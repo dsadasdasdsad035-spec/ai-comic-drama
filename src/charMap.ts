@@ -10,6 +10,10 @@ export type ProjectChar = {
   palette?: string
   keywords?: string[]
   voice?: string
+  /** 选中的三视图（本地相对路径；dataURL 不写文件，只在浏览器里保留） */
+  image?: string
+  candidates?: string[]
+  activeIdx?: number
 }
 
 /**
@@ -27,6 +31,9 @@ export function toSheet(c: ProjectChar): CharacterSheet {
     palette: c.palette || '',
     keywords: Array.isArray(c.keywords) ? c.keywords : [],
     voiceId: c.voice || undefined,
+    image: c.image,
+    candidates: Array.isArray(c.candidates) ? c.candidates.filter(Boolean) : undefined,
+    activeIdx: typeof c.activeIdx === 'number' ? c.activeIdx : undefined,
   }
 }
 
@@ -42,6 +49,13 @@ export function toProject(s: CharacterSheet): ProjectChar {
   }
   if (s.age) out.age = s.age
   if (s.voiceId) out.voice = s.voiceId
+  // 只有本地相对路径才写进项目文件；上传产生的 dataURL 太大会把文件撑爆
+  const local = (u?: string) => (u && u.startsWith('/') && !u.startsWith('/api') ? u.split('?')[0] : undefined)
+  const img = local(s.image)
+  if (img) out.image = img
+  const cands = (s.candidates ?? []).map(local).filter(Boolean) as string[]
+  if (cands.length) out.candidates = cands
+  if (typeof s.activeIdx === 'number') out.activeIdx = s.activeIdx
   return out
 }
 

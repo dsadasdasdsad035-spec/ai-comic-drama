@@ -11,6 +11,7 @@ import {
 } from './api'
 import { STORYBOARD_SYS, dialogueToText, parseDialogue } from './prompts'
 import { mergeGenerated } from './shotSync'
+import { endTask, startTask } from './tasks'
 
 type Props = {
   projectName: string
@@ -39,6 +40,9 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [genning, setGenning] = useState(false)
+  // 拆镜实测：lite 约 40s，pro 要 130s+。默认走快的，需要更好措辞再切 pro
+  const [model, setModel] = useState<'pro' | 'lite'>('lite')
+  const [elapsed, setElapsed] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -145,6 +149,10 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
       return
     }
     setGenning(true)
+    setElapsed(0)
+    const t0 = Date.now()
+    const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
+    const tid = startTask('text', `E${pad(epNo)} 拆镜`)
     try {
       const r = await callText<{ shots: any[] }>({
         system: STORYBOARD_SYS,
@@ -153,7 +161,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +
           `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。` +
           `只在台词/描述里被提到、实际在画外的角色不要写进去。`,
-        model: 'pro',
+        model,
         json: true,
         maxTokens: 8192,
       })
@@ -180,14 +188,17 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
       setShots((prev) => [...prev.filter((x) => (Number(x.episode) || 1) !== epNo), ...merged])
       setDirty(true)
       const sum = merged.reduce((a, s) => a + (Number(s.seconds) || 0), 0)
+      endTask(tid)
       toast(
-        `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s` +
+        `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${Math.round((Date.now() - t0) / 1000)}s` +
           (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
           '，记得先审阅再保存',
       )
     } catch (e: any) {
+      endTask(tid, String(e?.message || '拆镜失败'))
       toast(e.message || '拆镜失败')
     } finally {
+      window.clearInterval(timer)
       setGenning(false)
     }
   }
@@ -241,6 +252,14 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           <span className="label">秒</span>
         </div>
 
+        <div className="wb-field">
+          <span className="label">模型</span>
+          <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
+            <option value="lite">lite（快，约 40s）</option>
+            <option value="pro">pro（慢，2 分钟+）</option>
+          </select>
+        </div>
+
         <div className="spacer" />
 
         <span className="wb-root" title={root}>
@@ -286,7 +305,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           rows={3}
         />
         <button className="btn primary wb-genbtn" onClick={generate} disabled={genning || !brief.trim()}>
-          {genning ? '拆镜中…' : '拆镜'}
+          {genning ? `拆镜中 ${elapsed}s` : '拆镜'}
         </button>
       </div>
 

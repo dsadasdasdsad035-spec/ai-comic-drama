@@ -183,7 +183,20 @@ function Shell() {
         if (!alive) return
         const list = (p.characters ?? []) as ProjectChar[]
         if (list.length > 0) {
-          const sheets = list.map(toSheet)
+          // 项目文件里可能没有图（历史数据 / dataURL 不落盘），此时保留本地已有的图，
+          // 否则每次刷新三视图都会"消失"
+          const prev = charactersRef.current
+          const sheets = list.map((c) => {
+            const s = toSheet(c)
+            const old = prev.find((x) => x.id === s.id || x.name === s.name)
+            if (!old) return s
+            return {
+              ...s,
+              image: s.image || old.image,
+              candidates: s.candidates?.length ? s.candidates : old.candidates,
+              activeIdx: s.activeIdx ?? old.activeIdx,
+            }
+          })
           setCharacters(sheets)
           charSnapRef.current = JSON.stringify(sheets.map(toProject))
         } else {
