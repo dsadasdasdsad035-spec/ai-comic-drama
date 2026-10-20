@@ -387,6 +387,8 @@ function Shell() {
             move: s.move ?? '',
             dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
             prompt: s.keyframe_prompt ?? '',
+            refImage: s.keyframe,
+            videoUrl: s.clip,
             marks: [],
           }),
         )

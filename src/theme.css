@@ -3194,3 +3194,15 @@ kbd {
   color: var(--muted);
   font-size: 11px;
 }
+
+.vid-save {
+  display: inline-block;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
+.vid-save {
+  display: inline-block;
+  margin-top: 6px;
+  text-decoration: none;
+}

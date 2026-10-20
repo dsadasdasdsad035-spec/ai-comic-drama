@@ -22,7 +22,18 @@ export function mergeGenerated(existing: ProjectShot[], generated: ProjectShot[]
   })
 }
 
-/** 画布节点的业务字段签名，用来判断有没有实质改动 */
+/** 只认本地相对路径：dataURL / 外链（如方舟临时 TOS 地址）不能写进项目文件 */
+export function localPath(u?: string): string | undefined {
+  if (!u) return undefined
+  const p = u.split('?')[0]
+  return p.startsWith('/') && !p.startsWith('/api') ? p : undefined
+}
+
+/**
+ * 画布节点的业务字段签名，用来判断有没有实质改动。
+ * 必须包含 keyframe / clip —— 否则「只出了图/只出了片」不会触发写回，
+ * 视频就永远进不了 project.json（实测踩到过）。
+ */
 export function bizSignature(d: ShotData): string {
   return JSON.stringify({
     no: d.no,
@@ -31,6 +42,8 @@ export function bizSignature(d: ShotData): string {
     move: d.move,
     dialogue: d.dialogue,
     keyframe_prompt: d.prompt,
+    keyframe: localPath(d.refImage),
+    clip: localPath(d.videoUrl),
   })
 }
 
@@ -45,6 +58,8 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     move: d.move,
     dialogue: parseDialogue(d.dialogue),
     keyframe_prompt: d.prompt,
+    keyframe: localPath(d.refImage),
+    clip: localPath(d.videoUrl),
   }
 }
 
@@ -58,6 +73,8 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     move: s.move || fallback.move,
     dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
     prompt: s.keyframe_prompt || s.desc || fallback.prompt,
+    refImage: s.keyframe ?? fallback.refImage,
+    videoUrl: s.clip ?? fallback.videoUrl,
     shotId: s.id,
     episode: s.episode,
     handEdited: s.handEdited ?? fallback.handEdited,

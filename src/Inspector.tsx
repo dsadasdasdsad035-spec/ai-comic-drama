@@ -262,7 +262,12 @@ export default function Inspector({
         </button>
         {d.vidState === 'error' && d.vidError && <div className="gen-error">{d.vidError}</div>}
         {d.videoUrl && (
-          <video className="vid-thumb" src={d.videoUrl} muted loop autoPlay playsInline />
+          <>
+            <video className="vid-thumb" src={d.videoUrl} muted loop autoPlay playsInline />
+            <a className="btn-ghost vid-save" href={d.videoUrl} download={`${d.shotId || d.no}.mp4`}>
+              保存成片
+            </a>
+          </>
         )}
       </div>
 

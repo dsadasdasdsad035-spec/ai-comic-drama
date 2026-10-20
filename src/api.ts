@@ -261,6 +261,10 @@ export type ProjectShot = {
   video_prompt?: string
   /** 该镜在画面内的角色名（拆镜产出，比从台词/描述猜准） */
   cast?: string[]
+  /** 首帧图（本地相对路径，如 /generated/xxx.jpg） */
+  keyframe?: string
+  /** 成片视频（本地相对路径，如 /videos/xxx.mp4） */
+  clip?: string
   handEdited?: string[]
   orphan?: boolean
 }
