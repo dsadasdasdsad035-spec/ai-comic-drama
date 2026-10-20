@@ -3056,3 +3056,141 @@ kbd {
   font-size: 11px;
   font-family: inherit;
 }
+
+/* ---------------------------------------------------------------- 标注下拉 */
+
+.tm {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tm-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tm-btn:hover,
+.tm-btn.on {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tm-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+}
+
+.tm-cur {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tm-panel {
+  position: absolute;
+  left: 0;
+  top: 32px;
+  width: 260px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+}
+
+.tm-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.tm-label {
+  width: 44px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- 标注下拉 */
+
+.tm {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tm-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tm-btn:hover,
+.tm-btn.on {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tm-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+}
+
+.tm-cur {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tm-panel {
+  position: absolute;
+  left: 0;
+  top: 32px;
+  width: 260px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+}
+
+.tm-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.tm-label {
+  width: 44px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}

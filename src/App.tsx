@@ -28,6 +28,7 @@ import PromptTable from './PromptTable'
 import EpisodeBar from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
 import TaskCenter from './TaskCenter'
+import ToolMenu from './ToolMenu'
 import { endTask, startTask } from './tasks'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
@@ -748,39 +749,17 @@ function Shell() {
           </div>
 
           {view === 'board' && (
-            <>
-              <div className="tools">
-                <button className={tool === 'none' ? 'on' : ''} onClick={() => setTool('none')} title="选择 (V)">选择</button>
-                <button className={tool === 'pen' ? 'on' : ''} onClick={() => setTool('pen')} title="画笔 (P)">画笔</button>
-                <button className={tool === 'rect' ? 'on' : ''} onClick={() => setTool('rect')} title="框选 (R)">框选</button>
-              </div>
-
-              <div className="swatches">
-                {COLORS.map((c) => (
-                  <button
-                    key={c}
-                    className={`swatch ${color === c ? 'on' : ''}`}
-                    style={{ background: c }}
-                    onClick={() => setColor(c)}
-                    title={c}
-                  />
-                ))}
-              </div>
-
-              <label className="toggle">
-                <input type="checkbox" checked={guides} onChange={(e) => setGuides(e.target.checked)} />
-                三分线 <kbd>G</kbd>
-              </label>
-
-              <div className="tools">
-                <span className="label">新连线</span>
-                <select value={relation} onChange={(e) => setRelation(e.target.value as Relation)}>
-                  <option value="cut">硬切</option>
-                  <option value="transition">转场</option>
-                  <option value="flashback">闪回</option>
-                </select>
-              </div>
-            </>
+            <ToolMenu
+              tool={tool}
+              setTool={setTool}
+              color={color}
+              setColor={setColor}
+              colors={COLORS}
+              guides={guides}
+              setGuides={setGuides}
+              relation={relation}
+              setRelation={setRelation}
+            />
           )}
 
           <div className="spacer" />
