@@ -247,11 +247,20 @@ export type ProjectShot = {
   orphan?: boolean
 }
 
+export type ProjectEpisode = {
+  no: number
+  title?: string
+  hook?: string
+  scenes?: { no?: number; slug?: string; place?: string; time?: string; beats?: string; characters?: string[] }[]
+}
+
 export type ProjectData = {
   name?: string
+  logline?: string
+  source?: string
   style?: string
   aspect?: string
-  episodes?: { no: number; title?: string }[]
+  episodes?: ProjectEpisode[]
   characters?: unknown[]
   shots?: ProjectShot[]
   updated_at?: string
@@ -271,7 +280,15 @@ export async function getProject(name: string): Promise<ProjectData> {
   return j.project as ProjectData
 }
 
-export type ProjectPatch = { shots?: ProjectShot[]; characters?: unknown[] }
+export type ProjectPatch = {
+  shots?: ProjectShot[]
+  characters?: unknown[]
+  episodes?: unknown[]
+  source?: string
+  logline?: string
+  style?: string
+  aspect?: string
+}
 
 /** 局部回写：只传的字段会更新，未传的一律保留 */
 export async function patchProject(

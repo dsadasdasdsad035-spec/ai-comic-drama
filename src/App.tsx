@@ -25,10 +25,14 @@ import CharacterBoard from './CharacterBoard'
 import Preview from './Preview'
 import ShotTable from './ShotTable'
 import PromptTable from './PromptTable'
+import EpisodeBar from './EpisodeBar'
+import ScriptBoard from './ScriptBoard'
+import TaskCenter from './TaskCenter'
+import { endTask, startTask } from './tasks'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type ShotEdgeType, type ShotNodeType } from './data'
-import { cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
+import { PRICE_PER_IMAGE, cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
   checkHealth,
   generateImage,
@@ -84,8 +88,12 @@ function Shell() {
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts'>('board')
+  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts' | 'script'>('board')
   const [projectName, setProjectName] = useState('')
+  /** 当前集：镜头表 / 提示词共用 */
+  const [epNo, setEpNo] = useState(1)
+  /** 工作台保存后自增，用来刷新集栏的镜数 */
+  const [epVersion, setEpVersion] = useState(0)
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -474,7 +482,16 @@ function Shell() {
     }
     setVbatch({ total: list.length, done: 0 })
     for (const n of list) {
-      await generateVoiceOne(n.id)
+      const tid = startTask('voice', `${n.data.no} 配音`, {
+        retry: () => void generateVoiceOne(n.id),
+      })
+      try {
+        await generateVoiceOne(n.id)
+        const after = nodesRef.current.find((x) => x.id === n.id)
+        endTask(tid, after?.data.voiceState === 'error' ? after.data.voiceError || '配音失败' : undefined)
+      } catch (e: any) {
+        endTask(tid, String(e?.message || e))
+      }
       setVbatch((b) => (b ? { ...b, done: b.done + 1 } : b))
       await new Promise((r) => setTimeout(r, 120))
     }
@@ -489,7 +506,17 @@ function Shell() {
     if (list.length === 0) return
     setBatch({ total: list.length, done: 0 })
     for (const n of list) {
-      await generateOne(n.id)
+      const tid = startTask('image', `${n.data.no} 出图`, {
+        cost: PRICE_PER_IMAGE,
+        retry: () => void generateOne(n.id),
+      })
+      try {
+        await generateOne(n.id)
+        const after = nodesRef.current.find((x) => x.id === n.id)
+        endTask(tid, after?.data.genState === 'error' ? after.data.genError || '出图失败' : undefined)
+      } catch (e: any) {
+        endTask(tid, String(e?.message || e))
+      }
       setBatch((b) => (b ? { ...b, done: b.done + 1 } : b))
       await new Promise((r) => setTimeout(r, 350))
     }
@@ -586,6 +613,9 @@ function Shell() {
           </div>
 
           <div className="viewtabs">
+            <button className={view === 'script' ? 'on' : ''} onClick={() => setView('script')}>
+              剧本
+            </button>
             <button className={view === 'chars' ? 'on' : ''} onClick={() => setView('chars')}>
               角色
             </button>
@@ -671,29 +701,54 @@ function Shell() {
                 ▶ 连播
               </button>
             </>
-          ) : view === 'table' || view === 'prompts' ? (
+          ) : view === 'table' || view === 'prompts' || view === 'script' ? (
             <span className="board-count">{projectName || '未选项目'}</span>
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
           )}
+          <TaskCenter />
           <button className="btn primary" onClick={exportJson}>导出 JSON</button>
         </header>
+
+        {(view === 'table' || view === 'prompts' || view === 'script') && (
+          <EpisodeBar
+            projectName={projectName}
+            epNo={epNo}
+            setEpNo={setEpNo}
+            version={epVersion}
+          />
+        )}
 
         {view === 'table' ? (
           <ShotTable
             projectName={projectName}
             setProjectName={setProjectName}
             onCanvas={onCanvasIds}
+            epNo={epNo}
+            onSaved={() => setEpVersion((v) => v + 1)}
             onPush={pushShotsToCanvas}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
             }}
           />
+        ) : view === 'script' ? (
+          <ScriptBoard
+            projectName={projectName}
+            epNo={epNo}
+            setEpNo={setEpNo}
+            onGotoShotTable={() => setView('table')}
+            onSaved={() => setEpVersion((v) => v + 1)}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2800)
+            }}
+          />
         ) : view === 'prompts' ? (
           <PromptTable
             projectName={projectName}
             onCanvas={onCanvasIds}
+            epNo={epNo}
             onPush={pushShotsToCanvas}
             toast={(m) => {
               setToast(m)

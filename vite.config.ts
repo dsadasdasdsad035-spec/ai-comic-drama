@@ -835,12 +835,19 @@ function seedreamProxy(): Plugin {
               const cur = readProject(rootDir, name)
               const patch: Record<string, unknown> = {}
               if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
-              if (body.characters !== undefined) {
-                if (!Array.isArray(body.characters)) throw new Error('characters 必须是数组')
-                patch.characters = body.characters
+              // 角色 / 集 / 原著 / 元信息整体替换（都是人改的结果，不是 LLM 增量）
+              for (const k of ['characters', 'episodes']) {
+                if (body[k] === undefined) continue
+                if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
+                patch[k] = body[k]
+              }
+              for (const k of ['source', 'logline', 'style', 'aspect']) {
+                if (body[k] === undefined) continue
+                if (typeof body[k] !== 'string') throw new Error(`${k} 必须是字符串`)
+                patch[k] = body[k]
               }
               if (Object.keys(patch).length === 0) {
-                throw new Error('POST 需要 shots 或 characters 之一')
+                throw new Error('POST 需要 shots / characters / episodes / source 等字段之一')
               }
               const saved = writeProject(rootDir, name, patch)
               res.end(

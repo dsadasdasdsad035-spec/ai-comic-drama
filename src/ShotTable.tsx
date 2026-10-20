@@ -18,19 +18,23 @@ type Props = {
   onCanvas: Set<string>
   onPush: (shots: ProjectShot[]) => void
   toast: (m: string) => void
+  /** 当前集：由 App 统一管理，两个工作台共用 */
+  epNo: number
+  /** 保存成功后通知 App 刷新集栏镜数 */
+  onSaved?: () => void
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-export default function ShotTable({ projectName, setProjectName, onCanvas, onPush, toast }: Props) {
+export default function ShotTable({ projectName, setProjectName, onCanvas, onPush, toast, epNo, onSaved }: Props) {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [root, setRoot] = useState('')
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [style, setStyle] = useState('')
   const [aspect, setAspect] = useState('16:9')
-  const [epNo, setEpNo] = useState(1)
   const [target, setTarget] = useState(60)
   const [brief, setBrief] = useState('')
+  const [episodes, setEpisodes] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [genning, setGenning] = useState(false)
@@ -45,10 +49,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
         setShots(p.shots ?? [])
         setStyle(p.style ?? '')
         setAspect(p.aspect ?? '16:9')
-        const firstEp = (p.episodes ?? [])[0] as any
-        if (firstEp?.no) setEpNo(Number(firstEp.no) || 1)
-        const epBrief = (p.episodes ?? []).find((e: any) => Number(e?.no) === epNo) as any
-        setBrief(epBrief ? describeEpisode(epBrief) : '')
+        setEpisodes(p.episodes ?? [])
         setDirty(false)
         toast(`已加载 ${name}：${(p.shots ?? []).length} 镜`)
       } catch (e: any) {
@@ -77,15 +78,27 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName])
 
+  // 切集时把该集的场景 beats 填进拆镜输入框
+  useEffect(() => {
+    const e = episodes.find((x: any) => Number(x?.no) === epNo)
+    setBrief(e ? describeEpisode(e) : '')
+  }, [epNo, episodes])
+
+  /** 当前集的镜头。集号缺失的老数据按第 1 集处理 */
+  const visible = useMemo(
+    () => shots.filter((s) => (Number(s.episode) || 1) === epNo),
+    [shots, epNo],
+  )
+
   const total = useMemo(
-    () => shots.reduce((a, s) => a + (Number(s.seconds) || 0), 0),
-    [shots],
+    () => visible.reduce((a, s) => a + (Number(s.seconds) || 0), 0),
+    [visible],
   )
   const locked = useMemo(
-    () => shots.reduce((a, s) => a + (s.handEdited?.length ?? 0), 0),
-    [shots],
+    () => visible.reduce((a, s) => a + (s.handEdited?.length ?? 0), 0),
+    [visible],
   )
-  const pushed = useMemo(() => shots.filter((s) => onCanvas.has(s.id)).length, [shots, onCanvas])
+  const pushed = useMemo(() => visible.filter((s) => onCanvas.has(s.id)).length, [visible, onCanvas])
 
   const edit = (idx: number, field: string, value: unknown) => {
     setShots((prev) =>
@@ -130,13 +143,14 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
         }
       })
       // 手改过的字段在重新生成时保住，这是 handEdited 唯一生效的地方
-      const merged = mergeGenerated(shots, next)
+      const merged = mergeGenerated(visible, next)
       const kept = merged.filter((s) => (s.handEdited?.length ?? 0) > 0).length
-      setShots(merged)
+      // 只替换本集，别集的镜头原样保留
+      setShots((prev) => [...prev.filter((x) => (Number(x.episode) || 1) !== epNo), ...merged])
       setDirty(true)
       const sum = merged.reduce((a, s) => a + (Number(s.seconds) || 0), 0)
       toast(
-        `拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s` +
+        `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s` +
           (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
           '，记得先审阅再保存',
       )
@@ -155,6 +169,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
       // 服务端做了字段级合并，拿回真正落盘的结果
       setShots(r.shots as ProjectShot[])
       setDirty(false)
+      onSaved?.()
       toast(`已写回 project.json · ${r.shots.length} 镜`)
     } catch (e: any) {
       toast(e.message || '保存失败')
@@ -176,17 +191,6 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
               </option>
             ))}
           </select>
-        </div>
-
-        <div className="wb-field">
-          <span className="label">集</span>
-          <input
-            type="number"
-            min={1}
-            value={epNo}
-            onChange={(e) => setEpNo(Math.max(1, Number(e.target.value) || 1))}
-            style={{ width: 56 }}
-          />
         </div>
 
         <div className="wb-field">
@@ -224,9 +228,9 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
         </button>
       </div>
 
-      {shots.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="wb-empty">
-          {loading ? '加载中…' : '这个项目还没有镜头。上面写点内容，点「拆镜」。'}
+          {loading ? '加载中…' : `E${pad(epNo)} 还没有镜头。上面写点内容，点「拆镜」。`}
         </div>
       ) : (
         <div className="wb-scroll">
@@ -243,7 +247,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
               </tr>
             </thead>
             <tbody>
-              {shots.map((s, i) => {
+              {visible.map((s, i) => {
                 const isPushed = onCanvas.has(s.id)
                 const hand = new Set(s.handEdited ?? [])
                 return (
@@ -305,12 +309,12 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
 
       <div className="wb-foot">
         <span className="wb-sum">
-          {shots.length} 镜 · 总时长{' '}
+          {visible.length} 镜 · 总时长{' '}
           <b className={total > target ? 'over' : ''}>{total.toFixed(1)}s</b> / 目标 {target}s
           {total > target && <span className="wb-warn">超 {(total - target).toFixed(1)}s</span>}
         </span>
         <span className="wb-sum">
-          已在画布 {pushed} / {shots.length}
+          已在画布 {pushed} / {visible.length}
           {locked > 0 && <span className="wb-lock">{locked} 个手改字段受保护</span>}
         </span>
         <div className="spacer" />
@@ -319,8 +323,8 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
         </button>
         <button
           className="btn primary"
-          onClick={() => onPush(shots)}
-          disabled={shots.length === 0}
+          onClick={() => onPush(visible)}
+          disabled={visible.length === 0}
           title="按 shot.id 幂等推送：画布上没有的新建，已有的更新，多余的标灰不删"
         >
           生成到画布

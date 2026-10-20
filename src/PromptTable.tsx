@@ -3,12 +3,14 @@ import { callText, getProject, patchProject, type ProjectShot } from './api'
 import { characterBible, toSheet, type ProjectChar } from './charMap'
 import type { CharacterSheet } from './characters'
 import { PROMPT_SYS, chunk, expandAnchors, hasUnresolvedAnchor } from './prompts'
+import { endTask, startTask } from './tasks'
 
 type Props = {
   projectName: string
   onCanvas: Set<string>
   onPush: (shots: ProjectShot[]) => void
   toast: (m: string) => void
+  epNo: number
 }
 
 type Audit = {
@@ -63,7 +65,7 @@ function auditOf(s: ProjectShot, chars: CharacterSheet[]): Audit {
   }
 }
 
-export default function PromptTable({ projectName, onCanvas, onPush, toast }: Props) {
+export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo }: Props) {
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [chars, setChars] = useState<CharacterSheet[]>([])
   const [style, setStyle] = useState('')
@@ -98,98 +100,115 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName])
 
-  const audits = useMemo(() => shots.map((s) => auditOf(s, chars)), [shots, chars])
+  /** 当前集的镜头 */
+  const visible = useMemo(
+    () => shots.filter((s) => (Number(s.episode) || 1) === epNo),
+    [shots, epNo],
+  )
+  const audits = useMemo(() => visible.map((s) => auditOf(s, chars)), [visible, chars])
   const stat = useMemo(() => {
     const empty = audits.filter((a) => a.empty).length
     const miss = audits.filter((a) => !a.empty && a.missing.length > 0).length
     const may = audits.filter((a) => !a.empty && a.maybe.length > 0).length
     const unk = audits.filter((a) => a.unknown.length > 0).length
-    return { empty, miss, may, unk, ok: shots.length - empty - miss }
-  }, [audits, shots.length])
+    return { empty, miss, may, unk, ok: visible.length - empty - miss }
+  }, [audits, visible.length])
 
   const edit = (idx: number, field: 'keyframe_prompt' | 'video_prompt', value: string) => {
     setShots((prev) => prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s)))
     setDirty(true)
   }
 
+  /** 跑一批。抽成独立函数是为了让任务台账的「重试」能精确重跑这一批 */
+  const runGroup = useCallback(
+    async (g: ProjectShot[], idx: number, t0: number) => {
+      const tid = startTask('text', `E${epNo} 提示词 批${idx + 1}`, {
+        retry: () => void runGroup(g, idx, t0),
+      })
+      const bible = characterBible(chars) || '（项目里还没有角色锚点）'
+      const brief = g.map((x) => ({
+        no: x.no,
+        seconds: x.seconds,
+        size: x.size,
+        move: x.move,
+        desc: x.desc,
+        dialogue: x.dialogue,
+      }))
+      try {
+        const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
+          system: PROMPT_SYS,
+          model,
+          json: true,
+          maxTokens: 4096,
+          prompt:
+            `画风锁：${style || '近未来科幻写实'}\n\n` +
+            `角色外观锚点：\n${bible}\n\n` +
+            `分镜：\n${JSON.stringify(brief)}\n\n` +
+            `输出要求：\n` +
+            `1. 每一镜都要给 keyframe_prompt 与 video_prompt，no 必须与输入一致\n` +
+            `2. keyframe_prompt 里凡出现角色，一律用 {{角色名}} 占位代替整段 look_en（例如 {{陈默}}），` +
+            `由我在保存前原样替换回原文 —— 不要自己展开那整段描述\n` +
+            `3. 只输出 JSON`,
+        })
+        const got = r.json?.shots
+        if (!Array.isArray(got) || got.length === 0) throw new Error('空返回')
+
+        const patch = new Map<string, { kf: string; vp: string }>()
+        let bad = 0
+        for (const x of got) {
+          const kf = expandAnchors(String(x.keyframe_prompt || '').trim(), chars)
+          if (hasUnresolvedAnchor(kf)) bad++
+          patch.set(String(x.no), { kf, vp: String(x.video_prompt || '').trim() })
+        }
+        setShots((prev) =>
+          prev.map((x) => {
+            const hit = patch.get(String(x.no))
+            return hit ? { ...x, keyframe_prompt: hit.kf, video_prompt: hit.vp } : x
+          }),
+        )
+        setDirty(true)
+        endTask(tid)
+        return { ok: true, filled: g.filter((x) => patch.has(String(x.no))).length, unresolved: bad, groups: 1, total: g.length, t0 }
+      } catch (e: any) {
+        endTask(tid, String(e?.message || '生成失败'))
+        return { ok: false, filled: 0, unresolved: 0, groups: 1, total: g.length, t0 }
+      }
+    },
+    [chars, epNo, model, style],
+  )
+
   const generate = async () => {
-    if (shots.length === 0) {
-      toast('先去「镜头表」拆镜')
+    if (visible.length === 0) {
+      toast(`E${String(epNo).padStart(2, '0')} 还没有镜头，先去「镜头表」拆镜`)
       return
     }
     // 分片并行：输出量受镜头数线性影响，切批并发是唯一能真正缩短墙钟时间的手段
-    const groups = chunk(shots, Math.max(2, batchSize))
+    const groups = chunk(visible, Math.max(2, batchSize))
     setGenning(true)
     setProgress({ done: 0, total: groups.length, failed: 0 })
-
     const t0 = Date.now()
-    const bible = characterBible(chars) || '（项目里还没有角色锚点）'
-    let ok = 0
-    let filled = 0
-    let unresolved = 0
 
-    await Promise.all(
-      groups.map(async (g) => {
-        const brief = g.map((x) => ({
-          no: x.no,
-          seconds: x.seconds,
-          size: x.size,
-          move: x.move,
-          desc: x.desc,
-          dialogue: x.dialogue,
-        }))
-        try {
-          const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
-            system: PROMPT_SYS,
-            model,
-            json: true,
-            maxTokens: 4096,
-            prompt:
-              `画风锁：${style || '近未来科幻写实'}\n\n` +
-              `角色外观锚点：\n${bible}\n\n` +
-              `分镜：\n${JSON.stringify(brief)}\n\n` +
-              `输出要求：\n` +
-              `1. 每一镜都要给 keyframe_prompt 与 video_prompt，no 必须与输入一致\n` +
-              `2. keyframe_prompt 里凡出现角色，一律用 {{角色名}} 占位代替整段 look_en（例如 {{陈默}}），` +
-              `由我在保存前原样替换回原文 —— 不要自己展开那整段描述\n` +
-              `3. 只输出 JSON`,
-          })
-          const got = r.json?.shots
-          if (!Array.isArray(got) || got.length === 0) throw new Error('空返回')
-
-          const patch = new Map<string, { kf: string; vp: string }>()
-          for (const x of got) {
-            const kf = expandAnchors(String(x.keyframe_prompt || '').trim(), chars)
-            if (hasUnresolvedAnchor(kf)) unresolved++
-            patch.set(String(x.no), { kf, vp: String(x.video_prompt || '').trim() })
-          }
-          ok++
-          // 计数必须在 setShots 之外算：函数式 updater 是延迟到渲染期才执行的，
-          // 在里面 ++ 会读到旧值（实测提示语显示 10/15 而实际已填 15/15）
-          filled += g.filter((x) => patch.has(String(x.no))).length
-          setShots((prev) =>
-            prev.map((x) => {
-              const hit = patch.get(String(x.no))
-              return hit ? { ...x, keyframe_prompt: hit.kf, video_prompt: hit.vp } : x
-            }),
-          )
-        } catch {
-          /* 单批失败不影响其他批，最后统一提示 */
-        } finally {
-          setProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev))
-        }
+    let done = 0
+    const results = await Promise.all(
+      groups.map(async (g, idx) => {
+        const r = await runGroup(g, idx, t0)
+        done++
+        setProgress({ done, total: groups.length, failed: 0 })
+        return r
       }),
     )
 
-    const failed = groups.length - ok
+    const okCount = results.filter((r) => r.ok).length
+    const filled = results.reduce((a, r) => a + r.filled, 0)
+    const unresolved = results.reduce((a, r) => a + r.unresolved, 0)
+    const failed = groups.length - okCount
     setProgress({ done: groups.length, total: groups.length, failed })
-    setDirty(true)
     setGenning(false)
     window.setTimeout(() => setProgress(null), 2600)
     const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
     toast(
-      `${filled}/${shots.length} 镜 · ${elapsed}s（${ok}/${groups.length} 批）` +
-        (failed > 0 ? ` · ${failed} 批失败，可再点一次补` : '') +
+      `E${String(epNo).padStart(2, '0')} ${filled}/${visible.length} 镜 · ${elapsed}s（${okCount}/${groups.length} 批）` +
+        (failed > 0 ? ` · ${failed} 批失败，可在任务台账里重试` : '') +
         (unresolved > 0 ? ` · ${unresolved} 条占位符未替换，检查角色名` : ''),
     )
   }
@@ -268,8 +287,10 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
         </button>
       </div>
 
-      {shots.length === 0 ? (
-        <div className="wb-empty">{loading ? '加载中…' : '这个项目还没有镜头。先去「镜头表」拆镜。'}</div>
+      {visible.length === 0 ? (
+        <div className="wb-empty">
+          {loading ? '加载中…' : `E${String(epNo).padStart(2, '0')} 还没有镜头。先去「镜头表」拆镜，或换个集。`}
+        </div>
       ) : (
         <div className="wb-scroll">
           <table className="wb-table pt-table">
@@ -283,7 +304,7 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
               </tr>
             </thead>
             <tbody>
-              {shots.map((s, i) => {
+              {visible.map((s, i) => {
                 const a = audits[i]
                 return (
                   <tr key={s.id}>
@@ -341,13 +362,13 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
 
       <div className="wb-foot">
         <span className="wb-sum">
-          {shots.length} 镜 · 缺锚点是 AI 出图「脸崩」的主因，靠人眼核 {shots.length} 条不现实
+          {visible.length} 镜 · 缺锚点是 AI 出图「脸崩」的主因，靠人眼核 {visible.length} 条不现实
         </span>
         <div className="spacer" />
         <button className="btn" onClick={fixAnchors} disabled={stat.miss === 0}>
           补齐锚点
         </button>
-        <button className="btn" onClick={generate} disabled={genning || shots.length === 0}>
+        <button className="btn" onClick={generate} disabled={genning || visible.length === 0}>
           {genning && progress
             ? `生成中 ${progress.done}/${progress.total} 批`
             : progress && progress.failed > 0
@@ -359,7 +380,7 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
         </button>
         <button
           className="btn primary"
-          onClick={() => onPush(shots)}
+          onClick={() => onPush(visible)}
           disabled={stat.empty > 0}
           title={stat.empty > 0 ? `还有 ${stat.empty} 镜没有首帧提示词` : '把提示词推到画布卡片上'}
         >

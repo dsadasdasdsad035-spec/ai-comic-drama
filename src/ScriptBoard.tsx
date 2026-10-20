@@ -1,0 +1,266 @@
+import { useCallback, useEffect, useState } from 'react'
+import { callText, getProject, patchProject, type ProjectEpisode } from './api'
+import { SCRIPT_SYS } from './prompts'
+
+type Props = {
+  projectName: string
+  epNo: number
+  setEpNo: (n: number) => void
+  /** 跳去镜头表拆这一集 */
+  onGotoShotTable: () => void
+  onSaved: () => void
+  toast: (m: string) => void
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * 剧本工作台（流水线第 1 段）：原著 → 分集剧本。
+ *
+ * 为什么不做成画布：这是线性长文本，价值在「通读 + 改」，不是空间排布。
+ * 左栏原著、右栏分集，唯一出口是把某一集交给镜头表。
+ */
+export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTable, onSaved, toast }: Props) {
+  const [source, setSource] = useState('')
+  const [logline, setLogline] = useState('')
+  const [style, setStyle] = useState('')
+  const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
+  const [epCount, setEpCount] = useState(3)
+  const [targetSeconds, setTargetSeconds] = useState(75)
+  const [model, setModel] = useState<'pro' | 'lite'>('lite')
+  const [loading, setLoading] = useState(false)
+  const [genning, setGenning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [elapsed, setElapsed] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    if (!projectName) return
+    setLoading(true)
+    try {
+      const p = await getProject(projectName)
+      setSource(p.source ?? '')
+      setLogline(p.logline ?? '')
+      setStyle(p.style ?? '')
+      setEpisodes((p.episodes ?? []) as ProjectEpisode[])
+      setEpCount(Math.max(1, (p.episodes ?? []).length || 3))
+      setDirty(false)
+      toast(`已加载 ${projectName}：${(p.episodes ?? []).length} 集`)
+    } catch (e: any) {
+      toast(e.message || '加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [projectName, toast])
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName])
+
+  const generate = async () => {
+    if (!source.trim()) {
+      toast('先把原著粘到左栏')
+      return
+    }
+    setGenning(true)
+    setElapsed(null)
+    const t0 = Date.now()
+    try {
+      const r = await callText<{ logline?: string; episodes?: ProjectEpisode[] }>({
+        system: SCRIPT_SYS,
+        model,
+        json: true,
+        maxTokens: 8192,
+        prompt:
+          `原著：\n${source}\n\n` +
+          `要求：拆 ${epCount} 集，每集目标时长约 ${targetSeconds} 秒。\n` +
+          `画风：${style || '近未来科幻写实'}`,
+      })
+      const eps = (r.json?.episodes ?? []).filter((e) => e && e.no !== undefined)
+      if (eps.length === 0) throw new Error('模型没给出分集结果')
+      setEpisodes(eps)
+      if (r.json?.logline) setLogline(r.json.logline)
+      setDirty(true)
+      const secs = Math.round((Date.now() - t0) / 1000)
+      setElapsed(secs)
+      toast(`生成 ${eps.length} 集 · ${secs}s，先审阅再保存`)
+    } catch (e: any) {
+      toast(e.message || '生成失败')
+    } finally {
+      setGenning(false)
+    }
+  }
+
+  const patchEp = (idx: number, p: Partial<ProjectEpisode>) => {
+    setEpisodes((prev) => prev.map((e, i) => (i === idx ? { ...e, ...p } : e)))
+    setDirty(true)
+  }
+
+  const save = async () => {
+    if (!projectName) return
+    setSaving(true)
+    try {
+      await patchProject(projectName, { source, logline, episodes, style })
+      setDirty(false)
+      onSaved()
+      toast('剧本已写回 project.json')
+    } catch (e: any) {
+      toast(e.message || '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const totalScenes = episodes.reduce((a, e) => a + (e.scenes?.length ?? 0), 0)
+
+  return (
+    <main className="sb">
+      <div className="sb-left">
+        <div className="sb-head">
+          <span className="label">原著</span>
+          <span className="sb-note">{source.length} 字</span>
+        </div>
+        <textarea
+          className="sb-source"
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value)
+            setDirty(true)
+          }}
+          placeholder="把原著 / 故事梗概粘到这里。也可以直接读 projects/<项目>/source.md。"
+        />
+
+        <div className="sb-head">
+          <span className="label">一句话故事</span>
+        </div>
+        <textarea
+          className="sb-logline"
+          value={logline}
+          onChange={(e) => {
+            setLogline(e.target.value)
+            setDirty(true)
+          }}
+          placeholder="logline，会写进 project.json"
+        />
+
+        <div className="sb-opts">
+          <div className="wb-field">
+            <span className="label">集数</span>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={epCount}
+              onChange={(e) => setEpCount(Math.max(1, Number(e.target.value) || 3))}
+              style={{ width: 56 }}
+            />
+          </div>
+          <div className="wb-field">
+            <span className="label">每集</span>
+            <input
+              type="number"
+              min={20}
+              step={5}
+              value={targetSeconds}
+              onChange={(e) => setTargetSeconds(Math.max(20, Number(e.target.value) || 75))}
+              style={{ width: 64 }}
+            />
+            <span className="label">秒</span>
+          </div>
+          <div className="wb-field">
+            <span className="label">模型</span>
+            <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
+              <option value="lite">lite（快）</option>
+              <option value="pro">pro（质量）</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="sb-actions">
+          <button className="btn primary" onClick={generate} disabled={genning || !source.trim()}>
+            {genning ? '生成分集中…' : episodes.length > 0 ? '重新生成分集' : '生成分集'}
+          </button>
+          <button className="btn" onClick={save} disabled={saving || !dirty}>
+            {saving ? '保存中…' : dirty ? '保存' : '已保存'}
+          </button>
+          <button className="btn" onClick={load} disabled={loading}>
+            {loading ? '加载中…' : '重新加载'}
+          </button>
+        </div>
+        {elapsed !== null && <div className="sb-note">{episodes.length} 集 / {totalScenes} 场 · 上次用时 {elapsed}s</div>}
+      </div>
+
+      <div className="sb-right">
+        {episodes.length === 0 ? (
+          <div className="wb-empty">
+            {genning ? '正在拆集…' : '还没有分集。左边粘上原著，点「生成分集」。'}
+          </div>
+        ) : (
+          <div className="sb-scroll">
+            {episodes.map((e, i) => {
+              const isCur = Number(e.no) === epNo
+              return (
+                <section key={`${e.no}-${i}`} className={`sb-ep ${isCur ? 'on' : ''}`}>
+                  <header className="sb-ep-head">
+                    <b>E{pad(Number(e.no) || i + 1)}</b>
+                    <input
+                      className="sb-ep-title"
+                      value={e.title ?? ''}
+                      placeholder="集标题"
+                      onChange={(ev) => patchEp(i, { title: ev.target.value })}
+                    />
+                    <span className="sb-note">{(e.scenes?.length ?? 0)} 场</span>
+                    <div className="spacer" />
+                    <button
+                      className="btn-mini"
+                      onClick={() => {
+                        setEpNo(Number(e.no) || i + 1)
+                        onGotoShotTable()
+                      }}
+                      title="切到这一集并打开镜头表"
+                    >
+                      拆这一集 →
+                    </button>
+                  </header>
+
+                  <label className="sb-hook">
+                    <span>结尾钩子</span>
+                    <input
+                      value={e.hook ?? ''}
+                      placeholder="本集结尾的悬念 / 反转"
+                      onChange={(ev) => patchEp(i, { hook: ev.target.value })}
+                    />
+                  </label>
+
+                  <ol className="sb-scenes">
+                    {(e.scenes ?? []).map((sc, si) => (
+                      <li key={si}>
+                        <div className="sb-scene-meta">
+                          <span className="sb-slug">{sc.slug || `场景 ${si + 1}`}</span>
+                          <span className="sb-dim">{sc.place}</span>
+                          <span className="sb-dim">{sc.time}</span>
+                          {!!sc.characters?.length && <span className="sb-cast">{sc.characters.join('、')}</span>}
+                        </div>
+                        <textarea
+                          className="sb-beats"
+                          rows={2}
+                          value={sc.beats ?? ''}
+                          onChange={(ev) => {
+                            const scenes = [...(e.scenes ?? [])]
+                            scenes[si] = { ...sc, beats: ev.target.value }
+                            patchEp(i, { scenes })
+                          }}
+                        />
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </main>
+  )
+}
