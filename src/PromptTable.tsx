@@ -331,7 +331,12 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
                   <tr key={s.id}>
                     <td className="mono">
                       <span className="wb-no">{s.no}</span>
-                      {onCanvas.has(s.id) && <em className="tag ok">在画布</em>}
+                      {/* 只有个别未上画布时才值得标出来；全都在画布上时逐行标注等于噪音 */}
+                      {onCanvas.has(s.id) ? (
+                        <i className="wb-dot on" title="已在画布" />
+                      ) : (
+                        <i className="wb-dot" title="还没推到画布" />
+                      )}
                     </td>
                     <td className="wb-cast">{a.cast.join('、') || '—'}</td>
                     <td>

@@ -377,8 +377,9 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
                       />
                     </td>
                     <td className="state">
+                      {/* 默认什么都不显示：整表都是「在画布」时逐行标注是纯噪音 */}
                       {s.orphan && <em className="tag orphan">孤儿</em>}
-                      {isPushed ? <em className="tag ok">在画布</em> : <em className="tag off">未上画布</em>}
+                      {!isPushed && !s.orphan && <i className="wb-dot" title="还没推到画布" />}
                     </td>
                   </tr>
                 )
