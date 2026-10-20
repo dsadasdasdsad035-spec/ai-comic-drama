@@ -29,6 +29,12 @@ export type ShotData = {
   handEdited?: string[]
   /** project.json 里有、但本次推送没覆盖到 —— 只标灰，不自动删 */
   orphan?: boolean
+  /** 该镜画面内的角色名（拆镜产出），时间线角色轨用 */
+  cast?: string[]
+  /** 时间线布局：配音相对镜头起点的偏移（秒，可负＝提前） */
+  voiceOffset?: number
+  /** 时间线布局：字幕相对镜头起点的偏移（秒） */
+  subOffset?: number
   refImage?: string
   marks: Mark[]
   /** 一镜多候选 */

@@ -700,6 +700,20 @@ function Shell() {
     window.setTimeout(() => setToast(''), 2200)
   }
 
+  /** 画面轨换序：把某镜移到目标下标（时间线上拖动触发） */
+  const reorderShot = useCallback((id: string, toIndex: number) => {
+    setNodes((prev) => {
+      const from = prev.findIndex((n) => n.id === id)
+      if (from < 0) return prev
+      const to = Math.max(0, Math.min(prev.length - 1, toIndex))
+      if (to === from) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }, [setNodes])
+
   const pickShot = (id: string) => {
     const n = nodes.find((x) => x.id === id)
     if (!n) return
@@ -1033,10 +1047,15 @@ function Shell() {
                 maskColor="rgba(6,10,16,.72)"
                 style={{ background: '#0b1220' }}
               />
-              <Panel position="bottom-center">
-                <Timeline nodes={shownNodes} activeId={selId} onPick={pickShot} />
-              </Panel>
             </ReactFlow>
+
+            <Timeline
+              nodes={shownNodes}
+              activeId={selId}
+              onPick={pickShot}
+              onPatch={patch}
+              onReorder={reorderShot}
+            />
           </div>
 
           <Inspector

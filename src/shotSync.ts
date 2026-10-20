@@ -60,6 +60,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     keyframe_prompt: d.prompt,
     keyframe: localPath(d.refImage),
     clip: localPath(d.videoUrl),
+    cast: d.cast,
   }
 }
 
@@ -75,6 +76,7 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     prompt: s.keyframe_prompt || s.desc || fallback.prompt,
     refImage: s.keyframe ?? fallback.refImage,
     videoUrl: s.clip ?? fallback.videoUrl,
+    cast: s.cast,
     shotId: s.id,
     episode: s.episode,
     handEdited: s.handEdited ?? fallback.handEdited,

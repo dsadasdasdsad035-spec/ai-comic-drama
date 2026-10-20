@@ -3559,3 +3559,441 @@ button:not(:disabled),
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
+
+/* ============================================================================
+   多轨时间线（停靠在画布底部）
+   ============================================================================ */
+
+.ntl {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 186px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line-2);
+  z-index: var(--z-panel);
+}
+
+.ntl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.ntl-head b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ntl-sum b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ntl-warn {
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+}
+
+.ntl-zoom {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  min-width: 46px;
+  text-align: center;
+}
+
+.ntl-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ntl-labels {
+  width: 64px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.ntl-ruler-gap {
+  height: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-label {
+  display: flex;
+  align-items: center;
+  padding-left: var(--sp-2);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ntl-canvas {
+  position: relative;
+  min-height: 100%;
+}
+
+.ntl-ruler {
+  position: relative;
+  height: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-tick {
+  position: absolute;
+  top: 2px;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  padding-left: 3px;
+  border-left: 1px solid var(--line-2);
+  height: 14px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+.ntl-track {
+  position: relative;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-track.info {
+  opacity: 0.9;
+}
+
+.ntl-clip {
+  position: absolute;
+  top: 2px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-size: var(--fs-2xs);
+  color: var(--text);
+  overflow: hidden;
+  text-align: left;
+  font-family: var(--font-sans);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.ntl-clip:active {
+  cursor: grabbing;
+}
+
+.ntl-clip-t {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ntl-clip.pic.vid {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: var(--accent);
+}
+
+.ntl-clip.pic.img {
+  background: var(--panel-2);
+  border-color: var(--line-2);
+  color: var(--text-2);
+}
+
+.ntl-clip.pic.empty {
+  background: transparent;
+  border: 1px dashed var(--line-2);
+  color: var(--muted);
+}
+
+.ntl-clip.voice {
+  background: rgba(74, 222, 128, 0.2);
+  border-color: var(--ok);
+  color: var(--text);
+}
+
+.ntl-clip.voice.over {
+  border-color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.ntl-clip.sub {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: var(--warn);
+  color: var(--text);
+}
+
+.ntl-clip.on {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(56, 189, 248, 0.35);
+}
+
+.ntl-chip {
+  position: absolute;
+  top: 4px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 3px;
+  font-size: 9px;
+  color: var(--accent-ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.ntl-mark {
+  position: absolute;
+  top: 7px;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--line-2);
+}
+
+.ntl-mark.has {
+  background: var(--accent);
+}
+
+/* ============================================================================
+   多轨时间线（停靠在画布底部）
+   ============================================================================ */
+
+.ntl {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 186px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line-2);
+  z-index: var(--z-panel);
+}
+
+.ntl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.ntl-head b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ntl-sum b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ntl-warn {
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+}
+
+.ntl-zoom {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  min-width: 46px;
+  text-align: center;
+}
+
+.ntl-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ntl-labels {
+  width: 64px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.ntl-ruler-gap {
+  height: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-label {
+  display: flex;
+  align-items: center;
+  padding-left: var(--sp-2);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.ntl-canvas {
+  position: relative;
+  min-height: 100%;
+}
+
+.ntl-ruler {
+  position: relative;
+  height: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-tick {
+  position: absolute;
+  top: 2px;
+  font-size: 9px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  padding-left: 3px;
+  border-left: 1px solid var(--line-2);
+  height: 14px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+.ntl-track {
+  position: relative;
+  border-bottom: 1px solid var(--line);
+}
+
+.ntl-track.info {
+  opacity: 0.9;
+}
+
+.ntl-clip {
+  position: absolute;
+  top: 2px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-size: var(--fs-2xs);
+  color: var(--text);
+  overflow: hidden;
+  text-align: left;
+  font-family: var(--font-sans);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.ntl-clip:active {
+  cursor: grabbing;
+}
+
+.ntl-clip-t {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.ntl-clip.pic.vid {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: var(--accent);
+}
+
+.ntl-clip.pic.img {
+  background: var(--panel-2);
+  border-color: var(--line-2);
+  color: var(--text-2);
+}
+
+.ntl-clip.pic.empty {
+  background: transparent;
+  border: 1px dashed var(--line-2);
+  color: var(--muted);
+}
+
+.ntl-clip.voice {
+  background: rgba(74, 222, 128, 0.2);
+  border-color: var(--ok);
+  color: var(--text);
+}
+
+.ntl-clip.voice.over {
+  border-color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.ntl-clip.sub {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: var(--warn);
+  color: var(--text);
+}
+
+.ntl-clip.on {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 8px rgba(56, 189, 248, 0.35);
+}
+
+.ntl-chip {
+  position: absolute;
+  top: 4px;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 3px;
+  font-size: 9px;
+  color: var(--accent-ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.ntl-mark {
+  position: absolute;
+  top: 7px;
+  width: 3px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--line-2);
+}
+
+.ntl-mark.has {
+  background: var(--accent);
+}
+
+.ntl.collapsed {
+  height: 30px;
+}
+
+.ntl.collapsed .ntl-head {
+  border-bottom: 0;
+}
+
+.ntl.collapsed {
+  height: 30px;
+}
+
+.ntl.collapsed .ntl-head {
+  border-bottom: 0;
+}
