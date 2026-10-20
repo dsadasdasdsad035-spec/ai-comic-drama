@@ -6,8 +6,10 @@ const PJ = '/Users/mjy/WorkBuddy/2026-10-19-21-40-01/manga-pipeline/projects/rec
 const SNAP = fs.readFileSync(PJ) // 跑完还原，保证可重复且不弄脏数据
 const read = () => JSON.parse(fs.readFileSync(PJ, 'utf8'))
 const base = JSON.parse(SNAP.toString('utf8'))
-const baseTotal = +base.shots.reduce((a, s) => a + Number(s.seconds || 0), 0).toFixed(1)
-const baseSec0 = Number(base.shots[0].seconds)
+// 表格/画布都按集过滤了，断言要以「第 1 集」为准，不能用全项目镜头数
+const ep1 = base.shots.filter((x) => (Number(x.episode) || 1) === 1)
+const baseTotal = +ep1.reduce((a, s) => a + Number(s.seconds || 0), 0).toFixed(1)
+const baseSec0 = Number(ep1[0].seconds)
 
 let ok = 0
 let bad = 0
@@ -56,17 +58,24 @@ try {
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(1600)
   const rows = await page.locator('.wb-table tbody tr').count()
-  check(rows === base.shots.length, `表格 ${base.shots.length} 行`, `实际 ${rows}`)
+  check(rows === ep1.length, `表格 ${ep1.length} 行`, `实际 ${rows}`)
   const foot = (await page.locator('.wb-foot').innerText()).replace(/\s+/g, ' ')
-  check(foot.includes(`${base.shots.length} 镜`), '页脚镜数正确')
+  check(foot.includes(`${ep1.length} 镜`), '页脚镜数正确')
   check(foot.includes(`${baseTotal.toFixed(1)}s`), `总时长 ${baseTotal.toFixed(1)}s`, foot)
   check(/目标 \d+s/.test(foot), '目标时长可调')
   const firstDesc = await page
     .locator('.wb-table tbody tr').first().locator('td').nth(4).locator('textarea').inputValue()
   check(firstDesc.length > 10, '首行描述已带入')
-  const dlg = await page
-    .locator('.wb-table tbody tr').nth(2).locator('td').nth(5).locator('textarea').inputValue()
-  check(dlg.includes('：'), '台词按「角色：台词」渲染', dlg)
+  // 镜头在文件里的顺序会随写回变化，不能按固定行号取；找第一条真带台词的
+  const dlg = await page.evaluate(() => {
+    for (const tr of document.querySelectorAll('.wb-table tbody tr')) {
+      const ta = tr.querySelectorAll('td')[5]?.querySelector('textarea')
+      const v = ta?.value?.trim()
+      if (v) return v
+    }
+    return ''
+  })
+  check(dlg.includes('：'), '台词按「角色：台词」渲染', dlg.slice(0, 40))
   console.log(`  · 描述：${firstDesc.slice(0, 28)}…  台词：${dlg.replace(/\n/g, ' / ').slice(0, 30)}`)
   await page.screenshot({ path: '/tmp/sb-shots/70-table.png' })
 
@@ -105,10 +114,10 @@ try {
       size0: nodes.find((n) => n.data?.shotId === 'E01-S01')?.data?.size,
     }
   })
-  check(st.withId === base.shots.length, `${base.shots.length} 个节点带业务 ID`, JSON.stringify(st))
+  check(st.withId === ep1.length, `${ep1.length} 个节点带业务 ID`, JSON.stringify(st))
   check(st.first3[0] === 'E01-S01', '业务 ID 形如 E01-S01', JSON.stringify(st.first3))
   check(Number(st.sec0) === Number(target), 'S01 秒数沿用表格值', String(st.sec0))
-  check(st.size0 === base.shots[0].size, 'S01 景别带入画布', String(st.size0))
+  check(st.size0 === ep1[0].size, 'S01 景别带入画布', String(st.size0))
   console.log(`  · 节点总数 ${st.total}（含 1 张无业务 ID 的占位卡；不自动删）`)
   await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.waitForTimeout(900)
@@ -158,12 +167,12 @@ try {
     const ids = (s.nodes || []).filter((n) => n.data?.shotId).map((n) => n.data.shotId)
     return { withId: ids.length, uniq: new Set(ids).size }
   })
-  check(st2.withId === base.shots.length && st2.uniq === base.shots.length, '重推后仍是唯一节点', JSON.stringify(st2))
+  check(st2.withId === ep1.length && st2.uniq === ep1.length, '重推后仍是唯一节点', JSON.stringify(st2))
   console.log('\n[6] 提示词工作台 + 锚点校验')
   await page.getByRole('button', { name: '提示词', exact: true }).click()
   await page.waitForTimeout(1600)
   const prow = await page.locator('.pt-table tbody tr').count()
-  check(prow === base.shots.length, `提示词表 ${base.shots.length} 行`, `实际 ${prow}`)
+  check(prow === ep1.length, `提示词表 ${ep1.length} 行`, `实际 ${prow}`)
   const badCount = await page.locator('.pt-table .tag.bad').count()
   check(badCount === 0, '无「缺锚点」行（有台词的角色都嵌了锚点）', String(badCount))
   const unkCount = await page.locator('.pt-table .tag.unknown').count()

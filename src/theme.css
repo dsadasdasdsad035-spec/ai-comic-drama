@@ -3206,3 +3206,32 @@ kbd {
   margin-top: 6px;
   text-decoration: none;
 }
+
+/* 连播里的集切换 */
+.pv-eps {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.pv-ep {
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.pv-ep:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.pv-ep.on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+}

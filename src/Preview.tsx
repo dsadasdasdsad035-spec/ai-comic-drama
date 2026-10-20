@@ -42,6 +42,8 @@ export default function Preview({
   onClose,
   onPick,
   assReady,
+  epNo,
+  onEpChange,
 }: {
   nodes: ShotNodeType[]
   startId?: string | null
@@ -49,8 +51,19 @@ export default function Preview({
   onPick: (id: string) => void
   /** ffmpeg 是否带 libass（带则服务端走 SRT，前端无需渲 PNG） */
   assReady?: boolean
+  /** 当前集：连播与导出都只处理这一集 */
+  epNo: number
+  onEpChange: (n: number) => void
 }) {
-  const items = useMemo(() => buildPlaylist(nodes), [nodes])
+  // 集号：从节点里出现过的 episode 归并，缺省按第 1 集（与画布/表格同一约定）
+  const epOf = useCallback((n: ShotNodeType) => Number(n.data.episode) || 1, [])
+  const epList = useMemo(() => {
+    const set = new Set(nodes.map(epOf))
+    return [...set].sort((a, b) => a - b)
+  }, [nodes, epOf])
+
+  const epNodes = useMemo(() => nodes.filter((n) => epOf(n) === epNo), [nodes, epNo, epOf])
+  const items = useMemo(() => buildPlaylist(epNodes), [epNodes])
   /** 视频元数据加载后用真实片长覆盖名义时长 */
   const [durFix, setDurFix] = useState<Record<string, number>>({})
   const durOf = useCallback((it: Item) => durFix[it.id] ?? it.duration, [durFix])
@@ -58,6 +71,14 @@ export default function Preview({
 
   const startIdx = Math.max(0, items.findIndex((it) => it.id === startId))
   const [idx, setIdx] = useState(items.length ? startIdx : -1)
+  // 切集：列表换了，游标必须回到第一镜，否则会越界或停在无意义的镜号
+  const epRef = useRef(epNo)
+  useEffect(() => {
+    if (epRef.current === epNo) return
+    epRef.current = epNo
+    setIdx(items.length ? 0 : -1)
+    setEnded(false)
+  }, [epNo, items.length])
   const [paused, setPaused] = useState(false)
   const [ended, setEnded] = useState(false)
 
@@ -172,6 +193,23 @@ export default function Preview({
             {cur ? `${durOf(cur).toFixed(1)}s · ${cur.size} · ${cur.move}` : ''}
             {cur && !cur.isVideo && <em className="pv-still">静帧</em>}
           </span>
+          {epList.length > 1 && (
+            <span className="pv-eps">
+              {epList.map((n) => (
+                <button
+                  key={n}
+                  className={`pv-ep ${n === epNo ? 'on' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEpChange(n)
+                  }}
+                  title={`只播第 ${n} 集`}
+                >
+                  E{String(n).padStart(2, '0')}
+                </button>
+              ))}
+            </span>
+          )}
           <span className="pv-time">
             {(elapsedBefore + (cur ? durOf(cur) : 0)).toFixed(1)} / {total.toFixed(1)}s
           </span>

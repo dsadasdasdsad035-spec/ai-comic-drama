@@ -406,7 +406,9 @@ function Shell() {
           }),
         )
       }
-      syncedRef.current = snap
+      // 只更新本次推送的镜头，别把其他集的快照冲掉 ——
+      // 整份替换会让别集节点全部变成「脏」，下次写回时被无谓地重写一遍
+      for (const [k, v] of snap) syncedRef.current.set(k, v)
       setToast(`已推送 ${shots.length} 镜到画布`)
       window.setTimeout(() => setToast(''), 2200)
       window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.55, duration: 400 }), 80)
@@ -956,6 +958,8 @@ function Shell() {
             onClose={() => setPreview(false)}
             onPick={pickShot}
             assReady={assReady}
+            epNo={epNo}
+            onEpChange={setEpNo}
           />
         )}
 
