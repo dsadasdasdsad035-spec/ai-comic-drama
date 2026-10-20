@@ -517,6 +517,8 @@ type ResolvedSeg = {
   sub?: string
   dialogue?: string
   voiceDur?: number
+  voiceOffset: number
+  subOffset: number
 }
 
 /**
@@ -532,6 +534,10 @@ async function buildAnimatic(
     video?: string
     image?: string
     voice?: string
+    /** 配音相对镜头起点的偏移（秒，可负＝提前），由时间线拖动产生 */
+    voiceOffset?: number
+    /** 字幕相对镜头起点的偏移（秒） */
+    subOffset?: number
     /** 无 libass 时的兜底：整帧透明 PNG */
     sub?: string
     /** 有 libass 时走真字幕（SRT + subtitles 滤镜） */
@@ -584,7 +590,10 @@ async function buildAnimatic(
       if (fs.existsSync(sf)) sub = sf
     }
 
-    resolved.push({ file, isVideo, dur, voice, voiceDur, sub, dialogue: seg.dialogue })
+    // 偏移只在镜头时长内有效，夹紧避免拖出荒唐值
+    const vo = Math.max(-dur, Math.min(dur, Number(seg.voiceOffset) || 0))
+    const so = Math.max(-dur, Math.min(dur, Number(seg.subOffset) || 0))
+    resolved.push({ file, isVideo, dur, voice, voiceDur, sub, dialogue: seg.dialogue, voiceOffset: vo, subOffset: so })
   }
 
   if (resolved.length === 0) throw new Error('没有任何可用的画面或视频，先出图/出片再导出')
@@ -599,7 +608,10 @@ async function buildAnimatic(
   /** 配音比镜头长 → 会被截断，回传给前端告警 */
   const overflows = resolved
     .map((r, i) => ({ r, i }))
-    .filter(({ r }) => r.voiceDur && r.voiceDur > r.dur + 0.2)
+    .filter(({ r }) => {
+      const avail = Math.max(0.3, r.dur - Math.max(0, r.voiceOffset))
+      return !!r.voiceDur && r.voiceDur > avail + 0.2
+    })
     .map(({ r, i }) => ({
       shot: i + 1,
       voice: Math.round((r.voiceDur as number) * 10) / 10,
@@ -635,11 +647,15 @@ async function buildAnimatic(
     args.push('-i', r.voice)
     // 配音比镜头长：在镜头末尾收掉（0.12s 淡出），否则会盖住后面几镜的声音，
     // 也会跟字幕的截断点对不上。
-    const cut = !!r.voiceDur && r.voiceDur > r.dur + 0.2
+    // 起点 = 镜头起点 + 用户拖出来的偏移（不能为负时刻）
+    const absStart = Math.max(0, starts[i] + r.voiceOffset)
+    // 延后多少就少多少可用时长；提前的话可用时长仍是整镜
+    const available = Math.max(0.3, r.dur - Math.max(0, r.voiceOffset))
+    const cut = !!r.voiceDur && r.voiceDur > available + 0.2
     aInputs.push({
       idx: inputIdx,
-      startMs: Math.round(starts[i] * 1000),
-      keep: cut ? Math.max(0.3, r.dur) : 0,
+      startMs: Math.round(absStart * 1000),
+      keep: cut ? available : 0,
       cut,
     })
     inputIdx++
@@ -668,7 +684,7 @@ async function buildAnimatic(
     resolved.forEach((r, i) => {
       const text = (r.dialogue ?? '').replace(/\r?\n/g, ' ').trim()
       if (!text) return
-      const base = starts[i]
+      const base = Math.max(0, starts[i] + r.subOffset)
       const lead = 0.15
       const start = base + lead
       const voiced = r.voiceDur && r.voiceDur > 0.3

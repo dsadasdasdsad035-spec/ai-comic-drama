@@ -14,6 +14,8 @@ type Item = {
   size: string
   move: string
   voice?: string
+  voiceOffset: number
+  subOffset: number
 }
 
 /** 分镜顺序 = 节点数组顺序（与时间尺一致） */
@@ -32,6 +34,8 @@ export function buildPlaylist(nodes: ShotNodeType[]): Item[] {
       size: n.data.size,
       move: n.data.move,
       voice: n.data.voiceUrl,
+      voiceOffset: Number(n.data.voiceOffset) || 0,
+      subOffset: Number(n.data.subOffset) || 0,
     }
   })
 }
@@ -147,8 +151,8 @@ export default function Preview({
         .filter((it) => Boolean(it.src))
         .map((it) => {
           const seg: ExportSegment = it.isVideo
-            ? { seconds: durOf(it), video: it.src, voice: it.voice }
-            : { seconds: durOf(it), image: it.src, voice: it.voice }
+            ? { seconds: durOf(it), video: it.src, voice: it.voice, voiceOffset: it.voiceOffset, subOffset: it.subOffset }
+            : { seconds: durOf(it), image: it.src, voice: it.voice, voiceOffset: it.voiceOffset, subOffset: it.subOffset }
           if (burnSubs && it.dialogue.trim()) {
             seg.dialogue = it.dialogue
             // 没有 libass 才退回到「前端渲整帧 PNG + overlay」

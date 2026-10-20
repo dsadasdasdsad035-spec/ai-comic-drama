@@ -124,6 +124,10 @@ export type ExportSegment = {
   video?: string
   image?: string
   voice?: string
+  /** 配音相对镜头起点偏移（秒，可负） */
+  voiceOffset?: number
+  /** 字幕相对镜头起点偏移（秒） */
+  subOffset?: number
   /** 台词（服务端有 libass 时据此生成 SRT） */
   dialogue?: string
   /** 无 libass 时的兜底：整帧透明 PNG（dataURL） */
