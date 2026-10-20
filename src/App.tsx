@@ -33,6 +33,7 @@ import {
   checkHealth,
   generateImage,
   generateVoice,
+  listProjects,
   listVoices,
   getProject,
   mergeProjectShots,
@@ -123,6 +124,18 @@ function Shell() {
   useEffect(() => {
     voicesRef.current = voices
   }, [voices])
+
+  // 项目选择必须在 App 层引导：否则先进入「提示词」标签时 projectName 还是空，
+  // 工作台加载不到数据、按钮全灰（实测踩到过）
+  useEffect(() => {
+    listProjects()
+      .then(({ projects }) => {
+        setProjectName((cur) => cur || projects[0]?.name || '')
+      })
+      .catch(() => {
+        /* 没有项目目录时不阻塞画布使用 */
+      })
+  }, [])
 
   useEffect(() => {
     checkHealth().then((h) => {

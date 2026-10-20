@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { callText, getProject, patchProject, type ProjectShot } from './api'
 import { characterBible, toSheet, type ProjectChar } from './charMap'
 import type { CharacterSheet } from './characters'
-import { PROMPT_SYS } from './prompts'
+import { PROMPT_SYS, chunk, expandAnchors, hasUnresolvedAnchor } from './prompts'
 
 type Props = {
   projectName: string
@@ -71,6 +71,10 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
   const [genning, setGenning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  // 实测：lite 44s / pro 261s（15 镜 3 批并行），质量差异主要在电影感措辞，默认走快的
+  const [model, setModel] = useState<'pro' | 'lite'>('lite')
+  const [batchSize, setBatchSize] = useState(5)
+  const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null)
 
   const load = useCallback(async () => {
     if (!projectName) return
@@ -113,49 +117,81 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
       toast('先去「镜头表」拆镜')
       return
     }
+    // 分片并行：输出量受镜头数线性影响，切批并发是唯一能真正缩短墙钟时间的手段
+    const groups = chunk(shots, Math.max(2, batchSize))
     setGenning(true)
-    try {
-      const brief = shots.map((s) => ({
-        no: s.no,
-        seconds: s.seconds,
-        size: s.size,
-        move: s.move,
-        desc: s.desc,
-        dialogue: s.dialogue,
-      }))
-      const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
-        system: PROMPT_SYS,
-        model: 'pro',
-        json: true,
-        maxTokens: 8192,
-        prompt:
-          `画风锁：${style || '近未来科幻写实'}\n\n` +
-          `角色外观锚点（必须原样嵌入 keyframe_prompt，一字不改）：\n${characterBible(chars) || '（项目里还没有角色锚点）'}\n\n` +
-          `分镜：\n${JSON.stringify(brief)}`,
-      })
-      const got = r.json?.shots
-      if (!Array.isArray(got) || got.length === 0) throw new Error('模型没给出提示词')
-      const byNo = new Map(got.map((g) => [String(g.no), g]))
-      let filled = 0
-      setShots((prev) =>
-        prev.map((s) => {
-          const g = byNo.get(String(s.no))
-          if (!g) return s
-          filled++
-          return {
-            ...s,
-            keyframe_prompt: String(g.keyframe_prompt || '').trim(),
-            video_prompt: String(g.video_prompt || '').trim(),
+    setProgress({ done: 0, total: groups.length, failed: 0 })
+
+    const t0 = Date.now()
+    const bible = characterBible(chars) || '（项目里还没有角色锚点）'
+    let ok = 0
+    let filled = 0
+    let unresolved = 0
+
+    await Promise.all(
+      groups.map(async (g) => {
+        const brief = g.map((x) => ({
+          no: x.no,
+          seconds: x.seconds,
+          size: x.size,
+          move: x.move,
+          desc: x.desc,
+          dialogue: x.dialogue,
+        }))
+        try {
+          const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
+            system: PROMPT_SYS,
+            model,
+            json: true,
+            maxTokens: 4096,
+            prompt:
+              `画风锁：${style || '近未来科幻写实'}\n\n` +
+              `角色外观锚点：\n${bible}\n\n` +
+              `分镜：\n${JSON.stringify(brief)}\n\n` +
+              `输出要求：\n` +
+              `1. 每一镜都要给 keyframe_prompt 与 video_prompt，no 必须与输入一致\n` +
+              `2. keyframe_prompt 里凡出现角色，一律用 {{角色名}} 占位代替整段 look_en（例如 {{陈默}}），` +
+              `由我在保存前原样替换回原文 —— 不要自己展开那整段描述\n` +
+              `3. 只输出 JSON`,
+          })
+          const got = r.json?.shots
+          if (!Array.isArray(got) || got.length === 0) throw new Error('空返回')
+
+          const patch = new Map<string, { kf: string; vp: string }>()
+          for (const x of got) {
+            const kf = expandAnchors(String(x.keyframe_prompt || '').trim(), chars)
+            if (hasUnresolvedAnchor(kf)) unresolved++
+            patch.set(String(x.no), { kf, vp: String(x.video_prompt || '').trim() })
           }
-        }),
-      )
-      setDirty(true)
-      toast(`生成 ${filled}/${shots.length} 条提示词，先看锚点校验再保存`)
-    } catch (e: any) {
-      toast(e.message || '生成失败')
-    } finally {
-      setGenning(false)
-    }
+          ok++
+          // 计数必须在 setShots 之外算：函数式 updater 是延迟到渲染期才执行的，
+          // 在里面 ++ 会读到旧值（实测提示语显示 10/15 而实际已填 15/15）
+          filled += g.filter((x) => patch.has(String(x.no))).length
+          setShots((prev) =>
+            prev.map((x) => {
+              const hit = patch.get(String(x.no))
+              return hit ? { ...x, keyframe_prompt: hit.kf, video_prompt: hit.vp } : x
+            }),
+          )
+        } catch {
+          /* 单批失败不影响其他批，最后统一提示 */
+        } finally {
+          setProgress((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev))
+        }
+      }),
+    )
+
+    const failed = groups.length - ok
+    setProgress({ done: groups.length, total: groups.length, failed })
+    setDirty(true)
+    setGenning(false)
+    window.setTimeout(() => setProgress(null), 2600)
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
+    toast(
+      `${filled}/${shots.length} 镜 · ${elapsed}s（${ok}/${groups.length} 批）` +
+        (failed > 0 ? ` · ${failed} 批失败，可再点一次补` : '') +
+        (unresolved > 0 ? ` · ${unresolved} 条占位符未替换，检查角色名` : ''),
+    )
   }
 
   /** 只补硬问题（有台词的角色）。疑似项留给人工判断，避免把画外角色硬塞进特写 */
@@ -202,6 +238,23 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
         <div className="wb-field">
           <span className="label">角色锚点</span>
           <span className="wb-name">{chars.filter((c) => c.lookEn).length} 个可用</span>
+        </div>
+        <div className="wb-field">
+          <span className="label">模型</span>
+          <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
+            <option value="pro">pro（质量）</option>
+            <option value="lite">lite（快）</option>
+          </select>
+        </div>
+        <div className="wb-field">
+          <span className="label">每批</span>
+          <select value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))}>
+            {[3, 5, 8, 15].map((n) => (
+              <option key={n} value={n}>
+                {n} 镜
+              </option>
+            ))}
+          </select>
         </div>
         <div className="spacer" />
         <span className="wb-sum">
@@ -295,7 +348,11 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast }: Pr
           补齐锚点
         </button>
         <button className="btn" onClick={generate} disabled={genning || shots.length === 0}>
-          {genning ? '生成中…' : '生成提示词'}
+          {genning && progress
+            ? `生成中 ${progress.done}/${progress.total} 批`
+            : progress && progress.failed > 0
+              ? '重试失败批次'
+              : '生成提示词'}
         </button>
         <button className="btn" onClick={save} disabled={saving || !dirty}>
           {saving ? '保存中…' : dirty ? '保存到 project.json' : '已保存'}
