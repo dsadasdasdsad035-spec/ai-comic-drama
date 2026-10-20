@@ -5,7 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { listProjects, readProject, writeProject, mergeShots, resolveRoot, safeProjectName } from './server/data.mjs'
+import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot } from './server/data.mjs'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -828,6 +828,14 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            // 新建项目：?create=1
+            if (req.method === 'POST' && q.searchParams.get('create')) {
+              const body = await readJson(req).catch(() => ({}))
+              const made = createProject(rootDir, name, body || {})
+              res.end(JSON.stringify({ ok: true, name: made.name, created: true }))
+              return
+            }
+
             const body = await readJson(req)
 
             // POST = 局部合并（镜头按 id 合并、角色整体替换），保留未传的字段
@@ -956,7 +964,8 @@ function seedreamProxy(): Plugin {
           try {
             const body = await readJson(req)
             const text = String(body.text || '').trim()
-            if (!text) {
+            const hasLines = Array.isArray(body.lines) && body.lines.length > 0
+            if (!text && !hasLines) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '台词为空' }))
               return
@@ -974,6 +983,67 @@ function seedreamProxy(): Plugin {
             const outDir = path.join(root, 'public', 'voices')
             fs.mkdirSync(outDir, { recursive: true })
             const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+
+            // 一镜多说话人：每行各自合成，再拼成一条音轨
+            const lines = Array.isArray(body.lines) ? body.lines.slice(0, 12) : []
+            if (lines.length > 0) {
+              const parts: { file: string; seconds: number; engine: string }[] = []
+              for (let i = 0; i < lines.length; i++) {
+                const t = String(lines[i]?.text || '').trim()
+                if (!t) continue
+                if (t.length > 400) throw new Error(`第 ${i + 1} 句台词过长（上限 400 字）`)
+                const v = String(lines[i]?.voice || voice)
+                const r = Math.min(260, Math.max(110, Number(lines[i]?.rate) || rate))
+                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`)
+                parts.push({
+                  file: path.join(root, 'public', one.url.replace(/^\//, '')),
+                  seconds: one.seconds,
+                  engine: one.engine,
+                })
+              }
+              if (parts.length === 0) throw new Error('没有可配音的台词')
+
+              if (parts.length === 1) {
+                const only = parts[0]
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    url: `/${path.relative(path.join(root, 'public'), only.file).split(path.sep).join('/')}`,
+                    engine: only.engine,
+                    seconds: only.seconds,
+                    lines: 1,
+                    elapsed: Date.now() - t0,
+                  }),
+                )
+                return
+              }
+
+              // 重编码拼接：不同 provider 的容器/编码可能不一样，直接 -c copy 会炸
+              const merged = path.join(outDir, `${stamp}-mix.m4a`)
+              const args: string[] = ['-y']
+              for (const pt of parts) args.push('-i', pt.file)
+              const streams = parts.map((_, i) => `[${i}:a]`).join('')
+              args.push(
+                '-filter_complex',
+                `${streams}concat=n=${parts.length}:v=0:a=1[a]`,
+                '-map', '[a]', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+                merged,
+              )
+              await runFfmpeg(args)
+              const total = await probeDuration(merged)
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  url: `/voices/${path.basename(merged)}`,
+                  engine: parts[0].engine,
+                  seconds: total,
+                  lines: parts.length,
+                  elapsed: Date.now() - t0,
+                }),
+              )
+              return
+            }
+
             const result = await synthesize(text, voice, rate, outDir, stamp)
             res.end(
               JSON.stringify({

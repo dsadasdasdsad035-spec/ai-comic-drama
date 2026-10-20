@@ -23,10 +23,35 @@ export type Task = {
  * 为什么需要它：批量出图/出片/配音各自在按钮里循环，失败只弹一句 toast 就没了，
  * 也看不到「现在还有几件事在跑、这次会话花了多少」。
  */
-let tasks: Task[] = []
+const STORE = 'storyboard-tasks-v1'
+
+/** 刷新前还在跑的任务，重开页面时其实已经断了 —— 标成错误，别显示成「一直运行中」 */
+function loadTasks(): Task[] {
+  try {
+    const raw = localStorage.getItem(STORE)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return []
+    return arr.slice(0, 200).map((t: any) =>
+      t?.state === 'running'
+        ? { ...t, state: 'error' as TaskState, error: '页面刷新已中断' }
+        : t,
+    )
+  } catch {
+    return []
+  }
+}
+
+let tasks: Task[] = loadTasks()
 const subs = new Set<() => void>()
 
 function emit() {
+  try {
+    // retry 是函数，JSON.stringify 会自动丢掉，刷新后就没有重试按钮了（可接受）
+    localStorage.setItem(STORE, JSON.stringify(tasks))
+  } catch {
+    /* 配额满等情况忽略，不影响内存态 */
+  }
   for (const fn of subs) fn()
 }
 

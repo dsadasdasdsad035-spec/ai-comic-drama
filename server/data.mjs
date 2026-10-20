@@ -154,3 +154,23 @@ export function mergeShots(existing = [], incoming = []) {
   }
   return out
 }
+
+/** 新建项目：目录 + 空 project.json 骨架。已存在则报错（不覆盖） */
+export function createProject(root, name, init = {}) {
+  const n = safeProjectName(name)
+  const dir = path.join(root, n)
+  const file = path.join(dir, 'project.json')
+  if (fs.existsSync(file)) throw new Error(`项目已存在：${n}`)
+  fs.mkdirSync(dir, { recursive: true })
+  return writeProject(root, n, {
+    schema: 1,
+    name: String(init.title || n),
+    logline: '',
+    source: '',
+    style: String(init.style || ''),
+    aspect: String(init.aspect || '16:9'),
+    characters: [],
+    episodes: [],
+    shots: [],
+  })
+}

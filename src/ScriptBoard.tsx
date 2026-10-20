@@ -92,6 +92,22 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
     }
   }
 
+  const addEpisode = () => {
+    const no = episodes.reduce((m, e) => Math.max(m, Number(e.no) || 0), 0) + 1
+    setEpisodes((prev) => [...prev, { no, title: '', hook: '', scenes: [] }])
+    setDirty(true)
+  }
+
+  const removeEpisode = (idx: number) => {
+    const ep = episodes[idx]
+    if (!ep) return
+    const n = Number(ep.no)
+    if (!window.confirm(`删除第 ${n} 集？分集结构会删掉，但该集已拆的镜头不受影响。`)) return
+    setEpisodes((prev) => prev.filter((_, i) => i !== idx))
+    setDirty(true)
+    toast(`已删除第 ${n} 集（记得保存）`)
+  }
+
   const patchEp = (idx: number, p: Partial<ProjectEpisode>) => {
     setEpisodes((prev) => prev.map((e, i) => (i === idx ? { ...e, ...p } : e)))
     setDirty(true)
@@ -184,6 +200,9 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
           <button className="btn" onClick={save} disabled={saving || !dirty}>
             {saving ? '保存中…' : dirty ? '保存' : '已保存'}
           </button>
+          <button className="btn" onClick={addEpisode} title="手动加一集（也可以重新生成分集）">
+            + 加一集
+          </button>
           <button className="btn" onClick={load} disabled={loading}>
             {loading ? '加载中…' : '重新加载'}
           </button>
@@ -221,6 +240,9 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
                       title="切到这一集并打开镜头表"
                     >
                       拆这一集 →
+                    </button>
+                    <button className="btn-mini" onClick={() => removeEpisode(i)} title="删除这一集">
+                      删除
                     </button>
                   </header>
 

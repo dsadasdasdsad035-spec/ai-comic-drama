@@ -9,6 +9,7 @@ export type ProjectChar = {
   look_en?: string
   palette?: string
   keywords?: string[]
+  voice?: string
 }
 
 /**
@@ -25,6 +26,7 @@ export function toSheet(c: ProjectChar): CharacterSheet {
     lookEn: c.look_en || '',
     palette: c.palette || '',
     keywords: Array.isArray(c.keywords) ? c.keywords : [],
+    voiceId: c.voice || undefined,
   }
 }
 
@@ -39,6 +41,7 @@ export function toProject(s: CharacterSheet): ProjectChar {
     keywords: s.keywords ?? [],
   }
   if (s.age) out.age = s.age
+  if (s.voiceId) out.voice = s.voiceId
   return out
 }
 

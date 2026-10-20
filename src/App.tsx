@@ -106,6 +106,7 @@ function Shell() {
   const [candCount, setCandCount] = useState(4)
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
   const [vbatch, setVbatch] = useState<{ total: number; done: number } | null>(null)
+  const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
@@ -271,6 +272,19 @@ function Shell() {
     setSelId(null)
   }
 
+  /**
+   * 画布只显示当前集：带业务 ID 的节点按 episode 过滤，
+   * 没有业务 ID 的（示例卡 / 手搓的实验镜头）始终显示，避免「刚建的卡突然不见了」。
+   */
+  const shownNodes = useMemo(
+    () => nodes.filter((n) => !n.data.shotId || (Number(n.data.episode) || 1) === epNo),
+    [nodes, epNo],
+  )
+  const shownEdges = useMemo(() => {
+    const ids = new Set(shownNodes.map((n) => n.id))
+    return edges.filter((e) => ids.has(e.source) && ids.has(e.target))
+  }, [edges, shownNodes])
+
   /** 画布上已有的业务 ID，给工作台标「在画布」 */
   const onCanvasIds = useMemo(() => {
     const s = new Set<string>()
@@ -420,6 +434,9 @@ function Shell() {
       patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
       const motion = node.data.prompt.trim()
       const fallback = `${node.data.size}，${node.data.move === '固定' ? '镜头固定，人物与环境的细微动态' : `镜头${node.data.move}`}，电影感光影，自然的空气与光尘流动`
+      const tid = startTask('video', `${node.data.no} 出片`, {
+        retry: () => void generateVideoOne(id),
+      })
       try {
         const taskId = await startVideo({
           image: first,
@@ -433,8 +450,10 @@ function Shell() {
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
         )
         patch(id, { videoUrl: url, vidState: 'idle', vidAt: undefined })
+        endTask(tid)
       } catch (e) {
         patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
+        endTask(tid, (e as Error).message)
       }
     },
     [patch, ratio, vidRes],
@@ -458,12 +477,26 @@ function Shell() {
       // 旧数据里的 voiceName 可能已不可用（如未下载的 say 音色），回落到首个可用音色
       const pick = available.find((v) => v.id === node.data.voiceName) ?? available[0]
       patch(id, { voiceState: 'running', voiceError: undefined, voiceName: pick.id })
+
+      // 一镜多说话人：按行拆开，各自用角色的音色；只有一行就走单句
+      const lines = parseDialogue(text)
+      const multi = lines.length > 1
+      const usable = (v?: string) => (v && available.some((x) => x.id === v) ? v : undefined)
+      const payload = multi
+        ? {
+            lines: lines.map((l) => {
+              const ch = charactersRef.current.find((c) => c.name === l.speaker)
+              return {
+                text: l.text,
+                voice: usable(ch?.voiceId) ?? pick.id,
+                rate: node.data.voiceRate ?? 180,
+              }
+            }),
+          }
+        : { text, voice: pick.id, rate: node.data.voiceRate ?? 180 }
+
       try {
-        const r = await generateVoice({
-          text,
-          voice: pick.id,
-          rate: node.data.voiceRate ?? 180,
-        })
+        const r = await generateVoice(payload)
         patch(id, { voiceUrl: r.url, voiceState: 'idle', voiceSeconds: r.seconds })
       } catch (e) {
         patch(id, { voiceState: 'error', voiceError: (e as Error).message })
@@ -521,6 +554,26 @@ function Shell() {
       await new Promise((r) => setTimeout(r, 350))
     }
     setBatch(null)
+  }
+
+  /** 批量出片：只挑「有画面、还没视频」的镜头 */
+  const generateVideoAll = async () => {
+    if (vidBatch) return
+    const list = nodesRef.current.filter((n) => n.data.refImage && !n.data.videoUrl)
+    if (list.length === 0) {
+      setToast('没有可出片的镜头（要先有画面）')
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    setVidBatch({ total: list.length, done: 0 })
+    for (const n of list) {
+      await generateVideoOne(n.id)
+      setVidBatch((b) => (b ? { ...b, done: b.done + 1 } : b))
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    setVidBatch(null)
+    setToast(`出片完成 ${list.length} 镜`)
+    window.setTimeout(() => setToast(''), 2200)
   }
 
   const pickShot = (id: string) => {
@@ -686,6 +739,14 @@ function Shell() {
               </button>
               <button
                 className="btn"
+                onClick={generateVideoAll}
+                disabled={!!vidBatch}
+                title="给所有已有画面、还没视频的镜头批量出片"
+              >
+                {vidBatch ? `出片中 ${vidBatch.done}/${vidBatch.total}` : '批量出片'}
+              </button>
+              <button
+                className="btn"
                 onClick={voiceAll}
                 disabled={!!vbatch}
                 title="为所有带台词的镜头生成配音（当前引擎：macOS TTS）"
@@ -761,13 +822,14 @@ function Shell() {
             patch={patchCharacter}
             selectedShot={selected ? { id: selected.id, no: selected.data.no } : null}
             onInject={injectCharacter}
+            voices={voices}
           />
         ) : (
         <main className="main">
           <div className="canvas">
             <ReactFlow
-              nodes={nodes}
-              edges={edges}
+              nodes={shownNodes}
+              edges={shownEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
@@ -796,7 +858,7 @@ function Shell() {
                 style={{ background: '#0b1220' }}
               />
               <Panel position="bottom-center">
-                <Timeline nodes={nodes} activeId={selId} onPick={pickShot} />
+                <Timeline nodes={shownNodes} activeId={selId} onPick={pickShot} />
               </Panel>
             </ReactFlow>
           </div>

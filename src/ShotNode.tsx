@@ -150,6 +150,11 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
     >
       <div className="shot-head">
         <span className="shot-no">{data.no}</span>
+        {data.shotId && (
+          <span className="shot-ep" title={data.shotId}>
+            {data.shotId.split('-')[0]}
+          </span>
+        )}
         <span className="shot-dur">{data.seconds.toFixed(1)}s</span>
         <span className="shot-meta">
           {data.size} · {data.move}

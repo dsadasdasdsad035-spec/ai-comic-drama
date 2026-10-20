@@ -44,3 +44,5 @@ export function listProjects(root: string): ProjectSummary[]
 export function readProject(root: string, name: string): ProjectData
 export function writeProject(root: string, name: string, data: ProjectData): ProjectData
 export function mergeShots(existing?: CanvasShot[], incoming?: CanvasShot[]): CanvasShot[]
+
+export function createProject(root: string, name: string, init?: { title?: string; style?: string; aspect?: string }): ProjectData

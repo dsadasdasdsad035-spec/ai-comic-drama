@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MOVES, SHOT_SIZES } from './types'
 import {
   callText,
+  createProject,
   getProject,
   listProjects,
   mergeProjectShots,
@@ -39,6 +40,10 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
   const [saving, setSaving] = useState(false)
   const [genning, setGenning] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newTitle, setNewTitle] = useState('')
+  const [making, setMaking] = useState(false)
 
   const load = useCallback(
     async (name: string) => {
@@ -100,6 +105,29 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
   )
   const pushed = useMemo(() => visible.filter((s) => onCanvas.has(s.id)).length, [visible, onCanvas])
 
+  const doCreate = async () => {
+    const name = newName.trim()
+    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(name)) {
+      toast('项目名只能用字母/数字/下划线/短横，最长 40 字（会作为目录名）')
+      return
+    }
+    setMaking(true)
+    try {
+      await createProject(name, { title: newTitle.trim() || name })
+      const { projects: ps } = await listProjects()
+      setProjects(ps)
+      setProjectName(name)
+      setCreating(false)
+      setNewName('')
+      setNewTitle('')
+      toast(`已新建项目 ${name}`)
+    } catch (e: any) {
+      toast(e.message || '新建失败')
+    } finally {
+      setMaking(false)
+    }
+  }
+
   const edit = (idx: number, field: string, value: unknown) => {
     setShots((prev) =>
       prev.map((s, i) => {
@@ -122,7 +150,9 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
         system: STORYBOARD_SYS,
         prompt:
           `画风：${style || '近未来科幻写实'}\n画幅：${aspect}\n\n` +
-          `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。`,
+          `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +
+          `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。` +
+          `只在台词/描述里被提到、实际在画外的角色不要写进去。`,
         model: 'pro',
         json: true,
         maxTokens: 8192,
@@ -140,6 +170,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           move: s?.move || '固定',
           desc: s?.desc || '',
           dialogue: Array.isArray(s?.dialogue) ? s.dialogue : [],
+          cast: Array.isArray(s?.cast) ? s.cast.map(String) : undefined,
         }
       })
       // 手改过的字段在重新生成时保住，这是 handEdited 唯一生效的地方
@@ -193,6 +224,10 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           </select>
         </div>
 
+        <button className="btn-mini" onClick={() => setCreating((v) => !v)} title="新建一个空项目">
+          {creating ? '取消' : '+ 新建'}
+        </button>
+
         <div className="wb-field">
           <span className="label">目标时长</span>
           <input
@@ -215,6 +250,33 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           {loading ? '加载中…' : '重新加载'}
         </button>
       </div>
+
+      {creating && (
+        <div className="wb-new">
+          <div className="wb-field">
+            <span className="label">目录名</span>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="如 my-drama"
+              style={{ width: 150 }}
+            />
+          </div>
+          <div className="wb-field">
+            <span className="label">标题</span>
+            <input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="如 回收人（可空）"
+              style={{ width: 190 }}
+            />
+          </div>
+          <button className="btn primary" onClick={doCreate} disabled={making || !newName.trim()}>
+            {making ? '创建中…' : '创建'}
+          </button>
+          <span className="wb-note">目录名同时是仓库里的文件夹名，只在本地创建，不会自动提交</span>
+        </div>
+      )}
 
       <div className="wb-gen">
         <textarea

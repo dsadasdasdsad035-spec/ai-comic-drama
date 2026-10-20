@@ -7,9 +7,11 @@ type Props = {
   patch: (id: string, p: Partial<CharacterSheet>) => void
   selectedShot: { id: string; no: string } | null
   onInject: (charId: string) => void
+  /** 可用音色（一镜多说话人时按角色取） */
+  voices: { id: string; label: string }[]
 }
 
-export default function CharacterBoard({ characters, patch, selectedShot, onInject }: Props) {
+export default function CharacterBoard({ characters, patch, selectedShot, onInject, voices }: Props) {
   return (
     <div className="board">
       <div className="board-head">
@@ -32,6 +34,7 @@ export default function CharacterBoard({ characters, patch, selectedShot, onInje
             patch={patch}
             canInject={Boolean(selectedShot)}
             onInject={() => onInject(c.id)}
+            voices={voices}
           />
         ))}
       </div>
@@ -44,11 +47,13 @@ function CharCard({
   patch,
   canInject,
   onInject,
+  voices,
 }: {
   c: CharacterSheet
   patch: (id: string, p: Partial<CharacterSheet>) => void
   canInject: boolean
   onInject: () => void
+  voices: { id: string; label: string }[]
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const candidates = c.candidates ?? []
@@ -81,6 +86,23 @@ function CharCard({
         <span className="char-name">{c.name}</span>
         <span className="char-role">{c.role}</span>
       </div>
+
+      {voices.length > 0 && (
+        <label className="char-voice" title="这个角色的配音音色；一镜多说话人时按行取">
+          <span>音色</span>
+          <select
+            value={c.voiceId ?? ''}
+            onChange={(e) => patch(c.id, { voiceId: e.target.value || undefined })}
+          >
+            <option value="">跟随镜头</option>
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       <div className="char-sheet">
         {c.image ? (

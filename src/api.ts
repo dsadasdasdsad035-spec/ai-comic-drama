@@ -1,3 +1,4 @@
+import { endTask, startTask } from './tasks'
 export type GenResult = {
   urls: string[]
   url: string
@@ -145,6 +146,7 @@ export async function assembleAnimatic(
   resolution: '480p' | '720p' | '1080p',
   timeoutMs = 10 * 60 * 1000,
 ): Promise<ExportResult> {
+  const tid = startTask('export', `合成 ${resolution}`)
   let res: Response
   try {
     res = await fetch('/api/assemble', {
@@ -153,18 +155,24 @@ export async function assembleAnimatic(
       body: JSON.stringify({ segments, resolution }),
     })
   } catch {
+    endTask(tid, '连不上本地代理')
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '提交合成失败')
+  if (!j.ok) {
+    endTask(tid, j.message || '提交合成失败')
+    throw new Error(j.message || '提交合成失败')
+  }
 
   const t0 = Date.now()
-  for (;;) {
+  try {
+    for (;;) {
     await new Promise((r) => setTimeout(r, 1200))
     const r = await fetch(`/api/assemble?id=${encodeURIComponent(j.id)}`)
     const s = await readJsonRes(r)
     if (!s.ok) throw new Error(s.message || '查询合成状态失败')
     if (s.status === 'succeeded') {
+      endTask(tid)
       return {
         url: s.url,
         shots: s.shots,
@@ -175,8 +183,12 @@ export async function assembleAnimatic(
         elapsed: s.elapsed,
       }
     }
-    if (s.status === 'failed') throw new Error(s.message || '合成失败')
-    if (Date.now() - t0 > timeoutMs) throw new Error('合成超时')
+      if (s.status === 'failed') throw new Error(s.message || '合成失败')
+      if (Date.now() - t0 > timeoutMs) throw new Error('合成超时')
+    }
+  } catch (e: any) {
+    endTask(tid, String(e?.message || '合成失败'))
+    throw e
   }
 }
 
@@ -184,10 +196,14 @@ export async function assembleAnimatic(
 
 export type VoiceResult = { url: string; engine: string; seconds: number; elapsed: number }
 
+export type VoiceLine = { text: string; voice?: string; rate?: number }
+
 export async function generateVoice(o: {
-  text: string
+  /** 单句模式：传 text；多说话人模式：传 lines（每行可各自指定音色） */
+  text?: string
   voice?: string
   rate?: number
+  lines?: VoiceLine[]
 }): Promise<VoiceResult> {
   let res: Response
   try {
@@ -243,6 +259,8 @@ export type ProjectShot = {
   dialogue?: string | { speaker: string; text: string }[]
   keyframe_prompt?: string
   video_prompt?: string
+  /** 该镜在画面内的角色名（拆镜产出，比从台词/描述猜准） */
+  cast?: string[]
   handEdited?: string[]
   orphan?: boolean
 }
@@ -278,6 +296,19 @@ export async function getProject(name: string): Promise<ProjectData> {
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '读取项目失败')
   return j.project as ProjectData
+}
+
+export async function createProject(
+  name: string,
+  init?: { title?: string; style?: string; aspect?: string },
+): Promise<void> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}&create=1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(init ?? {}),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '新建项目失败')
 }
 
 export type ProjectPatch = {

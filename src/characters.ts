@@ -4,6 +4,8 @@ export type CharacterSheet = {
   role: string
   /** 年龄段，project.json 里的 age 原样保留，避免回写时丢字段 */
   age?: string
+  /** 该角色的默认音色（TTS voice id）。一镜多说话人时按行取这个 */
+  voiceId?: string
   lookCn: string
   /** 生图锚点：英文短语，所有镜头复用同一段，保证长相一致 */
   lookEn: string

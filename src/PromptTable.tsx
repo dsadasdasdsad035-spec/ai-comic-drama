@@ -30,6 +30,27 @@ type Audit = {
  * 硬问题标红，软提示标黄，不混为一谈。
  */
 function auditOf(s: ProjectShot, chars: CharacterSheet[]): Audit {
+  // 拆镜给了 cast 就以它为准（权威），没有才退回「台词 + 描述点名」的启发式
+  const declared = Array.isArray(s.cast) && s.cast.length > 0 ? s.cast : null
+  return declared ? auditByCast(s, chars, declared) : auditByHeuristic(s, chars)
+}
+
+function auditByCast(s: ProjectShot, chars: CharacterSheet[], declared: string[]): Audit {
+  const kf = s.keyframe_prompt || ''
+  const missing: string[] = []
+  const unknown: string[] = []
+  for (const name of declared) {
+    const c = chars.find((x) => x.name === name)
+    if (!c) {
+      unknown.push(name)
+      continue
+    }
+    if (c.lookEn && !kf.includes(c.lookEn)) missing.push(name)
+  }
+  return { cast: [...declared], missing, maybe: [], unknown, empty: !kf.trim() }
+}
+
+function auditByHeuristic(s: ProjectShot, chars: CharacterSheet[]): Audit {
   const dlg = Array.isArray(s.dialogue) ? s.dialogue : []
   const spoken = new Set<string>()
   for (const d of dlg) if (d?.speaker) spoken.add(d.speaker)
