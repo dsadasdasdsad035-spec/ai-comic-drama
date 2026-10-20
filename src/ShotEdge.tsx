@@ -14,6 +14,7 @@ const STYLE: Record<Relation, { color: string; dash?: string; label: string }> =
   cut: { color: '#38bdf8', label: '硬切' },
   transition: { color: '#a3e635', dash: '7 5', label: '转场' },
   flashback: { color: '#c084fc', dash: '2 5', label: '闪回' },
+  branch: { color: 'var(--warn)', dash: '6 4', label: '分支' },
 }
 
 export default function ShotEdge(props: EdgeProps<ShotEdgeType>) {

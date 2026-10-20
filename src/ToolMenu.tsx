@@ -17,6 +17,7 @@ const RELATION_LABEL: Record<Relation, string> = {
   cut: '硬切',
   transition: '转场',
   flashback: '闪回',
+  branch: '分支',
 }
 
 const TOOL_LABEL: Record<Tool, string> = { none: '选择', pen: '画笔', rect: '框选' }
@@ -108,6 +109,7 @@ export default function ToolMenu({
               <option value="cut">硬切</option>
               <option value="transition">转场</option>
               <option value="flashback">闪回</option>
+              <option value="branch">分支（剧情分叉）</option>
             </select>
           </div>
         </div>

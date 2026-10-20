@@ -3533,3 +3533,29 @@ button:not(:disabled),
   color: var(--muted);
   font-size: var(--fs-2xs);
 }
+
+/* 候选并排缩略图：比小圆点更容易直接比出差异 */
+/* 候选并排缩略图：比小圆点更容易直接比出差异 */
+.cand-thumb {
+  padding: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  overflow: hidden;
+  cursor: pointer;
+  width: 46px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.cand-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cand-thumb.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}

@@ -338,13 +338,15 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
             {candidates.map((c, i) => (
               <button
                 key={c}
-                className={`cand-dot ${i === activeIdx ? 'on' : ''}`}
-                title={`候选 ${i + 1}`}
+                className={`cand-thumb ${i === activeIdx ? 'on' : ''}`}
+                title={`候选 ${i + 1}（点选即定稿）`}
                 onClick={(e) => {
                   e.stopPropagation()
                   patch(id, { activeIdx: i, refImage: c, videoUrl: undefined, vidState: 'idle' })
                 }}
-              />
+              >
+                <img src={c} alt={`候选 ${i + 1}`} />
+              </button>
             ))}
           </div>
         )}

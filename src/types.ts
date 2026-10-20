@@ -1,5 +1,5 @@
 export type Tool = 'none' | 'pen' | 'rect'
-export type Relation = 'cut' | 'transition' | 'flashback'
+export type Relation = 'cut' | 'transition' | 'flashback' | 'branch'
 
 /** 标注坐标统一用 0..1 归一化，卡片宽度随镜头时长变化时不会错位 */
 export type Mark = {

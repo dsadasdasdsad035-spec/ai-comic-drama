@@ -263,7 +263,7 @@ function Shell() {
 
   const cycleEdge = useCallback(
     (id: string) => {
-      const order: Relation[] = ['cut', 'transition', 'flashback']
+      const order: Relation[] = ['cut', 'transition', 'flashback', 'branch']
       setEdges((eds) =>
         eds.map((e) => {
           if (e.id !== id) return e
