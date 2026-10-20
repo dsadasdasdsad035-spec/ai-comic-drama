@@ -271,19 +271,30 @@ export async function getProject(name: string): Promise<ProjectData> {
   return j.project as ProjectData
 }
 
-/** 合并式回写：手改过的字段不会被覆盖 */
+export type ProjectPatch = { shots?: ProjectShot[]; characters?: unknown[] }
+
+/** 局部回写：只传的字段会更新，未传的一律保留 */
+export async function patchProject(
+  name: string,
+  patch: ProjectPatch,
+): Promise<{ shots: ProjectShot[]; characters: unknown[]; savedAt: string }> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '保存失败')
+  return { shots: j.shots ?? [], characters: j.characters ?? [], savedAt: j.savedAt }
+}
+
+/** 只回写镜头的便捷形式 */
 export async function mergeProjectShots(
   name: string,
   shots: ProjectShot[],
 ): Promise<{ shots: ProjectShot[]; savedAt: string }> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ shots }),
-  })
-  const j = await readJsonRes(r)
-  if (!j.ok) throw new Error(j.message || '保存失败')
-  return { shots: j.shots ?? [], savedAt: j.savedAt }
+  const r = await patchProject(name, { shots })
+  return { shots: r.shots, savedAt: r.savedAt }
 }
 
 export async function saveProject(name: string, project: ProjectData): Promise<void> {

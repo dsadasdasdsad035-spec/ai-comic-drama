@@ -2097,3 +2097,95 @@ kbd {
   border-radius: 999px;
   padding: 0 6px;
 }
+
+/* ---------------------------------------------------------------- 提示词工作台 */
+
+.wb-name {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tag.bad {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.pt-table td:nth-child(1) {
+  vertical-align: middle;
+}
+
+.wb-no {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 3px;
+}
+
+.wb-cast {
+  color: var(--muted);
+  font-size: 12px;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+.pt-table textarea {
+  min-height: 62px;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+/* ---------------------------------------------------------------- 提示词工作台 */
+
+.wb-name {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tag.bad {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.pt-table td:nth-child(1) {
+  vertical-align: middle;
+}
+
+.wb-no {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 3px;
+}
+
+.wb-cast {
+  color: var(--muted);
+  font-size: 12px;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+.pt-table textarea {
+  min-height: 62px;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.wb-maybe {
+  color: #fbbf24;
+}
+
+.tag.unknown {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(251, 191, 36, 0.16);
+  margin-top: 3px;
+}
+
+.tag.unknown {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.7);
+  background: rgba(251, 191, 36, 0.16);
+  margin-top: 3px;
+}

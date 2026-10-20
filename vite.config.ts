@@ -830,12 +830,27 @@ function seedreamProxy(): Plugin {
 
             const body = await readJson(req)
 
-            // POST = 只合并 shots（拆镜工作台回写，保留手改字段）
+            // POST = 局部合并（镜头按 id 合并、角色整体替换），保留未传的字段
             if (req.method === 'POST') {
               const cur = readProject(rootDir, name)
-              const shots = mergeShots(cur.shots, body.shots || [])
-              const saved = writeProject(rootDir, name, { ...cur, shots })
-              res.end(JSON.stringify({ ok: true, shots: saved.shots, savedAt: saved.updated_at }))
+              const patch: Record<string, unknown> = {}
+              if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
+              if (body.characters !== undefined) {
+                if (!Array.isArray(body.characters)) throw new Error('characters 必须是数组')
+                patch.characters = body.characters
+              }
+              if (Object.keys(patch).length === 0) {
+                throw new Error('POST 需要 shots 或 characters 之一')
+              }
+              const saved = writeProject(rootDir, name, patch)
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  shots: saved.shots ?? [],
+                  characters: saved.characters ?? [],
+                  savedAt: saved.updated_at,
+                }),
+              )
               return
             }
 

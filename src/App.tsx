@@ -24,6 +24,7 @@ import Timeline from './Timeline'
 import CharacterBoard from './CharacterBoard'
 import Preview from './Preview'
 import ShotTable from './ShotTable'
+import PromptTable from './PromptTable'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type ShotEdgeType, type ShotNodeType } from './data'
@@ -33,7 +34,9 @@ import {
   generateImage,
   generateVoice,
   listVoices,
+  getProject,
   mergeProjectShots,
+  patchProject,
   startVideo,
   waitVideo,
   type ProjectShot,
@@ -42,6 +45,7 @@ import {
 import { dialogueToText, parseDialogue } from './prompts'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
+import { toProject, toSheet, type ProjectChar } from './charMap'
 
 const nodeTypes = { shot: ShotNode }
 const edgeTypes = { shot: ShotEdge }
@@ -79,7 +83,7 @@ function Shell() {
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars' | 'table'>('board')
+  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts'>('board')
   const [projectName, setProjectName] = useState('')
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
@@ -102,12 +106,19 @@ function Shell() {
   const { fitView, setCenter, getZoom } = useReactFlow()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
+  /** 角色上一次同步到 project.json 的快照 */
+  const charSnapRef = useRef<string>('')
 
   const nodesRef = useRef(nodes)
   const voicesRef = useRef<VoiceOption[]>([])
+  const charactersRef = useRef(characters)
   useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
+
+  useEffect(() => {
+    charactersRef.current = characters
+  }, [characters])
 
   useEffect(() => {
     voicesRef.current = voices
@@ -135,6 +146,44 @@ function Shell() {
       setCharacters((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c))),
     [],
   )
+
+  // 角色以 project.json 为准：绑定项目后加载进来，替换掉 localStorage 的那份
+  useEffect(() => {
+    if (!projectName) return
+    let alive = true
+    getProject(projectName)
+      .then((p) => {
+        if (!alive) return
+        const list = (p.characters ?? []) as ProjectChar[]
+        if (list.length > 0) {
+          const sheets = list.map(toSheet)
+          setCharacters(sheets)
+          charSnapRef.current = JSON.stringify(sheets.map(toProject))
+        } else {
+          // 项目里还没角色：把画布现有的写上去，建立单一真相源
+          const seed = charactersRef.current.map(toProject)
+          charSnapRef.current = JSON.stringify(seed)
+          patchProject(projectName, { characters: seed }).catch(() => {})
+        }
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [projectName])
+
+  // 角色改动回写（防抖 + 快照比对，避免首屏把整份角色重写一遍）
+  useEffect(() => {
+    if (!projectName) return
+    const payload = characters.map(toProject)
+    const sig = JSON.stringify(payload)
+    if (sig === charSnapRef.current) return
+    const t = window.setTimeout(() => {
+      charSnapRef.current = sig
+      patchProject(projectName, { characters: payload }).catch(() => {})
+    }, 1200)
+    return () => window.clearTimeout(t)
+  }, [characters, projectName])
 
   // 把角色的外观锚点追加到当前镜头提示词末尾；同一角色重复注入只保留一份
   const injectCharacter = useCallback(
@@ -524,14 +573,17 @@ function Shell() {
           </div>
 
           <div className="viewtabs">
-            <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
-              分镜
-            </button>
-            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>
-              拆镜
-            </button>
             <button className={view === 'chars' ? 'on' : ''} onClick={() => setView('chars')}>
               角色
+            </button>
+            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>
+              镜头表
+            </button>
+            <button className={view === 'prompts' ? 'on' : ''} onClick={() => setView('prompts')}>
+              提示词
+            </button>
+            <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
+              画布
             </button>
           </div>
 
@@ -606,7 +658,7 @@ function Shell() {
                 ▶ 连播
               </button>
             </>
-          ) : view === 'table' ? (
+          ) : view === 'table' || view === 'prompts' ? (
             <span className="board-count">{projectName || '未选项目'}</span>
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
@@ -618,6 +670,16 @@ function Shell() {
           <ShotTable
             projectName={projectName}
             setProjectName={setProjectName}
+            onCanvas={onCanvasIds}
+            onPush={pushShotsToCanvas}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2600)
+            }}
+          />
+        ) : view === 'prompts' ? (
+          <PromptTable
+            projectName={projectName}
             onCanvas={onCanvasIds}
             onPush={pushShotsToCanvas}
             toast={(m) => {
