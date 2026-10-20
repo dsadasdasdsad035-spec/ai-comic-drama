@@ -80,8 +80,13 @@ try {
   await page.screenshot({ path: '/tmp/sb-shots/70-table.png' })
 
   console.log('\n[2] 行内编辑 + 保存回文件')
-  const target = (baseSec0 + 2).toFixed(1)
-  const secInput = page.locator('.wb-table tbody tr').first().locator('td').nth(1).locator('input')
+  const row0 = page.locator('.wb-table tbody tr').first()
+  const rowNo = (await row0.locator('td').first().locator('input').inputValue()).trim()
+  const editId = `E01-${rowNo}`
+  const rowSec = Number(await row0.locator('td').nth(1).locator('input').inputValue())
+  const target = (rowSec + 2).toFixed(1)
+  console.log(`  · 本次编辑镜头: ${editId}  ${rowSec}s → ${target}s`)
+  const secInput = row0.locator('td').nth(1).locator('input')
   await secInput.fill(target)
   await secInput.blur()
   await page.waitForTimeout(250)
@@ -93,8 +98,9 @@ try {
   await page.getByRole('button', { name: '保存到 project.json' }).click()
   await page.waitForTimeout(1800)
   const afterSave = read()
-  check(Number(afterSave.shots[0].seconds) === Number(target), `文件里 seconds = ${target}`, String(afterSave.shots[0].seconds))
-  check((afterSave.shots[0].handEdited || []).includes('seconds'), 'handEdited 记录 seconds')
+  const savedEdit = afterSave.shots.find((x) => x.id === editId)
+  check(Number(savedEdit?.seconds) === Number(target), `文件里 ${editId} seconds = ${target}`, String(savedEdit?.seconds))
+  check((savedEdit?.handEdited || []).includes('seconds'), 'handEdited 记录 seconds')
   check(afterSave.episodes.length === base.episodes.length, 'episodes 未被清空', String(afterSave.episodes.length))
   check(afterSave.characters.length === base.characters.length, 'characters 未被清空', String(afterSave.characters.length))
   check(fs.existsSync(PJ + '.bak'), '.bak 备份已生成')
@@ -102,7 +108,8 @@ try {
   console.log('\n[3] 生成到画布（按 shot.id 幂等）')
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(1300)
-  const st = await page.evaluate(() => {
+  // editId 在浏览器上下文里不存在，必须作为参数传进去
+  const st = await page.evaluate((id) => {
     const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
     const nodes = s.nodes || []
     const withId = nodes.filter((n) => n.data?.shotId)
@@ -110,13 +117,13 @@ try {
       total: nodes.length,
       withId: withId.length,
       first3: withId.map((n) => n.data.shotId).slice(0, 3),
-      sec0: nodes.find((n) => n.data?.shotId === 'E01-S01')?.data?.seconds,
-      size0: nodes.find((n) => n.data?.shotId === 'E01-S01')?.data?.size,
+      sec0: nodes.find((n) => n.data?.shotId === id)?.data?.seconds,
+      size0: nodes.find((n) => n.data?.shotId === id)?.data?.size,
     }
-  })
+  }, editId)
   check(st.withId === ep1.length, `${ep1.length} 个节点带业务 ID`, JSON.stringify(st))
-  check(st.first3[0] === 'E01-S01', '业务 ID 形如 E01-S01', JSON.stringify(st.first3))
-  check(Number(st.sec0) === Number(target), 'S01 秒数沿用表格值', String(st.sec0))
+  check(/^E\d+-S\d+$/.test(String(st.first3[0])), '业务 ID 形如 E01-S01', JSON.stringify(st.first3))
+  check(Number(st.sec0) === Number(target), `${editId} 秒数沿用表格值`, String(st.sec0))
   check(st.size0 === ep1[0].size, 'S01 景别带入画布', String(st.size0))
   console.log(`  · 节点总数 ${st.total}（含 1 张无业务 ID 的占位卡；不自动删）`)
   await page.getByRole('button', { name: '画布', exact: true }).click()
@@ -126,11 +133,12 @@ try {
   console.log('\n[4] 画布侧改动 → 自动写回 project.json')
   await page.getByRole('button', { name: '适配' }).click()
   await page.waitForTimeout(900)
+  await page.evaluate((v) => { window.__editId = v }, editId)
   const s01NodeId = await page.evaluate(() => {
     const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
-    return (s.nodes || []).find((n) => n.data?.shotId === 'E01-S01')?.id ?? null
+    return (s.nodes || []).find((n) => n.data?.shotId === window.__editId)?.id ?? null
   })
-  check(Boolean(s01NodeId), '定位到 E01-S01 节点')
+  check(Boolean(s01NodeId), `定位到 ${editId} 节点`)
   // 适配后节点会重叠，点到别的卡上就会拿到错的 Inspector —— 点完校验镜号，不对就换位置重试
   const nodeLoc = page.locator(`.react-flow__node[data-id="${s01NodeId}"]`)
   let hit = false
@@ -138,12 +146,12 @@ try {
     await (pos ? nodeLoc.click({ force: true, position: pos }) : nodeLoc.click({ force: true }))
     await page.waitForTimeout(350)
     const sid = await page.locator('.panel-sid').innerText().catch(() => '')
-    if (sid.trim() === 'E01-S01') {
+    if (sid.trim() === editId) {
       hit = true
       break
     }
   }
-  check(hit, '选中节点业务 ID = E01-S01（不是重叠的示例卡）')
+  check(hit, `选中节点业务 ID = ${editId}（不是重叠的示例卡）`)
   const secBox = page.locator('.inspector input[type=number]').first()
   check((await secBox.count()) > 0, 'Inspector 打开时长输入')
   check((await secBox.inputValue()) === String(target), 'Inspector 时长与表格一致', await secBox.inputValue())
@@ -152,7 +160,7 @@ try {
   await secBox.blur()
   await page.waitForTimeout(2600)
   const afterCb = read()
-  const s01 = afterCb.shots.find((x) => x.id === 'E01-S01')
+  const s01 = afterCb.shots.find((x) => x.id === editId)
   check(Number(s01?.seconds) === Number(wb), `画布改 ${wb}s 已写回文件`, String(s01?.seconds))
   check(afterCb.shots.length === base.shots.length, '写回后镜头数不变', String(afterCb.shots.length))
   check(afterCb.episodes.length === base.episodes.length, '写回未破坏 episodes')

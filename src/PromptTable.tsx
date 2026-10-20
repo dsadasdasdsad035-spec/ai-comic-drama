@@ -135,8 +135,9 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
     return { empty, miss, may, unk, ok: visible.length - empty - miss }
   }, [audits, visible.length])
 
-  const edit = (idx: number, field: 'keyframe_prompt' | 'video_prompt', value: string) => {
-    setShots((prev) => prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s)))
+  /** 同上：按 id 定位，行下标只对「当前集」子集有效 */
+  const edit = (id: string, field: 'keyframe_prompt' | 'video_prompt', value: string) => {
+    setShots((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)))
     setDirty(true)
   }
 
@@ -344,14 +345,14 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
                         rows={3}
                         value={s.keyframe_prompt ?? ''}
                         placeholder={s.desc ? `（空 → 出图会退回用描述）${s.desc.slice(0, 40)}…` : '点上方「生成提示词」'}
-                        onChange={(e) => edit(i, 'keyframe_prompt', e.target.value)}
+                        onChange={(e) => edit(s.id, 'keyframe_prompt', e.target.value)}
                       />
                     </td>
                     <td>
                       <textarea
                         rows={3}
                         value={s.video_prompt ?? ''}
-                        onChange={(e) => edit(i, 'video_prompt', e.target.value)}
+                        onChange={(e) => edit(s.id, 'video_prompt', e.target.value)}
                       />
                     </td>
                     <td className="state">

@@ -3456,3 +3456,51 @@ button:not(:disabled),
   background: var(--ok);
   border-color: var(--ok);
 }
+
+/* 画布为空但别集有内容时的提示条 */
+.canvas-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  z-index: var(--z-panel);
+}
+
+.canvas-hint b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* 画布为空但别集有内容时的提示条 */
+.canvas-hint {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  z-index: var(--z-panel);
+}
+
+.canvas-hint b {
+  color: var(--text);
+  font-weight: 500;
+}

@@ -65,6 +65,8 @@ type Saved = {
   characters: CharacterSheet[]
   /** 用户主动清空过画布 —— 没有这个标记，空节点会被当成「首次打开」重置成示例卡 */
   cleared?: boolean
+  /** 当前集也要记住，否则刷新后一律回到第 1 集，看起来像「别的集的卡片和视频丢了」 */
+  epNo?: number
 }
 
 function loadSaved(): Saved | null {
@@ -74,6 +76,7 @@ function loadSaved(): Saved | null {
     const p = JSON.parse(raw)
     if (!Array.isArray(p?.nodes)) return null
     if (p.nodes.length === 0 && p.cleared !== true) return null
+    // epNo 单独恢复（见下方 useEffect）
     return {
       nodes: p.nodes.map((n: ShotNodeType) => ({
         ...n,
@@ -82,6 +85,7 @@ function loadSaved(): Saved | null {
       edges: p.edges ?? [],
       characters: Array.isArray(p.characters) ? p.characters : defaultCharacters,
       cleared: p.cleared === true,
+      epNo: Number.isFinite(Number(p.epNo)) && Number(p.epNo) > 0 ? Number(p.epNo) : 1,
     }
   } catch {
     return null
@@ -149,6 +153,12 @@ function Shell() {
       .catch(() => {
         /* 没有项目目录时不阻塞画布使用 */
       })
+  }, [])
+
+  // 恢复上次停留的集：只做一次，避免与后续切换打架
+  useEffect(() => {
+    const saved = loadSavedEpNo()
+    if (saved > 1) setEpNo(saved)
   }, [])
 
   useEffect(() => {
@@ -298,6 +308,17 @@ function Shell() {
     () => nodes.filter((n) => !n.data.shotId || (Number(n.data.episode) || 1) === epNo),
     [nodes, epNo],
   )
+  /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
+  const otherEpCounts = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const n of nodes) {
+      if (!n.data.shotId) continue
+      const e = Number(n.data.episode) || 1
+      m.set(e, (m.get(e) ?? 0) + 1)
+    }
+    return [...m.entries()].filter(([e]) => e !== epNo).sort((a, b) => a[0] - b[0])
+  }, [nodes, epNo])
+
   const shownEdges = useMemo(() => {
     const ids = new Set(shownNodes.map((n) => n.id))
     return edges.filter((e) => ids.has(e.source) && ids.has(e.target))
@@ -704,14 +725,14 @@ function Shell() {
       try {
         localStorage.setItem(
           STORAGE_KEY,
-          JSON.stringify({ nodes, edges, characters, cleared: nodes.length === 0 }),
+          JSON.stringify({ nodes, edges, characters, cleared: nodes.length === 0, epNo }),
         )
       } catch {
         /* 图片过大超出配额时静默失败，不影响使用 */
       }
     }, 400)
     return () => window.clearTimeout(t)
-  }, [nodes, edges, characters])
+  }, [nodes, edges, characters, epNo])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -891,6 +912,18 @@ function Shell() {
         ) : (
         <main className="main">
           <div className="canvas">
+            {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
+            {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
+              <div className="canvas-hint">
+                <b>E{String(epNo).padStart(2, '0')} 这一集画布上没有卡片</b>
+                <span>其他集还有：</span>
+                {otherEpCounts.map(([e, c]) => (
+                  <button key={e} className="btn-mini" onClick={() => setEpNo(e)}>
+                    E{String(e).padStart(2, '0')} · {c} 张
+                  </button>
+                ))}
+              </div>
+            )}
             <ReactFlow
               nodes={shownNodes}
               edges={shownEdges}
@@ -975,4 +1008,16 @@ export default function App() {
       <Shell />
     </ReactFlowProvider>
   )
+}
+
+/** 只读当前集，供首帧恢复用（loadSaved 已解析过整份存档） */
+function loadSavedEpNo(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return 1
+    const n = Number(JSON.parse(raw)?.epNo)
+    return Number.isFinite(n) && n > 0 ? n : 1
+  } catch {
+    return 1
+  }
 }

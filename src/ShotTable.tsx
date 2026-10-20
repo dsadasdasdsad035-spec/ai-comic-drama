@@ -132,10 +132,15 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
     }
   }
 
-  const edit = (idx: number, field: string, value: unknown) => {
+  /**
+   * 按 shot.id 定位，不能用行下标：
+   * 表格渲染的是「当前集」的子集，下标与全量 shots 数组对不上，
+   * 一旦文件里镜头不是严格按集排列，就会改到别的镜头上（实测踩到过）。
+   */
+  const edit = (id: string, field: string, value: unknown) => {
     setShots((prev) =>
-      prev.map((s, i) => {
-        if (i !== idx) return s
+      prev.map((s) => {
+        if (s.id !== id) return s
         const hand = new Set([...(s.handEdited ?? []), field])
         return { ...s, [field]: value, handEdited: [...hand] }
       }),
@@ -334,7 +339,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
                 return (
                   <tr key={s.id} className={s.orphan ? 'orphan' : ''}>
                     <td className="mono">
-                      <input value={s.no ?? ''} onChange={(e) => edit(i, 'no', e.target.value)} />
+                      <input value={s.no ?? ''} onChange={(e) => edit(s.id, 'no', e.target.value)} />
                     </td>
                     <td>
                       <input
@@ -344,18 +349,18 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
                         max={12}
                         className={hand.has('seconds') ? 'hand' : ''}
                         value={s.seconds ?? 3}
-                        onChange={(e) => edit(i, 'seconds', Number(e.target.value) || 0)}
+                        onChange={(e) => edit(s.id, 'seconds', Number(e.target.value) || 0)}
                       />
                     </td>
                     <td>
-                      <select value={s.size ?? '中景'} onChange={(e) => edit(i, 'size', e.target.value)}>
+                      <select value={s.size ?? '中景'} onChange={(e) => edit(s.id, 'size', e.target.value)}>
                         {SHOT_SIZES.map((v) => (
                           <option key={v}>{v}</option>
                         ))}
                       </select>
                     </td>
                     <td>
-                      <select value={s.move ?? '固定'} onChange={(e) => edit(i, 'move', e.target.value)}>
+                      <select value={s.move ?? '固定'} onChange={(e) => edit(s.id, 'move', e.target.value)}>
                         {MOVES.map((v) => (
                           <option key={v}>{v}</option>
                         ))}
@@ -365,7 +370,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
                       <textarea
                         rows={2}
                         value={s.desc ?? ''}
-                        onChange={(e) => edit(i, 'desc', e.target.value)}
+                        onChange={(e) => edit(s.id, 'desc', e.target.value)}
                       />
                     </td>
                     <td>
@@ -373,7 +378,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
                         rows={2}
                         value={dialogueToText(s.dialogue)}
                         placeholder="角色：台词（一行一句）"
-                        onChange={(e) => edit(i, 'dialogue', parseDialogue(e.target.value))}
+                        onChange={(e) => edit(s.id, 'dialogue', parseDialogue(e.target.value))}
                       />
                     </td>
                     <td className="state">
