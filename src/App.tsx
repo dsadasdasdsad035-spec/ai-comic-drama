@@ -30,6 +30,7 @@ import ScriptBoard from './ScriptBoard'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import { endTask, startTask } from './tasks'
+import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type ShotEdgeType, type ShotNodeType } from './data'
@@ -309,6 +310,44 @@ function Shell() {
     [nodes, epNo],
   )
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
+  /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
+  const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
+  const [selBusy, setSelBusy] = useState('')
+
+  /** 对选中的卡片批量执行 */
+  const runOnSelected = async (kind: 'image' | 'video' | 'voice') => {
+    if (selBusy) return
+    const list = nodesRef.current.filter((n) => n.selected)
+    if (list.length === 0) return
+    const label = { image: '出图', video: '出片', voice: '配音' }[kind]
+    setSelBusy(`${label} 0/${list.length}`)
+    let i = 0
+    for (const n of list) {
+      if (kind === 'image') await generateOne(n.id)
+      else if (kind === 'video') await generateVideoOne(n.id)
+      else await generateVoiceOne(n.id)
+      i += 1
+      setSelBusy(`${label} ${i}/${list.length}`)
+    }
+    setSelBusy('')
+    setToast(`已对 ${list.length} 张执行${label}`)
+    window.setTimeout(() => setToast(''), 2400)
+  }
+
+  const deleteSelected = () => {
+    const ids = new Set(nodesRef.current.filter((n) => n.selected).map((n) => n.id))
+    if (ids.size === 0) return
+    setNodes((ns) => ns.filter((n) => !ids.has(n.id)))
+    setEdges((es) => es.filter((e) => !ids.has(e.source) && !ids.has(e.target)))
+    setSelId(null)
+    setToast(`已删除 ${ids.size} 张`)
+    window.setTimeout(() => setToast(''), 2000)
+  }
+
+  /** 连续性诊断 */
+  const [diagOn, setDiagOn] = useState(false)
+  const issues = useMemo(() => (diagOn ? diagnose(shownNodes) : []), [diagOn, shownNodes])
+
   const otherEpCounts = useMemo(() => {
     const m = new Map<number, number>()
     for (const n of nodes) {
@@ -835,6 +874,13 @@ function Shell() {
                 {vbatch ? `配音 ${vbatch.done}/${vbatch.total}` : '批量配音'}
               </button>
               <button className="btn" onClick={() => fitView({ padding: 0.2, duration: 400 })}>适配</button>
+              <button
+                className={`btn ${diagOn ? 'primary' : ''}`}
+                onClick={() => setDiagOn((v) => !v)}
+                title="检查时长 / 台词长度 / 连续同景别"
+              >
+                诊断
+              </button>
               <button className="btn" onClick={clearCanvas} title="清空画布（不动 project.json）">
                 清空
               </button>
@@ -924,6 +970,37 @@ function Shell() {
                 ))}
               </div>
             )}
+            {selectedNodes.length > 0 && (
+              <div className="selbar">
+                <b>{selectedNodes.length} 张已选</b>
+                <button className="btn-mini" onClick={() => runOnSelected('image')} disabled={!!selBusy}>
+                  出图
+                </button>
+                <button className="btn-mini" onClick={() => runOnSelected('video')} disabled={!!selBusy}>
+                  出片
+                </button>
+                <button className="btn-mini" onClick={() => runOnSelected('voice')} disabled={!!selBusy}>
+                  配音
+                </button>
+                <button className="btn-mini" onClick={deleteSelected} disabled={!!selBusy}>
+                  删除
+                </button>
+                {selBusy && <span className="selbusy">{selBusy}</span>}
+              </div>
+            )}
+
+            {diagOn && (
+              <DiagnosticsPanel
+                issues={issues}
+                onPick={(id) => {
+                  setSelId(id)
+                  const n = nodesRef.current.find((x) => x.id === id)
+                  if (n) setCenter(n.position.x + 150, n.position.y + 120, { zoom: Math.max(0.8, getZoom()), duration: 400 })
+                }}
+                onClose={() => setDiagOn(false)}
+              />
+            )}
+
             <ReactFlow
               nodes={shownNodes}
               edges={shownEdges}
@@ -943,6 +1020,8 @@ function Shell() {
               fitView
               fitViewOptions={{ padding: 0.12, minZoom: 0.66 }}
               deleteKeyCode={['Backspace', 'Delete']}
+              multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
+              selectionKeyCode="Shift"
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#1e2a38" />
               <Controls showInteractive={false} />

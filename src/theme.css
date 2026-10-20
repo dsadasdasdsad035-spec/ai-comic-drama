@@ -3504,3 +3504,32 @@ button:not(:disabled),
   color: var(--text);
   font-weight: 500;
 }
+
+/* 选中命令条 */
+.selbar {
+  position: absolute;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-full);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  z-index: var(--z-panel);
+}
+
+.selbar b {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.selbusy {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
