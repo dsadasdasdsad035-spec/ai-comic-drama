@@ -23,12 +23,25 @@ import Inspector from './Inspector'
 import Timeline from './Timeline'
 import CharacterBoard from './CharacterBoard'
 import Preview from './Preview'
+import ShotTable from './ShotTable'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type ShotEdgeType, type ShotNodeType } from './data'
 import { cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
-import { checkHealth, generateImage, generateVoice, listVoices, startVideo, waitVideo, type VoiceOption } from './api'
+import {
+  checkHealth,
+  generateImage,
+  generateVoice,
+  listVoices,
+  mergeProjectShots,
+  startVideo,
+  waitVideo,
+  type ProjectShot,
+  type VoiceOption,
+} from './api'
+import { dialogueToText, parseDialogue } from './prompts'
 import { COMPOSE_HINT, composeReference } from './compose'
+import { bizSignature, nodeToShot, shotToData } from './shotSync'
 
 const nodeTypes = { shot: ShotNode }
 const edgeTypes = { shot: ShotEdge }
@@ -66,7 +79,8 @@ function Shell() {
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars'>('board')
+  const [view, setView] = useState<'board' | 'chars' | 'table'>('board')
+  const [projectName, setProjectName] = useState('')
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -86,6 +100,8 @@ function Shell() {
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
   const { fitView, setCenter, getZoom } = useReactFlow()
+  /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
+  const syncedRef = useRef<Map<string, string>>(new Map())
 
   const nodesRef = useRef(nodes)
   const voicesRef = useRef<VoiceOption[]>([])
@@ -184,6 +200,98 @@ function Shell() {
     setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
     setSelId(null)
   }
+
+  /** 画布上已有的业务 ID，给工作台标「在画布」 */
+  const onCanvasIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const n of nodes) if (n.data.shotId) s.add(n.data.shotId)
+    return s
+  }, [nodes])
+
+  /** 工作台 → 画布：按 shot.id 幂等推送，本次没推到的旧节点只标灰不删 */
+  const pushShotsToCanvas = useCallback(
+    (shots: ProjectShot[]) => {
+      setNodes((prev) => {
+        const byShot = new Map<string, ShotNodeType>()
+        for (const n of prev) if (n.data.shotId) byShot.set(n.data.shotId, n)
+        const incoming = new Set(shots.map((s) => s.id))
+
+        const next: ShotNodeType[] = shots.map((s, i) => {
+          const old = byShot.get(s.id)
+          const base: ShotData = old?.data ?? {
+            no: s.no ?? `S${String(i + 1).padStart(2, '0')}`,
+            seconds: 3,
+            size: '中景',
+            move: '固定',
+            dialogue: '',
+            prompt: '',
+            marks: [],
+          }
+          return {
+            id: old?.id ?? uid(),
+            type: 'shot' as const,
+            position: old?.position ?? { x: i * 380, y: i % 2 === 0 ? 0 : 96 },
+            data: shotToData(s, base),
+          }
+        })
+
+        for (const n of prev) {
+          if (n.data.shotId && !incoming.has(n.data.shotId)) {
+            next.push({ ...n, data: { ...n.data, orphan: true } })
+          } else if (!n.data.shotId) {
+            next.push(n)
+          }
+        }
+        return next
+      })
+      // 记下快照：之后的改动才算「画布侧编辑」
+      const snap = new Map<string, string>()
+      for (const s of shots) {
+        snap.set(
+          s.id,
+          bizSignature({
+            no: s.no ?? '',
+            seconds: Number(s.seconds) || 0,
+            size: s.size ?? '',
+            move: s.move ?? '',
+            dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
+            prompt: s.keyframe_prompt ?? '',
+            marks: [],
+          }),
+        )
+      }
+      syncedRef.current = snap
+      setToast(`已推送 ${shots.length} 镜到画布`)
+      window.setTimeout(() => setToast(''), 2200)
+      window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.55, duration: 400 }), 80)
+    },
+    [setNodes, fitView],
+  )
+
+  /**
+   * 画布侧改动 → 写回 project.json。
+   * 只在有实质性业务字段变化时才写，且靠快照对比避免首屏把所有镜头重写一遍。
+   */
+  useEffect(() => {
+    if (!projectName || view !== 'board') return
+    if (syncedRef.current.size === 0) return
+    const timer = window.setTimeout(() => {
+      const changed: ProjectShot[] = []
+      for (const n of nodes) {
+        const id = n.data.shotId
+        if (!id) continue
+        const sig = bizSignature(n.data)
+        if (syncedRef.current.get(id) === sig) continue
+        syncedRef.current.set(id, sig)
+        changed.push(nodeToShot(n.data, id))
+      }
+      if (changed.length === 0) return
+      mergeProjectShots(projectName, changed).catch(() => {
+        /* 写回失败不打断画布操作，工作台「重新加载」可看到差异 */
+      })
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [nodes, projectName, view])
 
   const generateOne = useCallback(
     async (id: string) => {
@@ -419,6 +527,9 @@ function Shell() {
             <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
               分镜
             </button>
+            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>
+              拆镜
+            </button>
             <button className={view === 'chars' ? 'on' : ''} onClick={() => setView('chars')}>
               角色
             </button>
@@ -495,13 +606,26 @@ function Shell() {
                 ▶ 连播
               </button>
             </>
+          ) : view === 'table' ? (
+            <span className="board-count">{projectName || '未选项目'}</span>
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
           )}
           <button className="btn primary" onClick={exportJson}>导出 JSON</button>
         </header>
 
-        {view === 'chars' ? (
+        {view === 'table' ? (
+          <ShotTable
+            projectName={projectName}
+            setProjectName={setProjectName}
+            onCanvas={onCanvasIds}
+            onPush={pushShotsToCanvas}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2600)
+            }}
+          />
+        ) : view === 'chars' ? (
           <CharacterBoard
             characters={characters}
             patch={patchCharacter}

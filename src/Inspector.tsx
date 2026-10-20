@@ -73,6 +73,13 @@ export default function Inspector({
     <aside className="inspector">
       <div className="panel-title">
         <span className="panel-no">{d.no}</span>
+        {d.shotId && (
+          <code className="panel-sid" title="project.json 里的稳定 ID，同步靠它">
+            {d.shotId}
+          </code>
+        )}
+        {d.orphan && <em className="panel-orphan" title="project.json 里已没有这一镜">孤儿</em>}
+        <span className="spacer" />
         <button className="btn-ghost" onClick={() => onDelete(node.id)}>删除</button>
       </div>
 

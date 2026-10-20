@@ -1,0 +1,66 @@
+import type { ProjectShot } from './api'
+import { dialogueToText, parseDialogue } from './prompts'
+import type { ShotData } from './types'
+
+/**
+ * LLM 重新生成之后的合并：手改过的字段保留旧值。
+ * 这是 handEdited 唯一该生效的地方 —— 保存时不能拦，否则人改的东西存不进去。
+ */
+export function mergeGenerated(existing: ProjectShot[], generated: ProjectShot[]): ProjectShot[] {
+  const byId = new Map(existing.map((s) => [s.id, s]))
+  return generated.map((g) => {
+    const old = byId.get(g.id)
+    if (!old) return g
+    const locked = old.handEdited ?? []
+    if (locked.length === 0) return g
+    const merged: ProjectShot = { ...g }
+    for (const k of locked) {
+      ;(merged as Record<string, unknown>)[k] = (old as Record<string, unknown>)[k]
+    }
+    merged.handEdited = [...locked]
+    return merged
+  })
+}
+
+/** 画布节点的业务字段签名，用来判断有没有实质改动 */
+export function bizSignature(d: ShotData): string {
+  return JSON.stringify({
+    no: d.no,
+    seconds: d.seconds,
+    size: d.size,
+    move: d.move,
+    dialogue: d.dialogue,
+    keyframe_prompt: d.prompt,
+  })
+}
+
+/** 画布节点 → 可写回 project.json 的镜头（不含画布私有态：坐标/标注/候选） */
+export function nodeToShot(d: ShotData, id: string): ProjectShot {
+  return {
+    id,
+    episode: d.episode,
+    no: d.no,
+    seconds: d.seconds,
+    size: d.size,
+    move: d.move,
+    dialogue: parseDialogue(d.dialogue),
+    keyframe_prompt: d.prompt,
+  }
+}
+
+/** project.json 镜头 → 画布卡片数据（保留节点已有的图片/视频/配音） */
+export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
+  return {
+    ...fallback,
+    no: s.no ?? fallback.no,
+    seconds: Number(s.seconds) || fallback.seconds,
+    size: s.size || fallback.size,
+    move: s.move || fallback.move,
+    dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
+    prompt: s.keyframe_prompt || s.desc || fallback.prompt,
+    shotId: s.id,
+    episode: s.episode,
+    handEdited: s.handEdited ?? fallback.handEdited,
+    orphan: false,
+  }
+}

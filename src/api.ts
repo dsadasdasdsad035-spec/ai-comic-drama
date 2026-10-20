@@ -218,3 +218,105 @@ export async function listVoices(): Promise<VoiceList> {
     return { provider: 'none', voices: [] }
   }
 }
+
+// ---------------------------------------------------------------- 项目 / 文本
+
+export type ProjectSummary = {
+  name: string
+  title: string
+  style: string
+  aspect: string
+  episodes: number
+  shots: number
+  seconds: number
+  broken?: boolean
+}
+
+export type ProjectShot = {
+  id: string
+  episode?: number
+  no?: string
+  seconds?: number
+  size?: string
+  move?: string
+  desc?: string
+  dialogue?: string | { speaker: string; text: string }[]
+  keyframe_prompt?: string
+  video_prompt?: string
+  handEdited?: string[]
+  orphan?: boolean
+}
+
+export type ProjectData = {
+  name?: string
+  style?: string
+  aspect?: string
+  episodes?: { no: number; title?: string }[]
+  characters?: unknown[]
+  shots?: ProjectShot[]
+  updated_at?: string
+}
+
+export async function listProjects(): Promise<{ root: string; projects: ProjectSummary[] }> {
+  const r = await fetch('/api/project')
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '读取项目列表失败')
+  return { root: j.root, projects: j.projects ?? [] }
+}
+
+export async function getProject(name: string): Promise<ProjectData> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`)
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '读取项目失败')
+  return j.project as ProjectData
+}
+
+/** 合并式回写：手改过的字段不会被覆盖 */
+export async function mergeProjectShots(
+  name: string,
+  shots: ProjectShot[],
+): Promise<{ shots: ProjectShot[]; savedAt: string }> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '保存失败')
+  return { shots: j.shots ?? [], savedAt: j.savedAt }
+}
+
+export async function saveProject(name: string, project: ProjectData): Promise<void> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '保存失败')
+}
+
+export type TextOpts = {
+  system?: string
+  prompt: string
+  model?: 'lite' | 'pro'
+  json?: boolean
+  maxTokens?: number
+  temperature?: number
+}
+
+export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; text: string; model: string }> {
+  let res: Response
+  try {
+    res = await fetch('/api/text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(o),
+    })
+  } catch {
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+  const j = await readJsonRes(res)
+  if (!j.ok) throw new Error(j.message || '文本生成失败')
+  return { json: j.json as T, text: j.text ?? '', model: j.model ?? '' }
+}

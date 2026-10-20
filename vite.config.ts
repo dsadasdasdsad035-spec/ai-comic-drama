@@ -5,9 +5,16 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
+import { listProjects, readProject, writeProject, mergeShots, resolveRoot, safeProjectName } from './server/data.mjs'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
+const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
 const MODEL = 'doubao-seedream-4-5-251128'
+/** 文本档位：拆镜 / 提示词这种长输出用 pro，其余用 lite */
+const TEXT_MODELS = {
+  lite: process.env.ARK_TEXT_MODEL || 'doubao-seed-2-0-lite-260428',
+  pro: process.env.ARK_TEXT_MODEL_PRO || 'doubao-seed-2-1-pro-260915',
+} as const
 
 /** 账户已开通的图生视频模型（2.0 / 2.5 系列需在方舟控制台单独开通） */
 const VIDEO_MODEL = 'doubao-seedance-1-0-pro-250528'
@@ -88,6 +95,28 @@ function readJson(req: any): Promise<any> {
     })
     req.on('error', reject)
   })
+}
+
+/** 模型常把 JSON 包在 ```json 代码块里，或前后带解释文字，这里剥出来 */
+function extractJson(text: string): any {
+  const s = String(text || '').trim()
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const body = (fence ? fence[1] : s).trim()
+  try {
+    return JSON.parse(body)
+  } catch {
+    /* 降级到截取首个 {...} */
+  }
+  const a = body.indexOf('{')
+  const b = body.lastIndexOf('}')
+  if (a >= 0 && b > a) {
+    try {
+      return JSON.parse(body.slice(a, b + 1))
+    } catch {
+      /* ignore */
+    }
+  }
+  throw new Error(`模型返回的不是合法 JSON：${body.slice(0, 120)}`)
 }
 
 /** 本地相对路径 / dataURL / http URL → 可直接给方舟的 image 字段 */
@@ -778,6 +807,103 @@ function seedreamProxy(): Plugin {
               ttsProvider: readEnvKey('ELEVENLABS_API_KEY') ? 'elevenlabs' : 'macos-say',
             }),
           )
+          return
+        }
+
+        // ---- 项目数据：project.json 读写（工作台与画布共用同一真相源）----
+        if (url === '/api/project') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const q = new URL(req.url || '', 'http://x')
+          const name = q.searchParams.get('name') || ''
+          try {
+            const rootDir = resolveRoot(root)
+
+            if (req.method === 'GET' && !name) {
+              res.end(JSON.stringify({ ok: true, root: rootDir, projects: listProjects(rootDir) }))
+              return
+            }
+
+            if (req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, project: readProject(rootDir, name) }))
+              return
+            }
+
+            const body = await readJson(req)
+
+            // POST = 只合并 shots（拆镜工作台回写，保留手改字段）
+            if (req.method === 'POST') {
+              const cur = readProject(rootDir, name)
+              const shots = mergeShots(cur.shots, body.shots || [])
+              const saved = writeProject(rootDir, name, { ...cur, shots })
+              res.end(JSON.stringify({ ok: true, shots: saved.shots, savedAt: saved.updated_at }))
+              return
+            }
+
+            if (req.method === 'PUT') {
+              const saved = writeProject(rootDir, name, body.project || body)
+              res.end(JSON.stringify({ ok: true, savedAt: saved.updated_at, shots: saved.shots?.length ?? 0 }))
+              return
+            }
+
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 文本 LLM：拆镜 / 提示词共用这一个原语 ----
+        if (url === '/api/text') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          const key = readApiKey()
+          if (!key) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: '未找到 ARK_API_KEY', kind: 'no-key' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const system = String(body.system || '')
+            const prompt = String(body.prompt || '')
+            if (!prompt.trim()) throw new Error('prompt 不能为空')
+            const model = TEXT_MODELS[(body.model as 'lite' | 'pro') || 'lite'] || TEXT_MODELS.lite
+            const wantJson = Boolean(body.json)
+
+            const messages: { role: string; content: string }[] = []
+            if (system) messages.push({ role: 'system', content: system })
+            messages.push({ role: 'user', content: prompt })
+
+            const r = await fetch(ARK_CHAT, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model,
+                messages,
+                max_tokens: Number(body.maxTokens) || 8192,
+                temperature: body.temperature ?? 0.7,
+              }),
+            })
+            const raw = await r.text()
+            if (!r.ok) throw new Error(`ARK ${r.status}: ${raw.slice(0, 300)}`)
+
+            const j = JSON.parse(raw)
+            const text = String(j?.choices?.[0]?.message?.content ?? '')
+            if (!wantJson) {
+              res.end(JSON.stringify({ ok: true, text, model }))
+              return
+            }
+            res.end(JSON.stringify({ ok: true, json: extractJson(text), text, model }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
           return
         }
 

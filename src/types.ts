@@ -22,6 +22,13 @@ export type ShotData = {
   move: string
   dialogue: string
   prompt: string
+  /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
+  shotId?: string
+  episode?: number
+  /** 被人在工作台/画布上手改过的字段名，重新生成时跳过 */
+  handEdited?: string[]
+  /** project.json 里有、但本次推送没覆盖到 —— 只标灰，不自动删 */
+  orphan?: boolean
   refImage?: string
   marks: Mark[]
   /** 一镜多候选 */
