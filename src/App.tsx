@@ -62,6 +62,8 @@ type Saved = {
   nodes: ShotNodeType[]
   edges: ShotEdgeType[]
   characters: CharacterSheet[]
+  /** 用户主动清空过画布 —— 没有这个标记，空节点会被当成「首次打开」重置成示例卡 */
+  cleared?: boolean
 }
 
 function loadSaved(): Saved | null {
@@ -69,7 +71,8 @@ function loadSaved(): Saved | null {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
     const p = JSON.parse(raw)
-    if (!Array.isArray(p?.nodes) || p.nodes.length === 0) return null
+    if (!Array.isArray(p?.nodes)) return null
+    if (p.nodes.length === 0 && p.cleared !== true) return null
     return {
       nodes: p.nodes.map((n: ShotNodeType) => ({
         ...n,
@@ -77,6 +80,7 @@ function loadSaved(): Saved | null {
       })),
       edges: p.edges ?? [],
       characters: Array.isArray(p.characters) ? p.characters : defaultCharacters,
+      cleared: p.cleared === true,
     }
   } catch {
     return null
@@ -295,15 +299,39 @@ function Shell() {
   /** 工作台 → 画布：按 shot.id 幂等推送，本次没推到的旧节点只标灰不删 */
   const pushShotsToCanvas = useCallback(
     (shots: ProjectShot[]) => {
+      // 新节点 id 必须提前生成，才能同时把连线接上
+      const existing = new Map<string, ShotNodeType>()
+      for (const n of nodesRef.current) if (n.data.shotId) existing.set(n.data.shotId, n)
+      const ids = shots.map((sh) => existing.get(sh.id)?.id ?? uid())
+
+      // 分镜栅格：每行 6 格，左→右、再换行，保证一眼能顺着读
+      const PER_ROW = 6
+      const GAP_X = 56
+      const GAP_Y = 340
+      const grid: { x: number; y: number }[] = []
+      let cx = 0
+      let row = 0
+      let col = 0
+      for (const sh of shots) {
+        grid.push({ x: cx, y: row * GAP_Y })
+        cx += cardWidth(Number(sh.seconds) || 3) + GAP_X
+        col += 1
+        if (col >= PER_ROW) {
+          col = 0
+          row += 1
+          cx = 0
+        }
+      }
+
       setNodes((prev) => {
         const byShot = new Map<string, ShotNodeType>()
         for (const n of prev) if (n.data.shotId) byShot.set(n.data.shotId, n)
         const incoming = new Set(shots.map((s) => s.id))
 
-        const next: ShotNodeType[] = shots.map((s, i) => {
-          const old = byShot.get(s.id)
+        const next: ShotNodeType[] = shots.map((sh, i) => {
+          const old = byShot.get(sh.id)
           const base: ShotData = old?.data ?? {
-            no: s.no ?? `S${String(i + 1).padStart(2, '0')}`,
+            no: sh.no ?? `S${String(i + 1).padStart(2, '0')}`,
             seconds: 3,
             size: '中景',
             move: '固定',
@@ -312,10 +340,11 @@ function Shell() {
             marks: [],
           }
           return {
-            id: old?.id ?? uid(),
+            id: ids[i],
             type: 'shot' as const,
-            position: old?.position ?? { x: i * 380, y: i % 2 === 0 ? 0 : 96 },
-            data: shotToData(s, base),
+            // 已有节点保留手工拖过的位置，新节点落在栅格里
+            position: old?.position ?? grid[i],
+            data: shotToData(sh, base),
           }
         })
 
@@ -327,6 +356,23 @@ function Shell() {
           }
         }
         return next
+      })
+
+      // 顺序连线：把这一集的镜头按顺序串起来，重推时整条重建（幂等）
+      setEdges((prev) => {
+        const pushed = new Set(ids)
+        const kept = prev.filter((e) => !pushed.has(e.source) && !pushed.has(e.target))
+        const chain: ShotEdgeType[] = []
+        for (let i = 1; i < ids.length; i++) {
+          chain.push({
+            id: `seq-${ids[i - 1]}-${ids[i]}`,
+            source: ids[i - 1],
+            target: ids[i],
+            type: 'shot',
+            data: { relation: 'cut' },
+          })
+        }
+        return [...kept, ...chain]
       })
       // 记下快照：之后的改动才算「画布侧编辑」
       const snap = new Map<string, string>()
@@ -586,6 +632,21 @@ function Shell() {
     })
   }
 
+  /** 清空画布：只动画布，不碰 project.json */
+  const clearCanvas = () => {
+    if (nodesRef.current.length === 0 && edges.length === 0) {
+      setToast('画布已经是空的')
+      window.setTimeout(() => setToast(''), 2000)
+      return
+    }
+    if (!window.confirm('清空画布上的所有卡片和连线？project.json 里的镜头不受影响，可以再推一次。')) return
+    setNodes([])
+    setEdges([])
+    setSelId(null)
+    setToast('画布已清空（project.json 未改动）')
+    window.setTimeout(() => setToast(''), 2600)
+  }
+
   const resetAll = () => {
     try {
       localStorage.removeItem(STORAGE_KEY)
@@ -623,7 +684,10 @@ function Shell() {
   useEffect(() => {
     const t = window.setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes, edges, characters }))
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ nodes, edges, characters, cleared: nodes.length === 0 }),
+        )
       } catch {
         /* 图片过大超出配额时静默失败，不影响使用 */
       }
@@ -754,6 +818,9 @@ function Shell() {
                 {vbatch ? `配音 ${vbatch.done}/${vbatch.total}` : '批量配音'}
               </button>
               <button className="btn" onClick={() => fitView({ padding: 0.2, duration: 400 })}>适配</button>
+              <button className="btn" onClick={clearCanvas} title="清空画布（不动 project.json）">
+                清空
+              </button>
               <button
                 className="btn"
                 onClick={() => setPreview(true)}
