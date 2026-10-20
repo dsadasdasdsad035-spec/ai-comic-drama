@@ -771,7 +771,8 @@ function Shell() {
           <button className="btn primary" onClick={exportJson}>导出 JSON</button>
         </header>
 
-        {(view === 'table' || view === 'prompts' || view === 'script') && (
+        {/* 画布也按集过滤，所以集栏必须在画布上也能用，否则切不了集、也看不出当前是哪一集 */}
+        {(view === 'board' || view === 'table' || view === 'prompts' || view === 'script') && (
           <EpisodeBar
             projectName={projectName}
             epNo={epNo}
