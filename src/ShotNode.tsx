@@ -5,6 +5,7 @@ import type Konva from 'konva'
 import { CanvasCtx } from './ctx'
 import { cardWidth, uid, type Mark } from './types'
 import type { ShotNodeType } from './data'
+import { layoutSvg } from './layoutSheet'
 
 type Draft =
   | { kind: 'pen'; points: number[] }
@@ -32,7 +33,7 @@ function useImage(src?: string) {
 }
 
 function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
+  const { tool, guides, color, patch, generate, generateVideo, charImages, showLayout } = useContext(CanvasCtx)
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
@@ -344,6 +345,14 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
               {showVideo ? '看静帧' : '看视频'}
             </button>
           </div>
+        )}
+
+        {showLayout && data.layout && (data.layout.actors?.length ?? 0) > 0 && (
+          <div
+            className="shot-layout"
+            title="俯视调度（在 Inspector 里可拖动站位与机位）"
+            dangerouslySetInnerHTML={{ __html: layoutSvg(data.layout) }}
+          />
         )}
 
         {data.genState === 'running' && (

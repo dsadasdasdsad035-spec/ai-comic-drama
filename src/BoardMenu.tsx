@@ -9,6 +9,7 @@ type Props = {
   vidBatch: { total: number; done: number } | null
   vbatch: { total: number; done: number } | null
   charsOn: boolean
+  layoutOn: boolean
   diagOn: boolean
   onAddShot: () => void
   onGenAll: () => void
@@ -16,6 +17,7 @@ type Props = {
   onVoiceAll: () => void
   onFit: () => void
   onToggleChars: () => void
+  onToggleLayout: () => void
   onToggleDiag: () => void
   onClear: () => void
 }
@@ -31,6 +33,7 @@ export default function BoardMenu({
   vidBatch,
   vbatch,
   charsOn,
+  layoutOn,
   diagOn,
   onAddShot,
   onGenAll,
@@ -38,6 +41,7 @@ export default function BoardMenu({
   onVoiceAll,
   onFit,
   onToggleChars,
+  onToggleLayout,
   onToggleDiag,
   onClear,
 }: Props) {
@@ -128,6 +132,10 @@ export default function BoardMenu({
           <button className={`bm-item ${charsOn ? 'on' : ''}`} onClick={act(onToggleChars)}>
             角色上画布
             <span className="bm-hint">{charsOn ? '开' : '关'}</span>
+          </button>
+          <button className={`bm-item ${layoutOn ? 'on' : ''}`} onClick={act(onToggleLayout)} title="在卡片上叠俯视调度缩略图">
+            显示调度图
+            <span className="bm-hint">{layoutOn ? '开' : '关'}</span>
           </button>
           <button className={`bm-item ${diagOn ? 'on' : ''}`} onClick={act(onToggleDiag)}>
             连续性诊断

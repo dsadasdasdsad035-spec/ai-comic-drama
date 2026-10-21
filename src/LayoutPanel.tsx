@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { callText, getSettings } from './api'
 import LayoutView from './LayoutView'
 import { DEFAULT_LAYOUT, type ShotData, type ShotLayout } from './types'
+import { saveLayoutSheet } from './layoutSheet'
 import { endTask, startTask } from './tasks'
 
 /**
@@ -34,7 +35,6 @@ function fallbackLayout(cast: string[]): ShotLayout {
 }
 
 export default function LayoutPanel({ d, patch, cast }: Props) {
-  const svgEl = useRef<SVGSVGElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -100,37 +100,12 @@ export default function LayoutPanel({ d, patch, cast }: Props) {
 
   /** SVG → PNG → 存到 public/generated，作为出片参考图 */
   const saveAsRef = async () => {
-    const svg = svgEl.current
-    if (!svg) return
+    if (!layout) return
     setSaving(true)
     setErr('')
     try {
-      const xml = new XMLSerializer().serializeToString(svg)
-      const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const img = new Image()
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('俯视图转图片失败'))
-        img.src = url
-      })
-      const canvas = document.createElement('canvas')
-      canvas.width = 640
-      canvas.height = 480
-      const ctx = canvas.getContext('2d')
-      if (!ctx) throw new Error('取不到 canvas 上下文')
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      URL.revokeObjectURL(url)
-      const dataUrl = canvas.toDataURL('image/png')
-      const r = await fetch('/api/save-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl, prefix: 'layout' }),
-      }).then((x) => x.json())
-      if (!r.ok) throw new Error(r.message || '保存失败')
-      patch({ refSheet: r.url })
+      const url = await saveLayoutSheet(layout)
+      patch({ refSheet: url })
     } catch (e) {
       setErr((e as Error).message)
     } finally {
@@ -148,9 +123,6 @@ export default function LayoutPanel({ d, patch, cast }: Props) {
       <LayoutView
         layout={layout ?? { ...DEFAULT_LAYOUT, actors: [] }}
         onChange={(l) => patch({ layout: l })}
-        svgRef={(el) => {
-          svgEl.current = el
-        }}
       />
 
       <div className="layout-actions">

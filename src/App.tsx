@@ -63,6 +63,7 @@ import {
 } from './api'
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
+import { saveLayoutSheet } from './layoutSheet'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
@@ -794,6 +795,12 @@ function Shell() {
     return () => document.removeEventListener('keydown', onKey)
   }, [selRef, patch])
 
+  /** 卡片上叠俯视调度缩略图（默认开） */
+  const [layoutOn, setLayoutOn] = useState(() => localStorage.getItem('storyboard-layout-on') !== '0')
+  useEffect(() => {
+    localStorage.setItem('storyboard-layout-on', layoutOn ? '1' : '0')
+  }, [layoutOn])
+
   /** 缩得很小时切到精简渲染（CSS 隐藏卡片里的次要信息） */
   const [zoomLite, setZoomLite] = useState(false)
   const zoomLiteRef = useRef(false)
@@ -1360,7 +1367,16 @@ function Shell() {
       const nextShot = findNextShot(node.id)
       const wantLock = Boolean(tailLock && nextShot?.data.refImage)
       // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图，反之才带调度图
-      const sheet = String(node.data.refSheet || '')
+      let sheet = String(node.data.refSheet || '')
+      // 有调度但还没导出过 → 出片前自动生成一张，做到「默认就绑上」（不用先手动点存图）
+      if (!sheet && !wantLock && (node.data.layout?.actors?.length ?? 0) > 0) {
+        try {
+          sheet = await saveLayoutSheet(node.data.layout!)
+          patch(node.id, { refSheet: sheet } as never)
+        } catch {
+          /* 导不出就静默跳过，不挡住出片 */
+        }
+      }
       const sheetUsed = Boolean(sheet) && !wantLock
       const refList: string[] = []
       const refNotes: string[] = []
@@ -1660,6 +1676,7 @@ function Shell() {
       guides,
       color,
       charImages,
+      showLayout: layoutOn,
       patch,
       cycleEdge,
       generate: generateOne,
@@ -1730,6 +1747,8 @@ function Shell() {
                 vidBatch={vidBatch}
                 vbatch={vbatch}
                 charsOn={charsOn}
+              layoutOn={layoutOn}
+              onToggleLayout={() => setLayoutOn((v) => !v)}
                 diagOn={diagOn}
                 onAddShot={addShot}
                 onGenAll={generateAll}
