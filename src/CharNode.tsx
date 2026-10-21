@@ -4,7 +4,10 @@ import type { CharNodeType } from './data'
 /** 角色节点：只展示（图 + 名字 + 定位），不承载编辑 —— 编辑在角色板 */
 export default function CharNode({ data }: NodeProps<CharNodeType>) {
   return (
-    <div className="char-node" title={`${data.name}（点击聚焦出场镜头）`}>
+    <div
+      className={`char-node ${data.missing ? 'missing' : ''}`}
+      title={data.missing ? `${data.name}：出场名单里有，但角色板还没有这张卡` : `${data.name}（点击聚焦出场镜头）`}
+    >
       <Handle type="target" position={Position.Left} className="shot-handle" />
       <Handle type="source" position={Position.Right} className="shot-handle" />
       {data.image ? (

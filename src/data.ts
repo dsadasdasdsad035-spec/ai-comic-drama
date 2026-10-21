@@ -5,7 +5,10 @@ export type ShotNodeType = Node<ShotData, 'shot'>
 export type ShotEdgeType = Edge<{ relation: Relation }, 'shot'>
 
 /** 画布上的角色节点：数据来自 characters（真相源不在画布），位置单独持久化 */
-export type CharNodeType = Node<{ name: string; role?: string; image?: string }, 'char'>
+export type CharNodeType = Node<
+  { name: string; role?: string; image?: string; missing?: boolean },
+  'char'
+>
 
 /** 用纯 SVG 生成一张「参考图占位」，避免依赖外网图片 */
 function refArt(a: string, b: string, seed: number) {

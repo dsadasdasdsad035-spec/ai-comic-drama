@@ -63,6 +63,32 @@ const edgeTypes = { shot: ShotEdge }
 const COLORS = ['#fbbf24', '#f87171', '#38bdf8', '#a3e635', '#c084fc']
 const STORAGE_KEY = 'storyboard-canvas-v1'
 
+/** 没有角色卡的出场名字 → 占位节点 id（和角色卡 id 用不同前缀，避免撞名） */
+const missCharId = (name: string) => `char-miss-${name}`
+
+/** 角色节点 id → 位置表 key（占位节点用 miss: 前缀，图省事不跟角色 id 混） */
+const charKey = (nodeId: string) =>
+  nodeId.startsWith('char-miss-') ? `miss:${nodeId.slice('char-miss-'.length)}` : nodeId.slice(5)
+
+/** 角色节点 id → 角色名（占位节点存的就是名单原文） */
+const charNameOf = (nodeId: string) =>
+  nodeId.startsWith('char-miss-') ? nodeId.slice('char-miss-'.length) : nodeId.slice(5)
+
+/**
+ * 出场名单里的名字 → 角色卡。
+ * 拆镜产出会带修饰：「陈曦（投影）」「陈默（回忆）」，直接全等匹配会漏，
+ * 所以按 精确 → 去括号 → 互相包含 三级退让。
+ */
+function matchChar(name: string, chars: CharacterSheet[]): CharacterSheet | undefined {
+  const strip = (s: string) => s.replace(/[（(][^)）]*[)）]/g, '').trim()
+  const n = strip(name)
+  return (
+    chars.find((c) => c.name === name) ??
+    chars.find((c) => strip(c.name) === n) ??
+    chars.find((c) => Boolean(n) && Boolean(c.name) && (n.includes(c.name) || c.name.includes(n)))
+  )
+}
+
 type Saved = {
   nodes: ShotNodeType[]
   edges: ShotEdgeType[]
@@ -323,17 +349,59 @@ function Shell() {
     }
   })
 
-  const charNodes = useMemo<CharNodeType[]>(
-    () =>
-      characters.map((c, i) => ({
-        id: `char-${c.id}`,
-        type: 'char' as const,
-        position: charPos[c.id] ?? { x: 80 + i * 170, y: -280 },
-        data: { name: c.name, role: c.role, image: c.image },
-        deletable: false,
-      })),
-    [characters, charPos],
-  )
+  /**
+   * 角色节点必须保持对象引用稳定：每次渲染都造新对象会让 React Flow 反复测量、
+   * 触发 dimensions 变更 → 再渲染，形成抖动，连线也会渲染不出来（实测踩到）。
+   */
+  const charCache = useRef(new Map<string, CharNodeType>())
+  const charNodes = useMemo<CharNodeType[]>(() => {
+    const cache = charCache.current
+    const keep = (
+      id: string,
+      data: CharNodeType['data'],
+      position: { x: number; y: number },
+    ): CharNodeType => {
+      const old = cache.get(id)
+      if (
+        old &&
+        old.data.name === data.name &&
+        old.data.role === data.role &&
+        old.data.image === data.image &&
+        old.data.missing === data.missing &&
+        old.position.x === position.x &&
+        old.position.y === position.y
+      )
+        return old
+      const next: CharNodeType = { id, type: 'char', position, data, deletable: false }
+      cache.set(id, next)
+      return next
+    }
+
+    const cards = characters.map((c, i) =>
+      keep(
+        `char-${c.id}`,
+        { name: c.name, role: c.role, image: c.image },
+        charPos[c.id] ?? { x: 80 + i * 170, y: -280 },
+      ),
+    )
+    // 出场名单里有、但角色板没这张卡的名字 → 占位节点，连线不能丢
+    const orphans = new Set<string>()
+    for (const n of shownNodes) {
+      for (const name of n.data.cast ?? []) {
+        if (!matchChar(name, characters)) orphans.add(name)
+      }
+    }
+    for (const [i, name] of [...orphans].entries()) {
+      cards.push(
+        keep(
+          missCharId(name),
+          { name, role: '无角色卡', missing: true },
+          charPos[`miss:${name}`] ?? { x: 80 + (characters.length + i) * 170, y: -280 },
+        ),
+      )
+    }
+    return cards
+  }, [characters, charPos, shownNodes])
 
   /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化） */
   const canvasNodes = useMemo(
@@ -344,24 +412,28 @@ function Shell() {
   /** cast 命中的 角色 → 镜头 虚线边（派生，不持久化） */
   const castEdges = useMemo<Edge[]>(() => {
     if (!charsOn) return []
-    const byName = new Map(charNodes.map((n) => [n.data.name, n.id]))
     const out: Edge[] = []
     for (const n of shownNodes) {
       for (const name of n.data.cast ?? []) {
-        const cid = byName.get(name)
-        if (cid)
-          out.push({
-            id: `cast-${cid}-${n.id}`,
-            source: cid,
-            target: n.id,
-            type: 'default',
-            animated: true,
-            style: { stroke: '#34d399', strokeWidth: 1.4, strokeDasharray: '6 4' },
-          })
+        const card = matchChar(name, characters)
+        const cid = card ? `char-${card.id}` : missCharId(name)
+        out.push({
+          id: `cast-${cid}-${n.id}`,
+          source: cid,
+          target: n.id,
+          type: 'default',
+          animated: !card,
+          style: {
+            stroke: card ? '#34d399' : '#8aa0b8',
+            strokeWidth: 1.4,
+            strokeDasharray: '6 4',
+            opacity: card ? 1 : 0.65,
+          },
+        })
       }
     }
     return out
-  }, [charsOn, charNodes, shownNodes])
+  }, [charsOn, characters, shownNodes])
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
   const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
@@ -416,13 +488,13 @@ function Shell() {
     return [...edges.filter((e) => ids.has(e.source) && ids.has(e.target)), ...castEdges]
   }, [edges, shownNodes, castEdges])
 
-  /** 点角色节点 → 聚焦到它的出场镜头 */
-  const focusChar = (charName: string) => {
+  /** 点角色节点 → 聚焦到它的出场镜头（名单带修饰也能命中） */
+  const focusChar = (name: string) => {
     const targets = shownNodes
-      .filter((n) => (n.data.cast ?? []).includes(charName))
+      .filter((n) => (n.data.cast ?? []).some((c) => c === name || matchChar(c, characters)?.name === name))
       .map((n) => ({ id: n.id }))
     if (targets.length === 0) {
-      setToast(`「${charName}」当前集没有出场镜头`)
+      setToast(`「${name}」当前集没有出场镜头`)
       window.setTimeout(() => setToast(''), 2200)
       return
     }
@@ -542,8 +614,52 @@ function Shell() {
     [setNodes, fitView],
   )
 
+  /** 打开角色上画布；本集一条名单都没有时明确告知，而不是静默无反应 */
+  const toggleChars = useCallback(() => {
+    const next = !charsOn
+    setCharsOn(next)
+    localStorage.setItem('storyboard-chars-on', next ? '1' : '0')
+    if (!next) return
+    const withCast = nodesRef.current.filter((n) => (n.data.cast ?? []).length > 0).length
+    if (withCast === 0) {
+      setToast('本集画布还没有出场名单，正在从项目文件补…')
+      window.setTimeout(() => setToast(''), 2800)
+    }
+  }, [charsOn])
+
   /**
-   * 画布侧改动 → 写回 project.json。
+   * 画布节点的 cast 只在「推送」时带上，老节点会是空的。
+   * 打开角色视图时补一次：从 project.json 按 shotId 取 cast 填回去。
+   * cast 不在 bizSignature 里 → 不会触发无谓写回。
+   */
+  useEffect(() => {
+    if (!charsOn || !projectName) return
+    const missing = nodesRef.current.filter((n) => n.data.shotId && !(n.data.cast ?? []).length)
+    if (missing.length === 0) return
+    let alive = true
+    getProject(projectName)
+      .then((p) => {
+        if (!alive) return
+        const byId = new Map((p.shots ?? []).map((s) => [s.id, s]))
+        const fill = new Map<string, string[]>()
+        for (const n of missing) {
+          const c = byId.get(n.data.shotId as string)?.cast
+          if (c?.length) fill.set(n.id, c)
+        }
+        if (fill.size === 0) return
+        setNodes((ns) =>
+          ns.map((n) => (fill.has(n.id) ? { ...n, data: { ...n.data, cast: fill.get(n.id) } } : n)),
+        )
+        setToast(`已补全 ${fill.size} 镜的出场名单`)
+        window.setTimeout(() => setToast(''), 2400)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [charsOn, projectName, setNodes])
+
+  /** 画布侧改动 → 写回 project.json。
    * 只在有实质性业务字段变化时才写，且靠快照对比避免首屏把所有镜头重写一遍。
    */
   useEffect(() => {
@@ -955,13 +1071,7 @@ function Shell() {
                 onGenVideoAll={generateVideoAll}
                 onVoiceAll={voiceAll}
                 onFit={() => fitView({ padding: 0.2, duration: 400 })}
-                onToggleChars={() =>
-                  setCharsOn((v) => {
-                    const n = !v
-                    localStorage.setItem('storyboard-chars-on', n ? '1' : '0')
-                    return n
-                  })
-                }
+                onToggleChars={toggleChars}
                 onToggleDiag={() => setDiagOn((v) => !v)}
                 onClear={clearCanvas}
               />
@@ -1093,7 +1203,7 @@ function Shell() {
                   const next = { ...p }
                   for (const ch of changes) {
                     if (ch.type === 'position' && ch.id.startsWith('char-') && ch.position) {
-                      next[ch.id.slice(5)] = ch.position
+                      next[charKey(ch.id)] = ch.position
                       moved = true
                     }
                   }
@@ -1103,7 +1213,7 @@ function Shell() {
               onNodeDragStop={(_, node) => {
                 if (node.id.startsWith('char-')) {
                   setCharPos((p) => {
-                    const next = { ...p, [node.id.slice(5)]: node.position }
+                    const next = { ...p, [charKey(node.id)]: node.position }
                     localStorage.setItem('storyboard-char-pos', JSON.stringify(next))
                     return next
                   })
@@ -1114,7 +1224,7 @@ function Shell() {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodeClick={(_, n) => {
-                if (n.id.startsWith('char-')) focusChar(n.id.slice(5))
+                if (n.id.startsWith('char-')) focusChar(charNameOf(n.id))
                 else setSelId(n.id)
               }}
               onPaneClick={() => setSelId(null)}

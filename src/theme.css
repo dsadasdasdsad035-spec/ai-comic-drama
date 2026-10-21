@@ -4255,3 +4255,19 @@ button:not(:disabled),
   color: var(--muted);
   font-size: 9px;
 }
+
+/* 出场名单里有、但没有角色卡的占位节点：虚线灰框，提示去角色板建卡 */
+.char-node.missing {
+  border-style: dashed;
+  border-color: var(--line-2);
+  background: var(--bg-2);
+}
+.char-node.missing .char-name {
+  color: var(--muted);
+  font-weight: 500;
+}
+.char-node.missing .char-placeholder {
+  background: transparent;
+  border: 1px dashed var(--line-2);
+  color: var(--line-2);
+}
