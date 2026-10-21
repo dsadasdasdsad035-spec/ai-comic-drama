@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS characters (
   palette  TEXT DEFAULT '',
   keywords TEXT DEFAULT '[]',
   sort     INTEGER DEFAULT 0,
+  image    TEXT DEFAULT '',
+  candidates TEXT DEFAULT '[]',
+  active_idx INTEGER,
   UNIQUE(project_id, name)
 );
 CREATE TABLE IF NOT EXISTS episodes (
@@ -133,8 +136,22 @@ function open(root) {
   db = new DatabaseSync(dbFile)
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec(SCHEMA)
+  ensureColumns()
   if (firstTime) migrateFromJson(root)
   return db
+}
+
+/** 老库补列：SCHEMA 只在新建时生效，已有库缺列就走 ALTER */
+function ensureColumns() {
+  const cols = new Set(db.prepare('PRAGMA table_info(characters)').all().map((r) => r.name))
+  const need = [
+    ['image', "TEXT DEFAULT ''"],
+    ['candidates', "TEXT DEFAULT '[]'"],
+    ['active_idx', 'INTEGER'],
+  ]
+  for (const [name, def] of need) {
+    if (!cols.has(name)) db.exec(`ALTER TABLE characters ADD COLUMN ${name} ${def}`)
+  }
 }
 
 export function dbPath(root) {
@@ -187,12 +204,14 @@ function importProject(d, name, data) {
   const pid = Number(r.lastInsertRowid)
   for (const [i, c] of (data.characters || []).entries()) {
     d.prepare(
-      `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       pid, String(c.name || ''), String(c.role || ''), String(c.age || ''),
       String(c.look_cn || ''), String(c.look_en || ''), String(c.palette || ''),
       JSON.stringify(c.keywords ?? []), i,
+      String(c.image || ''), JSON.stringify(c.candidates ?? []),
+      typeof c.activeIdx === 'number' ? c.activeIdx : null,
     )
   }
   for (const [i, ep] of (data.episodes || []).entries()) {
@@ -336,6 +355,9 @@ function assemble(p) {
       look_en: c.look_en,
       palette: c.palette,
       keywords: JSON.parse(c.keywords || '[]'),
+      ...(c.image ? { image: c.image } : {}),
+      ...(c.candidates && c.candidates !== '[]' ? { candidates: JSON.parse(c.candidates || '[]') } : {}),
+      ...(c.active_idx == null ? {} : { activeIdx: Number(c.active_idx) }),
     }))
   const episodes = db
     .prepare('SELECT * FROM episodes WHERE project_id = ? ORDER BY sort, no')
@@ -426,12 +448,14 @@ export function writeProject(root, name, data = {}) {
     db.prepare('DELETE FROM characters WHERE project_id = ?').run(pid)
     for (const [i, c] of data.characters.entries()) {
       db.prepare(
-        `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         pid, String(c?.name || ''), String(c?.role || ''), String(c?.age || ''),
         String(c?.look_cn || ''), String(c?.look_en || ''), String(c?.palette || ''),
         JSON.stringify(c?.keywords ?? []), i,
+        String(c?.image || ''), JSON.stringify(c?.candidates ?? []),
+        typeof c?.activeIdx === 'number' ? c.activeIdx : null,
       )
     }
   }

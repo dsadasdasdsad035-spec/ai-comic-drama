@@ -1412,6 +1412,16 @@ function seedreamProxy(): Plugin {
             // 方舟不接受 svg 参考图；示例占位图是 svg，直接跳过
             if (!ref.startsWith('data:image/svg')) payload.image = resolveRef(ref, root)
           }
+          // 多参考图（角色三视图 / 场景图 / 道具图）：Seedream 4.5 的 image 字段收数组，上限 10 张。
+          // refImage（单张构图参考）排第一，其余按传入顺序追加。
+          const multiRefs: string[] = Array.isArray(body.refImages) ? body.refImages.map(String) : []
+          if (multiRefs.length) {
+            const single = payload.image ? [payload.image as string] : []
+            const resolved = multiRefs
+              .filter((r) => r && !r.startsWith('data:image/svg'))
+              .map((r) => resolveRef(r, root))
+            payload.image = [...single, ...resolved].slice(0, 10)
+          }
 
           const t0 = Date.now()
 

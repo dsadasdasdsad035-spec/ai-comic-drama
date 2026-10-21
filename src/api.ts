@@ -12,7 +12,10 @@ export type GenError = { message: string; kind?: string }
 export async function generateImage(opts: {
   prompt: string
   ratio: string
+  /** 单张构图参考（上一镜画面 / 标注合成图） */
   refImage?: string
+  /** 多参考图：角色三视图 / 场景图 / 道具图（Seedream 4.5 image 数组，上限 10 张） */
+  refImages?: string[]
   n?: number
 }): Promise<GenResult> {
   let res: Response
@@ -271,6 +274,8 @@ export type ProjectShot = {
   clip?: string
   handEdited?: string[]
   orphan?: boolean
+  /** 手动附加参考图（场景图/道具图），生成画面时随角色图一起做多图参考 */
+  refExtras?: string[]
 }
 
 export type ProjectEpisode = {

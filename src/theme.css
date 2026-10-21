@@ -4279,3 +4279,61 @@ button:not(:disabled),
   padding: 8px 0;
   background: linear-gradient(transparent, var(--bg) 40%);
 }
+
+/* ---------------------------------------------------------------- Inspector 参考图 */
+
+.refx-empty {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  padding: 4px 0;
+}
+
+.refx-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.refx-thumb {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.refx-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono, monospace);
+}
+
+.refx-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.refx-add-in {
+  width: 100%;
+  background: var(--bg);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: var(--fs-xs);
+}
+
+.refx-add-in:focus {
+  outline: none;
+  border-color: var(--accent);
+  border-style: solid;
+}

@@ -684,6 +684,13 @@ function Shell() {
     return () => window.clearTimeout(timer)
   }, [nodes, projectName, view])
 
+  const charImages = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const c of characters) if (c.name && c.image) m[c.name] = c.image
+    return m
+  }, [characters])
+
+
   const generateOne = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
@@ -705,10 +712,32 @@ function Shell() {
             ref = node.data.refImage
           }
         }
+        // 角色一致性靠图不靠词：出场角色（cast）的参考图自动进多图参考，
+        // 外加手动附加的场景图/道具图（refExtras）。上限 10 张，服务端合并去重。
+        const extraRefs: string[] = []
+        const refLabels: string[] = []
+        for (const name of node.data.cast ?? []) {
+          const key = matchChar(name, characters)?.name ?? name
+          const img = charImages[key]
+          if (img && !extraRefs.includes(img)) {
+            extraRefs.push(img)
+            refLabels.push(`图${extraRefs.length + 1}=角色「${name}」外观基准`)
+          }
+        }
+        for (const r of node.data.refExtras ?? []) {
+          if (r && !extraRefs.includes(r) && r !== ref) {
+            extraRefs.push(r)
+            refLabels.push(`图${extraRefs.length + 1}=场景/道具参考`)
+          }
+        }
         const res = await generateImage({
-          prompt: composed ? prompt + COMPOSE_HINT : prompt,
+          prompt: (composed ? prompt + COMPOSE_HINT : prompt) +
+            (extraRefs.length
+              ? `\n\n参考图说明：图1=构图与上一镜连贯性；${refLabels.join('，')}。对应主体必须与参考图保持一致。`
+              : ''),
           ratio,
           refImage: ref,
+          refImages: extraRefs,
           n: candCount,
         })
         const urls = res.urls?.length ? res.urls : [res.url]
@@ -725,7 +754,7 @@ function Shell() {
         patch(id, { genState: 'error', genError: (e as Error).message })
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters],
   )
 
   /** 图生视频：以卡片当前画面为首帧，提交后轮询出片 */
@@ -992,11 +1021,6 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const charImages = useMemo(() => {
-    const m: Record<string, string> = {}
-    for (const c of characters) if (c.name && c.image) m[c.name] = c.image
-    return m
-  }, [characters])
 
   const api = useMemo(
     () => ({

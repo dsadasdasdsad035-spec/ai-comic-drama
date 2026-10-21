@@ -198,6 +198,50 @@ export default function Inspector({
         />
       </label>
 
+      <div className="field">
+        <span>
+          参考图（场景 / 道具）
+          <i
+            className="hint-inline"
+            title="生成画面时随 cast 角色图一起传给 Seedream 做多图参考，锁定场景与道具外观"
+          >
+            多图参考
+          </i>
+        </span>
+        {(d.refExtras?.length ?? 0) === 0 && (
+          <div className="refx-empty">还没附加。粘图片 URL 或本地路径（/generated/xx.jpg），一行一张。</div>
+        )}
+        {(d.refExtras ?? []).map((r, i) => (
+          <div className="refx-row" key={`${r}-${i}`}>
+            <img src={r} alt="" className="refx-thumb" />
+            <input
+              value={r}
+              onChange={(e) => {
+                const next = [...(d.refExtras ?? [])]
+                next[i] = e.target.value
+                set({ refExtras: next })
+              }}
+            />
+            <button className="btn-mini" title="删除" onClick={() => set({ refExtras: (d.refExtras ?? []).filter((_, j) => j !== i) })}>
+              ✕
+            </button>
+          </div>
+        ))}
+        <div className="refx-add">
+          <input
+            className="refx-add-in"
+            placeholder="图片 URL / /generated/xx.jpg，回车添加"
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              const v = (e.target as HTMLInputElement).value.trim()
+              if (!v) return
+              set({ refExtras: [...(d.refExtras ?? []), v] })
+              ;(e.target as HTMLInputElement).value = ''
+            }}
+          />
+        </div>
+      </div>
+
       <div className="gen-box">
         <div className="gen-head">
           <span>AI 生成画面</span>
