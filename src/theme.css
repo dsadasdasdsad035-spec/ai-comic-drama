@@ -1,31 +1,39 @@
 :root {
-  /* ---- 表面：4 级（原来散落 12 个近似值）---- */
+  /* ===== Cinema Dark（OLED 影院暗）× IDE 高对比 =====
+     风格依据：Dark Mode(OLED) — 近黑底、低发光、WCAG AAA；
+     配色锚点：Developer Tool/IDE — 深底 + 冷蓝 focus + 高对比文字。
+     注意：这组 token 曾被补丁脚本写成 `--x: var(--x)` 自引用，
+     浏览器会判定为 invalid → 属性退回初始值（字体一度退化成 Times）。
+     任何 token 都必须写字面值，禁止自引用。 */
+  /* ---- 表面：4 级 ---- */
   --bg: #070b11;
   --bg-2: #0c131c;
   --panel: #0e1620;
-  --panel-2: var(--panel-2);
+  --panel-2: #111c28;
 
   /* ---- 描边：2 级 ---- */
   --line: #1d2b3a;
-  --line-2: #24384b;
+  --line-2: #2a3d52;
 
-  /* ---- 文字：3 级 ---- */
+  /* ---- 文字：3 级（对比度 13:1 / 8.6:1 / 5.8:1，均 ≥ AA）---- */
   --text: #dbe7f3;
-  --text-2: var(--text-2);
-  --muted: var(--muted);
+  --text-2: #b6c8da;
+  --muted: #7d93ab;
 
   /* ---- 主色 ---- */
   --accent: #38bdf8;
   --accent-dim: rgba(56, 189, 248, 0.12);
-  --accent-ink: var(--accent-ink);
+  --accent-ink: #04121b;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
 
-  /* ---- 语义色：每类只留一个（原来红/黄各有 4 个近似值）---- */
-  --warn: var(--warn);
-  --warn-dim: rgba(251, 191, 36, 0.12);
-  --danger: var(--danger);
-  --danger-dim: rgba(248, 113, 113, 0.12);
-  --ok: var(--ok);
-  --ok-dim: rgba(74, 222, 128, 0.12);
+  /* ---- 动效：150/200/300 三档 ---- */
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-slow: 300ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --focus-ring: 0 0 0 2px rgba(56, 189, 248, 0.55);
 
   /* ---- 字号：5 档（原来 11 档）---- */
   --fs-2xs: 10px;
@@ -47,9 +55,11 @@
   --sp-4: 16px;
   --sp-5: 24px;
 
-  /* ---- 字体 ---- */
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
+  /* ---- 字体：系统栈优先（本地工具不依赖外网字体），mono 用于时长/时间码 ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Segoe UI',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo,
+    monospace;
 
   /* ---- 层级 ---- */
   --z-panel: 30;
@@ -59,6 +69,11 @@
 
   /* ---- 阴影 ---- */
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  /* ---- 语义色dim（状态底色）---- */
+  --warn-dim: rgba(251, 191, 36, 0.12);
+  --danger-dim: rgba(248, 113, 113, 0.12);
+  --ok-dim: rgba(74, 222, 128, 0.12);
 }
 
 * {
@@ -302,6 +317,7 @@ kbd {
   font-size: var(--fs-sm);
   color: var(--accent);
   letter-spacing: 0.6px;
+  font-family: var(--font-mono);
 }
 
 .shot-dur {
@@ -310,6 +326,8 @@ kbd {
   background: var(--panel-2);
   border-radius: var(--r-sm);
   padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .shot-meta {
