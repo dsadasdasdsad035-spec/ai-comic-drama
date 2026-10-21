@@ -48,15 +48,17 @@ const CAP_TO_PC: Record<Cap, ProviderCap> = {
 const PC_GROUPS: { pc: ProviderCap; label: string; hint: string }[] = [
   { pc: 'text', label: '文本渠道', hint: '拆集 / 拆镜 / 拆角色 / 提示词' },
   { pc: 'image', label: '图片渠道', hint: '出画面 / 角色三视图' },
-  { pc: 'video', label: '视频渠道', hint: '图生视频（目前走方舟 Seedance CLI）' },
+  { pc: 'video', label: '视频渠道', hint: '图生视频（服务端 API 调用）' },
   { pc: 'audio', label: '音频渠道', hint: '台词配音' },
 ]
 
 const KIND_META: { kind: ProviderKind; label: string }[] = [
   { kind: 'ark', label: '字节方舟（ARK）' },
+  { kind: 'ark-plan', label: '字节方舟 · Agent Plan' },
   { kind: 'openai', label: 'OpenAI 兼容' },
   { kind: 'minimax', label: 'MiniMax' },
   { kind: 'elevenlabs', label: 'ElevenLabs' },
+  { kind: 'volc-tts', label: '火山语音 · Seed TTS' },
 ]
 
 const RULE_META = [
@@ -209,7 +211,13 @@ export default function Settings({ toast }: Props) {
                           <input
                             type="password"
                             value={p.apiKey || ''}
-                            placeholder={p.kind === 'ark' ? '留空 = 沿用 .env 的 ARK_API_KEY' : '必填'}
+                            placeholder={
+                              p.kind === 'ark'
+                                ? '留空 = 沿用 .env 的 ARK_API_KEY'
+                                : p.kind === 'ark-plan' || p.kind === 'volc-tts'
+                                  ? '留空 = 沿用 .env 的 ARK_AGENT_PLAN_API_KEY / VOLC_TTS_API_KEY'
+                                  : '必填'
+                            }
                             onChange={(e) => patchProvider(p.id, { apiKey: e.target.value })}
                           />
                         </label>
@@ -374,6 +382,7 @@ export default function Settings({ toast }: Props) {
             <h3>计价</h3>
             <span className="st-hint">
               默认值是估算，对不上账单就按实际单价改。图片按张、视频按秒（480p/720p 分开）、配音按次。
+              Agent Plan 按 AFP 扣减，这里的人民币单价只作估算，不能当作账单。
             </span>
           </header>
           <div className="st-grid">

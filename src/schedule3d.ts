@@ -7,7 +7,7 @@ import type { ShotLayout } from './types'
  * 为什么用 3D：平面图看不出高度与遮挡关系。这里人物是胶囊体、机位是带视锥的相机，
  * 镜头沿「机位 → 看的方向」推近，能直观看走位与轴线。
  *
- * 为什么要录视频：Seedance CLI 只吃图片（image / last-frame / ref-images），
+ * 为什么要录视频：Seedance 只吃图片（首帧 / 尾帧 / 参考图），
  * 所以视频会被抽成帧再当参考图用 —— 视频给人看，帧给模型用。
  */
 export type ScheduleOptions = {

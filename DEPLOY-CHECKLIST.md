@@ -1,6 +1,6 @@
 # 部署前须做清单（storyboard-canvas）
 
-> 结论：**当前形态不适合直接发布到云端**。本地可用，但换一台机器有 4 个硬阻塞。
+> 结论：**当前形态不适合直接发布到云端**。本地可用，但换一台机器有 3 个硬阻塞。
 > 本文记录每一项改什么、改哪里、大概多少工作量，便于以后一次性动手。
 
 ---
@@ -13,13 +13,13 @@
 | 项目数据读写（project.json） | ✅ | ⚠️ 需改成服务端持久化，沙箱文件系统重启即丢 |
 | 文本生成（剧本/拆镜/提示词） | ✅ | ❌ 需注入 ARK Key |
 | 出图（Seedream） | ✅ | ❌ 同上 |
-| 出片（Seedance） | ✅ | ❌ 依赖项目目录外的 Python CLI |
+| 出片（Seedance） | ✅（HTTP API） | ⚠️ 需注入 ARK Key，不再依赖 Python CLI |
 | 配音 | ✅（macOS say） | ❌ Linux 无 say，且未配 ElevenLabs |
 | 合成 / 字幕 | ✅（Homebrew ffmpeg-full） | ❌ 只探测 macOS 路径 |
 
 ---
 
-## 二、四个硬阻塞
+## 二、三个硬阻塞
 
 ### 1. API 路由只在 dev server 里存在（最根本）
 
@@ -46,19 +46,7 @@ Linux 上三条都不存在。
 注意 `ffmpeg-static` 默认**不带 libass**，字幕烧录会失效；纯合片不受影响。
 **工作量**：小（半天），但字幕功能需要另外的方案（见下文「软字幕」）。
 
-### 3. 出片依赖项目目录外的 Python CLI
-
-```ts
-const SEEDANCE_CLI = path.join(os.homedir(), '.workbuddy', 'skills',
-  'seedance-video-generation', 'seedance.py')
-```
-它在项目目录之外，**发布时不会被打包**。
-
-**改法**：把 Seedance 调用改成纯 HTTP（提交任务 → 轮询 → 下载产物），去掉对外部脚本的依赖。
-接口形态可参考 CLI 现有逻辑。
-**工作量**：中（半天到 1 天）。
-
-### 4. 配音只有 macOS `say`，没有云端引擎
+### 3. 配音只有 macOS `say`，没有云端引擎
 
 `ttsProvider` 现在是 `macos-say`，因为 `.env` 里没有 `ELEVENLABS_API_KEY`。
 
@@ -92,10 +80,9 @@ const SEEDANCE_CLI = path.join(os.homedir(), '.workbuddy', 'skills',
 
 1. **抽独立 server**（阻塞项，其他都依赖它）
 2. **ffmpeg-static + Key 走环境变量**
-3. **Seedance 改 HTTP**
-4. **TTS 换云端引擎**
+3. **TTS 换云端引擎**
 
-前两步完成后，就能部署出一个「能看、能改、能出图」的版本；出片和配音可以后续补。
+前两步完成后，就能部署出一个「能看、能改、能出图」的版本；出片已经走纯 HTTP API，配音可以后续补。
 
 ---
 
@@ -120,6 +107,7 @@ GET  /api/project?name=X  → 能读到 episodes / characters / shots
 POST /api/text            → 返回 ok 与 model
 POST /api/voice           → 返回 url（若禁用应返回明确原因）
 POST /api/generate        → 返回图片 url
-POST /api/seedance        → 返回任务 id
+POST /api/seedance        → 返回任务 id（服务端提交方舟任务并轮询）
+GET  /api/seedance?id=...  → 能轮询到 succeeded，并返回本地视频路径
 POST /api/assemble        → 轮询能到 succeeded
 ```

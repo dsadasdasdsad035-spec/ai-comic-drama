@@ -247,9 +247,10 @@ export type VoiceOption = { id: string; label: string }
 export type VoiceList = { provider: string; voices: VoiceOption[] }
 
 /** 列出当前 TTS provider 下真正可用的音色 */
-export async function listVoices(): Promise<VoiceList> {
+export async function listVoices(modelKey?: string): Promise<VoiceList> {
   try {
-    const r = await fetch('/api/voices')
+    const q = modelKey ? `?modelKey=${encodeURIComponent(modelKey)}` : ''
+    const r = await fetch(`/api/voices${q}`)
     const j = await readJsonRes(r)
     if (!j.ok) return { provider: 'none', voices: [] }
     return { provider: j.provider ?? 'unknown', voices: j.voices ?? [] }
@@ -447,7 +448,7 @@ export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; te
 export type RulePack = { enabled: boolean; text: string }
 
 export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
-export type ProviderKind = 'ark' | 'openai' | 'minimax' | 'elevenlabs'
+export type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {
   id: string
@@ -476,6 +477,7 @@ export type AppSettings = {
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   apiKey: string
   rules: Record<string, RulePack>
+  presetsVersion?: number
 }
 
 export async function getSettings(): Promise<{ settings: AppSettings; db?: string }> {

@@ -211,10 +211,6 @@ function Shell() {
       setHasKey(h ? h.hasKey : null)
       setAssReady(Boolean((h as any)?.ffmpegAss))
     })
-    listVoices().then((v) => {
-      setVoices(v.voices)
-      setVoiceProvider(v.provider)
-    })
   }, [])
 
   const patch = useCallback(
@@ -355,6 +351,20 @@ function Shell() {
   useEffect(() => {
     reloadSettings()
   }, [reloadSettings])
+
+  /** 当前生效的配音模型：手动选择 > 设置页默认；切换后重新取对应渠道的音色 */
+  const audioModelKey = modelPick.audio || appSettings?.defaults?.audio || ''
+  useEffect(() => {
+    let alive = true
+    listVoices(audioModelKey || undefined).then((v) => {
+      if (!alive) return
+      setVoices(v.voices)
+      setVoiceProvider(v.provider)
+    })
+    return () => {
+      alive = false
+    }
+  }, [audioModelKey])
 
   /**
    * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。

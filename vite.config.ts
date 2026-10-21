@@ -6,6 +6,18 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath } from './server/db.mjs'
+import {
+  VideoParamError,
+  buildVideoPayload,
+  downloadVideoArtifacts,
+  pollVideoTask,
+  submitVideoTask,
+} from './server/video.mjs'
+import {
+  DEFAULT_VOLC_TTS_VOICE,
+  VOLC_TTS_VOICES,
+  synthesizeVolcTts,
+} from './server/volc-tts.mjs'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -20,13 +32,6 @@ const TEXT_MODELS = {
 const VIDEO_MODEL = 'doubao-seedance-1-0-pro-250528'
 /** 多参考图（reference_image，1~4 张）走 Lite I2V；已开通 1.5 pro 可在设置页换模型 */
 const VIDEO_REF_MODEL = 'doubao-seedance-1-0-lite-i2v-250428'
-const SEEDANCE_CLI = path.join(
-  os.homedir(),
-  '.workbuddy',
-  'skills',
-  'seedance-video-generation',
-  'seedance.py',
-)
 
 /** 画幅 → Seedream 合规像素（4.5 要求总像素 ≥ 3,686,400） */
 const RATIO_SIZE: Record<string, string> = {
@@ -86,7 +91,7 @@ type RulePack = { enabled: boolean; text: string }
 type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 
 /** 渠道协议：决定请求怎么发 */
-type ProviderKind = 'ark' | 'openai' | 'minimax' | 'elevenlabs'
+type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 
 type Provider = {
   id: string
@@ -124,6 +129,8 @@ type AppSettings = {
   /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
+  /** 预设迁移版本：只在升级时合并一次新渠道/模型 */
+  presetsVersion?: number
 }
 
 /** 预置渠道：用户不用配也能跑（Key 留空时 ARK 走 .env） */
@@ -135,6 +142,14 @@ const DEFAULT_PROVIDERS: Provider[] = [
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     note: '文本 / Seedream 生图 / Seedance 视频，Key 可留空沿用 .env',
     caps: ['text', 'image', 'video'],
+  },
+  {
+    id: 'ark-plan',
+    label: '字节 · Agent Plan',
+    kind: 'ark-plan',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
+    note: 'Agent Plan 专属 Key（可留空沿用 .env 的 ARK_AGENT_PLAN_API_KEY）；文本/图片可用，视频不在本套餐，按 AFP 计费',
+    caps: ['text', 'image'],
   },
   {
     id: 'deepseek',
@@ -161,6 +176,14 @@ const DEFAULT_PROVIDERS: Provider[] = [
     caps: ['audio'],
   },
   {
+    id: 'volc-tts',
+    label: '火山语音 · Seed TTS',
+    kind: 'volc-tts',
+    baseUrl: 'https://openspeech.bytedance.com/api/v3/plan',
+    note: 'Agent Plan 语音（可留空沿用 .env 的 ARK_AGENT_PLAN_API_KEY）；需在控制台开启扣减，按 AFP 计费',
+    caps: ['audio'],
+  },
+  {
     id: 'openai',
     label: '第三方 · OpenAI 兼容',
     kind: 'openai',
@@ -174,6 +197,30 @@ const DEFAULT_PROVIDERS: Provider[] = [
 const DEFAULT_MODELS: ModelEntry[] = [
   { key: 'ark-text-lite', label: '豆包 · lite', cap: 'text', provider: 'ark', model: TEXT_MODELS.lite },
   { key: 'ark-text-pro', label: '豆包 · pro', cap: 'textPro', provider: 'ark', model: TEXT_MODELS.pro },
+  {
+    key: 'ark-plan-text-lite',
+    label: '豆包 2.1 lite（Agent Plan）',
+    cap: 'text',
+    provider: 'ark-plan',
+    model: 'doubao-seed-2-1-lite-260915',
+  },
+  {
+    key: 'ark-plan-text-pro',
+    label: '豆包 2.1 pro（Agent Plan）',
+    cap: 'textPro',
+    provider: 'ark-plan',
+    model: 'doubao-seed-2-1-pro-260915',
+  },
+  {
+    key: 'ark-plan-text-evolving',
+    label: '豆包 Seed Evolving（Agent Plan）',
+    cap: 'textPro',
+    provider: 'ark-plan',
+    model: 'doubao-seed-evolving',
+  },
+  { key: 'ark-plan-text-deepseek', label: 'DeepSeek V4 Pro（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'deepseek-v4-pro' },
+  { key: 'ark-plan-text-kimi', label: 'Kimi K3（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'kimi-k3' },
+  { key: 'ark-plan-text-glm', label: 'GLM 5.3（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'glm-5.3' },
   { key: 'deepseek-chat', label: 'DeepSeek Chat', cap: 'text', provider: 'deepseek', model: 'deepseek-chat' },
   {
     key: 'deepseek-reasoner',
@@ -186,6 +233,20 @@ const DEFAULT_MODELS: ModelEntry[] = [
   { key: 'ark-image', label: 'Seedream 4.5', cap: 'image', provider: 'ark', model: MODEL },
   { key: 'ark-view', label: 'Seedream 4.5（三视图）', cap: 'view', provider: 'ark', model: MODEL },
   {
+    key: 'ark-plan-image',
+    label: 'Seedream 5.0 Pro（Agent Plan）',
+    cap: 'image',
+    provider: 'ark-plan',
+    model: 'doubao-seedream-5-0-pro-260628',
+  },
+  {
+    key: 'ark-plan-view',
+    label: 'Seedream 5.0 Pro（三视图 · Agent Plan）',
+    cap: 'view',
+    provider: 'ark-plan',
+    model: 'doubao-seedream-5-0-pro-260628',
+  },
+  {
     key: 'openai-image',
     label: 'gpt-image-1（第三方）',
     cap: 'image',
@@ -196,25 +257,53 @@ const DEFAULT_MODELS: ModelEntry[] = [
   { key: 'ark-video', label: 'Seedance 1.0 pro', cap: 'video', provider: 'ark', model: VIDEO_MODEL },
   { key: 'ark-video-ref', label: 'Seedance Lite I2V（多参考）', cap: 'videoRef', provider: 'ark', model: VIDEO_REF_MODEL },
   { key: 'eleven-tts', label: 'ElevenLabs 多语言 v2', cap: 'audio', provider: 'elevenlabs', model: 'eleven_multilingual_v2' },
+  { key: 'volc-tts', label: '火山 Seed TTS 2.0', cap: 'audio', provider: 'volc-tts', model: 'doubao-seed-tts-2.0' },
   { key: 'minimax-tts', label: 'MiniMax speech-02-hd', cap: 'audio', provider: 'minimax', model: 'speech-02-hd' },
 ]
 
 const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
-  text: 'ark-text-lite',
-  textPro: 'ark-text-pro',
-  image: 'ark-image',
-  view: 'ark-view',
+  text: 'ark-plan-text-lite',
+  textPro: 'ark-plan-text-pro',
+  image: 'ark-plan-image',
+  view: 'ark-plan-view',
   video: 'ark-video',
   videoRef: 'ark-video-ref',
-  audio: 'eleven-tts',
+  audio: 'volc-tts',
 }
 
 /** 老渠道没有 caps 字段时按协议推一个默认用途 */
 function capsOfKind(kind: ProviderKind): ProviderCap[] {
   if (kind === 'ark') return ['text', 'image', 'video']
+  if (kind === 'ark-plan') return ['text', 'image']
   if (kind === 'openai') return ['text', 'image']
   if (kind === 'minimax') return ['text', 'audio']
+  if (kind === 'volc-tts') return ['audio']
   return ['audio']
+}
+
+/** 预设迁移版本：只在升级时合并一次 v2 新增的 Agent Plan / 火山语音预设 */
+const CURRENT_PRESETS_VERSION = 2
+const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
+const V2_PRESET_MODEL_KEYS = new Set(
+  DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
+)
+
+function mergePresets(cur: AppSettings, version: number): AppSettings {
+  if (version >= CURRENT_PRESETS_VERSION) return { ...cur, presetsVersion: version }
+  const providerIds = new Set(cur.providers.map((p) => p.id))
+  const modelKeys = new Set(cur.models.map((m) => m.key))
+  return {
+    ...cur,
+    providers: [
+      ...cur.providers,
+      ...DEFAULT_PROVIDERS.filter((p) => V2_PRESET_PROVIDER_IDS.has(p.id) && !providerIds.has(p.id)),
+    ],
+    models: [
+      ...cur.models,
+      ...DEFAULT_MODELS.filter((m) => V2_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
+    ],
+    presetsVersion: CURRENT_PRESETS_VERSION,
+  }
 }
 
 /** 老结构（models.lite/pro/image/video/videoRef）→ 新结构，只做读时转换 */
@@ -234,14 +323,19 @@ function normalizeSettings(raw: any): AppSettings {
             : (def?.caps ?? capsOfKind(p.kind)),
       }
     })
-    return {
-      providers,
-      models: raw.models,
-      defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
-      pricing: raw.pricing || {},
-      apiKey,
-      rules,
-    }
+    const version = Number(raw.presetsVersion) || 1
+    return mergePresets(
+      {
+        providers,
+        models: raw.models as ModelEntry[],
+        defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
+        pricing: raw.pricing || {},
+        apiKey,
+        rules,
+        presetsVersion: version,
+      },
+      version,
+    )
   }
   const legacy = (raw?.models || {}) as Record<string, string>
   const providers = DEFAULT_PROVIDERS.map((p) => (p.id === 'ark' ? { ...p, apiKey } : { ...p }))
@@ -254,7 +348,15 @@ function normalizeSettings(raw: any): AppSettings {
     if (m.key === 'ark-video-ref' && legacy.videoRef) return { ...m, model: legacy.videoRef }
     return { ...m }
   })
-  return { providers, models, defaults: { ...DEFAULT_DEFAULTS }, pricing: {}, apiKey, rules }
+  return {
+    providers,
+    models,
+    defaults: { ...DEFAULT_DEFAULTS },
+    pricing: {},
+    apiKey,
+    rules,
+    presetsVersion: CURRENT_PRESETS_VERSION,
+  }
 }
 
 let settingsReady = false
@@ -267,7 +369,17 @@ function getAppSettings(): AppSettings {
       dbPath(resolveRoot(appRoot || process.cwd()))
       settingsReady = true
     }
-    return normalizeSettings(getSetting('app'))
+    const raw = getSetting('app')
+    const normalized = normalizeSettings(raw)
+    // 预设迁移只落盘一次；之后用户删掉的预设不会被反复加回来
+    if ((Number(raw?.presetsVersion) || 1) < CURRENT_PRESETS_VERSION) {
+      try {
+        setSetting('app', normalized)
+      } catch {
+        /* 只读环境忽略，内存里仍可用 */
+      }
+    }
+    return normalized
   } catch {
     return normalizeSettings(null)
   }
@@ -284,6 +396,7 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
+    presetsVersion: CURRENT_PRESETS_VERSION,
   }
   setSetting('app', next)
   return next
@@ -301,11 +414,31 @@ function pickModel(cap: Cap, keyOverride?: string): { entry?: ModelEntry; provid
   return { entry, provider }
 }
 
-/** 渠道 Key：非 ARK 渠道不会拿 ARK 的 Key 兜底，避免串号 401 */
+/** 渠道 Key：设置库里的值优先；没有时再读本地 .env / 环境变量，避免重建库后丢 Key */
 function providerKey(p?: Provider): string {
   const own = String(p?.apiKey || '').trim()
   if (own) return own
   if (!p || p.kind === 'ark') return readApiKey() || ''
+  if (p.kind === 'ark-plan') {
+    return (
+      readEnvKey('ARK_AGENT_PLAN_API_KEY') ||
+      readEnvKey('ARK_PLAN_API_KEY') ||
+      readEnvKey('VOLC_API_KEY') ||
+      ''
+    )
+  }
+  if (p.kind === 'volc-tts') {
+    return (
+      readEnvKey('VOLC_TTS_API_KEY') ||
+      readEnvKey('ARK_AGENT_PLAN_API_KEY') ||
+      readEnvKey('ARK_PLAN_API_KEY') ||
+      readEnvKey('VOLC_API_KEY') ||
+      ''
+    )
+  }
+  if (p.kind === 'elevenlabs') return readEnvKey('ELEVENLABS_API_KEY') || ''
+  if (p.kind === 'minimax') return readEnvKey('MINIMAX_API_KEY') || ''
+  if (p.kind === 'openai') return readEnvKey('OPENAI_API_KEY') || ''
   return ''
 }
 
@@ -376,6 +509,9 @@ function resolveRef(ref: string, root: string): string {
   if (ref.startsWith('data:') || ref.startsWith('http')) return ref
   const clean = ref.split('?')[0].replace(/^\//, '')
   const file = path.join(root, 'public', clean)
+  if (!fs.existsSync(file)) throw new Error(`参考图不存在：${ref}`)
+  const size = fs.statSync(file).size
+  if (size > 30 * 1024 * 1024) throw new Error(`参考图超过 30MB：${ref}`)
   const buf = fs.readFileSync(file)
   const ext = path.extname(file).slice(1) || 'png'
   return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buf.toString('base64')}`
@@ -391,38 +527,11 @@ type VideoJob = {
   message?: string
   startedAt: number
   elapsed?: number
+  /** 方舟任务 id，便于排查与后续恢复 */
+  taskId?: string
 }
 
 const videoJobs = new Map<string, VideoJob>()
-
-function runSeedance(args: string[], apiKey: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'python3',
-      [SEEDANCE_CLI, ...args],
-      {
-        env: { ...process.env, ARK_API_KEY: apiKey },
-        timeout: 10 * 60 * 1000,
-        maxBuffer: 16 * 1024 * 1024,
-      },
-      (err, stdout, stderr) => {
-        if (err) {
-          const raw = `${stderr || ''}\n${stdout || ''}`
-          const line =
-            raw
-              .split('\n')
-              .map((s) => s.trim())
-              .filter((s) => s && !s.startsWith('{') && !s.startsWith('"') && !s.startsWith('}'))
-              .slice(-2)
-              .join(' · ') || err.message
-          reject(new Error(line))
-          return
-        }
-        resolve(stdout)
-      },
-    )
-  })
-}
 
 /** 静态文件直出：绕开 vite 启动时建立的 public 索引 + 支持 Range（视频拖动进度条需要） */
 function serveFile(res: any, req: any, file: string, mime: string) {
@@ -469,8 +578,17 @@ function mimeOf(ext: string): string {
   return 'image/png'
 }
 
-/** 缓存的可用音色列表 */
-let voiceCache: { provider: string; voices: { id: string; label: string }[]; at: number } | null = null
+/** 缓存的可用音色列表：按渠道 id 分开，切换配音模型时不会串音色 */
+type VoiceCacheEntry = { provider: string; voices: { id: string; label: string }[]; at: number }
+const voiceCache = new Map<string, VoiceCacheEntry>()
+
+/** MiniMax 没有稳定的音色列表接口，先用常用音色 */
+const MINIMAX_VOICES = [
+  { id: 'male-qn-qingse', label: 'MiniMax · 青涩男声' },
+  { id: 'female-shaonv', label: 'MiniMax · 少女音' },
+  { id: 'male-qn-jingying', label: 'MiniMax · 精英男声' },
+  { id: 'female-yujie', label: 'MiniMax · 御姐音' },
+]
 
 /** say 的 zh 发音人里有一堆"列表里有但没下载"的，会静默输出 15ms 空音频，必须实测 */
 async function probeSayVoices(): Promise<{ id: string; label: string }[]> {
@@ -511,34 +629,54 @@ async function probeSayVoices(): Promise<{ id: string; label: string }[]> {
   return results.filter((v): v is { id: string; label: string } => Boolean(v))
 }
 
-async function listVoices(): Promise<{ provider: string; voices: { id: string; label: string }[] }> {
-  if (voiceCache && Date.now() - voiceCache.at < 10 * 60 * 1000) return voiceCache
+async function listVoices(modelKey?: string): Promise<{
+  provider: string
+  voices: { id: string; label: string }[]
+}> {
+  const { provider } = pickModel('audio', modelKey)
+  const kind = provider?.kind
+  const cacheKey = provider?.id || 'none'
+  const cached = voiceCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached
 
-  const key = readEnvKey('ELEVENLABS_API_KEY')
-  if (key) {
-    try {
-      const r = await fetch(ELEVEN_VOICES, { headers: { 'xi-api-key': key } })
-      if (r.ok) {
-        const j: any = await r.json()
-        const voices = (j?.voices ?? []).map((v: any) => ({
-          id: String(v.voice_id),
-          label: `${v.name}${v.labels?.accent ? ` · ${v.labels.accent}` : ''}${
-            v.labels?.gender ? ` · ${v.labels.gender}` : ''
-          }`,
-        }))
-        if (voices.length > 0) {
-          voiceCache = { provider: 'elevenlabs', voices, at: Date.now() }
-          return voiceCache
-        }
-      }
-    } catch {
-      /* 落回本地 */
+  let result: VoiceCacheEntry
+  if (kind === 'volc-tts') {
+    result = {
+      provider: 'volc-tts',
+      voices: VOLC_TTS_VOICES.map((v) => ({ ...v })),
+      at: Date.now(),
     }
+  } else if (kind === 'minimax') {
+    result = { provider: 'minimax', voices: MINIMAX_VOICES.slice(), at: Date.now() }
+  } else {
+    // ElevenLabs 用自己的 Key；没有 Key 或不是 ElevenLabs 时回落 macOS say
+    const key =
+      kind === 'elevenlabs' ? providerKey(provider) || readEnvKey('ELEVENLABS_API_KEY') : ''
+    let voices: { id: string; label: string }[] | null = null
+    if (key) {
+      try {
+        const r = await fetch(ELEVEN_VOICES, { headers: { 'xi-api-key': key } })
+        if (r.ok) {
+          const j: any = await r.json()
+          const list = (j?.voices ?? []).map((v: any) => ({
+            id: String(v.voice_id),
+            label: `${v.name}${v.labels?.accent ? ` · ${v.labels.accent}` : ''}${
+              v.labels?.gender ? ` · ${v.labels.gender}` : ''
+            }`,
+          }))
+          if (list.length > 0) voices = list
+        }
+      } catch {
+        /* 落回本地 */
+      }
+    }
+    result = voices
+      ? { provider: 'elevenlabs', voices, at: Date.now() }
+      : { provider: 'macos-say', voices: await probeSayVoices(), at: Date.now() }
   }
 
-  const voices = await probeSayVoices()
-  voiceCache = { provider: 'macos-say', voices, at: Date.now() }
-  return voiceCache
+  voiceCache.set(cacheKey, result)
+  return result
 }
 
 // ---------- animatic 合成（ffmpeg） ----------
@@ -664,6 +802,19 @@ async function synthesize(
   const { provider, entry } = pickModel('audio', modelKey)
   const kind = provider?.kind
   const ownKey = providerKey(provider)
+  if (kind === 'volc-tts') {
+    if (!ownKey) throw new Error('火山 TTS 渠道没有填 API Key，去设置页填一下')
+    const base = String(provider?.baseUrl || 'https://openspeech.bytedance.com/api/v3/plan').replace(
+      /\/+$/,
+      '',
+    )
+    const speaker = VOLC_TTS_VOICES.some((v) => v.id === voice) ? voice : DEFAULT_VOLC_TTS_VOICE
+    const out = await synthesizeVolcTts({ baseUrl: base, apiKey: ownKey, text, speaker })
+    const file = path.join(outDir, `voice-${stamp}.mp3`)
+    fs.writeFileSync(file, out.audio)
+    const seconds = await probeDuration(file)
+    return { url: `/voices/voice-${stamp}.mp3`, engine: out.engine, seconds }
+  }
   if (kind === 'minimax' && ownKey) {
     return synthesizeMinimax(text, voice, ownKey, outDir, stamp, provider!, entry?.model)
   }
@@ -1121,6 +1272,9 @@ function seedreamProxy(): Plugin {
 
         if (url === '/api/health') {
           const ff = await ensureFf()
+          const videoReady = [pickModel('video'), pickModel('videoRef')].some(({ provider }) =>
+            provider ? provider.kind === 'ark' && Boolean(providerKey(provider)) : Boolean(readApiKey()),
+          )
           res.setHeader('Content-Type', 'application/json')
           res.end(
             JSON.stringify({
@@ -1130,7 +1284,7 @@ function seedreamProxy(): Plugin {
               model: effImageModel(),
               videoModel: effVideoModel(),
               videoRefModel: effVideoRefModel(),
-              videoReady: fs.existsSync(SEEDANCE_CLI),
+              videoReady,
               ffmpegReady: fs.existsSync(FFMPEG),
               ttsReady: fs.existsSync(SAY),
               ttsProvider: readEnvKey('ELEVENLABS_API_KEY') ? 'elevenlabs' : 'macos-say',
@@ -1183,7 +1337,12 @@ function seedreamProxy(): Plugin {
                 JSON.stringify({
                   ok: false,
                   kind: 'no-key',
-                  message: p.kind === 'ark' ? '没有 Key：填到设置页或配 ARK_API_KEY' : '这个渠道还没填 API Key',
+                  message:
+                    p.kind === 'ark'
+                      ? '没有 Key：填到设置页或配 ARK_API_KEY'
+                      : p.kind === 'ark-plan'
+                        ? 'Agent Plan 渠道需要单独填 Key，不会沿用标准方舟 Key'
+                        : '这个渠道还没填 API Key',
                   latency: 0,
                 }),
               )
@@ -1212,6 +1371,105 @@ function seedreamProxy(): Plugin {
                   max_tokens: 1,
                 }),
               }
+            } else if (p.kind === 'ark-plan') {
+              // Agent Plan 不提供 /models，直接用该渠道绑定的文本模型发 1 token
+              const m = s.models.find((x) => x.provider === p.id && x.cap === 'text')?.model
+              if (!m) {
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'config',
+                    message: '这个渠道还没有文本模型，先在模型表加一条再测试',
+                    latency: 0,
+                  }),
+                )
+                return
+              }
+              endpoint = `${base}/chat/completions`
+              init = {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: m,
+                  messages: [{ role: 'user', content: 'ping' }],
+                  max_tokens: 1,
+                }),
+              }
+            } else if (p.kind === 'volc-tts') {
+              // 语音没有免费鉴权端点：发空请求，不产生音频；45000000 表示缺少 req_params
+              const ttsEndpoint = `${base}/tts/unidirectional`
+              const rv = await fetch(ttsEndpoint, {
+                method: 'POST',
+                headers: {
+                  'X-Api-Key': key,
+                  'X-Api-Resource-Id': 'seed-tts-2.0',
+                  'X-Api-Connect-Id': crypto.randomUUID(),
+                  'Content-Type': 'application/json',
+                },
+                body: '{}',
+                signal: AbortSignal.timeout(30_000),
+              })
+              const rawTts = (await rv.text()).slice(0, 800)
+              const firstLine = rawTts.split('\n').map((x) => x.trim()).find(Boolean) || ''
+              let parsed: any = {}
+              try {
+                parsed = JSON.parse(firstLine)
+              } catch {
+                /* 保持原文 */
+              }
+              const code = Number(parsed?.code ?? parsed?.header?.code ?? 0)
+              const msg = String(parsed?.message ?? parsed?.header?.message ?? '')
+              const latencyTts = Date.now() - t0
+              if (rv.status === 401 || rv.status === 403) {
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'auth',
+                    status: rv.status,
+                    latency: latencyTts,
+                    endpoint: ttsEndpoint,
+                    message: `Key 无效或没权限（HTTP ${rv.status}）：${(msg || rawTts).slice(0, 160)}`,
+                  }),
+                )
+                return
+              }
+              if (/AgentPlanDeductNotEnabled/.test(rawTts)) {
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'plan',
+                    status: rv.status,
+                    latency: latencyTts,
+                    endpoint: ttsEndpoint,
+                    message: `Key 可用，但需在 Agent Plan 控制台开启扣减：${msg || rawTts.slice(0, 160)}`,
+                  }),
+                )
+                return
+              }
+              if (code === 45000000 || code === 0) {
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    kind: 'ok',
+                    status: rv.status,
+                    latency: latencyTts,
+                    endpoint: ttsEndpoint,
+                    message: '连通，鉴权通过（未合成音频）',
+                  }),
+                )
+                return
+              }
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: 'api',
+                  status: rv.status,
+                  latency: latencyTts,
+                  endpoint: ttsEndpoint,
+                  message: `HTTP ${rv.status} code ${code}：${(msg || rawTts).slice(0, 160)}`,
+                }),
+              )
+              return
             } else {
               // ark / openai：先试 models 列表（免费），不行再退回 1 token 对话
               endpoint = `${base}/models`
@@ -1588,7 +1846,8 @@ function seedreamProxy(): Plugin {
         if (url === '/api/voices') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           try {
-            const list = await listVoices()
+            const q = new URL(req.url || '', 'http://x').searchParams
+            const list = await listVoices(q.get('modelKey') || '')
             res.end(JSON.stringify({ ok: true, ...list }))
           } catch (e) {
             res.statusCode = 500
@@ -1788,10 +2047,9 @@ function seedreamProxy(): Plugin {
           return
         }
 
-        // ---- 图生视频：提交 + 轮询（生成可能 1~4 分钟，不走长连接） ----
+        // ---- 图生视频：提交方舟任务 + 服务端轮询 + 下载产物 ----
         if (url === '/api/seedance') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          const key = readApiKey()
 
           if (req.method === 'GET') {
             const q = new URL(req.url || '', 'http://x').searchParams
@@ -1809,13 +2067,6 @@ function seedreamProxy(): Plugin {
           if (req.method !== 'POST') {
             res.statusCode = 405
             res.end(JSON.stringify({ ok: false, message: '只支持 POST / GET' }))
-            return
-          }
-          if (!fs.existsSync(SEEDANCE_CLI)) {
-            res.statusCode = 500
-            res.end(
-              JSON.stringify({ ok: false, message: `未找到 Seedance 脚本：${SEEDANCE_CLI}`, kind: 'no-cli' }),
-            )
             return
           }
 
@@ -1837,61 +2088,13 @@ function seedreamProxy(): Plugin {
               return
             }
 
-            // 图片入参统一落地：http 直接用，dataURL 写临时文件，/xxx 映射到 public
-            const tmpDir = path.join(os.tmpdir(), 'storyboard-canvas')
-            fs.mkdirSync(tmpDir, { recursive: true })
-            const prep = (src: string, tag: string): string => {
-              if (src.startsWith('data:')) {
-                const b64 = src.split(',')[1] || ''
-                const ext = /image\/png/.test(src) ? 'png' : 'jpg'
-                const out = path.join(tmpDir, `${tag}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`)
-                fs.writeFileSync(out, Buffer.from(b64, 'base64'))
-                return out
-              }
-              const p = src.startsWith('/')
-                ? path.join(root, 'public', src.replace(/^\//, '').split('?')[0])
-                : src
-              if (!p.startsWith('http') && !fs.existsSync(p)) throw new Error(`${tag} 图片不存在：${p}`)
-              return p
-            }
-            let imgPath = ''
-            let lastPath = ''
-            const refPaths: string[] = []
-            const skipped: string[] = []
-            try {
-              if (refMode) {
-                // 参考图里个别文件失效不该整单失败：跳过并回报，全坏才算错
-                for (const [i, r] of refImages.entries()) {
-                  try {
-                    refPaths.push(prep(r, `ref${i + 1}`))
-                  } catch {
-                    skipped.push(r)
-                  }
-                }
-                if (refPaths.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
-              } else {
-                imgPath = prep(image, 'first')
-                if (useLastFrame) lastPath = prep(lastFrame, 'last')
-              }
-            } catch (e) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
-              return
-            }
-
             const seconds = Math.min(12, Math.max(2, Math.round(Number(body.seconds) || 5)))
             const ratio = ['16:9', '9:16', '4:3', '1:1', '3:4', '21:9'].includes(String(body.ratio))
               ? String(body.ratio)
               : '16:9'
             const resolution = body.resolution === '720p' ? '720p' : '480p'
             const prompt = String(body.prompt || '').trim() || '镜头缓慢推进，环境细节自然流动，人物保持姿态'
-            const cameraFixed = body.cameraFixed ? 'true' : 'false'
-
-            const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
-            videoJobs.set(id, { status: 'running', startedAt: Date.now() })
-
-            const outDir = path.join(root, 'public', 'videos')
-            fs.mkdirSync(outDir, { recursive: true })
+            const cameraFixed = Boolean(body.cameraFixed)
 
             // 参考图模式走 reference_image 模型，首帧模式走 video 模型；都可由前端指定 modelKey
             const wantKey = String(body.modelKey || '').trim()
@@ -1920,28 +2123,70 @@ function seedreamProxy(): Plugin {
               res.end(
                 JSON.stringify({
                   ok: false,
-                  message: '视频出片目前只走方舟 Seedance CLI，请在设置里选方舟渠道的视频模型',
+                  message: '视频出片目前只支持方舟协议渠道，请在设置里选方舟渠道的视频模型',
                 }),
               )
               return
             }
-            const cliArgs = [
-              'create',
-              '-p', prompt,
-              ...(refMode ? ['--ref-images', ...refPaths] : ['-i', imgPath]),
-              ...(useLastFrame ? ['--last-frame', lastPath] : []),
-              ...(returnLastFrame ? ['--return-last-frame', 'true'] : []),
-              '--ratio', ratio,
-              '-d', String(seconds),
-              '-r', resolution,
-              '-m', model,
-              '--camera-fixed', cameraFixed,
-              '--wait',
-              '--interval', '8',
-              '--download', outDir,
-            ]
+            const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(
+              /\/+$/,
+              '',
+            )
 
-            // dryRun：只回显将要提交的参数，不真的出片（调试 / 验证用）
+            // 本地图片转 data URL（方舟访问不到 127.0.0.1）；参考图个别失效不整单失败
+            let firstUrl = ''
+            let lastUrl = ''
+            const refUrls: string[] = []
+            const skipped: string[] = []
+            try {
+              if (refMode) {
+                for (const r of refImages) {
+                  try {
+                    refUrls.push(resolveRef(r, root))
+                  } catch {
+                    skipped.push(r)
+                  }
+                }
+                if (refUrls.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
+              } else {
+                firstUrl = resolveRef(image, root)
+                if (useLastFrame) lastUrl = resolveRef(lastFrame, root)
+              }
+            } catch (e) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+              return
+            }
+
+            let payload: Record<string, unknown>
+            try {
+              payload = buildVideoPayload({
+                model,
+                prompt,
+                ratio,
+                seconds,
+                resolution,
+                cameraFixed,
+                returnLastFrame,
+                firstFrame: firstUrl,
+                lastFrame: useLastFrame ? lastUrl : '',
+                referenceImages: refUrls,
+              })
+            } catch (e) {
+              if (!(e instanceof VideoParamError)) throw e
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: e.message,
+                  kind: e.kind,
+                  ...(e.details || {}),
+                }),
+              )
+              return
+            }
+
+            // dryRun：只回显将要提交的请求体，不真的出片（调试 / 验证用）
             if (body.dryRun) {
               res.end(
                 JSON.stringify({
@@ -1950,60 +2195,53 @@ function seedreamProxy(): Plugin {
                   mode: refMode ? 'ref' : 'first',
                   model,
                   skipped,
-                  lastFrame: useLastFrame ? lastPath : undefined,
-                  returnLastFrame,
-                  args: cliArgs,
+                  request: payload,
                 }),
               )
               return
             }
 
+            const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+            const startedAt = Date.now()
+            videoJobs.set(id, { status: 'running', startedAt })
+
+            const outDir = path.join(root, 'public', 'videos')
+            const frameDir = path.join(root, 'public', 'generated')
+            fs.mkdirSync(outDir, { recursive: true })
+
             res.end(JSON.stringify({ ok: true, id, mode: refMode ? 'ref' : 'first', model, skipped }))
 
-            // 后台执行，前端轮询
+            // 提交后后台轮询，前端继续用本地 job id 查询
             ;(async () => {
-              const t0 = Date.now()
+              let taskId = ''
               try {
-                const stdout = await runSeedance(cliArgs, runKey)
-                const m = stdout.match(/Saved to:\s*(.+?\.(?:mp4|mov))/)
-                if (!m) throw new Error('未解析到视频产物路径')
-                // 尾帧：模型返回的 URL 24 小时过期，立刻下载到本地，供下一镜当首帧
-                let tail = ''
-                const tailUrl = stdout.match(/Last Frame URL:\s*(https?:\/\/\S+)/)?.[1]
-                if (tailUrl) {
-                  try {
-                    const tr = await fetch(tailUrl)
-                    if (tr.ok) {
-                      const bytes = Buffer.from(await tr.arrayBuffer())
-                      const tn = `tail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.jpg`
-                      fs.writeFileSync(path.join(root, 'public', 'generated', tn), bytes)
-                      tail = `/generated/${tn}`
-                    }
-                  } catch {
-                    /* 尾帧拿不到不影响出片 */
-                  }
-                }
-                const src = m[1].trim()
-                const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
-                fs.copyFileSync(src, path.join(outDir, name))
-                try {
-                  fs.unlinkSync(src)
-                } catch {
-                  /* 临时文件删不掉无所谓 */
-                }
+                const submitted = await submitVideoTask({ baseUrl: base, apiKey: runKey, payload })
+                taskId = submitted.taskId
+                const running = videoJobs.get(id)
+                if (running) running.taskId = taskId
+
+                const done = await pollVideoTask({ baseUrl: base, apiKey: runKey, taskId })
+                const art = await downloadVideoArtifacts({
+                  videoUrl: done.videoUrl,
+                  lastFrameUrl: done.lastFrameUrl,
+                  videoDir: outDir,
+                  frameDir,
+                })
                 videoJobs.set(id, {
                   status: 'succeeded',
-                  url: `/videos/${name}`,
-                  tail,
-                  startedAt: t0,
-                  elapsed: Date.now() - t0,
+                  url: art.url,
+                  tail: art.tail,
+                  startedAt,
+                  elapsed: Date.now() - startedAt,
+                  taskId,
                 })
               } catch (e) {
                 videoJobs.set(id, {
                   status: 'failed',
                   message: (e as Error).message,
-                  startedAt: t0,
-                  elapsed: Date.now() - t0,
+                  startedAt,
+                  elapsed: Date.now() - startedAt,
+                  ...(taskId ? { taskId } : {}),
                 })
               }
             })()
@@ -2067,7 +2305,7 @@ function seedreamProxy(): Plugin {
             '',
           )
           const imgEndpoint = `${base}/images/generations`
-          const refSupported = kind === 'ark'
+          const refSupported = kind === 'ark' || kind === 'ark-plan'
 
           const ratio = String(body.ratio || '16:9')
           const size = RATIO_SIZE[ratio] || RATIO_SIZE['16:9']

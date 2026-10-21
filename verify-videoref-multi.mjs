@@ -2,7 +2,7 @@
  * 视频多参考图验证：
  * 1) 两张素材卡（场景 + 道具）都连到同一镜
  * 2) 点生成视频 → 前端 payload 带 refImages 多张，prompt 含 [图N] 图注
- * 3) 后端 dryRun：/api/seedance 走 reference_image 模式（--ref-images + Lite I2V 模型）
+ * 3) 后端 dryRun：/api/seedance 走 reference_image 角色 + Lite I2V 模型
  * 跑法：node verify-videoref-multi.mjs
  */
 import { chromium } from 'playwright-core'
@@ -129,7 +129,7 @@ if (posts.length) {
   check('不再单传首帧 image', !body.image, String(body.image))
 }
 
-// 后端：dryRun 断言 CLI 参数
+// 后端：dryRun 断言 API 请求体
 const dry = await fetch(`${URL}/api/seedance`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -143,13 +143,23 @@ const dry = await fetch(`${URL}/api/seedance`, {
   }),
 }).then((r) => r.json())
 check('后端 dryRun 走 ref 模式', dry.mode === 'ref', JSON.stringify(dry.mode))
-check('CLI 带 --ref-images', (dry.args ?? []).includes('--ref-images'))
+const refItems = (dry.request?.content ?? []).filter((c) => c.type === 'image_url')
+check(
+  '请求体带参考图角色',
+  refItems.length === imgs.length && refItems.every((c) => c.role === 'reference_image'),
+  JSON.stringify(refItems),
+)
 check(
   '多图用 Lite I2V 模型',
   String(dry.model).includes('lite-i2v'),
   String(dry.model),
 )
-check('没有 -i 首帧参数', !(dry.args ?? []).includes('-i'))
+check('没有 first_frame', !refItems.some((c) => c.role === 'first_frame'), JSON.stringify(refItems))
+check(
+  '顶层参数正确',
+  dry.request?.duration === 5 && dry.request?.ratio === '9:16' && dry.request?.resolution === '720p',
+  JSON.stringify(dry.request),
+)
 
 // 坏图跳过：一张有效 + 一张不存在 → 只提交有效图，skipped 回报
 const dry2 = await fetch(`${URL}/api/seedance`, {
@@ -163,11 +173,8 @@ const dry2 = await fetch(`${URL}/api/seedance`, {
   }),
 }).then((r) => r.json())
 check('失效参考图被跳过而不是整单失败', dry2.ok === true && dry2.skipped?.length === 1, JSON.stringify(dry2.skipped))
-check(
-  '只提交有效图',
-  (dry2.args ?? []).filter((x) => /\.(jpe?g|png|webp)$/i.test(String(x))).length === 1,
-  JSON.stringify(dry2.args),
-)
+const refItems2 = (dry2.request?.content ?? []).filter((c) => c.type === 'image_url')
+check('只提交有效图', refItems2.length === 1, JSON.stringify(refItems2))
 
 // 清理
 await p.evaluate(async (nid) => {

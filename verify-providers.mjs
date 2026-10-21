@@ -57,19 +57,35 @@ check('defaults 保存成功', put.ok && put.settings.defaults.video === 'ark-vi
 
 // ---- 3. dryRun 按 modelKey 选模型 ----
 const files = await import('node:fs').then((m) => m.readdirSync('public/generated'))
-const img = `/generated/${files.find((f) => f.endsWith('.jpg'))}`
+const imgName = files.find((f) => /\.(jpe?g|png|webp)$/i.test(f))
+const img = `/generated/${imgName}`
 const dryFirst = await api('/api/seedance', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ dryRun: true, modelKey: 'ark-video', image: img, prompt: '[图]走', seconds: 5 }),
 })
 check('首帧模式按 modelKey 取模型', dryFirst.ok && /1-0-pro/.test(dryFirst.model ?? ''), String(dryFirst.model))
+const firstItems = (dryFirst.request?.content ?? []).filter((c) => c.type === 'image_url')
+check(
+  '首帧请求体角色与参数正确',
+  firstItems.length === 1 &&
+    firstItems[0].role === 'first_frame' &&
+    dryFirst.request?.duration === 5 &&
+    dryFirst.request?.model === dryFirst.model,
+  JSON.stringify(dryFirst.request),
+)
 const dryRef = await api('/api/seedance', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ dryRun: true, modelKey: 'ark-video-ref', refImages: [img], prompt: '[图1]走', seconds: 5 }),
 })
 check('多参考模式按 modelKey 取模型', dryRef.ok && /lite-i2v/.test(dryRef.model ?? ''), String(dryRef.model))
+const refItems = (dryRef.request?.content ?? []).filter((c) => c.type === 'image_url')
+check(
+  '多参考请求体角色正确',
+  refItems.length === 1 && refItems[0].role === 'reference_image',
+  JSON.stringify(dryRef.request),
+)
 
 // ---- 3b. 渠道测试端点 ----
 const tNoKey = await api('/api/test-provider', {

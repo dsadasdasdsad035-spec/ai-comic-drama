@@ -315,7 +315,15 @@ export default function Inspector({
           <span>台词配音</span>
           <span className="gen-cost">
             {d.voiceUrl ? `${(d.voiceSeconds ?? 0).toFixed(1)}s · ` : ''}
-            {voiceProvider === 'elevenlabs' ? 'ElevenLabs' : voiceProvider === 'macos-say' ? 'macOS TTS' : '无可用引擎'}
+            {voiceProvider === 'elevenlabs'
+              ? 'ElevenLabs'
+              : voiceProvider === 'minimax'
+                ? 'MiniMax'
+                : voiceProvider === 'volc-tts'
+                  ? '火山 Seed TTS'
+                  : voiceProvider === 'macos-say'
+                    ? 'macOS TTS'
+                    : '无可用引擎'}
           </span>
         </div>
         <div className="gen-controls">

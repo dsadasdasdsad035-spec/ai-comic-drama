@@ -15,6 +15,11 @@ public/exports/
 *.pem
 keys.json
 
+# 本地设置/项目数据库（含 API Key）
+projects/*.sqlite
+projects/*.sqlite-wal
+projects/*.sqlite-shm
+
 # 系统与编辑器
 .DS_Store
 __pycache__/
