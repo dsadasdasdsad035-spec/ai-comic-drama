@@ -20,6 +20,7 @@ import './theme.css'
 
 import ShotNode from './ShotNode'
 import CharNode from './CharNode'
+import AssetNode from './AssetNode'
 import ShotEdge from './ShotEdge'
 import Inspector from './Inspector'
 import Timeline from './Timeline'
@@ -37,7 +38,7 @@ import { endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
-import { initialEdges, initialNodes, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
+import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
 import { PRICE_PER_IMAGE, cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
   checkHealth,
@@ -58,7 +59,7 @@ import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
 
-const nodeTypes = { shot: ShotNode, char: CharNode }
+const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
 const edgeTypes = { shot: ShotEdge }
 
 const COLORS = ['#fbbf24', '#f87171', '#38bdf8', '#a3e635', '#c084fc']
@@ -306,11 +307,39 @@ function Shell() {
   )
 
   const onConnect = useCallback(
-    (c: Connection) =>
-      setEdges((eds) => addEdge({ ...c, type: 'shot', data: { relation } } as ShotEdgeType, eds)),
-    [relation, setEdges],
+    (c: Connection) => {
+      const src = nodesRef.current.find((n) => n.id === c.source) as unknown as AssetNodeType | undefined
+      const srcType = (src as unknown as { type?: string } | undefined)?.type
+      // 角色/素材 → 分镜：不进 edges 状态，写进目标镜头的 refIds（随镜头落库），边由 refEdges 派生
+      if ((srcType === 'char' || srcType === 'asset') && c.target) {
+        const tgt = nodesRef.current.find((n) => n.id === c.target)
+        if (!tgt) return
+        const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+        if (!cur.includes(c.source!)) {
+          patch(c.target, { refIds: [...cur, c.source!] } as never)
+          setToast(`已连线为参考（共 ${cur.length + 1} 张）`)
+          window.setTimeout(() => setToast(''), 1800)
+        }
+        return
+      }
+      setEdges((eds) => addEdge({ ...c, type: 'shot', data: { relation } } as ShotEdgeType, eds))
+    },
+    [relation, setEdges, patch],
   )
 
+  /** 删除参考连线 = 从目标镜头的 refIds 里移除 */
+  const onEdgesDeleted = useCallback(
+    (eds: Edge[]) => {
+      for (const e of eds) {
+        if (!e.id.startsWith('ref-')) continue
+        const tgt = nodesRef.current.find((n) => n.id === e.target)
+        if (!tgt) continue
+        const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+        if (cur.includes(e.source)) patch(e.target, { refIds: cur.filter((x) => x !== e.source) } as never)
+      }
+    },
+    [patch],
+  )
   const addShot = () => {
     const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x), 0)
     const no = `S${String(nodes.length + 1).padStart(2, '0')}`
@@ -323,6 +352,18 @@ function Shell() {
     setNodes((ns) => [...ns, node])
     setSelId(node.id)
     window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.62, duration: 400 }), 60)
+  }
+
+  /** 加一张素材卡（场景/道具/图/视频），数据存画布 localStorage */
+  const addAsset = () => {
+    const node = {
+      id: `asset-${uid()}`,
+      type: 'asset',
+      position: { x: 120, y: 220 },
+      data: { title: '新素材', kind: 'image', url: '' },
+    } as unknown as ShotNodeType
+    setNodes((ns) => [...ns, node])
+    setSelId(node.id)
   }
 
   const removeShot = (id: string) => {
@@ -404,10 +445,21 @@ function Shell() {
     return cards
   }, [characters, charPos, shownNodes])
 
-  /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化） */
+  /** 素材卡：混在 nodes 状态里持久化（type==='asset'），不受集过滤，始终显示 */
+  const assetNodes = useMemo(
+    () => nodes.filter((n) => (n as unknown as AssetNodeType).type === 'asset') as unknown as ShotNodeType[],
+    [nodes],
+  )
+
+  /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化）；素材卡始终在 */
   const canvasNodes = useMemo(
-    () => (charsOn ? ([...charNodes, ...shownNodes] as unknown as ShotNodeType[]) : shownNodes),
-    [charsOn, charNodes, shownNodes],
+    () =>
+      [
+        ...(charsOn ? charNodes : []),
+        ...assetNodes,
+        ...shownNodes,
+      ] as unknown as ShotNodeType[],
+    [charsOn, charNodes, assetNodes, shownNodes],
   )
 
   /** cast 命中的 角色 → 镜头 虚线边（派生，不持久化） */
@@ -435,6 +487,62 @@ function Shell() {
     }
     return out
   }, [charsOn, characters, shownNodes])
+  /**
+   * 参考连线（派生）：角色卡/素材卡 → 分镜，id 前缀 ref-。
+   * 连线关系持久在 shot.data.refIds（随镜头写回 project.json）；
+   * 源节点不在画布（角色视图关闭 / 素材被删）时不画边，但 refIds 保留。
+   */
+  /** 选中的参考连线（派生边不在 edges 状态里，React Flow 的选中态会被重算覆盖，自己管一份） */
+  const [selRef, setSelRef] = useState<string | null>(null)
+  const refEdges = useMemo<Edge[]>(() => {
+    const out: Edge[] = []
+    const inCanvas = new Set(canvasNodes.map((n) => n.id))
+    for (const n of shownNodes) {
+      for (const rid of (n.data as unknown as { refIds?: string[] }).refIds ?? []) {
+        if (!inCanvas.has(rid)) continue
+        const eid = `ref-${rid}-${n.id}`
+        const on = selRef === eid
+        out.push({
+          id: eid,
+          source: rid,
+          target: n.id,
+          type: 'default',
+          style: {
+            stroke: '#fbbf24',
+            strokeWidth: on ? 3 : 1.6,
+            filter: on ? 'drop-shadow(0 0 6px #fbbf24)' : undefined,
+          },
+          label: '参考',
+          labelStyle: { fill: '#fbbf24', fontSize: 10 },
+          labelBgStyle: { fill: '#070b11' },
+        } as unknown as Edge)
+      }
+    }
+    return out
+  }, [canvasNodes, shownNodes, selRef])
+
+  /** Delete/Backspace 删掉选中的参考连线（边是派生的，不走 React Flow 的选中删除） */
+  useEffect(() => {
+    if (!selRef) return
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Delete' && ev.key !== 'Backspace') return
+      const t = ev.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      for (const n of nodesRef.current) {
+        const cur = (n.data as unknown as { refIds?: string[] }).refIds ?? []
+        for (const rid of cur) {
+          if (`ref-${rid}-${n.id}` !== selRef) continue
+          ev.preventDefault()
+          patch(n.id, { refIds: cur.filter((x) => x !== rid) } as never)
+          setSelRef(null)
+          return
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selRef, patch])
+
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
   const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
@@ -485,9 +593,13 @@ function Shell() {
   }, [nodes, epNo])
 
   const shownEdges = useMemo<Edge[]>(() => {
-    const ids = new Set(shownNodes.map((n) => n.id))
-    return [...edges.filter((e) => ids.has(e.source) && ids.has(e.target)), ...castEdges]
-  }, [edges, shownNodes, castEdges])
+    const ids = new Set(canvasNodes.map((n) => n.id))
+    return [
+      ...edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+      ...castEdges,
+      ...refEdges,
+    ]
+  }, [edges, canvasNodes, castEdges, refEdges])
 
   /** 点角色节点 → 聚焦到它的出场镜头（名单带修饰也能命中） */
   const focusChar = (name: string) => {
@@ -712,16 +824,41 @@ function Shell() {
             ref = node.data.refImage
           }
         }
-        // 角色一致性靠图不靠词：出场角色（cast）的参考图自动进多图参考，
-        // 外加手动附加的场景图/道具图（refExtras）。上限 10 张，服务端合并去重。
+        // 角色一致性靠图不靠词：参考图按「连线」取——连到本镜的角色卡/素材卡。
+        // 没有连线时兜底 cast 自动匹配；再兜底手动附加 refExtras。上限 10 张。
         const extraRefs: string[] = []
         const refLabels: string[] = []
-        for (const name of node.data.cast ?? []) {
-          const key = matchChar(name, characters)?.name ?? name
-          const img = charImages[key]
-          if (img && !extraRefs.includes(img)) {
+        const nodeRefIds = (node.data as unknown as { refIds?: string[] }).refIds ?? []
+        for (const rid of nodeRefIds) {
+          let img: string | undefined
+          let label = ''
+          if (rid.startsWith('char-')) {
+            const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
+            const card = characters.find((c) => c.id === key || c.name === key)
+            img = card?.image
+            label = `角色「${card?.name ?? key}」外观基准`
+          } else if (rid.startsWith('asset-')) {
+            const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
+            const d = a?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
+            if (d && d.kind !== 'video' && d.url) {
+              img = d.url
+              label = `素材「${d.title ?? ''}」`
+            }
+          }
+          if (img && !extraRefs.includes(img) && img !== ref) {
             extraRefs.push(img)
-            refLabels.push(`图${extraRefs.length + 1}=角色「${name}」外观基准`)
+            refLabels.push(`图${extraRefs.length + 1}=${label}`)
+          }
+        }
+        if (nodeRefIds.length === 0) {
+          // 兜底：cast 自动匹配（老数据没有连线也能吃到角色图）
+          for (const name of node.data.cast ?? []) {
+            const key = matchChar(name, characters)?.name ?? name
+            const img = charImages[key]
+            if (img && !extraRefs.includes(img)) {
+              extraRefs.push(img)
+              refLabels.push(`图${extraRefs.length + 1}=角色「${name}」外观基准`)
+            }
           }
         }
         for (const r of node.data.refExtras ?? []) {
@@ -948,10 +1085,10 @@ function Shell() {
       return
     }
     if (!window.confirm('清空画布上的所有卡片和连线？project.json 里的镜头不受影响，可以再推一次。')) return
-    setNodes([])
+    setNodes((ns) => ns.filter((n) => (n as unknown as AssetNodeType).type === 'asset')) // 素材卡保留
     setEdges([])
     setSelId(null)
-    setToast('画布已清空（project.json 未改动）')
+    setToast('画布已清空（素材卡保留，project.json 未改动）')
     window.setTimeout(() => setToast(''), 2600)
   }
 
@@ -1109,6 +1246,13 @@ function Shell() {
               />
               <button
                 className="btn"
+                onClick={addAsset}
+                title="添加素材卡：场景图 / 道具图 / 参考图 / 视频素材，连线到分镜卡即为参考"
+              >
+                + 素材
+              </button>
+              <button
+                className="btn"
                 onClick={() => setPreview(true)}
                 title="按时间尺顺序连播：有视频放视频，没视频按镜头时长定格"
               >
@@ -1262,13 +1406,24 @@ function Shell() {
               }}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
+              onEdgesDelete={onEdgesDeleted}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodeClick={(_, n) => {
+                setSelRef(null)
                 if (n.id.startsWith('char-')) focusChar(charNameOf(n.id))
                 else setSelId(n.id)
               }}
-              onPaneClick={() => setSelId(null)}
+              onEdgeClick={(_, e) => {
+                if (e.id.startsWith('ref-')) {
+                  setSelId(null)
+                  setSelRef(e.id)
+                }
+              }}
+              onPaneClick={() => {
+                setSelRef(null)
+                setSelId(null)
+              }}
               onNodesDelete={() => setSelId(null)}
               defaultEdgeOptions={{ type: 'shot' }}
               connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}

@@ -46,6 +46,7 @@ export function bizSignature(d: ShotData): string {
     keyframe: localPath(d.refImage),
     clip: localPath(d.videoUrl),
     refExtras: d.refExtras ?? [],
+    refIds: d.refIds ?? [],
   })
 }
 
@@ -65,6 +66,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     clip: localPath(d.videoUrl),
     cast: d.cast,
     refExtras: d.refExtras,
+    refIds: d.refIds,
   }
 }
 
@@ -83,6 +85,7 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     videoUrl: s.clip ?? fallback.videoUrl,
     cast: s.cast,
     refExtras: s.refExtras,
+    refIds: s.refIds,
     shotId: s.id,
     episode: s.episode,
     handEdited: s.handEdited ?? fallback.handEdited,

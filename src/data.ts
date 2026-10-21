@@ -10,6 +10,15 @@ export type CharNodeType = Node<
   'char'
 >
 
+/** 素材类型：场景图 / 道具图 / 普通参考图 / 视频素材 */
+export type AssetKind = 'scene' | 'prop' | 'image' | 'video'
+
+/** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
+export type AssetNodeType = Node<
+  { title: string; kind: AssetKind; url?: string },
+  'asset'
+>
+
 /** 用纯 SVG 生成一张「参考图占位」，避免依赖外网图片 */
 function refArt(a: string, b: string, seed: number) {
   const bars: string[] = []

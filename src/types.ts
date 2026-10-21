@@ -26,6 +26,8 @@ export type ShotData = {
   videoPrompt?: string
   /** 手动附加参考图（场景图/道具图），生成画面时与角色图一起传给 Seedream */
   refExtras?: string[]
+  /** 参考连线：连到本镜的角色卡/素材卡节点 id（生成画面时按它取参考图） */
+  refIds?: string[]
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number

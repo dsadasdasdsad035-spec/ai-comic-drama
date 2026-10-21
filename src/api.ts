@@ -276,6 +276,8 @@ export type ProjectShot = {
   orphan?: boolean
   /** 手动附加参考图（场景图/道具图），生成画面时随角色图一起做多图参考 */
   refExtras?: string[]
+  /** 参考连线节点的 id（角色卡/素材卡），生成画面时按它取参考图 */
+  refIds?: string[]
 }
 
 export type ProjectEpisode = {

@@ -1,7 +1,78 @@
 import type { ShotData } from './types'
 import { CANDIDATE_COUNTS, MOVES, PRICE_PER_IMAGE, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
 import type { VoiceOption } from './api'
-import type { ShotNodeType } from './data'
+import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
+
+/** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
+function AssetPanel({
+  node,
+  patch,
+  onDelete,
+}: {
+  node: AssetNodeType
+  patch: (id: string, p: Record<string, unknown>) => void
+  onDelete: (id: string) => void
+}) {
+  const d = node.data
+  const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
+  const KINDS: { v: AssetKind; label: string }[] = [
+    { v: 'scene', label: '场景图' },
+    { v: 'prop', label: '道具图' },
+    { v: 'image', label: '参考图' },
+    { v: 'video', label: '视频' },
+  ]
+  return (
+    <aside className="inspector">
+      <header className="panel-head">
+        <b>素材卡</b>
+        <span className="panel-sid">{node.id.slice(0, 14)}</span>
+      </header>
+      <div className="field">
+        <span>类型</span>
+        <div className="refx-kinds">
+          {KINDS.map((k) => (
+            <button
+              key={k.v}
+              className={`btn-mini ${d.kind === k.v ? 'on' : ''}`}
+              onClick={() => set({ kind: k.v })}
+            >
+              {k.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="field">
+        <span>标题</span>
+        <input value={d.title} onChange={(e) => set({ title: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>{d.kind === 'video' ? '视频地址' : '图片地址'}</span>
+        <input
+          value={d.url ?? ''}
+          placeholder="/generated/xxx.jpg 或图片 URL"
+          onChange={(e) => set({ url: e.target.value })}
+        />
+      </label>
+      <div className="field">
+        <span>预览</span>
+        {d.url ? (
+          d.kind === 'video' ? (
+            <video src={d.url} muted loop autoPlay playsInline className="asset-preview" />
+          ) : (
+            <img src={d.url} alt={d.title} className="asset-preview" />
+          )
+        ) : (
+          <div className="refx-empty">还没设置地址</div>
+        )}
+      </div>
+      <p className="st-hint">
+        从卡片右侧的圆点拉线到分镜卡，连线即参考 —— 生成画面时图会作为参考图传给模型；
+        视频卡用于管理与预览素材（Seedance 1.0 出片只吃单首帧）。
+      </p>
+      <button className="btn-ghost reset" onClick={() => onDelete(node.id)}>删除素材卡</button>
+    </aside>
+  )
+}
 
 type Props = {
   node: ShotNodeType | null
@@ -63,6 +134,17 @@ export default function Inspector({
           <button className="btn-ghost reset" onClick={onReset}>恢复示例分镜</button>
         </div>
       </aside>
+    )
+  }
+
+  // 素材卡走专属面板（节点数据结构与分镜卡不同）
+  if ((node as unknown as AssetNodeType).type === 'asset') {
+    return (
+      <AssetPanel
+        node={node as unknown as AssetNodeType}
+        patch={patch as unknown as (id: string, p: Record<string, unknown>) => void}
+        onDelete={onDelete}
+      />
     )
   }
 
