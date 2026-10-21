@@ -5,7 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot } from './server/data.mjs'
+import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath } from './server/db.mjs'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -37,6 +37,9 @@ const RATIO_SIZE: Record<string, string> = {
 }
 
 function readApiKey(): string | null {
+  // 设置页里填的 Key 优先于 .env / 环境变量
+  const fromSettings = String(getAppSettings().apiKey || '').trim()
+  if (fromSettings) return fromSettings
   const candidates = [
     path.join(os.homedir(), '.canghe-skills', '.env'),
     path.join(process.cwd(), '.canghe-skills', '.env'),
@@ -71,6 +74,58 @@ function readEnvKey(name: string): string | null {
     }
   }
   return process.env[name] || null
+}
+
+// ---------------------------------------------------------------- 设置（存 SQLite settings 表）
+
+type RulePack = { enabled: boolean; text: string }
+type AppSettings = {
+  models: { lite?: string; pro?: string; image?: string; video?: string }
+  apiKey: string
+  rules: Record<string, RulePack>
+}
+
+let settingsReady = false
+/** 插件启动时赋值（server.config.root），供设置层定位 DB */
+let appRoot = ''
+/** 懒打开 DB（供设置/模型覆盖用；项目路由也会各自 open，同一文件同一连接缓存） */
+function getAppSettings(): AppSettings {
+  const empty: AppSettings = { models: {}, apiKey: '', rules: {} }
+  try {
+    if (!settingsReady) {
+      dbPath(resolveRoot(appRoot || process.cwd()))
+      settingsReady = true
+    }
+    const raw = getSetting('app')
+    return raw ? { ...empty, ...(raw as object) } as AppSettings : empty
+  } catch {
+    return empty
+  }
+}
+
+function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
+  dbPath(resolveRoot(appRoot || process.cwd()))
+  settingsReady = true
+  const cur = getAppSettings()
+  const next: AppSettings = {
+    models: { ...cur.models, ...(patch.models || {}) },
+    apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
+    rules: { ...cur.rules, ...(patch.rules || {}) },
+  }
+  setSetting('app', next)
+  return next
+}
+
+/** 生效的模型 ID：设置页 > 环境变量 > 内置默认 */
+function effTextModel(tier: 'lite' | 'pro'): string {
+  const m = getAppSettings().models
+  return (tier === 'pro' ? m.pro : m.lite) || TEXT_MODELS[tier]
+}
+function effImageModel(): string {
+  return getAppSettings().models.image || MODEL
+}
+function effVideoModel(): string {
+  return getAppSettings().models.video || VIDEO_MODEL
 }
 
 function readJson(req: any): Promise<any> {
@@ -792,6 +847,7 @@ function seedreamProxy(): Plugin {
     name: 'seedream-proxy',
     configureServer(server) {
       const root = server.config.root
+      appRoot = root
       const outDir = path.join(root, 'public', 'generated')
 
       server.middlewares.use(async (req, res, next) => {
@@ -815,8 +871,8 @@ function seedreamProxy(): Plugin {
               hasKey: Boolean(readApiKey()),
               ffmpegAss: ff.ass,
               ffmpegPath: ff.bin,
-              model: MODEL,
-              videoModel: VIDEO_MODEL,
+              model: effImageModel(),
+              videoModel: effVideoModel(),
               videoReady: fs.existsSync(SEEDANCE_CLI),
               ffmpegReady: fs.existsSync(FFMPEG),
               ttsReady: fs.existsSync(SAY),
@@ -826,7 +882,30 @@ function seedreamProxy(): Plugin {
           return
         }
 
-        // ---- 项目数据：project.json 读写（工作台与画布共用同一真相源）----
+        // ---- 设置页：大模型 + 技能规则包，存 SQLite settings 表 ----
+        if (url === '/api/settings') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            if (req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, settings: getAppSettings(), db: dbPath(resolveRoot(root)) }))
+              return
+            }
+            if (req.method === 'PUT') {
+              const body = await readJson(req)
+              const settings = saveAppSettings(body || {})
+              res.end(JSON.stringify({ ok: true, settings }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / PUT' }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 项目数据：SQLite 读写（工作台与画布共用同一真相源；首次启动自动迁移 project.json）----
         if (url === '/api/project') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           const q = new URL(req.url || '', 'http://x')
@@ -919,7 +998,7 @@ function seedreamProxy(): Plugin {
             const system = String(body.system || '')
             const prompt = String(body.prompt || '')
             if (!prompt.trim()) throw new Error('prompt 不能为空')
-            const model = TEXT_MODELS[(body.model as 'lite' | 'pro') || 'lite'] || TEXT_MODELS.lite
+            const model = effTextModel(((body.model as 'lite' | 'pro') || 'lite') === 'pro' ? 'pro' : 'lite')
             const wantJson = Boolean(body.json)
 
             const messages: { role: string; content: string }[] = []
@@ -1247,7 +1326,7 @@ function seedreamProxy(): Plugin {
                     '--ratio', ratio,
                     '-d', String(seconds),
                     '-r', resolution,
-                    '-m', VIDEO_MODEL,
+                    '-m', effVideoModel(),
                     '--camera-fixed', cameraFixed,
                     '--wait',
                     '--interval', '8',
@@ -1322,7 +1401,7 @@ function seedreamProxy(): Plugin {
           const size = RATIO_SIZE[ratio] || RATIO_SIZE['16:9']
           const n = Math.min(4, Math.max(1, Number(body.n) || 1))
           const payload: Record<string, unknown> = {
-            model: MODEL,
+            model: effImageModel(),
             prompt,
             size,
             response_format: 'url',

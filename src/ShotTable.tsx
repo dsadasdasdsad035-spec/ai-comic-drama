@@ -4,12 +4,13 @@ import {
   callText,
   createProject,
   getProject,
+  getSettings,
   listProjects,
   mergeProjectShots,
   type ProjectShot,
   type ProjectSummary,
 } from './api'
-import { STORYBOARD_SYS, dialogueToText, parseDialogue } from './prompts'
+import { dialogueToText, parseDialogue, storyboardSys } from './prompts'
 import { mergeGenerated } from './shotSync'
 import { endTask, startTask } from './tasks'
 
@@ -159,8 +160,9 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
     const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
     const tid = startTask('text', `E${pad(epNo)} 拆镜`)
     try {
+      const { settings } = await getSettings()
       const r = await callText<{ shots: any[] }>({
-        system: STORYBOARD_SYS,
+        system: storyboardSys(settings.rules),
         prompt:
           `画风：${style || '近未来科幻写实'}\n画幅：${aspect}\n\n` +
           `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +

@@ -1,0 +1,518 @@
+/**
+ * 项目数据层（SQLite 版）：node:sqlite 单文件库，替代逐个 project.json。
+ *
+ * 为什么用内置 node:sqlite：零依赖（不用装 better-sqlite3），Node 22.13+ 自带，
+ * 同步 API 足够本项目单用户场景；实验性警告无害。
+ *
+ * 关键设计：
+ * 1. **首次启动自动迁移**：扫描各项目目录下的 project.json 灌库；原 json 文件保留不删，
+ *    作为迁移前的冷备份（之后不再回读，真相源切到 DB）。
+ * 2. **对外 API 与 data.mjs 完全同形**：listProjects / readProject / writeProject /
+ *    createProject / mergeShots，路由层零改动。
+ * 3. **shots.extra JSON 列兜底未知字段**：画布的 marks / candidates 等不建列，
+ *    原样收进 extra，读时展开 —— 结构演进不丢数据。
+ * 4. writeProject 合并语义不变：只更新传入的顶层字段，没传的一律保留。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+
+const NAME_RE = /^[a-zA-Z0-9_-]{1,40}$/
+const SCHEMA_VERSION = 1
+
+/** 项目名只允许字母数字下划线短横，挡掉 ../ 之类的路径穿越 */
+export function safeProjectName(name) {
+  const v = String(name ?? '').trim()
+  if (!NAME_RE.test(v)) throw new Error(`项目名不合法：${v}`)
+  return v
+}
+
+/** 项目根目录（与 data.mjs 相同的解析顺序），DB 文件就放这个目录下 */
+export function resolveRoot(appRoot) {
+  const env = process.env.SB_PROJECTS_DIR
+  if (env) return path.resolve(env)
+  const sibling = path.resolve(appRoot, '..', 'manga-pipeline', 'projects')
+  if (fs.existsSync(sibling)) return sibling
+  const local = path.resolve(appRoot, 'projects')
+  fs.mkdirSync(local, { recursive: true })
+  return local
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS projects (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE,
+  title      TEXT DEFAULT '',
+  style      TEXT DEFAULT '',
+  aspect     TEXT DEFAULT '16:9',
+  source     TEXT DEFAULT '',
+  logline    TEXT DEFAULT '',
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS characters (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  name     TEXT NOT NULL,
+  role     TEXT DEFAULT '',
+  age      TEXT DEFAULT '',
+  look_cn  TEXT DEFAULT '',
+  look_en  TEXT DEFAULT '',
+  palette  TEXT DEFAULT '',
+  keywords TEXT DEFAULT '[]',
+  sort     INTEGER DEFAULT 0,
+  UNIQUE(project_id, name)
+);
+CREATE TABLE IF NOT EXISTS episodes (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  no       INTEGER NOT NULL,
+  title    TEXT DEFAULT '',
+  hook     TEXT DEFAULT '',
+  sort     INTEGER DEFAULT 0,
+  UNIQUE(project_id, no)
+);
+CREATE TABLE IF NOT EXISTS scenes (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  ep_no    INTEGER NOT NULL,
+  no       INTEGER,
+  slug     TEXT DEFAULT '',
+  place    TEXT DEFAULT '',
+  time     TEXT DEFAULT '',
+  beats    TEXT DEFAULT '',
+  characters TEXT DEFAULT '[]',
+  intensity INTEGER,
+  tone     TEXT DEFAULT '',
+  sort     INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS shots (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  shot_id   TEXT NOT NULL,
+  episode   INTEGER,
+  no        TEXT DEFAULT '',
+  seconds   REAL,
+  size      TEXT DEFAULT '',
+  move      TEXT DEFAULT '',
+  desc      TEXT DEFAULT '',
+  dialogue  TEXT DEFAULT '[]',
+  cast      TEXT DEFAULT '[]',
+  keyframe_prompt TEXT DEFAULT '',
+  keyframe  TEXT DEFAULT '',
+  video_prompt TEXT DEFAULT '',
+  clip      TEXT DEFAULT '',
+  hand_edited TEXT DEFAULT '[]',
+  extra     TEXT DEFAULT '{}',
+  sort      INTEGER DEFAULT 0,
+  updated_at TEXT,
+  UNIQUE(project_id, shot_id)
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT
+);
+`
+
+/** 固定列之外的 shot 字段全部收进 extra，读写时展开合并 */
+const SHOT_COLS = [
+  'shot_id', 'episode', 'no', 'seconds', 'size', 'move', 'desc',
+  'dialogue', 'cast', 'keyframe_prompt', 'keyframe', 'video_prompt',
+  'clip', 'hand_edited', 'extra',
+]
+
+let db = null
+let dbFile = ''
+
+function open(root) {
+  if (db) return db
+  fs.mkdirSync(root, { recursive: true })
+  dbFile = path.join(root, 'storyboard.sqlite')
+  const firstTime = !fs.existsSync(dbFile)
+  db = new DatabaseSync(dbFile)
+  db.exec('PRAGMA journal_mode = WAL;')
+  db.exec(SCHEMA)
+  if (firstTime) migrateFromJson(root)
+  return db
+}
+
+export function dbPath(root) {
+  open(root)
+  return dbFile
+}
+
+// ---------------------------------------------------------------- 迁移
+
+function migrateFromJson(root) {
+  const done = getSetting('schema')
+  if (done) return
+  const dirs = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && NAME_RE.test(d.name))
+    .map((d) => d.name)
+  let migrated = 0
+  for (const name of dirs) {
+    const file = path.join(root, name, 'project.json')
+    if (!fs.existsSync(file)) continue
+    try {
+      const d = JSON.parse(fs.readFileSync(file, 'utf8'))
+      importProject(db, name, d)
+      migrated++
+    } catch (e) {
+      console.warn(`[db] 迁移失败 ${name}: ${e.message}`)
+    }
+  }
+  setSetting('schema', { v: SCHEMA_VERSION, at: new Date().toISOString(), migrated })
+  console.log(`[db] 已迁移 ${migrated}/${dirs.length} 个项目 → ${dbFile}`)
+}
+
+function importProject(d, name, data) {
+  const now = new Date().toISOString()
+  const r = d
+    .prepare(
+      `INSERT INTO projects (name,title,style,aspect,source,logline,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    )
+    .run(
+      name,
+      String(data.name || name),
+      String(data.style || ''),
+      String(data.aspect || '16:9'),
+      String(data.source || ''),
+      String(data.logline || ''),
+      String(data.created_at || now),
+      String(data.updated_at || now),
+    )
+  const pid = Number(r.lastInsertRowid)
+  for (const [i, c] of (data.characters || []).entries()) {
+    d.prepare(
+      `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      pid, String(c.name || ''), String(c.role || ''), String(c.age || ''),
+      String(c.look_cn || ''), String(c.look_en || ''), String(c.palette || ''),
+      JSON.stringify(c.keywords ?? []), i,
+    )
+  }
+  for (const [i, ep] of (data.episodes || []).entries()) {
+    const no = Number(ep.no) || i + 1
+    d.prepare(`INSERT INTO episodes (project_id,no,title,hook,sort) VALUES (?,?,?,?,?)`).run(
+      pid, no, String(ep.title || ''), String(ep.hook || ''), i,
+    )
+    for (const [si, sc] of (ep.scenes || []).entries()) {
+      d.prepare(
+        `INSERT INTO scenes (project_id,ep_no,no,slug,place,time,beats,characters,intensity,tone,sort)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        pid, no, sc.no == null ? si + 1 : Number(sc.no),
+        String(sc.slug || ''), String(sc.place || ''), String(sc.time || ''),
+        String(sc.beats || ''), JSON.stringify(sc.characters ?? []),
+        sc.intensity == null ? null : Number(sc.intensity),
+        String(sc.tone || ''), si,
+      )
+    }
+  }
+  for (const [i, s] of (data.shots || []).entries()) {
+    insertShot(d, pid, s, i, String(data.updated_at || now))
+  }
+}
+
+function insertShot(d, pid, s, sort, updatedAt) {
+  if (!s || !s.id) return
+  const extra = {}
+  for (const [k, v] of Object.entries(s)) {
+    if (k === 'id' || SHOT_COLS.includes(k === 'id' ? 'shot_id' : k)) continue
+    extra[k] = v
+  }
+  // 'id' 映射成 shot_id；注意 SHOT_COLS 里没有 'id'
+  d.prepare(
+    `INSERT INTO shots (project_id,shot_id,episode,no,seconds,size,move,desc,dialogue,cast,
+                        keyframe_prompt,keyframe,video_prompt,clip,hand_edited,extra,sort,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    pid, String(s.id), s.episode == null ? null : Number(s.episode), String(s.no || ''),
+    Number(s.seconds) || 0, String(s.size || ''), String(s.move || ''), String(s.desc || ''),
+    JSON.stringify(s.dialogue ?? []), JSON.stringify(s.cast ?? []),
+    String(s.keyframe_prompt || ''), String(s.keyframe || ''), String(s.video_prompt || ''),
+    String(s.clip || ''), JSON.stringify(s.handEdited ?? s.hand_edited ?? []),
+    JSON.stringify(extra), sort, updatedAt,
+  )
+}
+
+// ---------------------------------------------------------------- settings
+
+function getSettingRaw(d, key) {
+  const row = d.prepare('SELECT value FROM settings WHERE key = ?').get(key)
+  return row?.value
+}
+
+export function getSetting(key) {
+  if (!db) return undefined
+  const v = getSettingRaw(db, key)
+  return v === undefined ? undefined : JSON.parse(v)
+}
+
+export function setSetting(key, value) {
+  if (!db) throw new Error('DB 未打开')
+  db.prepare(
+    `INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+  ).run(key, JSON.stringify(value), new Date().toISOString())
+}
+
+// ---------------------------------------------------------------- 项目 CRUD
+
+export function listProjects(root) {
+  open(root)
+  const rows = db
+    .prepare(
+      `SELECT p.name, p.title, p.style, p.aspect,
+              (SELECT COUNT(*) FROM episodes e WHERE e.project_id=p.id) AS episodes,
+              (SELECT COUNT(*) FROM shots s WHERE s.project_id=p.id) AS shots,
+              (SELECT SUM(s.seconds) FROM shots s WHERE s.project_id=p.id) AS seconds
+       FROM projects p ORDER BY p.name`,
+    )
+    .all()
+  return rows.map((r) => ({
+    name: r.name,
+    title: r.title || r.name,
+    style: r.style || '',
+    aspect: r.aspect || '16:9',
+    episodes: Number(r.episodes) || 0,
+    shots: Number(r.shots) || 0,
+    seconds: Math.round((Number(r.seconds) || 0) * 10) / 10,
+  }))
+}
+
+function rowToShot(r) {
+  const s = {
+    id: r.shot_id,
+    episode: r.episode == null ? undefined : Number(r.episode),
+    no: r.no,
+    seconds: r.seconds == null ? undefined : Number(r.seconds),
+    size: r.size,
+    move: r.move,
+    desc: r.desc,
+    dialogue: JSON.parse(r.dialogue || '[]'),
+    cast: JSON.parse(r.cast || '[]'),
+    keyframe_prompt: r.keyframe_prompt,
+    keyframe: r.keyframe,
+    video_prompt: r.video_prompt,
+    clip: r.clip,
+    handEdited: JSON.parse(r.hand_edited || '[]'),
+  }
+  try {
+    Object.assign(s, JSON.parse(r.extra || '{}'))
+  } catch {
+    /* extra 损坏不致命 */
+  }
+  for (const k of Object.keys(s)) if (s[k] === undefined) delete s[k]
+  return s
+}
+
+function readProjectRow(d, n) {
+  return d.prepare('SELECT * FROM projects WHERE name = ?').get(n)
+}
+
+export function readProject(root, name) {
+  open(root)
+  const n = safeProjectName(name)
+  const p = readProjectRow(db, n)
+  if (!p) throw new Error(`项目不存在：${n}`)
+  return assemble(p)
+}
+
+function assemble(p) {
+  const pid = p.id
+  const characters = db
+    .prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((c) => ({
+      name: c.name,
+      role: c.role,
+      age: c.age,
+      look_cn: c.look_cn,
+      look_en: c.look_en,
+      palette: c.palette,
+      keywords: JSON.parse(c.keywords || '[]'),
+    }))
+  const episodes = db
+    .prepare('SELECT * FROM episodes WHERE project_id = ? ORDER BY sort, no')
+    .all(pid)
+    .map((e) => ({
+      no: Number(e.no),
+      title: e.title,
+      hook: e.hook,
+      scenes: db
+        .prepare('SELECT * FROM scenes WHERE project_id = ? AND ep_no = ? ORDER BY sort, id')
+        .all(pid, e.no)
+        .map((sc) => ({
+          no: sc.no == null ? undefined : Number(sc.no),
+          slug: sc.slug,
+          place: sc.place,
+          time: sc.time,
+          beats: sc.beats,
+          characters: JSON.parse(sc.characters || '[]'),
+          ...(sc.intensity == null ? {} : { intensity: Number(sc.intensity) }),
+          ...(sc.tone ? { tone: sc.tone } : {}),
+        })),
+    }))
+  const shots = db
+    .prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map(rowToShot)
+  return {
+    schema: 1,
+    name: p.title || p.name,
+    style: p.style,
+    aspect: p.aspect,
+    source: p.source,
+    logline: p.logline,
+    created_at: p.created_at,
+    updated_at: p.updated_at,
+    characters,
+    episodes,
+    shots,
+  }
+}
+
+/**
+ * 落库。合并语义与旧版一致：
+ *   只更新传入的顶层字段，没传的一律保留；
+ *   shots / characters / episodes 传入即全量替换（调用方在 POST 路由里先做 mergeShots）。
+ */
+export function writeProject(root, name, data = {}) {
+  open(root)
+  const n = safeProjectName(name)
+  const now = new Date().toISOString()
+  const cur = readProjectRow(db, n)
+  if (!cur) {
+    // 与旧版行为对齐：写不存在的项目 = 隐式创建骨架
+    db.prepare(
+      `INSERT INTO projects (name,title,style,aspect,source,logline,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    ).run(n, String(data.name || n), '', '16:9', '', '', now, now)
+    return writeProject(root, n, data)
+  }
+  const pid = cur.id
+  const cols = {
+    title: 'name',
+    style: 'style',
+    aspect: 'aspect',
+    source: 'source',
+    logline: 'logline',
+  }
+  const sets = []
+  const vals = []
+  for (const [k, col] of Object.entries(cols)) {
+    if (data[k] === undefined) continue
+    if (typeof data[k] !== 'string') throw new Error(`${k} 必须是字符串`)
+    sets.push(`${col} = ?`)
+    vals.push(data[k])
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...vals, now, pid)
+  }
+
+  if (data.shots !== undefined) {
+    if (!Array.isArray(data.shots)) throw new Error('shots 必须是数组 —— 拒绝写入会丢掉镜头列表的内容')
+    db.prepare('DELETE FROM shots WHERE project_id = ?').run(pid)
+    for (const [i, s] of data.shots.entries()) insertShot(db, pid, s, i, now)
+  }
+
+  if (data.characters !== undefined) {
+    if (!Array.isArray(data.characters)) throw new Error('characters 必须是数组')
+    db.prepare('DELETE FROM characters WHERE project_id = ?').run(pid)
+    for (const [i, c] of data.characters.entries()) {
+      db.prepare(
+        `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        pid, String(c?.name || ''), String(c?.role || ''), String(c?.age || ''),
+        String(c?.look_cn || ''), String(c?.look_en || ''), String(c?.palette || ''),
+        JSON.stringify(c?.keywords ?? []), i,
+      )
+    }
+  }
+
+  if (data.episodes !== undefined) {
+    if (!Array.isArray(data.episodes)) throw new Error('episodes 必须是数组')
+    db.prepare('DELETE FROM episodes WHERE project_id = ?').run(pid)
+    db.prepare('DELETE FROM scenes WHERE project_id = ?').run(pid)
+    for (const [i, ep] of data.episodes.entries()) {
+      const no = Number(ep?.no) || i + 1
+      db.prepare(`INSERT INTO episodes (project_id,no,title,hook,sort) VALUES (?,?,?,?,?)`).run(
+        pid, no, String(ep?.title || ''), String(ep?.hook || ''), i,
+      )
+      for (const [si, sc] of (ep?.scenes || []).entries()) {
+        db.prepare(
+          `INSERT INTO scenes (project_id,ep_no,no,slug,place,time,beats,characters,intensity,tone,sort)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        ).run(
+          pid, no, sc?.no == null ? si + 1 : Number(sc.no),
+          String(sc?.slug || ''), String(sc?.place || ''), String(sc?.time || ''),
+          String(sc?.beats || ''), JSON.stringify(sc?.characters ?? []),
+          sc?.intensity == null ? null : Number(sc.intensity),
+          String(sc?.tone || ''), si,
+        )
+      }
+    }
+  }
+
+  const p = readProjectRow(db, n)
+  db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now, pid)
+  return assemble({ ...p, updated_at: now })
+}
+
+/** 新建项目。已存在则报错（不覆盖） */
+export function createProject(root, name, init = {}) {
+  open(root)
+  const n = safeProjectName(name)
+  if (readProjectRow(db, n)) throw new Error(`项目已存在：${n}`)
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO projects (name,title,style,aspect,source,logline,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?)`,
+  ).run(n, String(init.title || n), String(init.style || ''), String(init.aspect || '16:9'), '', '', now, now)
+  return { name: n, created: true }
+}
+
+/**
+ * 字段级合并：只更新 incoming 里出现的字段，未出现的保持原样。
+ * 不在 incoming 里的现有镜头**保留并标 orphan**，不静默删。
+ * handEdited 的手改保护不在这里做（保存是人的意图；保护在生成时）。
+ */
+export function mergeShots(existing = [], incoming = []) {
+  const byId = new Map()
+  for (const s of existing) if (s && s.id) byId.set(s.id, s)
+  const out = []
+  const touched = new Set()
+
+  for (const inc of incoming) {
+    if (!inc || !inc.id) continue
+    const old = byId.get(inc.id)
+    touched.add(inc.id)
+    if (!old) {
+      out.push({ ...inc })
+      continue
+    }
+    const merged = { ...old }
+    for (const [k, v] of Object.entries(inc)) {
+      if (k === 'handEdited') continue
+      if (v === undefined) continue
+      merged[k] = v
+    }
+    // handEdited 只增不减：一旦手改过就永久留痕
+    const hand = new Set([...(old.handEdited || []), ...(Array.isArray(inc.handEdited) ? inc.handEdited : [])])
+    if (hand.size) merged.handEdited = [...hand]
+    delete merged.orphan
+    out.push(merged)
+  }
+
+  for (const s of existing) {
+    if (!s || !s.id || touched.has(s.id)) continue
+    out.push({ ...s, orphan: true })
+  }
+  return out
+}

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { callText, getProject, patchProject, type ProjectShot } from './api'
+import { callText, getProject, getSettings, patchProject, type ProjectShot, type RulePack } from './api'
 import { characterBible, toSheet, type ProjectChar } from './charMap'
 import type { CharacterSheet } from './characters'
-import { PROMPT_SYS, chunk, expandAnchors, hasUnresolvedAnchor } from './prompts'
+import { chunk, expandAnchors, hasUnresolvedAnchor, promptSys } from './prompts'
 import { endTask, startTask } from './tasks'
 
 type Props = {
@@ -143,9 +143,9 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
 
   /** 跑一批。抽成独立函数是为了让任务台账的「重试」能精确重跑这一批 */
   const runGroup = useCallback(
-    async (g: ProjectShot[], idx: number, t0: number) => {
+    async (g: ProjectShot[], idx: number, t0: number, rules?: Record<string, RulePack>) => {
       const tid = startTask('text', `E${epNo} 提示词 批${idx + 1}`, {
-        retry: () => void runGroup(g, idx, t0),
+        retry: () => void runGroup(g, idx, t0, rules),
       })
       const bible = characterBible(chars) || '（项目里还没有角色锚点）'
       const brief = g.map((x) => ({
@@ -158,7 +158,7 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
       }))
       try {
         const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
-          system: PROMPT_SYS,
+          system: promptSys(rules),
           model,
           json: true,
           maxTokens: 4096,
@@ -210,10 +210,17 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
     setProgress({ done: 0, total: groups.length, failed: 0 })
     const t0 = Date.now()
 
+    // 生成前拉一次设置：规则包可能刚在设置页改过
+    let rules: Record<string, RulePack> | undefined
+    try {
+      rules = (await getSettings()).settings.rules
+    } catch {
+      /* 设置读不到就用默认规则 */
+    }
     let done = 0
     const results = await Promise.all(
       groups.map(async (g, idx) => {
-        const r = await runGroup(g, idx, t0)
+        const r = await runGroup(g, idx, t0, rules)
         done++
         setProgress({ done, total: groups.length, failed: 0 })
         return r

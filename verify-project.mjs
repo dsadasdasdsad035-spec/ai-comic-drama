@@ -1,11 +1,20 @@
 import { chromium } from 'playwright-core'
+
+// 「适配视图」收在画布右上「操作」下拉里：先开菜单，点完菜单自动收起
+async function p_openBoardMenu(page) {
+  await page.locator('.bm .tm-btn').click()
+  await page.waitForTimeout(350)
+}
 import fs from 'node:fs'
 
 const URL = 'http://127.0.0.1:5273/'
-const PJ = '/Users/mjy/WorkBuddy/2026-10-19-21-40-01/manga-pipeline/projects/recycle/project.json'
-const SNAP = fs.readFileSync(PJ) // 跑完还原，保证可重复且不弄脏数据
-const read = () => JSON.parse(fs.readFileSync(PJ, 'utf8'))
-const base = JSON.parse(SNAP.toString('utf8'))
+// 真相源已切到 SQLite：数据断言统一走 /api/project；写回断言也一样。
+// 快照用于跑完还原，保证可重复且不弄脏数据。
+const PROJECT = 'recycle'
+const snapFetch = () => fetch(`${URL}api/project?name=${PROJECT}`).then((r) => r.json())
+const SNAP = JSON.stringify((await snapFetch()).project)
+const read = async () => (await snapFetch()).project
+const base = JSON.parse(SNAP)
 // 表格/画布都按集过滤了，断言要以「第 1 集」为准，不能用全项目镜头数
 const ep1 = base.shots.filter((x) => (Number(x.episode) || 1) === 1)
 const baseTotal = +ep1.reduce((a, s) => a + Number(s.seconds || 0), 0).toFixed(1)
@@ -97,13 +106,13 @@ try {
   )
   await page.getByRole('button', { name: '保存到 project.json' }).click()
   await page.waitForTimeout(1800)
-  const afterSave = read()
+  const afterSave = await read()
   const savedEdit = afterSave.shots.find((x) => x.id === editId)
   check(Number(savedEdit?.seconds) === Number(target), `文件里 ${editId} seconds = ${target}`, String(savedEdit?.seconds))
   check((savedEdit?.handEdited || []).includes('seconds'), 'handEdited 记录 seconds')
   check(afterSave.episodes.length === base.episodes.length, 'episodes 未被清空', String(afterSave.episodes.length))
   check(afterSave.characters.length === base.characters.length, 'characters 未被清空', String(afterSave.characters.length))
-  check(fs.existsSync(PJ + '.bak'), '.bak 备份已生成')
+  // 旧版这里检查 project.json.bak；真相源切 SQLite 后写路径由 WAL 保护，不再生成 .bak
 
   console.log('\n[3] 生成到画布（按 shot.id 幂等）')
   await page.getByRole('button', { name: '生成到画布' }).click()
@@ -131,7 +140,8 @@ try {
   await page.screenshot({ path: '/tmp/sb-shots/71-pushed.png' })
 
   console.log('\n[4] 画布侧改动 → 自动写回 project.json')
-  await page.getByRole('button', { name: '适配' }).click()
+  await p_openBoardMenu(page)
+  await page.getByRole('button', { name: /适配视图/ }).click()
   await page.waitForTimeout(900)
   await page.evaluate((v) => { window.__editId = v }, editId)
   const s01NodeId = await page.evaluate(() => {
@@ -159,7 +169,7 @@ try {
   await secBox.fill(wb)
   await secBox.blur()
   await page.waitForTimeout(2600)
-  const afterCb = read()
+  const afterCb = await read()
   const s01 = afterCb.shots.find((x) => x.id === editId)
   check(Number(s01?.seconds) === Number(wb), `画布改 ${wb}s 已写回文件`, String(s01?.seconds))
   check(afterCb.shots.length === base.shots.length, '写回后镜头数不变', String(afterCb.shots.length))
@@ -207,7 +217,12 @@ try {
 } finally {
   console.log('\n--- 页面错误 ---')
   console.log(errs.length ? errs.slice(0, 5).join('\n') : '(none)')
-  fs.writeFileSync(PJ, SNAP) // 还原，测试不留痕
+  // 还原，测试不留痕（真相源是 DB，走 PUT 全量写回）
+  await fetch(`${URL}api/project?name=${PROJECT}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project: JSON.parse(SNAP) }),
+  })
   console.log('（已还原 project.json 到测试前状态）')
   console.log(`\n结果：通过 ${ok} / 失败 ${bad}`)
   await browser.close()

@@ -4112,3 +4112,170 @@ button:not(:disabled),
   font-style: normal;
   font-family: var(--font-mono);
 }
+
+/* ---------------------------------------------------------------- 设置页 */
+
+.settings {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.st-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.st-sec {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  padding: 12px 14px;
+}
+
+.st-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.st-sec-head h3 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+.st-hint {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.st-hint code {
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
+
+.st-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 10px 14px;
+}
+
+.st-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.st-field span {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.st-field input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  font-family: var(--font-mono, monospace);
+}
+
+.st-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.st-field em {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-style: normal;
+}
+
+.st-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.st-rule {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  background: var(--bg-2);
+}
+
+.st-rule.off {
+  opacity: 0.55;
+}
+
+.st-rule header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.st-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.st-switch input {
+  accent-color: var(--accent);
+}
+
+.st-switch span {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.st-src {
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-full);
+  padding: 1px 8px;
+}
+
+.st-rule textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+  font-family: inherit;
+}
+
+.st-rule textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.st-actions {
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0;
+  background: linear-gradient(transparent, var(--bg) 40%);
+}

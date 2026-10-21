@@ -398,3 +398,31 @@ export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; te
   if (!j.ok) throw new Error(j.message || '文本生成失败')
   return { json: j.json as T, text: j.text ?? '', model: j.model ?? '' }
 }
+
+// ---------------------------------------------------------------- 设置页
+
+export type RulePack = { enabled: boolean; text: string }
+
+export type AppSettings = {
+  models: { lite?: string; pro?: string; image?: string; video?: string }
+  apiKey: string
+  rules: Record<string, RulePack>
+}
+
+export async function getSettings(): Promise<{ settings: AppSettings; db?: string }> {
+  const r = await fetch('/api/settings')
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '读取设置失败')
+  return { settings: j.settings as AppSettings, db: j.db }
+}
+
+export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  const r = await fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '保存设置失败')
+  return j.settings as AppSettings
+}

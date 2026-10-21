@@ -32,6 +32,7 @@ import ScriptBoard from './ScriptBoard'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
+import Settings from './Settings'
 import { endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
@@ -127,7 +128,7 @@ function Shell() {
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts' | 'script'>('board')
+  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts' | 'script' | 'settings'>('board')
   const [projectName, setProjectName] = useState('')
   /** 当前集：镜头表 / 提示词共用 */
   const [epNo, setEpNo] = useState(1)
@@ -1038,6 +1039,9 @@ function Shell() {
             <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
               画布
             </button>
+            <button className={view === 'settings' ? 'on' : ''} onClick={() => setView('settings')} title="大模型 / 技能规则包 / 存储">
+              设置
+            </button>
           </div>
 
           {view === 'board' && (
@@ -1089,6 +1093,8 @@ function Shell() {
             </>
           ) : view === 'table' || view === 'prompts' || view === 'script' ? (
             <span className="board-count">{projectName || '未选项目'}</span>
+          ) : view === 'settings' ? (
+            <span className="board-count">设置</span>
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
           )}
@@ -1140,6 +1146,13 @@ function Shell() {
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
+            }}
+          />
+        ) : view === 'settings' ? (
+          <Settings
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2800)
             }}
           />
         ) : view === 'chars' ? (

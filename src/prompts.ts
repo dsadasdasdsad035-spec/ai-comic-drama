@@ -1,11 +1,11 @@
 import { CHARACTER_RULES, PROMPT_WRITING_RULES, SCRIPT_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
+import type { RulePack } from './api'
 
 /**
- * 与 manga-pipeline/prompts.py 保持一字不差的系统提示词。
- * 工作台和 CLI 用同一套 → 两边产出结构一致，可以互相接手。
+ * 四段系统提示词的「基础部分」（不含技能规则）。设置页可对规则包改写/停用，
+ * 生成时用 *Sys() 构造；同名大写常量 = 基础 + 默认规则，保持与 Python 侧一字不差。
  */
-
-export const STORYBOARD_SYS = `你是分镜师。把一集剧本拆成可直接生产的镜头列表。
+export const STORYBOARD_BASE = `你是分镜师。把一集剧本拆成可直接生产的镜头列表。
 
 镜头语言要求：
 - size（景别）：远景 / 全景 / 中景 / 近景 / 特写 / 大特写，必须有节奏变化，不要连续三个同景别。
@@ -21,7 +21,43 @@ export const STORYBOARD_SYS = `你是分镜师。把一集剧本拆成可直接�
     {"no": "S01", "seconds": 3.5, "size": "中景", "move": "固定",
      "desc": "...", "dialogue": [{"speaker": "角色名", "text": "..."}]}
   ]
-}${SHOT_LANGUAGE_RULES}`
+}`
+
+export const STORYBOARD_SYS = STORYBOARD_BASE + SHOT_LANGUAGE_RULES
+
+/** 规则包拼接：停用 → 只出基础段；启用 → 基础 + 规则文本 */
+export function withRule(base: string, pack?: RulePack): string {
+  if (!pack || pack.enabled === false) return base
+  return base + (pack.text || '')
+}
+
+/** 默认规则包（来自技能库摘录），设置页首次展示/重置用 */
+export const DEFAULT_RULES: Record<'script' | 'character' | 'shot' | 'prompt', RulePack> = {
+  script: { enabled: true, text: SCRIPT_RULES },
+  character: { enabled: true, text: CHARACTER_RULES },
+  shot: { enabled: true, text: SHOT_LANGUAGE_RULES },
+  prompt: { enabled: true, text: PROMPT_WRITING_RULES },
+}
+
+/** 设置里可能缺 rules（老数据），补齐默认值 */
+export function normalizeRules(rules?: Record<string, RulePack>): Record<string, RulePack> {
+  return { ...DEFAULT_RULES, ...(rules || {}) }
+}
+
+export const scriptSys = (rules?: Record<string, RulePack>) =>
+  withRule(SCRIPT_BASE, normalizeRules(rules).script)
+export const storyboardSys = (rules?: Record<string, RulePack>) =>
+  withRule(STORYBOARD_BASE, normalizeRules(rules).shot)
+export const promptSys = (rules?: Record<string, RulePack>) =>
+  withRule(PROMPT_BASE, normalizeRules(rules).prompt)
+export const characterSys = (rules?: Record<string, RulePack>) =>
+  withRule(CHARACTER_BASE, normalizeRules(rules).character)
+
+/**
+ * 与 manga-pipeline/prompts.py 保持一字不差的系统提示词。
+ * 工作台和 CLI 用同一套 → 两边产出结构一致，可以互相接手。
+ */
+
 
 /** 台词数组 ⇄ 表格里的多行文本 */
 export function dialogueToText(d: unknown): string {
@@ -47,7 +83,7 @@ export function parseDialogue(text: string): { speaker: string; text: string }[]
 
 // ---- 以下两段同样取自 manga-pipeline/prompts.py ----
 
-export const SCRIPT_SYS = `你是短剧/漫剧的编剧与分集策划。
+export const SCRIPT_BASE = `你是短剧/漫剧的编剧与分集策划。
 
 任务：把用户给的原著/故事，改编成适合 AI 生成的多集短剧剧本。
 
@@ -73,9 +109,10 @@ export const SCRIPT_SYS = `你是短剧/漫剧的编剧与分集策划。
       ]
     }
   ]
-}${SCRIPT_RULES}`
+}`
+export const SCRIPT_SYS = SCRIPT_BASE + SCRIPT_RULES
 
-export const CHARACTER_SYS = `你是角色设定师，为 AI 生图做「外观锚点」，保证多镜头之间角色长相一致。
+export const CHARACTER_BASE = `你是角色设定师，为 AI 生图做「外观锚点」，保证多镜头之间角色长相一致。
 
 对每个主要角色，提取/设计一套**不可变的外观锚点**。锚点必须是视觉可描述的，不能写性格形容词。
 
@@ -90,9 +127,10 @@ export const CHARACTER_SYS = `你是角色设定师，为 AI 生图做「外观�
 
 铁律：所有角色必须有明确区分度（轮廓/配色/配饰不能撞）；同一角色在不同镜头复用同一段 look_en。
 
-输出 JSON：{"characters": [ ... ]}${CHARACTER_RULES}`
+输出 JSON：{"characters": [ ... ]}`
+export const CHARACTER_SYS = CHARACTER_BASE + CHARACTER_RULES
 
-export const PROMPT_SYS = `你是 AI 影像提示词工程师，把分镜转成两类可直接执行的提示词。
+export const PROMPT_BASE = `你是 AI 影像提示词工程师，把分镜转成两类可直接执行的提示词。
 
 【A. keyframe_prompt —— 给文生图模型（Seedream）】
 结构固定：主体与外观锚点 + 动作姿态 + 环境 + 景别与镜头 + 光影 + 画风 + 画质
@@ -112,7 +150,8 @@ export const PROMPT_SYS = `你是 AI 影像提示词工程师，把分镜转成�
   "shots": [
     {"no": "S01", "keyframe_prompt": "...", "video_prompt": "..."}
   ]
-}${PROMPT_WRITING_RULES}`
+}`
+export const PROMPT_SYS = PROMPT_BASE + PROMPT_WRITING_RULES
 
 /**
  * 把 {{角色名}} 占位符替换回角色的 look_en 原文。

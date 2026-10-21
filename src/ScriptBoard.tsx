@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { callText, getProject, patchProject, type ProjectEpisode } from './api'
-import { SCRIPT_SYS } from './prompts'
+import { callText, getProject, getSettings, patchProject, type ProjectEpisode } from './api'
+import { scriptSys } from './prompts'
 
 type Props = {
   projectName: string
@@ -67,8 +67,9 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
     setElapsed(null)
     const t0 = Date.now()
     try {
+      const { settings } = await getSettings()
       const r = await callText<{ logline?: string; episodes?: ProjectEpisode[] }>({
-        system: SCRIPT_SYS,
+        system: scriptSys(settings.rules),
         model,
         json: true,
         maxTokens: 8192,
