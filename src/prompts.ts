@@ -1,3 +1,5 @@
+import { PROMPT_WRITING_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
+
 /**
  * 与 manga-pipeline/prompts.py 保持一字不差的系统提示词。
  * 工作台和 CLI 用同一套 → 两边产出结构一致，可以互相接手。
@@ -19,7 +21,7 @@ export const STORYBOARD_SYS = `你是分镜师。把一集剧本拆成可直接�
     {"no": "S01", "seconds": 3.5, "size": "中景", "move": "固定",
      "desc": "...", "dialogue": [{"speaker": "角色名", "text": "..."}]}
   ]
-}`
+}${SHOT_LANGUAGE_RULES}`
 
 /** 台词数组 ⇄ 表格里的多行文本 */
 export function dialogueToText(d: unknown): string {
@@ -109,7 +111,7 @@ export const PROMPT_SYS = `你是 AI 影像提示词工程师，把分镜转成�
   "shots": [
     {"no": "S01", "keyframe_prompt": "...", "video_prompt": "..."}
   ]
-}`
+}${PROMPT_WRITING_RULES}`
 
 /**
  * 把 {{角色名}} 占位符替换回角色的 look_en 原文。
