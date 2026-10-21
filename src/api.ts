@@ -296,6 +296,10 @@ export type ProjectShot = {
   refIds?: string[]
   /** 本镜真实尾帧（本地路径），用于下一镜首帧接龙 */
   tail_image?: string
+  /** 俯视调度（人物站位 + 机位） */
+  layout?: unknown
+  /** 俯视调度图（本地路径），可当出片参考图 */
+  ref_sheet?: string
 }
 
 export type ProjectEpisode = {

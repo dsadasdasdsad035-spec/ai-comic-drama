@@ -4,7 +4,8 @@ import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
 import { listVideoFiles, type VideoFile } from './api'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import LayoutPanel from './LayoutPanel'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
@@ -423,6 +424,8 @@ export default function Inspector({
 
         {d.genState === 'error' && d.genError && <div className="gen-error">{d.genError}</div>}
       </div>
+
+      <LayoutPanel d={d} patch={set} cast={d.cast} />
 
       <div className="gen-box vid-box">
         <div className="gen-head">

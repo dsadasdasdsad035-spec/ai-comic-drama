@@ -48,6 +48,8 @@ export function bizSignature(d: ShotData): string {
     refExtras: d.refExtras ?? [],
     refIds: d.refIds ?? [],
     tailImage: d.tailImage ?? '',
+    layout: d.layout ?? null,
+    refSheet: d.refSheet ?? '',
   })
 }
 
@@ -69,6 +71,8 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     refExtras: d.refExtras,
     refIds: d.refIds,
     tail_image: localPath(d.tailImage),
+    layout: d.layout,
+    ref_sheet: localPath(d.refSheet),
   }
 }
 
@@ -88,6 +92,8 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     cast: s.cast,
     refExtras: s.refExtras,
     tailImage: s.tail_image ?? fallback.tailImage,
+    layout: (s.layout as ShotData['layout']) ?? fallback.layout,
+    refSheet: s.ref_sheet ?? fallback.refSheet,
     refIds: s.refIds,
     shotId: s.id,
     episode: s.episode,

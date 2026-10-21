@@ -1414,6 +1414,33 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 保存前端生成的图片（俯视调度图等 dataURL）----
+        if (url === '/api/save-image') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const dataUrl = String(body.dataUrl || '')
+            const m = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/)
+            if (!m) throw new Error('dataUrl 格式不对')
+            const ext = m[1] === 'jpeg' ? 'jpg' : m[1]
+            const prefix = String(body.prefix || 'sheet').replace(/[^a-z0-9-]/gi, '') || 'sheet'
+            const dir = path.join(root, 'public', 'generated')
+            fs.mkdirSync(dir, { recursive: true })
+            const name = `${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
+            fs.writeFileSync(path.join(dir, name), Buffer.from(m[2], 'base64'))
+            res.end(JSON.stringify({ ok: true, url: `/generated/${name}` }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         // ---- 已生成的视频列表（给「挂载已有视频」用）----
         if (url === '/api/videos') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')

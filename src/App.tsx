@@ -1355,10 +1355,16 @@ function Shell() {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
       const { imgs, labels } = collectRefImgs(node)
-      // 有连线：参考图模式（画面排第一张，保持与上一镜连贯），最多 4 张（方舟上限）
+      const first = node.data.refImage
+      // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
+      const nextShot = findNextShot(node.id)
+      const wantLock = Boolean(tailLock && nextShot?.data.refImage)
+      // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图，反之才带调度图
+      const sheet = String(node.data.refSheet || '')
+      const sheetUsed = Boolean(sheet) && !wantLock
       const refList: string[] = []
       const refNotes: string[] = []
-      if (imgs.length > 0) {
+      if (imgs.length > 0 || sheetUsed) {
         if (node.data.refImage) {
           refList.push(node.data.refImage)
           refNotes.push('画面构图与上一镜连贯')
@@ -1368,11 +1374,12 @@ function Shell() {
           refList.push(imgs[i])
           refNotes.push(labels[i] || '参考素材')
         }
+        if (sheetUsed && refList.length < 4) {
+          refList.push(sheet)
+          refNotes.push('俯视调度示意：只取站位/机位/轴线关系，不要把示意图本身画进画面')
+        }
       }
-      const first = node.data.refImage
-      // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
-      const nextShot = findNextShot(node.id)
-      const tailConstraint = tailLock && nextShot?.data.refImage ? nextShot.data.refImage : ''
+      const tailConstraint = wantLock ? String(nextShot?.data.refImage || '') : ''
       const useTailConstraint = Boolean(tailConstraint) && refList.length === 0
       if (refList.length === 0 && !first) {
         patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
@@ -1430,7 +1437,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, collectRefImgs, modelPick],
+    [patch, ratio, vidRes, collectRefImgs, modelPick, tailLock, findNextShot],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */

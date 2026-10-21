@@ -30,6 +30,10 @@ export type ShotData = {
   refIds?: string[]
   /** 本镜出片的真实尾帧（本地路径），可一键设为下一镜首帧 */
   tailImage?: string
+  /** 调度：俯视布局。坐标归一化 0~1，face 为朝向角度（0=向右，90=向下） */
+  layout?: ShotLayout
+  /** 俯视调度图存成的图片（本地路径），可当出片参考图 */
+  refSheet?: string
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number
@@ -99,4 +103,24 @@ export function migrateMarks(marks: Mark[]): Mark[] {
       ? { ...m, x: (m.x ?? 0) / 264, y: (m.y ?? 0) / 148.5, w: (m.w ?? 0) / 264, h: (m.h ?? 0) / 148.5 }
       : m
   })
+}
+
+/** 俯视调度：人物站位 + 机位，全部归一化到 0~1，渲染时乘画布尺寸 */
+export type LayoutActor = { name: string; x: number; y: number; face: number }
+export type LayoutCamera = { x: number; y: number; lookX: number; lookY: number }
+export type ShotLayout = {
+  actors: LayoutActor[]
+  camera: LayoutCamera
+  /** 场地尺寸（米），仅用于显示比例 */
+  w?: number
+  h?: number
+  /** 轴线说明（默认取前两名演员连线） */
+  axisNote?: string
+}
+
+export const DEFAULT_LAYOUT: ShotLayout = {
+  actors: [],
+  camera: { x: 0.5, y: 0.92, lookX: 0.5, lookY: 0.5 },
+  w: 10,
+  h: 8,
 }

@@ -205,8 +205,10 @@ try {
   const kf1 = await page.locator('.pt-table tbody tr').first().locator('td').nth(2).locator('textarea').inputValue()
   check(kf1.length > 40, '首帧提示词已带入', String(kf1.length))
   check(kf1.includes('画风锁'), '提示词含画风锁')
-  const cast1 = await page.locator('.pt-table tbody tr').nth(1).locator('.wb-cast').innerText()
-  check(cast1.trim().length > 0 && cast1.trim() !== '—', '出场角色列有值', cast1)
+  // 有的镜确实没有出场角色（空镜），断言「至少有一行有值」才稳
+  const castCells = await page.locator('.pt-table tbody tr .wb-cast').allInnerTexts()
+  const filled = castCells.map((t) => t.trim()).filter((t) => t && t !== '—')
+  check(filled.length > 0, '出场角色列有值', `${filled.length}/${castCells.length}`)
   await page.screenshot({ path: '/tmp/sb-shots/72-prompts.png' })
 
   console.log('\n[7] 角色来自 project.json（不是 localStorage 默认值）')
