@@ -18,6 +18,8 @@ const TEXT_MODELS = {
 
 /** 账户已开通的图生视频模型（2.0 / 2.5 系列需在方舟控制台单独开通） */
 const VIDEO_MODEL = 'doubao-seedance-1-0-pro-250528'
+/** 多参考图（reference_image，1~4 张）走 Lite I2V；已开通 1.5 pro 可在设置页换模型 */
+const VIDEO_REF_MODEL = 'doubao-seedance-1-0-lite-i2v-250428'
 const SEEDANCE_CLI = path.join(
   os.homedir(),
   '.workbuddy',
@@ -80,7 +82,7 @@ function readEnvKey(name: string): string | null {
 
 type RulePack = { enabled: boolean; text: string }
 type AppSettings = {
-  models: { lite?: string; pro?: string; image?: string; video?: string }
+  models: { lite?: string; pro?: string; image?: string; video?: string; videoRef?: string }
   apiKey: string
   rules: Record<string, RulePack>
 }
@@ -126,6 +128,11 @@ function effImageModel(): string {
 }
 function effVideoModel(): string {
   return getAppSettings().models.video || VIDEO_MODEL
+}
+
+/** 多参考图（reference_image）模式用的模型：默认 Lite I2V，可在设置页覆盖 */
+function effVideoRefModel(): string {
+  return getAppSettings().models.videoRef || VIDEO_REF_MODEL
 }
 
 function readJson(req: any): Promise<any> {
@@ -873,6 +880,7 @@ function seedreamProxy(): Plugin {
               ffmpegPath: ff.bin,
               model: effImageModel(),
               videoModel: effVideoModel(),
+              videoRefModel: effVideoRefModel(),
               videoReady: fs.existsSync(SEEDANCE_CLI),
               ffmpegReady: fs.existsSync(FFMPEG),
               ttsReady: fs.existsSync(SAY),
@@ -1274,27 +1282,54 @@ function seedreamProxy(): Plugin {
           try {
             const body = await readJson(req)
             const image = String(body.image || '')
-            if (!image) {
+            // 参考图（reference_image）模式：1~4 张，多了截断（方舟上限）
+            const refImages: string[] = Array.isArray(body.refImages)
+              ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 4)
+              : []
+            const refMode = refImages.length > 0
+            if (!image && !refMode) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: '缺少首帧图片，请先生成画面' }))
+              res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
               return
             }
 
-            // 首帧：本地文件直接给路径，dataURL 落地成临时文件
+            // 图片入参统一落地：http 直接用，dataURL 写临时文件，/xxx 映射到 public
             const tmpDir = path.join(os.tmpdir(), 'storyboard-canvas')
             fs.mkdirSync(tmpDir, { recursive: true })
-            let imgPath = image
-            if (image.startsWith('data:')) {
-              const b64 = image.split(',')[1] || ''
-              const ext = /image\/png/.test(image) ? 'png' : 'jpg'
-              imgPath = path.join(tmpDir, `first-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`)
-              fs.writeFileSync(imgPath, Buffer.from(b64, 'base64'))
-            } else if (image.startsWith('/')) {
-              imgPath = path.join(root, 'public', image.replace(/^\//, '').split('?')[0])
+            const prep = (src: string, tag: string): string => {
+              if (src.startsWith('data:')) {
+                const b64 = src.split(',')[1] || ''
+                const ext = /image\/png/.test(src) ? 'png' : 'jpg'
+                const out = path.join(tmpDir, `${tag}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`)
+                fs.writeFileSync(out, Buffer.from(b64, 'base64'))
+                return out
+              }
+              const p = src.startsWith('/')
+                ? path.join(root, 'public', src.replace(/^\//, '').split('?')[0])
+                : src
+              if (!p.startsWith('http') && !fs.existsSync(p)) throw new Error(`${tag} 图片不存在：${p}`)
+              return p
             }
-            if (!imgPath.startsWith('http') && !fs.existsSync(imgPath)) {
+            let imgPath = ''
+            const refPaths: string[] = []
+            const skipped: string[] = []
+            try {
+              if (refMode) {
+                // 参考图里个别文件失效不该整单失败：跳过并回报，全坏才算错
+                for (const [i, r] of refImages.entries()) {
+                  try {
+                    refPaths.push(prep(r, `ref${i + 1}`))
+                  } catch {
+                    skipped.push(r)
+                  }
+                }
+                if (refPaths.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
+              } else {
+                imgPath = prep(image, 'first')
+              }
+            } catch (e) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: `首帧图片不存在：${imgPath}` }))
+              res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
               return
             }
 
@@ -1312,28 +1347,44 @@ function seedreamProxy(): Plugin {
             const outDir = path.join(root, 'public', 'videos')
             fs.mkdirSync(outDir, { recursive: true })
 
-            res.end(JSON.stringify({ ok: true, id }))
+            // 参考图模式走 Lite I2V（reference_image），首帧模式走已开通的 pro
+            const model = refMode ? effVideoRefModel() : effVideoModel()
+            const cliArgs = [
+              'create',
+              '-p', prompt,
+              ...(refMode ? ['--ref-images', ...refPaths] : ['-i', imgPath]),
+              '--ratio', ratio,
+              '-d', String(seconds),
+              '-r', resolution,
+              '-m', model,
+              '--camera-fixed', cameraFixed,
+              '--wait',
+              '--interval', '8',
+              '--download', outDir,
+            ]
+
+            // dryRun：只回显将要提交的参数，不真的出片（调试 / 验证用）
+            if (body.dryRun) {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  id: 'dry-run',
+                  mode: refMode ? 'ref' : 'first',
+                  model,
+                  skipped,
+                  args: cliArgs,
+                }),
+              )
+              return
+            }
+
+            res.end(JSON.stringify({ ok: true, id, mode: refMode ? 'ref' : 'first', model, skipped }))
 
             // 后台执行，前端轮询
             ;(async () => {
               const t0 = Date.now()
               try {
-                const stdout = await runSeedance(
-                  [
-                    'create',
-                    '-p', prompt,
-                    '-i', imgPath,
-                    '--ratio', ratio,
-                    '-d', String(seconds),
-                    '-r', resolution,
-                    '-m', effVideoModel(),
-                    '--camera-fixed', cameraFixed,
-                    '--wait',
-                    '--interval', '8',
-                    '--download', outDir,
-                  ],
-                  key,
-                )
+                const stdout = await runSeedance(cliArgs, key)
                 const m = stdout.match(/Saved to:\s*(.+?\.(?:mp4|mov))/)
                 if (!m) throw new Error('未解析到视频产物路径')
                 const src = m[1].trim()

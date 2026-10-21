@@ -393,9 +393,12 @@ export default function Inspector({
           </span>
         </div>
         <p className="vid-note">
-          首帧取卡片当前画面；没有画面时用画布上连线的参考图（右击卡片选）。时长取镜头时长（2~12 秒），按
-          tokens 计费。
+          连线了参考图就走<b>多参考图模式</b>（reference_image，最多 4 张，提示词用 [图N] 指代）；
+          没连线才回落到首帧图生视频。时长取镜头时长（2~12 秒），按 tokens 计费。
         </p>
+        {(d.refIds?.length ?? 0) > 0 && (
+          <p className="vid-refs">参考图 {d.refIds!.length} 张（画布连线）· 多图模式</p>
+        )}
         <button
           className="btn primary block"
           disabled={d.vidState === 'running'}

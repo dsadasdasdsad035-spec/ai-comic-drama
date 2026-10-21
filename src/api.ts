@@ -63,7 +63,9 @@ export async function checkHealth(): Promise<{ hasKey: boolean; model: string } 
 // ---------- 图生视频 ----------
 
 export type VideoOpts = {
-  image: string
+  image?: string
+  /** 多参考图模式（方舟 reference_image，1~4 张）；有值时忽略 image */
+  refImages?: string[]
   prompt: string
   seconds: number
   ratio: string
@@ -80,7 +82,9 @@ async function readJsonRes(res: Response) {
 }
 
 /** 提交视频任务，返回任务 id（生成需要 1~4 分钟，不阻塞 HTTP） */
-export async function startVideo(o: VideoOpts): Promise<string> {
+export async function startVideo(
+  o: VideoOpts,
+): Promise<{ id: string; mode?: 'ref' | 'first'; skipped?: string[] }> {
   let res: Response
   try {
     res = await fetch('/api/seedance', {
@@ -93,7 +97,7 @@ export async function startVideo(o: VideoOpts): Promise<string> {
   }
   const j = await readJsonRes(res)
   if (!j.ok) throw new Error(j.message || '提交失败')
-  return j.id as string
+  return { id: j.id as string, mode: j.mode, skipped: j.skipped }
 }
 
 /** 轮询直到出片；onTick 每次回调可用于刷新计时 */

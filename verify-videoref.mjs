@@ -118,7 +118,13 @@ await videoBtn.click()
 await p.waitForTimeout(1200)
 check('拦截到出片请求', posts.length === 1, String(posts.length))
 if (posts.length) {
-  check('首帧取连线素材图', posts[0].image === '/generated/verify-scene.jpg', String(posts[0].image))
+  // 连线存在即走多参考图模式（reference_image），不再单传首帧
+  check(
+    '连线素材图进参考图列表',
+    (posts[0].refImages ?? []).includes('/generated/verify-scene.jpg'),
+    JSON.stringify(posts[0].refImages),
+  )
+  check('提示词带图注', /\[图1\]=/.test(posts[0].prompt || ''))
 }
 
 // 清理

@@ -15,7 +15,12 @@ const MODEL_FIELDS = [
   { key: 'lite', label: '文本 · lite 档', hint: '拆镜外的批量生成默认走这档，便宜' },
   { key: 'pro', label: '文本 · pro 档', hint: '拆镜/重质量生成用，慢但稳' },
   { key: 'image', label: '图像 · Seedream', hint: '首帧图生成模型 ID' },
-  { key: 'video', label: '视频 · Seedance', hint: '图生视频模型 ID' },
+  { key: 'video', label: '视频 · Seedance', hint: '图生视频模型 ID（首帧模式）' },
+  {
+    key: 'videoRef',
+    label: '视频 · 多参考图',
+    hint: 'reference_image 模式模型（1~4 张参考图），默认 Lite I2V',
+  },
 ] as const
 
 const RULE_META = [

@@ -988,27 +988,63 @@ function Shell() {
     [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters],
   )
 
-  /** 图生视频：以卡片当前画面（或连线选中的参考图）为首帧，提交后轮询出片 */
+  /**
+   * 连线 → 参考图清单（角色/素材，视频卡不参与）。
+   * 出片时：1 张以上走多参考图模式（reference_image），0 张退回首帧图生视频。
+   */
+  const collectRefImgs = useCallback(
+    (node: ShotNodeType) => {
+      const imgs: string[] = []
+      const labels: string[] = []
+      for (const rid of (node.data as unknown as { refIds?: string[] }).refIds ?? []) {
+        let img: string | undefined
+        let label = ''
+        if (rid.startsWith('char-')) {
+          const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
+          const card = characters.find((c) => c.id === key || c.name === key)
+          img = card?.image
+          label = `角色「${card?.name ?? key}」外观`
+        } else if (rid.startsWith('asset-')) {
+          const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
+          const d = a?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
+          if (d && d.kind !== 'video' && d.url) {
+            img = d.url
+            const tag = { scene: '场景', prop: '道具', image: '图片' }[d.kind as string] ?? '参考'
+            label = `${tag}「${d.title || '未命名'}」`
+          }
+        }
+        if (img && !imgs.includes(img)) {
+          imgs.push(img)
+          labels.push(label)
+        }
+      }
+      return { imgs, labels }
+    },
+    [characters],
+  )
+
+  /** 图生视频：多张连线图走 reference_image，否则用首帧图生视频 */
   const generateVideoOne = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      // 首帧取值：卡片当前画面 → 连线的素材/角色图（右键选的那张，免填 URL）
-      let first = node.data.refImage
-      if (!first) {
-        for (const rid of (node.data as unknown as { refIds?: string[] }).refIds ?? []) {
-          if (rid.startsWith('char-')) {
-            const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
-            first = characters.find((c) => c.id === key || c.name === key)?.image
-          } else if (rid.startsWith('asset-')) {
-            const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
-            const d = a?.data as unknown as { kind?: string; url?: string } | undefined
-            if (d && d.kind !== 'video') first = d.url
-          }
-          if (first) break
+      const { imgs, labels } = collectRefImgs(node)
+      // 有连线：参考图模式（画面排第一张，保持与上一镜连贯），最多 4 张（方舟上限）
+      const refList: string[] = []
+      const refNotes: string[] = []
+      if (imgs.length > 0) {
+        if (node.data.refImage) {
+          refList.push(node.data.refImage)
+          refNotes.push('画面构图与上一镜连贯')
+        }
+        for (let i = 0; i < imgs.length && refList.length < 4; i++) {
+          if (refList.includes(imgs[i])) continue
+          refList.push(imgs[i])
+          refNotes.push(labels[i] || '参考素材')
         }
       }
-      if (!first) {
+      const first = node.data.refImage
+      if (refList.length === 0 && !first) {
         patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
         return
       }
@@ -1019,18 +1055,28 @@ function Shell() {
       const fallback = `${node.data.size}，${
         node.data.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${node.data.move}`
       }，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
+      // 多参考图模式：提示词里用 [图N] 指代，模型才知道每张图管什么
+      const refHint =
+        refList.length > 0
+          ? `\n\n参考图：${refNotes.map((n, i) => `[图${i + 1}]=${n}`).join('，')}。主体外观、场景与道具必须与参考图一致。`
+          : ''
       const tid = startTask('video', `${node.data.no} 出片`, {
         retry: () => void generateVideoOne(id),
       })
       try {
-        const taskId = await startVideo({
-          image: first,
-          prompt: motion || fallback,
+        const res = await startVideo({
+          ...(refList.length > 0 ? { refImages: refList } : { image: first }),
+          prompt: (motion || fallback) + refHint,
           seconds: Math.round(node.data.seconds),
           ratio,
           resolution: vidRes,
           cameraFixed: node.data.move === '固定',
         })
+        if (res.skipped?.length) {
+          setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
+          window.setTimeout(() => setToast(''), 3000)
+        }
+        const taskId = res.id
         const url = await waitVideo(taskId, (elapsed) =>
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
         )
@@ -1041,7 +1087,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, characters],
+    [patch, ratio, vidRes, collectRefImgs],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
