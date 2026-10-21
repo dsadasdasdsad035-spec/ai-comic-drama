@@ -96,7 +96,10 @@ type Provider = {
   /** 留空则 ARK 回落到 .env / 环境变量 */
   apiKey?: string
   note?: string
+  /** 这个渠道能做哪几类活：文本 / 图片 / 视频 / 音频 */
+  caps?: ProviderCap[]
 }
+type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 
 type ModelEntry = {
   /** 唯一键，生成时按它选模型 */
@@ -127,6 +130,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     kind: 'ark',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     note: '文本 / Seedream 生图 / Seedance 视频，Key 可留空沿用 .env',
+    caps: ['text', 'image', 'video'],
   },
   {
     id: 'deepseek',
@@ -134,6 +138,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     kind: 'openai',
     baseUrl: 'https://api.deepseek.com/v1',
     note: 'OpenAI 兼容，填 Key 即用',
+    caps: ['text'],
   },
   {
     id: 'minimax',
@@ -141,6 +146,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     kind: 'minimax',
     baseUrl: 'https://api.minimaxi.com/v1',
     note: '文本 chatcompletion_v2 / 语音 t2a_v2',
+    caps: ['text', 'audio'],
   },
   {
     id: 'elevenlabs',
@@ -148,6 +154,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     kind: 'elevenlabs',
     baseUrl: 'https://api.elevenlabs.io',
     note: '配音，多角色音色',
+    caps: ['audio'],
   },
   {
     id: 'openai',
@@ -155,6 +162,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     kind: 'openai',
     baseUrl: 'https://api.openai.com/v1',
     note: '中转站 / 自建服务，改 baseUrl 即可',
+    caps: ['text', 'image'],
   },
 ]
 
@@ -197,13 +205,33 @@ const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
   audio: 'eleven-tts',
 }
 
+/** 老渠道没有 caps 字段时按协议推一个默认用途 */
+function capsOfKind(kind: ProviderKind): ProviderCap[] {
+  if (kind === 'ark') return ['text', 'image', 'video']
+  if (kind === 'openai') return ['text', 'image']
+  if (kind === 'minimax') return ['text', 'audio']
+  return ['audio']
+}
+
 /** 老结构（models.lite/pro/image/video/videoRef）→ 新结构，只做读时转换 */
 function normalizeSettings(raw: any): AppSettings {
   const rules = (raw?.rules || {}) as Record<string, RulePack>
   const apiKey = String(raw?.apiKey || '')
   if (Array.isArray(raw?.providers) && Array.isArray(raw?.models)) {
+    const providers = (raw.providers as Provider[]).map((p) => {
+      // 老数据可能缺 caps / baseUrl：按同 id 的预置渠道兜底，再退到协议推断
+      const def = DEFAULT_PROVIDERS.find((d) => d.id === p.id)
+      return {
+        ...p,
+        baseUrl: String(p.baseUrl || def?.baseUrl || ''),
+        caps:
+          Array.isArray(p.caps) && p.caps.length
+            ? p.caps
+            : (def?.caps ?? capsOfKind(p.kind)),
+      }
+    })
     return {
-      providers: raw.providers,
+      providers,
       models: raw.models,
       defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
       apiKey,
@@ -1122,6 +1150,111 @@ function seedreamProxy(): Plugin {
           } catch (e: any) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 渠道连通性测试：用最轻的真实调用验证 Key / baseUrl / 模型名 ----
+        if (url === '/api/test-provider') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const s = getAppSettings()
+            const p =
+              s.providers.find((x) => x.id === String(body.id || '')) ||
+              (body.provider as Provider | undefined)
+            if (!p) throw new Error('找不到这个渠道')
+            const key = providerKey(p)
+            if (!key) {
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: 'no-key',
+                  message: p.kind === 'ark' ? '没有 Key：填到设置页或配 ARK_API_KEY' : '这个渠道还没填 API Key',
+                  latency: 0,
+                }),
+              )
+              return
+            }
+            const base = String(p.baseUrl || '').replace(/\/+$/, '')
+            if (!/^https?:\/\//.test(base)) throw new Error('Base URL 必须带 http(s)://')
+
+            // 每个协议挑最轻的鉴权调用：文本类发 1 token 对话，其余查资源
+            const t0 = Date.now()
+            let endpoint = ''
+            let init: RequestInit
+            if (p.kind === 'elevenlabs') {
+              endpoint = `${base}/v1/user`
+              init = { headers: { 'xi-api-key': key } }
+            } else if (p.kind === 'minimax') {
+              // MiniMax 没有稳定的 models 端点，用 1 token 文本对话验鉴权
+              const m = s.models.find((x) => x.provider === p.id && x.cap === 'text')?.model || 'MiniMax-M1'
+              endpoint = `${base}/text/chatcompletion_v2`
+              init = {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: m,
+                  messages: [{ role: 'user', content: 'ping' }],
+                  max_tokens: 1,
+                }),
+              }
+            } else {
+              // ark / openai：先试 models 列表（免费），不行再退回 1 token 对话
+              endpoint = `${base}/models`
+              init = { headers: { Authorization: `Bearer ${key}` } }
+            }
+
+            let r = await fetch(endpoint, init)
+            if (!r.ok && r.status === 404 && (p.kind === 'ark' || p.kind === 'openai')) {
+              const m = s.models.find((x) => x.provider === p.id && x.cap === 'text')?.model || ''
+              endpoint = `${base}/chat/completions`
+              r = await fetch(endpoint, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  model: m,
+                  messages: [{ role: 'user', content: 'ping' }],
+                  max_tokens: 1,
+                }),
+              })
+            }
+            const latency = Date.now() - t0
+            const raw = (await r.text()).slice(0, 300)
+            if (r.ok) {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  kind: 'ok',
+                  status: r.status,
+                  latency,
+                  endpoint,
+                  message: '连通，鉴权通过',
+                }),
+              )
+              return
+            }
+            const kind = r.status === 401 || r.status === 403 ? 'auth' : 'api'
+            res.end(
+              JSON.stringify({
+                ok: false,
+                kind,
+                status: r.status,
+                latency,
+                endpoint,
+                message:
+                  kind === 'auth'
+                    ? `Key 无效或没权限（HTTP ${r.status}）：${raw.slice(0, 160)}`
+                    : `HTTP ${r.status}：${raw.slice(0, 160)}`,
+              }),
+            )
+          } catch (e: any) {
+            res.end(JSON.stringify({ ok: false, kind: 'net', message: e?.message || String(e), latency: 0 }))
           }
           return
         }

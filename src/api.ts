@@ -426,6 +426,7 @@ export type RulePack = { enabled: boolean; text: string }
 
 export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 export type ProviderKind = 'ark' | 'openai' | 'minimax' | 'elevenlabs'
+export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {
   id: string
   label: string
@@ -433,6 +434,8 @@ export type Provider = {
   baseUrl: string
   apiKey?: string
   note?: string
+  /** 这个渠道能承接哪几类活 */
+  caps?: ProviderCap[]
 }
 export type ModelEntry = {
   key: string
@@ -467,4 +470,29 @@ export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSett
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '保存设置失败')
   return j.settings as AppSettings
+}
+
+// ---------------------------------------------------------------- 渠道测试
+
+export type ProviderTestResult = {
+  ok: boolean
+  kind?: 'ok' | 'no-key' | 'auth' | 'api' | 'net'
+  status?: number
+  latency?: number
+  endpoint?: string
+  message?: string
+}
+
+/** 用一个最轻的请求验证渠道的 Key / baseUrl / 首个文本模型是否可用 */
+export async function testProvider(id: string, provider?: Provider): Promise<ProviderTestResult> {
+  try {
+    const r = await fetch('/api/test-provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, provider }),
+    })
+    return (await readJsonRes(r)) as ProviderTestResult
+  } catch (e) {
+    return { ok: false, kind: 'net', message: (e as Error).message }
+  }
 }

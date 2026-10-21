@@ -5055,3 +5055,135 @@ button:not(:disabled),
   flex: 1;
   min-width: 0;
 }
+
+/* ===== 渠道按用途分组 + 测试 ===== */
+.st-pcgroup {
+  margin-bottom: 14px;
+}
+.st-pcgroup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 2px 8px;
+}
+.st-pcgroup-head b {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.st-prov-caps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+.st-cap-label {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+.st-cap {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  cursor: pointer;
+}
+.st-cap.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.st-test {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  word-break: break-all;
+}
+.st-test.ok {
+  border: 1px solid var(--ok, #34d399);
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--ok, #34d399);
+}
+.st-test.bad {
+  border: 1px solid var(--danger);
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.st-test-ep {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+/* ===== 渠道按用途分组 + 测试 ===== */
+.st-pcgroup {
+  margin-bottom: 14px;
+}
+.st-pcgroup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 2px 8px;
+}
+.st-pcgroup-head b {
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.st-prov-caps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+.st-cap-label {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+.st-cap {
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  cursor: pointer;
+}
+.st-cap.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+.st-test {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+  word-break: break-all;
+}
+.st-test.ok {
+  border: 1px solid var(--ok, #34d399);
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--ok, #34d399);
+}
+.st-test.bad {
+  border: 1px solid var(--danger);
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.st-test-ep {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}

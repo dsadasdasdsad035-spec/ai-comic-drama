@@ -6,8 +6,11 @@ import {
   type Cap,
   type ModelEntry,
   type Provider,
+  type ProviderCap,
   type ProviderKind,
+  type ProviderTestResult,
   type RulePack,
+  testProvider,
 } from './api'
 import { DEFAULT_RULES, normalizeRules } from './prompts'
 
@@ -27,6 +30,25 @@ const CAP_META: { cap: Cap; label: string; hint: string }[] = [
   { cap: 'video', label: '视频 · 首帧出片', hint: '单图图生视频' },
   { cap: 'videoRef', label: '视频 · 多参考图', hint: 'reference_image 1~4 张' },
   { cap: 'audio', label: '音频 · 配音', hint: '台词合成' },
+]
+
+/** 模型能力 → 渠道用途（决定模型行里能选哪些渠道） */
+const CAP_TO_PC: Record<Cap, ProviderCap> = {
+  text: 'text',
+  textPro: 'text',
+  image: 'image',
+  view: 'image',
+  video: 'video',
+  videoRef: 'video',
+  audio: 'audio',
+}
+
+/** 渠道分组：按用途分四块 */
+const PC_GROUPS: { pc: ProviderCap; label: string; hint: string }[] = [
+  { pc: 'text', label: '文本渠道', hint: '拆集 / 拆镜 / 拆角色 / 提示词' },
+  { pc: 'image', label: '图片渠道', hint: '出画面 / 角色三视图' },
+  { pc: 'video', label: '视频渠道', hint: '图生视频（目前走方舟 Seedance CLI）' },
+  { pc: 'audio', label: '音频渠道', hint: '台词配音' },
 ]
 
 const KIND_META: { kind: ProviderKind; label: string }[] = [
@@ -52,6 +74,8 @@ export default function Settings({ toast }: Props) {
   const [dbFile, setDbFile] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState<Record<string, boolean>>({})
+  const [tested, setTested] = useState<Record<string, ProviderTestResult>>({})
 
   useEffect(() => {
     getSettings()
@@ -86,11 +110,24 @@ export default function Settings({ toast }: Props) {
   const patchModel = (key: string, p: Partial<ModelEntry>) =>
     setModels((ms) => ms.map((x) => (x.key === key ? { ...x, ...p } : x)))
 
-  const addProvider = () => {
+  const capsOf = (p: Provider): ProviderCap[] => p.caps ?? ['text']
+  const runTest = async (p: Provider) => {
+    setTesting((t) => ({ ...t, [p.id]: true }))
+    const r = await testProvider(p.id, p)
+    setTesting((t) => ({ ...t, [p.id]: false }))
+    setTested((t) => ({ ...t, [p.id]: r }))
+  }
+  const toggleCap = (p: Provider, pc: ProviderCap) => {
+    const cur = capsOf(p)
+    const next = cur.includes(pc) ? cur.filter((x) => x !== pc) : [...cur, pc]
+    patchProvider(p.id, { caps: next.length ? next : [pc] })
+  }
+
+  const addProvider = (pc: ProviderCap = 'text') => {
     const id = `custom-${Date.now().toString(36).slice(-4)}`
     setProviders((ps) => [
       ...ps,
-      { id, label: '新渠道', kind: 'openai', baseUrl: 'https://', apiKey: '' },
+      { id, label: '新渠道', kind: 'openai', baseUrl: 'https://', apiKey: '', caps: [pc] },
     ])
   }
 
@@ -120,57 +157,108 @@ export default function Settings({ toast }: Props) {
           <header className="st-sec-head">
             <h3>渠道（Provider）</h3>
             <span className="st-hint">
-              一个渠道 = 一个 baseUrl + 一把 Key。已预置字节方舟 / DeepSeek / MiniMax / ElevenLabs / 第三方兼容；
-              方舟的 Key 留空会自动沿用 ~/.canghe-skills/.env。
+              按用途分成四类，每类里只列能做这活的渠道。点「测试」会用最轻的请求验一把 Key / baseUrl。
             </span>
-            <button className="btn-mini" onClick={addProvider}>
-              + 渠道
-            </button>
           </header>
-          <div className="st-providers">
-            {providers.map((p) => (
-              <div key={p.id} className="st-prov">
-                <div className="st-prov-head">
-                  <input
-                    className="st-prov-name"
-                    value={p.label}
-                    onChange={(e) => patchProvider(p.id, { label: e.target.value })}
-                  />
-                  <select
-                    value={p.kind}
-                    onChange={(e) => patchProvider(p.id, { kind: e.target.value as ProviderKind })}
-                  >
-                    {KIND_META.map((k) => (
-                      <option key={k.kind} value={k.kind}>
-                        {k.label}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="btn-mini danger"
-                    onClick={() => setProviders((ps) => ps.filter((x) => x.id !== p.id))}
-                    title="删除渠道（引用它的模型会失效）"
-                  >
-                    删除
+          {PC_GROUPS.map((g) => {
+            const list = providers.filter((p) => capsOf(p).includes(g.pc))
+            return (
+              <div key={g.pc} className="st-pcgroup" data-pc={g.pc}>
+                <div className="st-pcgroup-head">
+                  <b>{g.label}</b>
+                  <span className="st-hint">{g.hint}</span>
+                  <span className="spacer" />
+                  <button className="btn-mini" onClick={() => addProvider(g.pc)}>
+                    + 渠道
                   </button>
                 </div>
-                <label className="st-field">
-                  <span>Base URL</span>
-                  <input value={p.baseUrl} onChange={(e) => patchProvider(p.id, { baseUrl: e.target.value })} />
-                </label>
-                <label className="st-field">
-                  <span>API Key</span>
-                  <input
-                    type="password"
-                    value={p.apiKey || ''}
-                    placeholder={p.kind === 'ark' ? '留空 = 沿用 .env 的 ARK_API_KEY' : '必填'}
-                    onChange={(e) => patchProvider(p.id, { apiKey: e.target.value })}
-                  />
-                </label>
-                {p.note && <em className="st-prov-note">{p.note}</em>}
+                <div className="st-providers">
+                  {list.map((p) => {
+                    const t = tested[p.id]
+                    return (
+                      <div key={`${g.pc}-${p.id}`} className="st-prov" data-pid={p.id}>
+                        <div className="st-prov-head">
+                          <input
+                            className="st-prov-name"
+                            value={p.label}
+                            onChange={(e) => patchProvider(p.id, { label: e.target.value })}
+                          />
+                          <select
+                            value={p.kind}
+                            onChange={(e) => patchProvider(p.id, { kind: e.target.value as ProviderKind })}
+                          >
+                            {KIND_META.map((k) => (
+                              <option key={k.kind} value={k.kind}>
+                                {k.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <label className="st-field">
+                          <span>Base URL</span>
+                          <input
+                            value={p.baseUrl}
+                            onChange={(e) => patchProvider(p.id, { baseUrl: e.target.value })}
+                          />
+                        </label>
+                        <label className="st-field">
+                          <span>API Key</span>
+                          <input
+                            type="password"
+                            value={p.apiKey || ''}
+                            placeholder={p.kind === 'ark' ? '留空 = 沿用 .env 的 ARK_API_KEY' : '必填'}
+                            onChange={(e) => patchProvider(p.id, { apiKey: e.target.value })}
+                          />
+                        </label>
+                        <div className="st-prov-caps">
+                          <span className="st-cap-label">用途</span>
+                          {PC_GROUPS.map((x) => (
+                            <button
+                              key={x.pc}
+                              className={`st-cap ${capsOf(p).includes(x.pc) ? 'on' : ''}`}
+                              onClick={() => toggleCap(p, x.pc)}
+                              title={`这个渠道是否承接${x.label}`}
+                            >
+                              {x.label.replace('渠道', '')}
+                            </button>
+                          ))}
+                          <span className="spacer" />
+                          <button
+                            className="btn-mini"
+                            disabled={!!testing[p.id]}
+                            onClick={() => void runTest(p)}
+                            title="用最轻的请求验证 Key / baseUrl"
+                          >
+                            {testing[p.id] ? '测试中…' : '测试'}
+                          </button>
+                          <button
+                            className="btn-mini danger"
+                            onClick={() => setProviders((ps) => ps.filter((x) => x.id !== p.id))}
+                            title="删除渠道（引用它的模型会失效）"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {t && (
+                          <div className={`st-test ${t.ok ? 'ok' : 'bad'}`}>
+                            <b>{t.ok ? '可用' : '不可用'}</b>
+                            {typeof t.latency === 'number' && t.latency > 0 ? ` · ${t.latency}ms` : ''}
+                            {' · '}
+                            {t.message}
+                            {t.endpoint && <code className="st-test-ep">{t.endpoint}</code>}
+                          </div>
+                        )}
+                        {p.note && <em className="st-prov-note">{p.note}</em>}
+                      </div>
+                    )
+                  })}
+                  {list.length === 0 && (
+                    <div className="st-model-empty">还没有{g.label}，点上方「+ 渠道」加一个</div>
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
+            )
+          })}
         </section>
 
         <section className="st-sec">
@@ -226,12 +314,15 @@ export default function Settings({ toast }: Props) {
                     <select
                       value={m.provider}
                       onChange={(e) => patchModel(m.key, { provider: e.target.value })}
+                      title={`这里只列支持「${c.label}」的渠道，渠道用途在下方渠道卡片里勾`}
                     >
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
+                      {providers
+                        .filter((p) => capsOf(p).includes(CAP_TO_PC[c.cap]))
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
                     </select>
                     <input
                       className="st-model-id"

@@ -26,6 +26,14 @@ check('渠道含 DeepSeek', s0.providers.some((p) => p.id === 'deepseek' && p.ki
 check('渠道含 MiniMax', s0.providers.some((p) => p.id === 'minimax' && p.kind === 'minimax'))
 check('渠道含 ElevenLabs', s0.providers.some((p) => p.id === 'elevenlabs' && p.kind === 'elevenlabs'))
 check('渠道含第三方兼容', s0.providers.some((p) => p.id === 'openai' && p.kind === 'openai'))
+check(
+  '每个渠道都标了用途',
+  s0.providers.every((p) => Array.isArray(p.caps) && p.caps.length > 0),
+  JSON.stringify(s0.providers.map((p) => `${p.id}:${p.caps}`)),
+)
+const arkP = s0.providers.find((p) => p.id === 'ark')
+check('方舟用途含文本/图片/视频', ['text', 'image', 'video'].every((c) => arkP.caps.includes(c)), JSON.stringify(arkP.caps))
+check('每个渠道都有 baseUrl', s0.providers.every((p) => /^https?:\/\//.test(p.baseUrl || '')))
 
 const caps = new Set((s0.models || []).map((m) => m.cap))
 for (const c of ['text', 'textPro', 'image', 'view', 'video', 'videoRef', 'audio']) {
@@ -63,6 +71,32 @@ const dryRef = await api('/api/seedance', {
 })
 check('多参考模式按 modelKey 取模型', dryRef.ok && /lite-i2v/.test(dryRef.model ?? ''), String(dryRef.model))
 
+// ---- 3b. 渠道测试端点 ----
+const tNoKey = await api('/api/test-provider', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ id: 'deepseek' }),
+})
+check('没填 Key 的渠道报 no-key', tNoKey.kind === 'no-key', JSON.stringify(tNoKey))
+
+const tNet = await api('/api/test-provider', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    id: 'ghost',
+    provider: { id: 'ghost', label: 'ghost', kind: 'openai', baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'k' },
+  }),
+})
+check('连不通报 net', tNet.ok === false && tNet.kind === 'net', JSON.stringify(tNet))
+
+const tArk = await api('/api/test-provider', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ id: 'ark' }),
+})
+check('方舟渠道能测出结果', typeof tArk.status === 'number' || typeof tArk.latency === 'number', JSON.stringify(tArk))
+check('方舟鉴权通过（/models 200）', tArk.ok === true && tArk.status === 200, JSON.stringify(tArk).slice(0, 120))
+
 // ---- 4. 设置页 UI ----
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1680, height: 1000 } })
@@ -76,9 +110,36 @@ await p.getByRole('button', { name: '设置', exact: true }).click().catch(async
 })
 await p.waitForTimeout(900)
 
+check('设置页按用途分四组', (await p.locator('.st-pcgroup').count()) === 4, String(await p.locator('.st-pcgroup').count()))
+for (const [pc, name] of [['text', '文本渠道'], ['image', '图片渠道'], ['video', '视频渠道'], ['audio', '音频渠道']]) {
+  const g = p.locator(`.st-pcgroup[data-pc="${pc}"]`)
+  check(`${name}分组有标题`, (await g.locator('.st-pcgroup-head b').innerText()) === name)
+}
+check(
+  '方舟同时出现在文本/图片/视频组',
+  (
+    await Promise.all(
+      ['text', 'image', 'video'].map((pc) =>
+        p.locator(`.st-pcgroup[data-pc="${pc}"] .st-prov[data-pid="ark"]`).count(),
+      ),
+    )
+  ).every((n) => n >= 1),
+)
+check(
+  '音频组只列音频渠道',
+  (await p.locator('.st-pcgroup[data-pc="audio"] .st-prov[data-pid="ark"]').count()) === 0,
+)
 check('设置页渲染渠道卡', (await p.locator('.st-prov').count()) >= 5, String(await p.locator('.st-prov').count()))
 check('设置页渲染模型行', (await p.locator('.st-model-row').count()) === s0.models.length)
 check('默认模型下拉数量', (await p.locator('.st-sec select').count()) >= 7)
+
+// 点方舟卡上的「测试」→ 出现结果行
+const arkCard = p.locator('.st-pcgroup[data-pc="text"] .st-prov[data-pid="ark"]').first()
+await arkCard.locator('button', { hasText: '测试' }).click()
+await p.waitForTimeout(2500)
+const testBox = arkCard.locator('.st-test')
+check('测试按钮出结果', (await testBox.count()) === 1, await testBox.innerText().catch(() => ''))
+check('方舟测试结果为可用', (await testBox.getAttribute('class'))?.includes('ok') ?? false, await testBox.innerText())
 
 // 改一个默认模型并保存
 const videoSel = p.locator('.st-field', { hasText: '视频 · 首帧出片' }).locator('select')
