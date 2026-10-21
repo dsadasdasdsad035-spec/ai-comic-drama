@@ -514,3 +514,16 @@ export async function testProvider(id: string, provider?: Provider): Promise<Pro
     return { ok: false, kind: 'net', message: (e as Error).message }
   }
 }
+
+/** 已生成的视频（public/videos），用于把本地视频挂到镜头 */
+export type VideoFile = { name: string; url: string; size: number; mtime: number }
+
+export async function listVideoFiles(): Promise<VideoFile[]> {
+  try {
+    const r = await fetch('/api/videos')
+    const j = await readJsonRes(r)
+    return j.ok ? ((j.videos ?? []) as VideoFile[]) : []
+  } catch {
+    return []
+  }
+}

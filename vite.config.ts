@@ -1414,6 +1414,30 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 已生成的视频列表（给「挂载已有视频」用）----
+        if (url === '/api/videos') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const dir = path.join(root, 'public', 'videos')
+            const list = fs.existsSync(dir)
+              ? fs
+                  .readdirSync(dir)
+                  .filter((f) => /\.(mp4|mov|webm)$/i.test(f))
+                  .map((f) => {
+                    const st = fs.statSync(path.join(dir, f))
+                    return { name: f, url: `/videos/${f}`, size: st.size, mtime: st.mtimeMs }
+                  })
+                  .sort((a, b) => b.mtime - a.mtime)
+                  .slice(0, 80)
+              : []
+            res.end(JSON.stringify({ ok: true, videos: list }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e), videos: [] }))
+          }
+          return
+        }
+
         // ---- 可用音色 ----
         if (url === '/api/voices') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')

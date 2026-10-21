@@ -36,6 +36,8 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
+  /** 视频文件缺失/解码失败：卡片上直接说清楚，而不是留一块黑 */
+  const [vidBroken, setVidBroken] = useState(false)
   const [vidDur, setVidDur] = useState(0)
   const origin = useRef({ x: 0, y: 0 })
   const lastPt = useRef({ x: 0, y: 0 })
@@ -311,7 +313,22 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
             playsInline
             preload="metadata"
             onLoadedMetadata={(e) => setVidDur(e.currentTarget.duration || 0)}
+            onError={() => setVidBroken(true)}
           />
+        )}
+
+        {hasVideo && vidBroken && (
+          <div className="vid-broken nodrag" title={data.videoUrl}>
+            <b>视频文件缺失</b>
+            <span>先在 Inspector 重出，或「挂载已有视频」</span>
+          </div>
+        )}
+
+        {hasVideo && vidBroken && (
+          <div className="vid-broken nodrag" title={data.videoUrl}>
+            <b>视频文件缺失</b>
+            <span>先在 Inspector 重出，或「挂载已有视频」</span>
+          </div>
         )}
 
         {hasVideo && (

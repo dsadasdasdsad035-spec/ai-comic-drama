@@ -3,6 +3,8 @@ import { CANDIDATE_COUNTS, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './type
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
+import { listVideoFiles, type VideoFile } from './api'
+import { useEffect, useState } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
@@ -160,6 +162,19 @@ export default function Inspector({
       </aside>
     )
   }
+
+  const [videos, setVideos] = useState<VideoFile[]>([])
+  const [pickVideo, setPickVideo] = useState('')
+  useEffect(() => {
+    if (!node || (node as unknown as AssetNodeType).type === 'asset') return
+    let alive = true
+    listVideoFiles().then((v) => {
+      if (alive) setVideos(v)
+    })
+    return () => {
+      alive = false
+    }
+  }, [node?.id])
 
   // 素材卡走专属面板（节点数据结构与分镜卡不同）
   if ((node as unknown as AssetNodeType).type === 'asset') {
@@ -466,6 +481,28 @@ export default function Inspector({
         </p>
         {(d.refIds?.length ?? 0) > 0 && (
           <p className="vid-refs">参考图 {d.refIds!.length} 张（画布连线）· 多图模式</p>
+        )}
+        {videos.length > 0 && (
+          <div className="vid-pick">
+            <select value={pickVideo} onChange={(e) => setPickVideo(e.target.value)} title="选一个已生成的视频挂到本镜">
+              <option value="">挂载已有视频…（{videos.length} 个）</option>
+              {videos.map((v) => (
+                <option key={v.url} value={v.url}>
+                  {v.name} · {(v.size / 1024 / 1024).toFixed(1)}MB
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn-mini"
+              disabled={!pickVideo}
+              onClick={() => {
+                set({ videoUrl: pickVideo, vidState: 'idle', vidError: undefined })
+                setPickVideo('')
+              }}
+            >
+              挂上
+            </button>
+          </div>
         )}
         <button
           className="btn primary block"
