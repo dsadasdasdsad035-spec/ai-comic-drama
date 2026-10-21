@@ -1,4 +1,4 @@
-import { PROMPT_WRITING_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
+import { CHARACTER_RULES, PROMPT_WRITING_RULES, SCRIPT_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
 
 /**
  * 与 manga-pipeline/prompts.py 保持一字不差的系统提示词。
@@ -68,11 +68,12 @@ export const SCRIPT_SYS = `你是短剧/漫剧的编剧与分集策划。
       "hook": "本集结尾钩子",
       "scenes": [
         {"no": 1, "slug": "场景简称", "place": "地点", "time": "时间/光线",
-         "beats": "这一场发生什么，2-4 句", "characters": ["角色名"]}
+         "beats": "这一场发生什么，2-4 句", "characters": ["角色名"],
+         "intensity": 6, "tone": "悬疑"}
       ]
     }
   ]
-}`
+}${SCRIPT_RULES}`
 
 export const CHARACTER_SYS = `你是角色设定师，为 AI 生图做「外观锚点」，保证多镜头之间角色长相一致。
 
@@ -89,7 +90,7 @@ export const CHARACTER_SYS = `你是角色设定师，为 AI 生图做「外观�
 
 铁律：所有角色必须有明确区分度（轮廓/配色/配饰不能撞）；同一角色在不同镜头复用同一段 look_en。
 
-输出 JSON：{"characters": [ ... ]}`
+输出 JSON：{"characters": [ ... ]}${CHARACTER_RULES}`
 
 export const PROMPT_SYS = `你是 AI 影像提示词工程师，把分镜转成两类可直接执行的提示词。
 

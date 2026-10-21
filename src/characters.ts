@@ -18,10 +18,16 @@ export type CharacterSheet = {
   error?: string
 }
 
+/**
+ * 三视图提示词尾巴（character-design-sheet 的参考表规范）：
+ * 除了「三个角度」，还必须锁定服装/道具/比例 —— 否则三视图彼此不一致，
+ * 拿去做参考图反而把错误长相带进每一镜。
+ */
 export const TURNAROUND_SUFFIX =
   'character turnaround sheet, three views side by side: front view, side view, back view — ' +
-  'full body, standing straight, arms relaxed, plain neutral grey studio background, ' +
-  'even soft lighting, consistent design across all three views, no text, no watermark'
+  'full body, standing straight, arms relaxed, plain neutral grey seamless studio background, ' +
+  'flat even lighting, no dramatic shadows, identical outfit, hairstyle, accessories and body ' +
+  'proportions in all views, consistent design across views, no text, no watermark'
 
 export const defaultCharacters: CharacterSheet[] = [
   {

@@ -217,6 +217,11 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
           </div>
         ) : (
           <div className="sb-scroll">
+            <datalist id="sb-tone-options">
+              {['紧张', '温情', '悬疑', '压抑', '热血'].map((t) => (
+                <option key={t} value={t} />
+              ))}
+            </datalist>
             {episodes.map((e, i) => {
               const isCur = Number(e.no) === epNo
               return (
@@ -263,6 +268,41 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
                           <span className="sb-dim">{sc.place}</span>
                           <span className="sb-dim">{sc.time}</span>
                           {!!sc.characters?.length && <span className="sb-cast">{sc.characters.join('、')}</span>}
+                          <span className="sb-knob" title="冲突强度 0-10：拆镜时 0-3 一条运镜、4-6 两条、7-10 三条">
+                            <span className="sb-knob-k">强度</span>
+                            <input
+                              className="sb-knob-in sb-int"
+                              type="number"
+                              min={0}
+                              max={10}
+                              step={1}
+                              value={sc.intensity ?? ''}
+                              placeholder="—"
+                              onChange={(ev) => {
+                                const v = ev.target.value
+                                const scenes = [...(e.scenes ?? [])]
+                                scenes[si] = {
+                                  ...sc,
+                                  intensity: v === '' ? undefined : Math.max(0, Math.min(10, Number(v) || 0)),
+                                }
+                                patchEp(i, { scenes })
+                              }}
+                            />
+                          </span>
+                          <span className="sb-knob" title="情绪基调：紧张 / 温情 / 悬疑 / 压抑 / 热血">
+                            <span className="sb-knob-k">基调</span>
+                            <input
+                              className="sb-knob-in sb-tone"
+                              value={sc.tone ?? ''}
+                              placeholder="—"
+                              list="sb-tone-options"
+                              onChange={(ev) => {
+                                const scenes = [...(e.scenes ?? [])]
+                                scenes[si] = { ...sc, tone: ev.target.value || undefined }
+                                patchEp(i, { scenes })
+                              }}
+                            />
+                          </span>
                         </div>
                         <textarea
                           className="sb-beats"

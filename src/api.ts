@@ -277,7 +277,18 @@ export type ProjectEpisode = {
   no: number
   title?: string
   hook?: string
-  scenes?: { no?: number; slug?: string; place?: string; time?: string; beats?: string; characters?: string[] }[]
+  scenes?: {
+    no?: number
+    slug?: string
+    place?: string
+    time?: string
+    beats?: string
+    characters?: string[]
+    /** 冲突强度 0-10，拆镜时决定运镜条数 */
+    intensity?: number
+    /** 情绪基调，限一个词 */
+    tone?: string
+  }[]
 }
 
 export type ProjectData = {

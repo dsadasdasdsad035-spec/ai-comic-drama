@@ -426,9 +426,12 @@ function describeEpisode(ep: any): string {
   if (ep?.title) parts.push(`第 ${ep.no} 集《${ep.title}》`)
   if (ep?.hook) parts.push(`结尾钩子：${ep.hook}`)
   for (const sc of ep?.scenes ?? []) {
+    // 强度决定运镜条数（0-3 一条 / 4-6 两条 / 7-10 三条），必须带给拆镜模型
+    const itn = sc.intensity === undefined || sc.intensity === null ? '' : `｜强度 ${sc.intensity}/10`
+    const tone = sc.tone ? `｜基调 ${sc.tone}` : ''
     parts.push(
-      `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}｜` +
-        `${sc.beats || ''}｜在场：${(sc.characters ?? []).join('、')}`,
+      `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}` +
+        `${itn}${tone}｜${sc.beats || ''}｜在场：${(sc.characters ?? []).join('、')}`,
     )
   }
   return parts.join('\n')

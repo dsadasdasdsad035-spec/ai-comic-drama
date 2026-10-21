@@ -2381,232 +2381,6 @@ kbd {
   opacity: 0.7;
 }
 
-/* ---------------------------------------------------------------- 剧本工作台 */
-
-.sb {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 0;
-}
-
-.sb-left {
-  width: 380px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-right: 1px solid var(--line);
-  overflow: auto;
-}
-
-.sb-right {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.sb-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.sb-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.sb-head .label {
-  color: var(--muted);
-  font-size: var(--fs-sm);
-}
-
-.sb-note {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.sb-source {
-  flex: 1 1 46%;
-  min-height: 180px;
-  resize: vertical;
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-md);
-  padding: 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.7;
-  font-family: inherit;
-}
-
-.sb-logline {
-  min-height: 56px;
-  resize: vertical;
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  font-family: inherit;
-}
-
-.sb-opts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.sb-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.sb-ep {
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--panel);
-  padding: 10px 12px;
-}
-
-.sb-ep.on {
-  border-color: var(--accent);
-}
-
-.sb-ep-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sb-ep-head b {
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-}
-
-.sb-ep-title {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  color: var(--text);
-  font-size: var(--fs-md);
-  font-weight: 500;
-  padding: 3px 6px;
-  min-width: 120px;
-  font-family: inherit;
-}
-
-.sb-ep-title:hover,
-.sb-ep-title:focus {
-  border-color: var(--line-2);
-  outline: none;
-}
-
-.btn-mini {
-  background: transparent;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-full);
-  color: var(--muted);
-  font-size: var(--fs-xs);
-  padding: 3px 9px;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btn-mini:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.sb-hook {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0 10px;
-}
-
-.sb-hook span {
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  flex-shrink: 0;
-}
-
-.sb-hook input {
-  flex: 1;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  color: var(--text);
-  padding: 5px 8px;
-  font-size: var(--fs-sm);
-  font-family: inherit;
-}
-
-.sb-scenes {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sb-scenes li::marker {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.sb-scene-meta {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  flex-wrap: wrap;
-  margin-bottom: 3px;
-}
-
-.sb-slug {
-  color: var(--text);
-  font-size: var(--fs-sm);
-}
-
-.sb-dim {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.sb-cast {
-  color: var(--accent);
-  font-size: var(--fs-xs);
-}
-
-.sb-beats {
-  width: 100%;
-  resize: vertical;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  color: var(--text);
-  padding: 6px 8px;
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  font-family: inherit;
-}
-
-.sb-beats:focus,
-.sb-hook input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
 /* ---------------------------------------------------------------- 剧本工作台 */
 
@@ -2814,6 +2588,61 @@ kbd {
 .sb-cast {
   color: var(--accent);
   font-size: var(--fs-xs);
+}
+
+/* 强度 / 基调：剧本 → 拆镜的调参旋钮，拆镜时按它们定运镜条数 */
+.sb-knob {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  line-height: 1.7;
+}
+
+.sb-knob-k {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.sb-knob-in {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  padding: 0;
+  outline: none;
+}
+
+.sb-knob-in::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.sb-knob-in.sb-int {
+  width: 26px;
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.sb-knob-in.sb-int::-webkit-outer-spin-button,
+.sb-knob-in.sb-int::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sb-knob-in.sb-tone {
+  width: 44px;
+}
+
+.sb-knob:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .sb-beats {
