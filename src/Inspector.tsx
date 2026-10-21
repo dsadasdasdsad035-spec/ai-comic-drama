@@ -183,6 +183,21 @@ export default function Inspector({
         <textarea rows={4} value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} />
       </label>
 
+      <label className="field">
+        <span>
+          运动提示词
+          <i className="hint-inline" title="出片时发给 Seedance 的提示词，只写动作与运镜；留空则回退用画面提示词">
+            Seedance
+          </i>
+        </span>
+        <textarea
+          rows={3}
+          value={d.videoPrompt ?? ''}
+          placeholder="只写动作与运镜：镜头缓慢前推 20 厘米，雨丝斜切画面，24fps 冷青色调"
+          onChange={(e) => set({ videoPrompt: e.target.value })}
+        />
+      </label>
+
       <div className="gen-box">
         <div className="gen-head">
           <span>AI 生成画面</span>

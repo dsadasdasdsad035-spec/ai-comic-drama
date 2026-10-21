@@ -42,6 +42,7 @@ export function bizSignature(d: ShotData): string {
     move: d.move,
     dialogue: d.dialogue,
     keyframe_prompt: d.prompt,
+    video_prompt: d.videoPrompt ?? '',
     keyframe: localPath(d.refImage),
     clip: localPath(d.videoUrl),
   })
@@ -58,6 +59,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     move: d.move,
     dialogue: parseDialogue(d.dialogue),
     keyframe_prompt: d.prompt,
+    video_prompt: d.videoPrompt,
     keyframe: localPath(d.refImage),
     clip: localPath(d.videoUrl),
     cast: d.cast,
@@ -74,6 +76,7 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     move: s.move || fallback.move,
     dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
     prompt: s.keyframe_prompt || s.desc || fallback.prompt,
+    videoPrompt: s.video_prompt ?? fallback.videoPrompt,
     refImage: s.keyframe ?? fallback.refImage,
     videoUrl: s.clip ?? fallback.videoUrl,
     cast: s.cast,

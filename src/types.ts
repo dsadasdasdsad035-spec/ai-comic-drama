@@ -22,6 +22,8 @@ export type ShotData = {
   move: string
   dialogue: string
   prompt: string
+  /** 出片用的运动提示词（Seedance）：只写动作/运镜，不重复静态外观 */
+  videoPrompt?: string
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number

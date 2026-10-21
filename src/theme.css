@@ -4271,3 +4271,15 @@ button:not(:disabled),
   border: 1px dashed var(--line-2);
   color: var(--line-2);
 }
+
+/* 字段标题里的来源标注 */
+.hint-inline {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-style: normal;
+  font-family: var(--font-mono);
+}

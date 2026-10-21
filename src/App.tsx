@@ -738,8 +738,12 @@ function Shell() {
         return
       }
       patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
-      const motion = node.data.prompt.trim()
-      const fallback = `${node.data.size}，${node.data.move === '固定' ? '镜头固定，人物与环境的细微动态' : `镜头${node.data.move}`}，电影感光影，自然的空气与光尘流动`
+      // 出片要的是「运动」，优先用 video_prompt；没有才退回画面提示词
+      const motion = (node.data.videoPrompt || node.data.prompt).trim()
+      // fallback 不用「电影感」这类抽象词：给模型可见的物理量
+      const fallback = `${node.data.size}，${
+        node.data.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${node.data.move}`
+      }，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
       const tid = startTask('video', `${node.data.no} 出片`, {
         retry: () => void generateVideoOne(id),
       })
