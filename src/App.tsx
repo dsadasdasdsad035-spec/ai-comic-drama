@@ -1239,6 +1239,68 @@ function Shell() {
     [characters],
   )
 
+  /** 尾帧约束开关：出片时用「下一镜的画面」当落点，衔接不跳 */
+  const [tailLock, setTailLock] = useState(true)
+
+  /** 同集内按镜号取下一个镜头（用于首尾帧接龙） */
+  const findNextShot = useCallback((nodeId: string) => {
+    const cur = nodesRef.current.find((n) => n.id === nodeId)
+    if (!cur?.data.shotId) return undefined
+    const ep = Number(cur.data.episode ?? 1)
+    const same = nodesRef.current
+      .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === ep)
+      .sort((a, b) => String(a.data.no).localeCompare(String(b.data.no), 'zh'))
+    const i = same.findIndex((n) => n.id === nodeId)
+    return i >= 0 ? same[i + 1] : undefined
+  }, [])
+
+  /** 上一镜的尾帧（若已出过片） */
+  const findPrevTail = useCallback((nodeId: string) => {
+    const cur = nodesRef.current.find((n) => n.id === nodeId)
+    if (!cur?.data.shotId) return ''
+    const ep = Number(cur.data.episode ?? 1)
+    const same = nodesRef.current
+      .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === ep)
+      .sort((a, b) => String(a.data.no).localeCompare(String(b.data.no), 'zh'))
+    const i = same.findIndex((n) => n.id === nodeId)
+    return i > 0 ? (same[i - 1].data.tailImage ?? '') : ''
+  }, [])
+
+  /** 本镜尾帧 → 下一镜首帧（接龙），首尾相接才不跳 */
+  const tailToNext = useCallback(
+    (nodeId: string) => {
+      const cur = nodesRef.current.find((n) => n.id === nodeId)
+      const tail = cur?.data.tailImage
+      if (!tail) {
+        setToast('这一镜还没有尾帧，先出片')
+        window.setTimeout(() => setToast(''), 2400)
+        return
+      }
+      const next = findNextShot(nodeId)
+      if (!next) {
+        setToast('后面没有镜头了')
+        window.setTimeout(() => setToast(''), 2000)
+        return
+      }
+      patch(next.id, { refImage: tail, videoUrl: undefined, vidState: 'idle' } as never)
+      setToast(`已用 ${cur?.data.no} 的尾帧作为 ${next.data.no} 的首帧`)
+      window.setTimeout(() => setToast(''), 2600)
+    },
+    [findNextShot, patch],
+  )
+
+  /** 上一镜尾帧 → 本镜首帧 */
+  const prevTailToMe = useCallback(
+    (nodeId: string) => {
+      const tail = findPrevTail(nodeId)
+      if (!tail) return
+      patch(nodeId, { refImage: tail, videoUrl: undefined, vidState: 'idle' } as never)
+      setToast('已用上一镜尾帧作为本镜首帧')
+      window.setTimeout(() => setToast(''), 2400)
+    },
+    [findPrevTail, patch],
+  )
+
   /** 图生视频：多张连线图走 reference_image，否则用首帧图生视频 */
   const generateVideoOne = useCallback(
     async (id: string) => {
@@ -1260,6 +1322,10 @@ function Shell() {
         }
       }
       const first = node.data.refImage
+      // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
+      const nextShot = findNextShot(node.id)
+      const tailConstraint = tailLock && nextShot?.data.refImage ? nextShot.data.refImage : ''
+      const useTailConstraint = Boolean(tailConstraint) && refList.length === 0
       if (refList.length === 0 && !first) {
         patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
         return
@@ -1288,16 +1354,27 @@ function Shell() {
           resolution: vidRes,
           cameraFixed: node.data.move === '固定',
           modelKey: modelPick.video,
+          ...(useTailConstraint ? { lastFrame: tailConstraint, returnLastFrame: true } : { returnLastFrame: true }),
         })
         if (res.skipped?.length) {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
           window.setTimeout(() => setToast(''), 3000)
         }
         const taskId = res.id
-        const url = await waitVideo(taskId, (elapsed) =>
+        const done = await waitVideo(taskId, (elapsed) =>
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
         )
-        patch(id, { videoUrl: url, vidState: 'idle', vidAt: undefined })
+        patch(id, {
+          videoUrl: done.url,
+          // 尾帧落地到本地，下一镜可直接当首帧接龙
+          ...(done.tail ? { tailImage: done.tail } : {}),
+          vidState: 'idle',
+          vidAt: undefined,
+        })
+        if (done.tail) {
+          setToast('已拿到本镜尾帧，可在 Inspector 一键设为下一镜首帧')
+          window.setTimeout(() => setToast(''), 3200)
+        }
         endTask(tid)
       } catch (e) {
         patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
@@ -1903,6 +1980,15 @@ function Shell() {
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
+            tail={{
+              lock: tailLock,
+              setLock: setTailLock,
+              nextNo: selected ? findNextShot(selected.id)?.data.no : undefined,
+              nextHasImage: Boolean(selected && findNextShot(selected.id)?.data.refImage),
+              prevTail: (selected ? findPrevTail(selected.id) : '') || undefined,
+              toNext: () => selected && tailToNext(selected.id),
+              fromPrev: () => selected && prevTailToMe(selected.id),
+            }}
             onVoice={generateVoiceOne}
             voices={voices}
             voiceProvider={voiceProvider}

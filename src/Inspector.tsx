@@ -100,6 +100,16 @@ type Props = {
   /** 当前手动选的模型（键），空 = 用设置页默认 */
   pick: Partial<Record<Cap, string>>
   onPick: (cap: Cap, key: string) => void
+  /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
+  tail?: {
+    lock: boolean
+    setLock: (v: boolean) => void
+    nextNo?: string
+    nextHasImage: boolean
+    prevTail?: string
+    toNext: () => void
+    fromPrev: () => void
+  }
 }
 
 export default function Inspector({
@@ -125,6 +135,7 @@ export default function Inspector({
   settings,
   pick,
   onPick,
+  tail,
 }: Props) {
   if (!node) {
     return (
@@ -407,6 +418,39 @@ export default function Inspector({
         </div>
 
         <ModelPicker cap="video" label="出片模型" settings={settings} pick={pick} onPick={onPick} />
+
+        {tail && (
+          <label className={`chk ${tail.nextHasImage ? '' : 'dim'}`} title="用下一镜的画面当本镜落点，衔接更顺">
+            <input
+              type="checkbox"
+              checked={tail.lock && tail.nextHasImage}
+              disabled={!tail.nextHasImage}
+              onChange={(e) => tail.setLock(e.target.checked)}
+            />
+            以下一镜画面作尾帧约束
+            <span className="chk-note">
+              {tail.nextNo ? (tail.nextHasImage ? `（${tail.nextNo}）` : `（${tail.nextNo} 还没有画面）`) : '（没有下一镜）'}
+            </span>
+          </label>
+        )}
+
+        {d.tailImage && (
+          <div className="tail-row">
+            <img src={d.tailImage} alt="tail" title="本镜真实尾帧" />
+            <div className="tail-info">
+              <b>本镜尾帧</b>
+              <span>可直接接下一镜，避免动作跳变</span>
+            </div>
+            <button className="btn-mini" onClick={() => tail?.toNext()} disabled={!tail?.nextNo}>
+              设为下一镜首帧
+            </button>
+          </div>
+        )}
+        {tail?.prevTail && !d.refImage && (
+          <button className="btn-ghost block" onClick={() => tail.fromPrev()}>
+            用上一镜尾帧作首帧
+          </button>
+        )}
         <p className="vid-note">
           连线了参考图就走<b>多参考图模式</b>（reference_image，最多 4 张，提示词用 [图N] 指代）；
           没连线才回落到首帧图生视频。时长取镜头时长（2~12 秒），按 tokens 计费。
@@ -487,6 +531,16 @@ function ModelPicker({
   settings: AppSettings | null
   pick: Partial<Record<Cap, string>>
   onPick: (cap: Cap, key: string) => void
+  /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
+  tail?: {
+    lock: boolean
+    setLock: (v: boolean) => void
+    nextNo?: string
+    nextHasImage: boolean
+    prevTail?: string
+    toNext: () => void
+    fromPrev: () => void
+  }
 }) {
   const list = (settings?.models ?? []).filter((m) => m.cap === cap)
   const defKey = settings?.defaults?.[cap] || ''

@@ -28,6 +28,8 @@ export type ShotData = {
   refExtras?: string[]
   /** 参考连线：连到本镜的角色卡/素材卡节点 id（生成画面时按它取参考图） */
   refIds?: string[]
+  /** 本镜出片的真实尾帧（本地路径），可一键设为下一镜首帧 */
+  tailImage?: string
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number

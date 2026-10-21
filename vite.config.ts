@@ -380,6 +380,8 @@ function resolveRef(ref: string, root: string): string {
 type VideoJob = {
   status: 'running' | 'succeeded' | 'failed'
   url?: string
+  /** 本镜真实尾帧（本地 /generated 路径），可作下一镜首帧 */
+  tail?: string
   message?: string
   startedAt: number
   elapsed?: number
@@ -1649,6 +1651,10 @@ function seedreamProxy(): Plugin {
               ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 4)
               : []
             const refMode = refImages.length > 0
+            const lastFrame = String(body.lastFrame || '')
+            // 尾帧约束只在首帧模式有意义（方舟 content 里 last_frame 与 reference_image 互斥）
+            const useLastFrame = Boolean(lastFrame) && !refMode
+            const returnLastFrame = body.returnLastFrame !== false
             if (!image && !refMode) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
@@ -1673,6 +1679,7 @@ function seedreamProxy(): Plugin {
               return p
             }
             let imgPath = ''
+            let lastPath = ''
             const refPaths: string[] = []
             const skipped: string[] = []
             try {
@@ -1688,6 +1695,7 @@ function seedreamProxy(): Plugin {
                 if (refPaths.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
               } else {
                 imgPath = prep(image, 'first')
+                if (useLastFrame) lastPath = prep(lastFrame, 'last')
               }
             } catch (e) {
               res.statusCode = 400
@@ -1745,6 +1753,8 @@ function seedreamProxy(): Plugin {
               'create',
               '-p', prompt,
               ...(refMode ? ['--ref-images', ...refPaths] : ['-i', imgPath]),
+              ...(useLastFrame ? ['--last-frame', lastPath] : []),
+              ...(returnLastFrame ? ['--return-last-frame', 'true'] : []),
               '--ratio', ratio,
               '-d', String(seconds),
               '-r', resolution,
@@ -1764,6 +1774,8 @@ function seedreamProxy(): Plugin {
                   mode: refMode ? 'ref' : 'first',
                   model,
                   skipped,
+                  lastFrame: useLastFrame ? lastPath : undefined,
+                  returnLastFrame,
                   args: cliArgs,
                 }),
               )
@@ -1779,6 +1791,22 @@ function seedreamProxy(): Plugin {
                 const stdout = await runSeedance(cliArgs, runKey)
                 const m = stdout.match(/Saved to:\s*(.+?\.(?:mp4|mov))/)
                 if (!m) throw new Error('未解析到视频产物路径')
+                // 尾帧：模型返回的 URL 24 小时过期，立刻下载到本地，供下一镜当首帧
+                let tail = ''
+                const tailUrl = stdout.match(/Last Frame URL:\s*(https?:\/\/\S+)/)?.[1]
+                if (tailUrl) {
+                  try {
+                    const tr = await fetch(tailUrl)
+                    if (tr.ok) {
+                      const bytes = Buffer.from(await tr.arrayBuffer())
+                      const tn = `tail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.jpg`
+                      fs.writeFileSync(path.join(root, 'public', 'generated', tn), bytes)
+                      tail = `/generated/${tn}`
+                    }
+                  } catch {
+                    /* 尾帧拿不到不影响出片 */
+                  }
+                }
                 const src = m[1].trim()
                 const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
                 fs.copyFileSync(src, path.join(outDir, name))
@@ -1790,6 +1818,7 @@ function seedreamProxy(): Plugin {
                 videoJobs.set(id, {
                   status: 'succeeded',
                   url: `/videos/${name}`,
+                  tail,
                   startedAt: t0,
                   elapsed: Date.now() - t0,
                 })

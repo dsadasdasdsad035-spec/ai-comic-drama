@@ -77,6 +77,10 @@ export type VideoOpts = {
   cameraFixed?: boolean
   /** 设置页模型表里的键；不传走默认 */
   modelKey?: string
+  /** 尾帧约束（首帧模式生效）：让本镜落在指定构图上，衔接下一镜 */
+  lastFrame?: string
+  /** 让模型回传真实尾帧（默认 true），用于下一镜首帧 */
+  returnLastFrame?: boolean
 }
 
 async function readJsonRes(res: Response) {
@@ -111,7 +115,7 @@ export async function waitVideo(
   id: string,
   onTick?: (elapsedSec: number) => void,
   timeoutMs = 12 * 60 * 1000,
-): Promise<string> {
+): Promise<{ url: string; tail?: string }> {
   const t0 = Date.now()
   for (;;) {
     await new Promise((r) => setTimeout(r, 3000))
@@ -123,7 +127,7 @@ export async function waitVideo(
       throw new Error((e as Error).message)
     }
     if (!j.ok) throw new Error(j.message || '查询失败')
-    if (j.status === 'succeeded') return j.url as string
+    if (j.status === 'succeeded') return { url: j.url as string, tail: j.tail as string | undefined }
     if (j.status === 'failed') throw new Error(j.message || '生成失败')
     onTick?.(Math.round((Date.now() - t0) / 1000))
     if (Date.now() - t0 > timeoutMs) throw new Error('等待超时，可稍后重试')
@@ -290,6 +294,8 @@ export type ProjectShot = {
   refExtras?: string[]
   /** 参考连线节点的 id（角色卡/素材卡），生成画面时按它取参考图 */
   refIds?: string[]
+  /** 本镜真实尾帧（本地路径），用于下一镜首帧接龙 */
+  tail_image?: string
 }
 
 export type ProjectEpisode = {
