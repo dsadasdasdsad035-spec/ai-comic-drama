@@ -31,6 +31,7 @@ import EpisodeBar from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
+import BoardMenu from './BoardMenu'
 import { endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
@@ -942,55 +943,28 @@ function Shell() {
           )}
           {view === 'board' ? (
             <>
-              <button className="btn" onClick={addShot}>+ 镜头</button>
-              <button
-                className="btn"
-                onClick={generateAll}
-                disabled={!!batch || hasKey === false}
-                title="按顺序逐镜生成画面（约 ¥0.22/张）"
-              >
-                {batch ? `生成中 ${batch.done}/${batch.total}` : '批量生成'}
-              </button>
-              <button
-                className="btn"
-                onClick={generateVideoAll}
-                disabled={!!vidBatch}
-                title="给所有已有画面、还没视频的镜头批量出片"
-              >
-                {vidBatch ? `出片中 ${vidBatch.done}/${vidBatch.total}` : '批量出片'}
-              </button>
-              <button
-                className="btn"
-                onClick={voiceAll}
-                disabled={!!vbatch}
-                title="为所有带台词的镜头生成配音（当前引擎：macOS TTS）"
-              >
-                {vbatch ? `配音 ${vbatch.done}/${vbatch.total}` : '批量配音'}
-              </button>
-              <button className="btn" onClick={() => fitView({ padding: 0.2, duration: 400 })}>适配</button>
-              <button
-                className={`btn ${charsOn ? 'primary' : ''}`}
-                onClick={() =>
+              <BoardMenu
+                canGen={hasKey !== false}
+                batch={batch}
+                vidBatch={vidBatch}
+                vbatch={vbatch}
+                charsOn={charsOn}
+                diagOn={diagOn}
+                onAddShot={addShot}
+                onGenAll={generateAll}
+                onGenVideoAll={generateVideoAll}
+                onVoiceAll={voiceAll}
+                onFit={() => fitView({ padding: 0.2, duration: 400 })}
+                onToggleChars={() =>
                   setCharsOn((v) => {
                     const n = !v
                     localStorage.setItem('storyboard-chars-on', n ? '1' : '0')
                     return n
                   })
                 }
-                title="把角色放上画布，并按出场名单连到镜头"
-              >
-                角色
-              </button>
-              <button
-                className={`btn ${diagOn ? 'primary' : ''}`}
-                onClick={() => setDiagOn((v) => !v)}
-                title="检查时长 / 台词长度 / 连续同景别"
-              >
-                诊断
-              </button>
-              <button className="btn" onClick={clearCanvas} title="清空画布（不动 project.json）">
-                清空
-              </button>
+                onToggleDiag={() => setDiagOn((v) => !v)}
+                onClear={clearCanvas}
+              />
               <button
                 className="btn"
                 onClick={() => setPreview(true)}

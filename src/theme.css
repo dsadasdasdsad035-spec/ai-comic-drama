@@ -4119,3 +4119,139 @@ button:not(:disabled),
   color: #cfe3f7;
   white-space: nowrap;
 }
+
+/* ===== 画布操作下拉（BoardMenu）：复用 .tm 触发器，面板右对齐 ===== */
+.bm-panel {
+  left: auto;
+  right: 0;
+  width: 246px;
+  padding: 8px;
+  gap: 2px;
+}
+.bm-sec {
+  padding: 7px 8px 3px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+}
+.bm-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.bm-item:hover:not(:disabled) {
+  background: var(--accent-dim);
+}
+.bm-item.on {
+  color: var(--accent);
+}
+.bm-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bm-item.danger:hover {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.bm-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.bm-hint {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-family: var(--font-mono);
+}
+.bm-prog {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.bm-caret {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+/* ===== 画布操作下拉（BoardMenu）：复用 .tm 触发器，面板右对齐 ===== */
+.bm-panel {
+  left: auto;
+  right: 0;
+  width: 246px;
+  padding: 8px;
+  gap: 2px;
+}
+.bm-sec {
+  padding: 7px 8px 3px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+}
+.bm-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.bm-item:hover:not(:disabled) {
+  background: var(--accent-dim);
+}
+.bm-item.on {
+  color: var(--accent);
+}
+.bm-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.bm-item.danger:hover {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.bm-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.bm-hint {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-family: var(--font-mono);
+}
+.bm-prog {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.bm-caret {
+  color: var(--muted);
+  font-size: 9px;
+}
