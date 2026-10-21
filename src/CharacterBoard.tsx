@@ -13,6 +13,9 @@ type Props = {
   onDelete: (charId: string) => void
   /** 改名 = 换 id，需要同步连线与布局 */
   onRename: (oldId: string, name: string) => void
+  /** 大模型拆角色：本集剧本+分镜 / 全剧素材 */
+  onExtract: (scope: 'episode' | 'script') => void
+  extracting: '' | 'episode' | 'script'
 }
 
 export default function CharacterBoard({
@@ -24,6 +27,8 @@ export default function CharacterBoard({
   onAdd,
   onDelete,
   onRename,
+  onExtract,
+  extracting,
 }: Props) {
   return (
     <div className="board">
@@ -38,6 +43,22 @@ export default function CharacterBoard({
           <div className="board-hint">
             {selectedShot ? `当前镜头 ${selectedShot.no}` : '先在分镜视图里选一个镜头'}
           </div>
+          <button
+            className="btn-ghost"
+            disabled={!!extracting}
+            onClick={() => onExtract('episode')}
+            title="用大模型从本集剧本场次 + 本集分镜里拆出角色，自动写外观锚点"
+          >
+            {extracting === 'episode' ? '拆解中…' : '从本集拆角色'}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={!!extracting}
+            onClick={() => onExtract('script')}
+            title="用大模型从全剧原文梗概与分集场次里拆出角色"
+          >
+            {extracting === 'script' ? '拆解中…' : '从全剧拆角色'}
+          </button>
           <button className="btn" onClick={onAdd} title="新建一张角色卡">
             + 新建角色
           </button>

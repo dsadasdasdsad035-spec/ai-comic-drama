@@ -42,9 +42,11 @@ import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
 import { PRICE_PER_IMAGE, cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
+  callText,
   checkHealth,
   generateImage,
   generateVoice,
+  getSettings,
   listProjects,
   listVoices,
   getProject,
@@ -52,10 +54,12 @@ import {
   patchProject,
   startVideo,
   waitVideo,
+  type ProjectEpisode,
   type ProjectShot,
   type VoiceOption,
 } from './api'
-import { dialogueToText, parseDialogue } from './prompts'
+import { characterSys, dialogueToText, parseDialogue } from './prompts'
+import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
@@ -280,8 +284,7 @@ function Shell() {
     [migrateCharRefs],
   )
 
-  /** 改名：id 跟着名字走，所以连线（char-名字）与画布布局都要迁移 */
-  const renameCharacter = useCallback(
+  /** 改名：id 跟着名字走，所以连线（char-名字）与画布布局都要迁移 */  const renameCharacter = useCallback(
     (oldId: string, raw: string) => {
       const name = raw.trim()
       if (!name || name === oldId) return
@@ -313,6 +316,86 @@ function Shell() {
       void migrateCharRefs(oldId, name)
     },
     [migrateCharRefs],
+  )
+
+  /**
+   * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。
+   * 已写过外观锚点的同名角色不覆盖（保护手改），只做新增与补空。
+   */
+  const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
+  const extractCharacters = useCallback(
+    async (scope: 'episode' | 'script') => {
+      if (extracting) return
+      if (!projectName) {
+        setToast('先绑定一个项目')
+        return
+      }
+      setExtracting(scope)
+      const t0 = Date.now()
+      try {
+        const [p, st] = await Promise.all([getProject(projectName), getSettings()])
+        const eps = (p.episodes ?? []) as ProjectEpisode[]
+        const curEp = eps.find((e) => Number(e.no) === epNo)
+        const sceneText =
+          scope === 'episode'
+            ? digestEpisodes(curEp ? [curEp] : [])
+            : [
+                p.source ? `【原著 / 梗概】\n${p.source}` : '',
+                digestEpisodes(eps),
+              ]
+                .filter(Boolean)
+                .join('\n\n')
+        const shotText =
+          scope === 'episode'
+            ? digestShots(
+                nodesRef.current
+                  .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === epNo)
+                  .map((n) => ({
+                    no: n.data.no,
+                    cast: n.data.cast,
+                    dialogue: n.data.dialogue,
+                    prompt: n.data.prompt,
+                  })),
+              )
+            : ''
+        if (!sceneText.trim() && !shotText.trim()) {
+          throw new Error(
+            scope === 'episode'
+              ? `第 ${epNo} 集还没有剧本场次或分镜，先去「剧本」页拆集 / 「镜头表」拆镜`
+              : '项目里没有剧本素材（source 与场次都是空的）',
+          )
+        }
+        const r = await callText<{ characters?: unknown[] }>({
+          system: characterSys(st.settings.rules),
+          model: 'pro',
+          json: true,
+          maxTokens: 6000,
+          prompt:
+            `以下是${scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原文梗概与分集场次'}。\n\n` +
+            sceneText +
+            (shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : '') +
+            '\n\n要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。' +
+            '跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。',
+        })
+        const list = pickExtracted(r.json)
+        if (list.length === 0) throw new Error('模型没给出角色，换个范围再试')
+        const { next, added, filled, skipped } = mergeCharacters(charactersRef.current, list)
+        setCharacters(next)
+        const secs = Math.round((Date.now() - t0) / 1000)
+        setToast(
+          `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
+            (filled.length ? ` · 补全 ${filled.length}` : '') +
+            (skipped.length ? ` · 跳过已有 ${skipped.length}` : ''),
+        )
+        window.setTimeout(() => setToast(''), 4200)
+      } catch (e) {
+        setToast((e as Error).message || '拆角色失败')
+        window.setTimeout(() => setToast(''), 4200)
+      } finally {
+        setExtracting('')
+      }
+    },
+    [extracting, projectName, epNo],
   )
 
   // 角色以 project.json 为准：绑定项目后加载进来，替换掉 localStorage 的那份
@@ -1585,6 +1668,8 @@ function Shell() {
             onAdd={addCharacter}
             onDelete={deleteCharacter}
             onRename={renameCharacter}
+            onExtract={extractCharacters}
+            extracting={extracting}
           />
         ) : (
         <main className="main">
