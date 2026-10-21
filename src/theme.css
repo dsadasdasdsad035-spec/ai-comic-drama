@@ -5372,98 +5372,123 @@ button:not(:disabled),
   color: var(--muted);
 }
 
-/* ===== 调度（俯视）面板 ===== */
-.layout-box {
-  gap: 6px;
-}
-.layout-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.layout-svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: #f7f6f1;
-  touch-action: none;
-  user-select: none;
-}
-.layout-hint {
+/* Inspector：3D 调度推出来的运镜文案 */
+.motion-hint {
   margin: 0;
   color: var(--muted);
   font-size: var(--fs-2xs);
   line-height: 1.45;
 }
-.layout-actions {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.layout-sheet {
-  color: var(--accent);
-  font-size: var(--fs-2xs);
-  text-decoration: none;
-}
 
-/* ===== 调度（俯视）面板 ===== */
-.layout-box {
-  gap: 6px;
-}
-.layout-wrap {
+/* 右键菜单：动作区 */
+.ctx-actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--line);
 }
-.layout-svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  border: 1px solid var(--line);
+.ctx-action {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background: #f7f6f1;
-  touch-action: none;
-  user-select: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.layout-hint {
-  margin: 0;
+.ctx-action:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+.ctx-action em {
+  font-style: normal;
   color: var(--muted);
   font-size: var(--fs-2xs);
-  line-height: 1.45;
 }
-.layout-actions {
+
+/* Inspector：3D 调度视频 */
+.sched-row {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
 }
-.layout-sheet {
+.sched-row video {
+  width: 84px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: #000;
+}
+.sched-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sched-info b {
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+.sched-info span {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+.sched-row a {
   color: var(--accent);
   font-size: var(--fs-2xs);
   text-decoration: none;
 }
 
-/* 分镜卡上的俯视调度缩略图 */
-.shot-layout {
-  position: absolute;
-  right: 6px;
-  bottom: 28px;
-  width: 96px;
-  border-radius: 6px;
-  overflow: hidden;
-  opacity: 0.92;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
-  pointer-events: none;
-  z-index: 2;
+/* Inspector：3D 调度视频 */
+.sched-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg);
 }
-.shot-layout svg {
-  display: block;
-  width: 100%;
-  height: auto;
+.sched-row video {
+  width: 84px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: #000;
 }
-.zoom-lite .shot-layout {
-  display: none;
+.sched-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sched-info b {
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+.sched-info span {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+.sched-row a {
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  text-decoration: none;
 }

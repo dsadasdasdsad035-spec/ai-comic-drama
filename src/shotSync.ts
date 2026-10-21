@@ -49,7 +49,10 @@ export function bizSignature(d: ShotData): string {
     refIds: d.refIds ?? [],
     tailImage: d.tailImage ?? '',
     layout: d.layout ?? null,
-    refSheet: d.refSheet ?? '',
+    scheduleVideo: d.scheduleVideo ?? '',
+    scheduleFrames: d.scheduleFrames ?? [],
+    motionNote: d.motionNote ?? '',
+    useScheduleFrames: d.useScheduleFrames ? 1 : 0,
   })
 }
 
@@ -72,7 +75,10 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     refIds: d.refIds,
     tail_image: localPath(d.tailImage),
     layout: d.layout,
-    ref_sheet: localPath(d.refSheet),
+    schedule_video: localPath(d.scheduleVideo),
+    schedule_frames: (d.scheduleFrames ?? []).map((u) => localPath(u)).filter((x): x is string => Boolean(x)),
+    motion_note: d.motionNote ?? '',
+    use_schedule_frames: Boolean(d.useScheduleFrames),
   }
 }
 
@@ -93,7 +99,10 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     refExtras: s.refExtras,
     tailImage: s.tail_image ?? fallback.tailImage,
     layout: (s.layout as ShotData['layout']) ?? fallback.layout,
-    refSheet: s.ref_sheet ?? fallback.refSheet,
+    scheduleVideo: s.schedule_video ?? fallback.scheduleVideo,
+    scheduleFrames: (s.schedule_frames as string[] | undefined) ?? fallback.scheduleFrames,
+    motionNote: s.motion_note ?? fallback.motionNote,
+    useScheduleFrames: Boolean(s.use_schedule_frames ?? fallback.useScheduleFrames),
     refIds: s.refIds,
     shotId: s.id,
     episode: s.episode,

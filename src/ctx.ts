@@ -7,8 +7,6 @@ export type CanvasApi = {
   color: string
   /** 角色名 → 头像图，分镜卡上叠出场头像用 */
   charImages: Record<string, string>
-  /** 卡片上是否叠俯视调度缩略图 */
-  showLayout: boolean
   patch: (id: string, patch: Partial<ShotData>) => void
   cycleEdge: (id: string) => void
   generate: (id: string) => void
@@ -20,7 +18,6 @@ export const CanvasCtx = createContext<CanvasApi>({
   guides: true,
   color: '#fbbf24',
   charImages: {},
-  showLayout: true,
   patch: () => {},
   cycleEdge: () => {},
   generate: () => {},

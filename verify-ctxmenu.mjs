@@ -63,14 +63,18 @@ const addAsset = async (title, kindLabel, url) => {
   const id = await p.locator('.react-flow__node-asset').last().getAttribute('data-id')
   await p.locator('.refx-kinds .btn-mini', { hasText: kindLabel }).click()
   await p.locator('.inspector .field', { hasText: '标题' }).locator('input').fill(title)
-  await p.locator('.inspector .field', { hasText: /图片地址|视频地址/ })
-    .locator('input')
-    .fill(url)
+  await p
+    .locator('.inspector .field', { hasText: /图片来源|视频来源|图片地址|视频地址/ })
+    .locator('select')
+    .selectOption(url)
   await p.waitForTimeout(250)
   return id
 }
-const sceneId = await addAsset('废土夜市', '场景图', '/generated/verify-scene.jpg')
-const videoId = await addAsset('参考片段', '视频', '/videos/verify.mp4')
+const mediaAll = await fetch('http://localhost:5273/api/media?name=recycle').then((r) => r.json())
+const imgUrl = mediaAll.images?.[0]?.url ?? ''
+const vidUrl = mediaAll.videos?.[0]?.url ?? ''
+const sceneId = await addAsset('废土夜市', '场景图', imgUrl)
+const videoId = await addAsset('参考片段', '视频', vidUrl)
 check('两张素材卡就位', !!sceneId && !!videoId, `${sceneId} / ${videoId}`)
 
 // ---- 推送镜头到画布（新浏览器实例 localStorage 是空的） ----
@@ -124,7 +128,7 @@ const firstFrame = await p.evaluate((nid) => {
   const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
   return (s.nodes || []).find((x) => x.id === nid)?.data?.refImage ?? null
 }, shotNodeId)
-check('首帧已换成素材图', firstFrame === '/generated/verify-scene.jpg', String(firstFrame))
+check('首帧已换成素材图', firstFrame === imgUrl, String(firstFrame))
 
 // ---- 4. 素材卡右击 → 连到镜头 ----
 await p.keyboard.press('Escape')

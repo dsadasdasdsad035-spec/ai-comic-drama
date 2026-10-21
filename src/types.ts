@@ -30,10 +30,16 @@ export type ShotData = {
   refIds?: string[]
   /** 本镜出片的真实尾帧（本地路径），可一键设为下一镜首帧 */
   tailImage?: string
-  /** 调度：俯视布局。坐标归一化 0~1，face 为朝向角度（0=向右，90=向下） */
+  /** 调度：站位/机位坐标（归一化 0~1，face 为朝向角度）。只作为 3D 调度视频的输入，不上画布 */
   layout?: ShotLayout
-  /** 俯视调度图存成的图片（本地路径），可当出片参考图 */
-  refSheet?: string
+  /** 3D 调度动画（webm/mp4，本地路径）：给人审运镜与走位 */
+  scheduleVideo?: string
+  /** 从调度视频抽出的关键帧（可作结构性参考，白模会污染画风，默认不传） */
+  scheduleFrames?: string[]
+  /** 从 3D 调度推出来的运镜/走位描述，出片时拼进 prompt */
+  motionNote?: string
+  /** 出片时是否把调度关键帧当参考图（白模风格可能污染画面，默认关） */
+  useScheduleFrames?: boolean
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number

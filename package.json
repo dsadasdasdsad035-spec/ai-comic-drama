@@ -9,11 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/three": "^0.186.0",
     "@xyflow/react": "^12.3.5",
     "konva": "^9.3.20",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-konva": "^18.2.10",
+    "three": "^0.186.1",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

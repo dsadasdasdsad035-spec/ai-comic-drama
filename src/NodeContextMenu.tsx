@@ -23,6 +23,8 @@ type Props = {
   onClickItem: (id: string) => void
   /** 点「首帧」：用这张图当本镜首帧（视频参考） */
   onFirstFrame?: (id: string) => void
+  /** 额外动作（生成调度、重出参考图等） */
+  actions?: { key: string; label: string; hint?: string; onClick: () => void }[]
   onEdit?: () => void
   onDelete?: () => void
   onClose: () => void
@@ -102,6 +104,16 @@ export default function NodeContextMenu(p: Props) {
                   </button>
                 )}
               </div>
+            ))}
+          </div>
+        )}
+        {p.actions && p.actions.length > 0 && (
+          <div className="ctx-actions">
+            {p.actions.map((a) => (
+              <button key={a.key} className="ctx-action" onClick={a.onClick} title={a.hint}>
+                <span>{a.label}</span>
+                {a.hint && <em>{a.hint}</em>}
+              </button>
             ))}
           </div>
         )}

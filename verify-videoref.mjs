@@ -34,6 +34,8 @@ await fetch('http://localhost:5273/api/project?name=recycle', {
   body: JSON.stringify({ assets: [] }),
 })
 
+const mediaList = await fetch('http://localhost:5273/api/media?name=recycle').then((r) => r.json())
+const sceneImg = mediaList.images?.[0]?.url ?? ''
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 p.on('dialog', (d) => d.accept())
@@ -49,9 +51,9 @@ const assetId = await p.locator('.react-flow__node-asset').last().getAttribute('
 await p.locator('.refx-kinds .btn-mini', { hasText: '场景图' }).click()
 await p.locator('.inspector .field', { hasText: '标题' }).locator('input').fill('废土夜市')
 await p
-  .locator('.inspector .field', { hasText: /图片地址|视频地址/ })
-  .locator('input')
-  .fill('/generated/verify-scene.jpg')
+  .locator('.inspector .field', { hasText: /图片来源|视频来源|图片地址|视频地址/ })
+  .locator('select')
+  .selectOption(sceneImg)
 await p.waitForTimeout(300)
 
 // 推送镜头到画布
@@ -128,7 +130,7 @@ if (posts.length) {
   // 连线存在即走多参考图模式（reference_image），不再单传首帧
   check(
     '连线素材图进参考图列表',
-    (posts[0].refImages ?? []).includes('/generated/verify-scene.jpg'),
+    (posts[0].refImages ?? []).includes(sceneImg),
     JSON.stringify(posts[0].refImages),
   )
   check('提示词带图注', /\[图1\]=/.test(posts[0].prompt || ''))

@@ -296,10 +296,12 @@ export type ProjectShot = {
   refIds?: string[]
   /** 本镜真实尾帧（本地路径），用于下一镜首帧接龙 */
   tail_image?: string
-  /** 俯视调度（人物站位 + 机位） */
+  /** 调度坐标（站位 + 机位）：只作为 3D 调度视频的输入 */
   layout?: unknown
-  /** 俯视调度图（本地路径），可当出片参考图 */
-  ref_sheet?: string
+  schedule_video?: string
+  schedule_frames?: string[]
+  motion_note?: string
+  use_schedule_frames?: boolean
 }
 
 export type ProjectEpisode = {
@@ -530,4 +532,42 @@ export async function listVideoFiles(): Promise<VideoFile[]> {
   } catch {
     return []
   }
+}
+
+/** 项目可用素材：生成的图 / 视频 / assets 表里的条目（素材卡选地址用） */
+export type MediaItem = { name: string; url: string; size: number; mtime: number }
+export type ProjectAssetItem = { kind: string; title: string; url: string; note?: string }
+export type MediaBundle = { images: MediaItem[]; videos: MediaItem[]; assets: ProjectAssetItem[] }
+
+export async function listMedia(projectName: string): Promise<MediaBundle> {
+  try {
+    const r = await fetch(`/api/media?name=${encodeURIComponent(projectName)}`)
+    const j = await readJsonRes(r)
+    if (!j.ok) return { images: [], videos: [], assets: [] }
+    return { images: j.images ?? [], videos: j.videos ?? [], assets: j.assets ?? [] }
+  } catch {
+    return { images: [], videos: [], assets: [] }
+  }
+}
+
+/** 保存浏览器录制的调度视频（webm dataURL），后端转 mp4 后返回站内路径 */
+export async function saveScheduleVideo(dataUrl: string): Promise<string> {
+  const r = await fetch('/api/save-video', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  }).then((x) => x.json())
+  if (!r.ok) throw new Error(r.message || '调度视频保存失败')
+  return r.url as string
+}
+
+/** 从调度视频抽关键帧，供出片时作结构性参考 */
+export async function extractFrames(video: string, count = 3): Promise<{ urls: string[]; duration: number }> {
+  const r = await fetch('/api/frames', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ video, count }),
+  }).then((x) => x.json())
+  if (!r.ok) throw new Error(r.message || '抽帧失败')
+  return { urls: (r.urls ?? []) as string[], duration: Number(r.duration) || 0 }
 }

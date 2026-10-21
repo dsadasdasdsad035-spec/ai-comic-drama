@@ -1414,6 +1414,125 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 保存浏览器录制的调度视频（webm）+ 抽帧 ----
+        if (url === '/api/save-video') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const dataUrl = String(body.dataUrl || '')
+            const m = dataUrl.match(/^data:video\/(webm|mp4);base64,(.+)$/)
+            if (!m) throw new Error('dataUrl 不是视频')
+            const dir = path.join(root, 'public', 'videos')
+            fs.mkdirSync(dir, { recursive: true })
+            const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+            const src = path.join(dir, `schedule-${stamp}.webm`)
+            fs.writeFileSync(src, Buffer.from(m[2], 'base64'))
+            // 转 mp4：webm 在 Safari/剪辑软件里兼容性差，转失败就退回 webm
+            const mp4 = path.join(dir, `schedule-${stamp}.mp4`)
+            let out = `/videos/schedule-${stamp}.webm`
+            try {
+              await runFfmpeg(['-y', '-i', src, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4])
+              if (fs.existsSync(mp4) && fs.statSync(mp4).size > 1024) {
+                try {
+                  fs.unlinkSync(src)
+                } catch {
+                  /* 源文件删不掉无所谓 */
+                }
+                out = `/videos/schedule-${stamp}.mp4`
+              }
+            } catch {
+              /* 保留 webm */
+            }
+            res.end(JSON.stringify({ ok: true, url: out }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 从视频抽关键帧（调度视频 → 出片参考图）----
+        if (url === '/api/frames') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const rel = String(body.video || '')
+            const local = rel.startsWith('/') ? path.join(root, 'public', rel.replace(/^\//, '')) : rel
+            if (!local || !fs.existsSync(local)) throw new Error('视频不存在')
+            const count = Math.min(6, Math.max(2, Number(body.count) || 3))
+            const dur = await probeDuration(local).catch(() => 0)
+            const times =
+              Array.isArray(body.times) && body.times.length
+                ? body.times.map(Number)
+                : Array.from({ length: count }, (_, i) =>
+                    Math.max(0.05, (dur || 3) * (count === 1 ? 0 : i / (count - 1)) * 0.92),
+                  )
+            const dir = path.join(root, 'public', 'generated')
+            fs.mkdirSync(dir, { recursive: true })
+            const urls: string[] = []
+            for (const [i, t] of times.entries()) {
+              const name = `sched-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}.jpg`
+              const out = path.join(dir, name)
+              await runFfmpeg(['-y', '-ss', String(t), '-i', local, '-frames:v', '1', '-q:v', '2', out])
+              if (fs.existsSync(out) && fs.statSync(out).size > 512) urls.push(`/generated/${name}`)
+            }
+            if (urls.length === 0) throw new Error('抽帧失败')
+            res.end(JSON.stringify({ ok: true, urls, duration: Math.round(dur * 100) / 100 }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e), urls: [] }))
+          }
+          return
+        }
+
+        // ---- 项目可用素材（给素材卡选地址用，免手填）----
+        if (url === '/api/media') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const q = new URL(req.url || '', 'http://x').searchParams
+            const name = q.get('name') || ''
+            const scan = (dir: string, exts: RegExp, limit: number) => {
+              const full = path.join(root, 'public', dir)
+              if (!fs.existsSync(full)) return []
+              return fs
+                .readdirSync(full)
+                .filter((f) => exts.test(f))
+                .map((f) => {
+                  const st = fs.statSync(path.join(full, f))
+                  return { name: f, url: `/${dir}/${f}`, size: st.size, mtime: st.mtimeMs }
+                })
+                .sort((a, b) => b.mtime - a.mtime)
+                .slice(0, limit)
+            }
+            const images = scan('generated', /\.(png|jpe?g|webp)$/i, 120)
+            const videos = scan('videos', /\.(mp4|mov|webm)$/i, 60)
+            let assets: unknown[] = []
+            if (name) {
+              try {
+                const proj = readProject(resolveRoot(root), name)
+                assets = proj.assets ?? []
+              } catch {
+                assets = []
+              }
+            }
+            res.end(JSON.stringify({ ok: true, images, videos, assets }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e), images: [], videos: [], assets: [] }))
+          }
+          return
+        }
+
         // ---- 保存前端生成的图片（俯视调度图等 dataURL）----
         if (url === '/api/save-image') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')

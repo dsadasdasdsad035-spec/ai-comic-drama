@@ -56,7 +56,11 @@ check('Inspector 显示素材面板', (await p.locator('.inspector .panel-head',
 // 编辑：类型=场景图、标题、URL
 await p.locator('.refx-kinds .btn-mini', { hasText: '场景图' }).click()
 await p.locator('.inspector .field', { hasText: '标题' }).locator('input').fill('废土夜市')
-await p.locator('.inspector .field', { hasText: '图片地址' }).locator('input').fill('/generated/verify-scene.jpg')
+await p.locator('.inspector .field', { hasText: /图片来源|图片地址/ }).locator('select').selectOption({ index: 1 })
+const pickedUrl = await p
+  .locator('.inspector .field', { hasText: /图片来源|图片地址/ })
+  .locator('select')
+  .inputValue()
 await p.waitForTimeout(300)
 check('素材卡标题更新', (await assetNode.locator('.asset-title').innerText()) === '废土夜市')
 check('场景徽标', (await assetNode.locator('.asset-badge').innerText()) === '场景')
@@ -142,7 +146,7 @@ check('拦截到生成请求', captured.length === 1, String(captured.length))
 if (captured.length) {
   check(
     'refImages 含连线场景图',
-    (captured[0].refImages ?? []).includes('/generated/verify-scene.jpg'),
+    (captured[0].refImages ?? []).includes(pickedUrl),
     JSON.stringify(captured[0].refImages),
   )
   check('prompt 注明素材', (captured[0].prompt || '').includes('素材「废土夜市」'))

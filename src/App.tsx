@@ -46,7 +46,9 @@ import {
   checkHealth,
   generateImage,
   generateVoice,
+  extractFrames,
   getSettings,
+  saveScheduleVideo,
   listProjects,
   listVoices,
   getProject,
@@ -63,7 +65,8 @@ import {
 } from './api'
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
-import { saveLayoutSheet } from './layoutSheet'
+import { fallbackLayout, generateLayout, motionNoteOf } from './layoutGen'
+import { renderScheduleVideo } from './schedule3d'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
@@ -703,16 +706,24 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName, assets.length])
 
-  /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化）；素材卡始终在 */
-  const canvasNodes = useMemo(
-    () =>
-      [
-        ...(charsOn ? charNodes : []),
-        ...assetNodes,
-        ...shownNodes,
-      ] as unknown as ShotNodeType[],
-    [charsOn, charNodes, assetNodes, shownNodes],
-  )
+  /**
+   * 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化）；素材卡始终在。
+   * shownNodes 里也含素材卡（没有 shotId），必须去重 —— 否则 MiniMap 拿到重复 key。
+   */
+  const canvasNodes = useMemo(() => {
+    const seen = new Set<string>()
+    const out: ShotNodeType[] = []
+    for (const n of [
+      ...(charsOn ? charNodes : []),
+      ...assetNodes,
+      ...shownNodes,
+    ] as unknown as ShotNodeType[]) {
+      if (seen.has(n.id)) continue
+      seen.add(n.id)
+      out.push(n)
+    }
+    return out
+  }, [charsOn, charNodes, assetNodes, shownNodes])
 
   /** cast 命中的 角色 → 镜头 虚线边（派生，不持久化） */
   const castEdges = useMemo<Edge[]>(() => {
@@ -795,12 +806,6 @@ function Shell() {
     return () => document.removeEventListener('keydown', onKey)
   }, [selRef, patch])
 
-  /** 卡片上叠俯视调度缩略图（默认开） */
-  const [layoutOn, setLayoutOn] = useState(() => localStorage.getItem('storyboard-layout-on') !== '0')
-  useEffect(() => {
-    localStorage.setItem('storyboard-layout-on', layoutOn ? '1' : '0')
-  }, [layoutOn])
-
   /** 缩得很小时切到精简渲染（CSS 隐藏卡片里的次要信息） */
   const [zoomLite, setZoomLite] = useState(false)
   const zoomLiteRef = useRef(false)
@@ -873,6 +878,50 @@ function Shell() {
       })),
     }
   }, [ctx, canvasNodes, refCards, shownNodes])
+
+  /**
+   * 右击卡片：把调度渲染成 3D 动画视频（给人审运镜），并抽帧 + 生成运镜文案。
+   * useFrames = true 时顺手把抽出的关键帧挂成出片参考（白模会带风格，默认不挂）。
+   */
+  const genScheduleVideo = useCallback(
+    async (nodeId: string, useFrames = false) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId)
+      if (!node) return
+      setToast('正在渲染 3D 调度…')
+      try {
+        let layout = node.data.layout
+        if (!layout?.actors?.length) {
+          layout = await generateLayout(node.data, node.data.cast).catch(() => fallbackLayout(node.data.cast ?? []))
+          patch(nodeId, { layout } as never)
+        }
+        const blob = await renderScheduleVideo(layout, { seconds: 3 })
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const fr = new FileReader()
+          fr.onload = () => resolve(String(fr.result))
+          fr.onerror = () => reject(new Error('读取录制结果失败'))
+          fr.readAsDataURL(blob)
+        })
+        const url = await saveScheduleVideo(dataUrl)
+        patch(nodeId, {
+          scheduleVideo: url,
+          motionNote: motionNoteOf(layout),
+          ...(useFrames ? { useScheduleFrames: true } : {}),
+        } as never)
+        // 抽 3 帧：只在用户勾选时才当参考图传（白模会带风格，默认不传）
+        try {
+          const f = await extractFrames(url, 3)
+          patch(nodeId, { scheduleFrames: f.urls } as never)
+        } catch {
+          /* 抽帧失败不影响视频 */
+        }
+        setToast(useFrames ? '调度视频已生成，关键帧已挂为参考' : '调度视频已生成（可在 Inspector 里查看）')
+      } catch (e) {
+        setToast((e as Error).message || '生成调度视频失败')
+      }
+      window.setTimeout(() => setToast(''), 3000)
+    },
+    [patch],
+  )
 
   /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
   const toggleRef = useCallback(
@@ -1366,21 +1415,10 @@ function Shell() {
       // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
       const nextShot = findNextShot(node.id)
       const wantLock = Boolean(tailLock && nextShot?.data.refImage)
-      // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图，反之才带调度图
-      let sheet = String(node.data.refSheet || '')
-      // 有调度但还没导出过 → 出片前自动生成一张，做到「默认就绑上」（不用先手动点存图）
-      if (!sheet && !wantLock && (node.data.layout?.actors?.length ?? 0) > 0) {
-        try {
-          sheet = await saveLayoutSheet(node.data.layout!)
-          patch(node.id, { refSheet: sheet } as never)
-        } catch {
-          /* 导不出就静默跳过，不挡住出片 */
-        }
-      }
-      const sheetUsed = Boolean(sheet) && !wantLock
+      // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图
       const refList: string[] = []
       const refNotes: string[] = []
-      if (imgs.length > 0 || sheetUsed) {
+      if (imgs.length > 0 || node.data.useScheduleFrames) {
         if (node.data.refImage) {
           refList.push(node.data.refImage)
           refNotes.push('画面构图与上一镜连贯')
@@ -1390,9 +1428,14 @@ function Shell() {
           refList.push(imgs[i])
           refNotes.push(labels[i] || '参考素材')
         }
-        if (sheetUsed && refList.length < 4) {
-          refList.push(sheet)
-          refNotes.push('俯视调度示意：只取站位/机位/轴线关系，不要把示意图本身画进画面')
+        // 3D 调度关键帧：白模风格会污染画面，必须用户显式勾选才传
+        if (node.data.useScheduleFrames) {
+          for (const f of node.data.scheduleFrames ?? []) {
+            if (refList.length >= 4) break
+            if (refList.includes(f)) continue
+            refList.push(f)
+            refNotes.push('3D 调度关键帧：只取走位与机位变化，不要照搬几何体画风')
+          }
         }
       }
       const tailConstraint = wantLock ? String(nextShot?.data.refImage || '') : ''
@@ -1420,7 +1463,10 @@ function Shell() {
       try {
         const res = await startVideo({
           ...(refList.length > 0 ? { refImages: refList } : { image: first }),
-          prompt: (motion || fallback) + refHint,
+          prompt:
+            (motion || fallback) +
+            (node.data.motionNote ? `\n【运镜与走位】${node.data.motionNote}` : '') +
+            refHint,
           seconds: Math.round(node.data.seconds),
           ratio,
           resolution: vidRes,
@@ -1676,7 +1722,6 @@ function Shell() {
       guides,
       color,
       charImages,
-      showLayout: layoutOn,
       patch,
       cycleEdge,
       generate: generateOne,
@@ -1747,8 +1792,6 @@ function Shell() {
                 vidBatch={vidBatch}
                 vbatch={vbatch}
                 charsOn={charsOn}
-              layoutOn={layoutOn}
-              onToggleLayout={() => setLayoutOn((v) => !v)}
                 diagOn={diagOn}
                 onAddShot={addShot}
                 onGenAll={generateAll}
@@ -2002,6 +2045,32 @@ function Shell() {
                 onFirstFrame={
                   ctxData.mode === 'shot' ? (id) => useAsFirstFrame(ctxData.targetId, id) : undefined
                 }
+                actions={
+                  ctxData.mode === 'shot'
+                    ? [
+                        {
+                          key: 'schedule3d',
+                          label: '生成调度视频（3D）',
+                          hint: '推演运镜 · 抽帧 · 文案',
+                          onClick: () => {
+                            const id = ctx.id
+                            setCtx(null)
+                            void genScheduleVideo(id)
+                          },
+                        },
+                        {
+                          key: 'schedref',
+                          label: '调度关键帧作参考',
+                          hint: '抽 3 帧当参考图 · 可能带白模风',
+                          onClick: () => {
+                            const id = ctx.id
+                            setCtx(null)
+                            void genScheduleVideo(id, true)
+                          },
+                        },
+                      ]
+                    : undefined
+                }
                 onEdit={() => {
                   setSelId(ctx.id)
                   setCtx(null)
@@ -2046,6 +2115,7 @@ function Shell() {
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
             price={price}
+            projectName={projectName}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}

@@ -3,9 +3,8 @@ import { CANDIDATE_COUNTS, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './type
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
-import { listVideoFiles, type VideoFile } from './api'
+import { listMedia, listVideoFiles, type MediaBundle, type VideoFile } from './api'
 import { useEffect, useRef, useState } from 'react'
-import LayoutPanel from './LayoutPanel'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
@@ -13,12 +12,25 @@ function AssetPanel({
   node,
   patch,
   onDelete,
+  projectName,
 }: {
   node: AssetNodeType
   patch: (id: string, p: Record<string, unknown>) => void
   onDelete: (id: string) => void
+  projectName: string
 }) {
   const d = node.data
+  const [media, setMedia] = useState<MediaBundle>({ images: [], videos: [], assets: [] })
+  const [manual, setManual] = useState(false)
+  useEffect(() => {
+    let alive = true
+    listMedia(projectName).then((m) => {
+      if (alive) setMedia(m)
+    })
+    return () => {
+      alive = false
+    }
+  }, [projectName, node.id])
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
   const KINDS: { v: AssetKind; label: string }[] = [
     { v: 'scene', label: '场景图' },
@@ -50,14 +62,67 @@ function AssetPanel({
         <span>标题</span>
         <input value={d.title} onChange={(e) => set({ title: e.target.value })} />
       </label>
-      <label className="field">
-        <span>{d.kind === 'video' ? '视频地址' : '图片地址'}</span>
-        <input
+      <div className="field">
+        <span>{d.kind === 'video' ? '视频来源' : '图片来源'}</span>
+        <select
           value={d.url ?? ''}
-          placeholder="/generated/xxx.jpg 或图片 URL"
-          onChange={(e) => set({ url: e.target.value })}
-        />
-      </label>
+          onChange={(e) => {
+            const url = e.target.value
+            const hit = media.assets.find((a) => a.url === url)
+            set({
+              url,
+              ...(hit ? { title: d.title || hit.title || d.title } : {}),
+            })
+            if (hit && (hit.kind === 'scene' || hit.kind === 'prop' || hit.kind === 'image')) {
+              set({ kind: hit.kind as AssetKind })
+            }
+          }}
+        >
+          <option value="">从项目素材里选…</option>
+          {media.assets.length > 0 && (
+            <optgroup label="项目素材（场景 / 道具）">
+              {media.assets.map((a) => (
+                <option key={a.url} value={a.url}>
+                  {a.title || a.url} · {a.kind}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {media.images.length > 0 && (
+            <optgroup label={`生成的图片（${media.images.length}）`}>
+              {media.images.map((m) => (
+                <option key={m.url} value={m.url}>
+                  {m.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {media.videos.length > 0 && (
+            <optgroup label={`生成的视频（${media.videos.length}）`}>
+              {media.videos.map((m) => (
+                <option key={m.url} value={m.url}>
+                  {m.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {d.url && !media.assets.some((a) => a.url === d.url) &&
+            !media.images.some((m) => m.url === d.url) &&
+            !media.videos.some((m) => m.url === d.url) && (
+              <option value={d.url}>当前：{d.url}</option>
+            )}
+        </select>
+        <button className="btn-mini" onClick={() => setManual((v) => !v)}>
+          {manual ? '收起手填' : '手动填地址'}
+        </button>
+        {manual && (
+          <input
+            value={d.url ?? ''}
+            placeholder="/generated/xxx.jpg 或外链 URL"
+            onChange={(e) => set({ url: e.target.value })}
+          />
+        )}
+      </div>
       <div className="field">
         <span>预览</span>
         {d.url ? (
@@ -106,6 +171,8 @@ type Props = {
   onPick: (cap: Cap, key: string) => void
   /** 计价单价（设置页可校准） */
   price: Pricing
+  /** 当前项目名：素材卡挑素材要用 */
+  projectName: string
   /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
   tail?: {
     lock: boolean
@@ -142,6 +209,7 @@ export default function Inspector({
   pick,
   onPick,
   price,
+  projectName,
   tail,
 }: Props) {
   if (!node) {
@@ -184,6 +252,7 @@ export default function Inspector({
         node={node as unknown as AssetNodeType}
         patch={patch as unknown as (id: string, p: Record<string, unknown>) => void}
         onDelete={onDelete}
+        projectName={projectName}
       />
     )
   }
@@ -425,8 +494,6 @@ export default function Inspector({
         {d.genState === 'error' && d.genError && <div className="gen-error">{d.genError}</div>}
       </div>
 
-      <LayoutPanel d={d} patch={set} cast={d.cast} />
-
       <div className="gen-box vid-box">
         <div className="gen-head">
           <span>AI 生成视频</span>
@@ -445,6 +512,33 @@ export default function Inspector({
         </div>
 
         <ModelPicker cap="video" label="出片模型" settings={settings} pick={pick} onPick={onPick} />
+
+        {d.scheduleVideo && (
+          <div className="sched-row">
+            <video src={d.scheduleVideo} muted loop autoPlay playsInline preload="metadata" />
+            <div className="sched-info">
+              <b>3D 调度</b>
+              <span>推演运镜与走位（给人看）</span>
+            </div>
+            <a href={d.scheduleVideo} target="_blank" rel="noreferrer">
+              查看
+            </a>
+          </div>
+        )}
+
+        {d.motionNote && <p className="motion-hint">运镜：{d.motionNote}</p>}
+
+        {d.scheduleVideo && (
+          <label className="chk" title="调度视频抽的帧是白模，可能把画面带成 3D 风格，默认不传">
+            <input
+              type="checkbox"
+              checked={Boolean(d.useScheduleFrames)}
+              onChange={(e) => set({ useScheduleFrames: e.target.checked })}
+            />
+            带调度关键帧作参考
+            <span className="chk-note">（白模可能影响画风）</span>
+          </label>
+        )}
 
         {tail && (
           <label className={`chk ${tail.nextHasImage ? '' : 'dim'}`} title="用下一镜的画面当本镜落点，衔接更顺">

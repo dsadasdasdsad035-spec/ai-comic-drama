@@ -16,11 +16,8 @@ const check = (name, cond, extra = '') => {
 }
 
 // 用仓库里真实存在的图，后端会校验文件（dataURL/public 路径）
-const imgs = fs
-  .readdirSync('public/generated')
-  .filter((f) => f.endsWith('.jpg'))
-  .slice(0, 2)
-  .map((f) => `/generated/${f}`)
+const mediaAll = await fetch('http://localhost:5273/api/media?name=recycle').then((r) => r.json())
+const imgs = (mediaAll.images ?? []).slice(0, 2).map((m) => m.url)
 check('找到两张测试图', imgs.length === 2, imgs.join(','))
 
 {
@@ -58,9 +55,9 @@ const addAsset = async (title, kindLabel, url) => {
   await p.locator('.refx-kinds .btn-mini', { hasText: kindLabel }).click()
   await p.locator('.inspector .field', { hasText: '标题' }).locator('input').fill(title)
   await p
-    .locator('.inspector .field', { hasText: /图片地址|视频地址/ })
-    .locator('input')
-    .fill(url)
+    .locator('.inspector .field', { hasText: /图片来源|视频来源|图片地址|视频地址/ })
+    .locator('select')
+    .selectOption(url)
   await p.waitForTimeout(250)
   return id
 }
@@ -168,7 +165,7 @@ const dry2 = await fetch(`${URL}/api/seedance`, {
 check('失效参考图被跳过而不是整单失败', dry2.ok === true && dry2.skipped?.length === 1, JSON.stringify(dry2.skipped))
 check(
   '只提交有效图',
-  (dry2.args ?? []).filter((x) => String(x).endsWith('.jpg')).length === 1,
+  (dry2.args ?? []).filter((x) => /\.(jpe?g|png|webp)$/i.test(String(x))).length === 1,
   JSON.stringify(dry2.args),
 )
 
