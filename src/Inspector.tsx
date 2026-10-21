@@ -66,8 +66,8 @@ function AssetPanel({
         )}
       </div>
       <p className="st-hint">
-        从卡片右侧的圆点拉线到分镜卡，连线即参考 —— 生成画面时图会作为参考图传给模型；
-        视频卡用于管理与预览素材（Seedance 1.0 出片只吃单首帧）。
+        从卡片右侧的圆点拉线到分镜卡，或<b>右击卡片</b>直接点选要连的镜头，连线即参考 ——
+        生成画面时图会作为参考图传给模型；视频卡用于管理与预览素材（Seedance 1.0 出片只吃单首帧）。
       </p>
       <button className="btn-ghost reset" onClick={() => onDelete(node.id)}>删除素材卡</button>
     </aside>
@@ -291,7 +291,9 @@ export default function Inspector({
           </i>
         </span>
         {(d.refExtras?.length ?? 0) === 0 && (
-          <div className="refx-empty">还没附加。粘图片 URL 或本地路径（/generated/xx.jpg），一行一张。</div>
+          <div className="refx-empty">
+            还没附加。推荐<b>右击画布卡片</b>点选参考（免填 URL）；也可粘图片 URL 或本地路径（/generated/xx.jpg），一行一张。
+          </div>
         )}
         {(d.refExtras ?? []).map((r, i) => (
           <div className="refx-row" key={`${r}-${i}`}>

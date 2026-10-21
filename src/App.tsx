@@ -33,6 +33,7 @@ import ScriptBoard from './ScriptBoard'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
+import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
 import { endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
@@ -542,6 +543,99 @@ function Shell() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [selRef, patch])
+
+  /** 右键菜单：不填 URL，直接从画布里的卡片点选参考 */
+  const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null)
+
+  /** 可当参考源的卡片：角色卡 + 非视频素材卡（有图才算） */
+  const refCards = useMemo<
+    { id: string; title: string; tag: string; img: string }[]
+  >(() => {
+    const out: { id: string; title: string; tag: string; img: string }[] = []
+    for (const c of characters) {
+      if (!c.image) continue
+      out.push({ id: `char-${c.id}`, title: c.name || '未命名角色', tag: '角色', img: c.image })
+    }
+    for (const a of assetNodes) {
+      const d = a.data as unknown as { title?: string; kind?: string; url?: string }
+      if (d.kind === 'video' || !d.url) continue
+      const tag = { scene: '场景', prop: '道具', image: '图片' }[d.kind ?? 'image'] ?? '图片'
+      out.push({ id: a.id, title: d.title || '未命名素材', tag, img: d.url })
+    }
+    return out
+  }, [characters, assetNodes])
+
+  /** 右键菜单数据：分镜卡 → 选参考源；角色/素材卡 → 选要连的镜头 */
+  const ctxData = useMemo(() => {
+    if (!ctx) return null
+    const node = canvasNodes.find((n) => n.id === ctx.id)
+    if (!node) return null
+    const type = (node as unknown as { type?: string }).type
+    const d = node.data as unknown as {
+      no?: string
+      name?: string
+      prompt?: string
+      title?: string
+      kind?: string
+      refIds?: string[]
+    }
+    if (type === 'shot') {
+      const mine = d.refIds ?? []
+      return {
+        mode: 'shot' as const,
+        targetId: node.id,
+        nodeType: 'shot' as const,
+        headTitle: d.no ? `${d.no} 的参考` : '镜头参考',
+        headSub: '点选画布中的卡片作为参考图',
+        sectionTitle: '参考画布里的卡片',
+        emptyText: '画布上还没有可用作参考的图：先加素材卡，或给角色生成图',
+        hint: '多选可叠加；再点一次取消。「首帧」= 直接用这张图出片。',
+        items: refCards.map((c) => ({ ...c, on: mine.includes(c.id) })),
+      }
+    }
+    const isChar = type === 'char'
+    return {
+      mode: 'source' as const,
+      targetId: node.id,
+      nodeType: (isChar ? 'char' : 'asset') as 'char' | 'asset',
+      headTitle: isChar ? `角色「${d.name ?? ''}」` : `素材「${d.title || '未命名'}」`,
+      headSub: '点选镜头即建立参考连线',
+      sectionTitle: '连到画布里的镜头',
+      emptyText: '画布上还没有分镜卡',
+      hint: '连线后，生成画面 / 出片都会带上这张图。',
+      items: shownNodes.map((n) => ({
+        id: n.id,
+        title: `${n.data.no}${n.data.size ? ' · ' + n.data.size : ''}`,
+        tag: (n.data.prompt ?? '').slice(0, 14),
+        img: n.data.refImage,
+        on: (n.data.refIds ?? []).includes(node.id),
+      })),
+    }
+  }, [ctx, canvasNodes, refCards, shownNodes])
+
+  /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
+  const toggleRef = useCallback(
+    (shotNodeId: string, sourceId: string) => {
+      const t = nodesRef.current.find((n) => n.id === shotNodeId)
+      if (!t) return
+      const cur = (t.data as unknown as { refIds?: string[] }).refIds ?? []
+      const next = cur.includes(sourceId) ? cur.filter((x) => x !== sourceId) : [...cur, sourceId]
+      patch(shotNodeId, { refIds: next } as never)
+    },
+    [patch],
+  )
+
+  /** 直接用这张图当首帧（出片参考），省掉手填 URL */
+  const useAsFirstFrame = useCallback(
+    (shotNodeId: string, sourceId: string) => {
+      const card = refCards.find((c) => c.id === sourceId)
+      if (!card) return
+      patch(shotNodeId, { refImage: card.img, videoUrl: undefined, vidState: 'idle' } as never)
+      setToast(`已用「${card.title}」做首帧`)
+      window.setTimeout(() => setToast(''), 2000)
+    },
+    [patch, refCards],
+  )
 
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
@@ -1423,7 +1517,15 @@ function Shell() {
               onPaneClick={() => {
                 setSelRef(null)
                 setSelId(null)
+                setCtx(null)
               }}
+              onNodeContextMenu={(e, n) => {
+                e.preventDefault()
+                setSelRef(null)
+                setSelId(n.id)
+                setCtx({ x: e.clientX, y: e.clientY, id: n.id })
+              }}
+              onPaneContextMenu={() => setCtx(null)}
               onNodesDelete={() => setSelId(null)}
               defaultEdgeOptions={{ type: 'shot' }}
               connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}
@@ -1447,6 +1549,38 @@ function Shell() {
                 style={{ background: '#0b1220' }}
               />
             </ReactFlow>
+
+            {ctx && ctxData && (
+              <NodeContextMenu
+                x={ctx.x}
+                y={ctx.y}
+                headTitle={ctxData.headTitle}
+                headSub={ctxData.headSub}
+                sectionTitle={ctxData.sectionTitle}
+                emptyText={ctxData.emptyText}
+                hint={ctxData.hint}
+                items={ctxData.items}
+                onClickItem={(id) =>
+                  ctxData.mode === 'shot' ? toggleRef(ctxData.targetId, id) : toggleRef(id, ctxData.targetId)
+                }
+                onFirstFrame={
+                  ctxData.mode === 'shot' ? (id) => useAsFirstFrame(ctxData.targetId, id) : undefined
+                }
+                onEdit={() => {
+                  setSelId(ctx.id)
+                  setCtx(null)
+                }}
+                onDelete={
+                  ctxData.nodeType === 'asset'
+                    ? () => {
+                        removeShot(ctx.id)
+                        setCtx(null)
+                      }
+                    : undefined
+                }
+                onClose={() => setCtx(null)}
+              />
+            )}
 
             <Timeline
               nodes={shownNodes}
