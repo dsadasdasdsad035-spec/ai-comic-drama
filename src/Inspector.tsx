@@ -1,6 +1,7 @@
 import type { ShotData } from './types'
 import { CANDIDATE_COUNTS, MOVES, PRICE_PER_IMAGE, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
 import type { VoiceOption } from './api'
+import type { AppSettings, Cap } from './api'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
@@ -94,6 +95,11 @@ type Props = {
   onVoice: (id: string) => void
   voices: VoiceOption[]
   voiceProvider: string
+  /** 设置页的渠道+模型表，用于生成时选模型 */
+  settings: AppSettings | null
+  /** 当前手动选的模型（键），空 = 用设置页默认 */
+  pick: Partial<Record<Cap, string>>
+  onPick: (cap: Cap, key: string) => void
 }
 
 export default function Inspector({
@@ -116,6 +122,9 @@ export default function Inspector({
   onVoice,
   voices,
   voiceProvider,
+  settings,
+  pick,
+  onPick,
 }: Props) {
   if (!node) {
     return (
@@ -236,6 +245,8 @@ export default function Inspector({
             ))}
           </select>
         </div>
+
+        <ModelPicker cap="audio" label="配音模型" settings={settings} pick={pick} onPick={onPick} />
         <button
           className="btn primary block"
           disabled={d.voiceState === 'running' || !d.dialogue.trim() || voices.length === 0}
@@ -349,6 +360,8 @@ export default function Inspector({
           </select>
         </div>
 
+        <ModelPicker cap="image" label="出图模型" settings={settings} pick={pick} onPick={onPick} />
+
         <label className="chk">
           <input type="checkbox" checked={refMode} onChange={(e) => setRefMode(e.target.checked)} />
           用当前画面作参考
@@ -392,6 +405,8 @@ export default function Inspector({
             {Math.min(12, Math.max(2, Math.round(d.seconds)))}s · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
           </span>
         </div>
+
+        <ModelPicker cap="video" label="出片模型" settings={settings} pick={pick} onPick={onPick} />
         <p className="vid-note">
           连线了参考图就走<b>多参考图模式</b>（reference_image，最多 4 张，提示词用 [图N] 指代）；
           没连线才回落到首帧图生视频。时长取镜头时长（2~12 秒），按 tokens 计费。
@@ -456,5 +471,37 @@ export default function Inspector({
         <div>坐标：{Math.round(node.position.x)}, {Math.round(node.position.y)}</div>
       </div>
     </aside>
+  )
+}
+
+/** 生成时选模型：空值 = 用设置页该能力的默认模型 */
+function ModelPicker({
+  cap,
+  label,
+  settings,
+  pick,
+  onPick,
+}: {
+  cap: Cap
+  label: string
+  settings: AppSettings | null
+  pick: Partial<Record<Cap, string>>
+  onPick: (cap: Cap, key: string) => void
+}) {
+  const list = (settings?.models ?? []).filter((m) => m.cap === cap)
+  const defKey = settings?.defaults?.[cap] || ''
+  const def = list.find((m) => m.key === defKey) || list[0]
+  return (
+    <label className="mp-row" title="这个环节用哪个模型；不选就用设置页的默认">
+      <span>{label}</span>
+      <select value={pick[cap] || ''} onChange={(e) => onPick(cap, e.target.value)}>
+        <option value="">{def ? `默认 · ${def.label}` : '默认（未配置）'}</option>
+        {list.map((m) => (
+          <option key={m.key} value={m.key}>
+            {m.label} · {m.model}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }

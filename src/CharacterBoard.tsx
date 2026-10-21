@@ -16,6 +16,8 @@ type Props = {
   /** 大模型拆角色：本集剧本+分镜 / 全剧素材 */
   onExtract: (scope: 'episode' | 'script') => void
   extracting: '' | 'episode' | 'script'
+  /** 三视图用的图像模型（设置页 view 能力的默认或手选） */
+  viewModel?: string
 }
 
 export default function CharacterBoard({
@@ -29,6 +31,7 @@ export default function CharacterBoard({
   onRename,
   onExtract,
   extracting,
+  viewModel,
 }: Props) {
   return (
     <div className="board">
@@ -76,6 +79,7 @@ export default function CharacterBoard({
             voices={voices}
             onDelete={() => onDelete(c.id)}
             onRename={(name) => onRename(c.id, name)}
+            viewModel={viewModel}
           />
         ))}
         {characters.length === 0 && (
@@ -94,6 +98,7 @@ function CharCard({
   voices,
   onDelete,
   onRename,
+  viewModel,
 }: {
   c: CharacterSheet
   patch: (id: string, p: Partial<CharacterSheet>) => void
@@ -102,6 +107,7 @@ function CharCard({
   voices: { id: string; label: string }[]
   onDelete: () => void
   onRename: (name: string) => void
+  viewModel?: string
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
@@ -121,6 +127,8 @@ function CharCard({
         prompt: `${c.lookEn}, ${TURNAROUND_SUFFIX}`,
         ratio: '16:9',
         n: 2,
+        cap: 'view',
+        modelKey: viewModel,
       })
       const urls = res.urls?.length ? res.urls : [res.url]
       patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })

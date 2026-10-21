@@ -81,10 +81,147 @@ function readEnvKey(name: string): string | null {
 // ---------------------------------------------------------------- 设置（存 SQLite settings 表）
 
 type RulePack = { enabled: boolean; text: string }
+
+/** 能力：文本两档 / 图像 / 三视图 / 视频两档 / 音频 */
+type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+
+/** 渠道协议：决定请求怎么发 */
+type ProviderKind = 'ark' | 'openai' | 'minimax' | 'elevenlabs'
+
+type Provider = {
+  id: string
+  label: string
+  kind: ProviderKind
+  baseUrl: string
+  /** 留空则 ARK 回落到 .env / 环境变量 */
+  apiKey?: string
+  note?: string
+}
+
+type ModelEntry = {
+  /** 唯一键，生成时按它选模型 */
+  key: string
+  label: string
+  cap: Cap
+  /** Provider.id */
+  provider: string
+  /** 真实模型 ID */
+  model: string
+  note?: string
+}
+
 type AppSettings = {
-  models: { lite?: string; pro?: string; image?: string; video?: string; videoRef?: string }
+  providers: Provider[]
+  models: ModelEntry[]
+  defaults: Partial<Record<Cap, string>>
+  /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
+}
+
+/** 预置渠道：用户不用配也能跑（Key 留空时 ARK 走 .env） */
+const DEFAULT_PROVIDERS: Provider[] = [
+  {
+    id: 'ark',
+    label: '字节 · 火山方舟',
+    kind: 'ark',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    note: '文本 / Seedream 生图 / Seedance 视频，Key 可留空沿用 .env',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    kind: 'openai',
+    baseUrl: 'https://api.deepseek.com/v1',
+    note: 'OpenAI 兼容，填 Key 即用',
+  },
+  {
+    id: 'minimax',
+    label: 'MiniMax',
+    kind: 'minimax',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    note: '文本 chatcompletion_v2 / 语音 t2a_v2',
+  },
+  {
+    id: 'elevenlabs',
+    label: 'ElevenLabs',
+    kind: 'elevenlabs',
+    baseUrl: 'https://api.elevenlabs.io',
+    note: '配音，多角色音色',
+  },
+  {
+    id: 'openai',
+    label: '第三方 · OpenAI 兼容',
+    kind: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    note: '中转站 / 自建服务，改 baseUrl 即可',
+  },
+]
+
+/** 预置模型：每个能力至少一条，默认指向 ARK 现状 */
+const DEFAULT_MODELS: ModelEntry[] = [
+  { key: 'ark-text-lite', label: '豆包 · lite', cap: 'text', provider: 'ark', model: TEXT_MODELS.lite },
+  { key: 'ark-text-pro', label: '豆包 · pro', cap: 'textPro', provider: 'ark', model: TEXT_MODELS.pro },
+  { key: 'deepseek-chat', label: 'DeepSeek Chat', cap: 'text', provider: 'deepseek', model: 'deepseek-chat' },
+  {
+    key: 'deepseek-reasoner',
+    label: 'DeepSeek Reasoner',
+    cap: 'textPro',
+    provider: 'deepseek',
+    model: 'deepseek-reasoner',
+  },
+  { key: 'minimax-text', label: 'MiniMax M1', cap: 'text', provider: 'minimax', model: 'MiniMax-M1' },
+  { key: 'ark-image', label: 'Seedream 4.5', cap: 'image', provider: 'ark', model: MODEL },
+  { key: 'ark-view', label: 'Seedream 4.5（三视图）', cap: 'view', provider: 'ark', model: MODEL },
+  {
+    key: 'openai-image',
+    label: 'gpt-image-1（第三方）',
+    cap: 'image',
+    provider: 'openai',
+    model: 'gpt-image-1',
+    note: '需在渠道里配好 baseUrl + Key',
+  },
+  { key: 'ark-video', label: 'Seedance 1.0 pro', cap: 'video', provider: 'ark', model: VIDEO_MODEL },
+  { key: 'ark-video-ref', label: 'Seedance Lite I2V（多参考）', cap: 'videoRef', provider: 'ark', model: VIDEO_REF_MODEL },
+  { key: 'eleven-tts', label: 'ElevenLabs 多语言 v2', cap: 'audio', provider: 'elevenlabs', model: 'eleven_multilingual_v2' },
+  { key: 'minimax-tts', label: 'MiniMax speech-02-hd', cap: 'audio', provider: 'minimax', model: 'speech-02-hd' },
+]
+
+const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
+  text: 'ark-text-lite',
+  textPro: 'ark-text-pro',
+  image: 'ark-image',
+  view: 'ark-view',
+  video: 'ark-video',
+  videoRef: 'ark-video-ref',
+  audio: 'eleven-tts',
+}
+
+/** 老结构（models.lite/pro/image/video/videoRef）→ 新结构，只做读时转换 */
+function normalizeSettings(raw: any): AppSettings {
+  const rules = (raw?.rules || {}) as Record<string, RulePack>
+  const apiKey = String(raw?.apiKey || '')
+  if (Array.isArray(raw?.providers) && Array.isArray(raw?.models)) {
+    return {
+      providers: raw.providers,
+      models: raw.models,
+      defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
+      apiKey,
+      rules,
+    }
+  }
+  const legacy = (raw?.models || {}) as Record<string, string>
+  const providers = DEFAULT_PROVIDERS.map((p) => (p.id === 'ark' ? { ...p, apiKey } : { ...p }))
+  const models = DEFAULT_MODELS.map((m) => {
+    if (m.key === 'ark-text-lite' && legacy.lite) return { ...m, model: legacy.lite }
+    if (m.key === 'ark-text-pro' && legacy.pro) return { ...m, model: legacy.pro }
+    if (m.key === 'ark-image' && legacy.image) return { ...m, model: legacy.image }
+    if (m.key === 'ark-view' && legacy.image) return { ...m, model: legacy.image }
+    if (m.key === 'ark-video' && legacy.video) return { ...m, model: legacy.video }
+    if (m.key === 'ark-video-ref' && legacy.videoRef) return { ...m, model: legacy.videoRef }
+    return { ...m }
+  })
+  return { providers, models, defaults: { ...DEFAULT_DEFAULTS }, apiKey, rules }
 }
 
 let settingsReady = false
@@ -92,16 +229,14 @@ let settingsReady = false
 let appRoot = ''
 /** 懒打开 DB（供设置/模型覆盖用；项目路由也会各自 open，同一文件同一连接缓存） */
 function getAppSettings(): AppSettings {
-  const empty: AppSettings = { models: {}, apiKey: '', rules: {} }
   try {
     if (!settingsReady) {
       dbPath(resolveRoot(appRoot || process.cwd()))
       settingsReady = true
     }
-    const raw = getSetting('app')
-    return raw ? { ...empty, ...(raw as object) } as AppSettings : empty
+    return normalizeSettings(getSetting('app'))
   } catch {
-    return empty
+    return normalizeSettings(null)
   }
 }
 
@@ -110,7 +245,9 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   settingsReady = true
   const cur = getAppSettings()
   const next: AppSettings = {
-    models: { ...cur.models, ...(patch.models || {}) },
+    providers: Array.isArray(patch.providers) ? patch.providers : cur.providers,
+    models: Array.isArray(patch.models) ? patch.models : cur.models,
+    defaults: { ...cur.defaults, ...(patch.defaults || {}) },
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
   }
@@ -118,21 +255,40 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   return next
 }
 
-/** 生效的模型 ID：设置页 > 环境变量 > 内置默认 */
-function effTextModel(tier: 'lite' | 'pro'): string {
-  const m = getAppSettings().models
-  return (tier === 'pro' ? m.pro : m.lite) || TEXT_MODELS[tier]
+/** 按能力取模型条目：显式 key > 该能力默认 > 该能力第一条 */
+function pickModel(cap: Cap, keyOverride?: string): { entry?: ModelEntry; provider?: Provider } {
+  const s = getAppSettings()
+  const key = String(keyOverride || '').trim()
+  const entry =
+    (key && s.models.find((m) => m.key === key && m.cap === cap)) ||
+    s.models.find((m) => m.key === s.defaults[cap] && m.cap === cap) ||
+    s.models.find((m) => m.cap === cap)
+  const provider = entry ? s.providers.find((p) => p.id === entry.provider) : undefined
+  return { entry, provider }
 }
-function effImageModel(): string {
-  return getAppSettings().models.image || MODEL
+
+/** 渠道 Key：非 ARK 渠道不会拿 ARK 的 Key 兜底，避免串号 401 */
+function providerKey(p?: Provider): string {
+  const own = String(p?.apiKey || '').trim()
+  if (own) return own
+  if (!p || p.kind === 'ark') return readApiKey() || ''
+  return ''
+}
+
+/** 生效的模型 ID（兼容旧调用点） */
+function effTextModel(tier: 'lite' | 'pro'): string {
+  return pickModel(tier === 'pro' ? 'textPro' : 'text').entry?.model || TEXT_MODELS[tier]
+}
+function effImageModel(cap: 'image' | 'view' = 'image'): string {
+  return pickModel(cap).entry?.model || MODEL
 }
 function effVideoModel(): string {
-  return getAppSettings().models.video || VIDEO_MODEL
+  return pickModel('video').entry?.model || VIDEO_MODEL
 }
 
 /** 多参考图（reference_image）模式用的模型：默认 Lite I2V，可在设置页覆盖 */
 function effVideoRefModel(): string {
-  return getAppSettings().models.videoRef || VIDEO_REF_MODEL
+  return pickModel('videoRef').entry?.model || VIDEO_REF_MODEL
 }
 
 function readJson(req: any): Promise<any> {
@@ -466,10 +622,66 @@ async function synthesize(
   rate: number,
   outDir: string,
   stamp: string,
+  modelKey?: string,
 ): Promise<{ url: string; engine: string; seconds: number }> {
+  // 设置页选了哪个音频模型，就走对应渠道；没配 Key 再回落旧行为
+  const { provider, entry } = pickModel('audio', modelKey)
+  const kind = provider?.kind
+  const ownKey = providerKey(provider)
+  if (kind === 'minimax' && ownKey) {
+    return synthesizeMinimax(text, voice, ownKey, outDir, stamp, provider!, entry?.model)
+  }
+  if (kind === 'elevenlabs' && ownKey) {
+    return synthesizeEleven(text, voice, ownKey, outDir, stamp, entry?.model)
+  }
   const elevenKey = readEnvKey('ELEVENLABS_API_KEY')
-  if (elevenKey) return synthesizeEleven(text, voice, elevenKey, outDir, stamp)
+  if (elevenKey) return synthesizeEleven(text, voice, elevenKey, outDir, stamp, entry?.model)
   return synthesizeSay(text, voice, rate, outDir, stamp)
+}
+
+/** MiniMax 语音合成：t2a_v2 返回 hex 音频 */
+async function synthesizeMinimax(
+  text: string,
+  voiceId: string,
+  key: string,
+  outDir: string,
+  stamp: string,
+  provider: Provider,
+  model?: string,
+): Promise<{ url: string; engine: string; seconds: number }> {
+  const base = String(provider.baseUrl || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')
+  const vid = voiceId && /^[a-zA-Z0-9_-]+$/.test(voiceId) ? voiceId : 'male-qn-qingse'
+  const r = await fetch(`${base}/t2a_v2`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model || 'speech-02-hd',
+      text,
+      stream: false,
+      voice_setting: { voice_id: vid, speed: 1, vol: 1, pitch: 0 },
+      audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3' },
+    }),
+  })
+  const raw = await r.text()
+  if (!r.ok) throw new Error(`MiniMax ${r.status} — ${raw.slice(0, 240)}`)
+  let j: any
+  try {
+    j = JSON.parse(raw)
+  } catch {
+    throw new Error(`MiniMax 返回非 JSON：${raw.slice(0, 160)}`)
+  }
+  const code = j?.base_resp?.status_code
+  if (code !== undefined && code !== 0) {
+    throw new Error(`MiniMax ${code} — ${j?.base_resp?.status_msg || '合成失败'}`)
+  }
+  const hex = String(j?.data?.audio || '')
+  if (!hex) throw new Error('MiniMax 未返回音频数据')
+  const buf = Buffer.from(hex, 'hex')
+  if (buf.length < 1024) throw new Error('MiniMax 返回的音频为空')
+  const file = path.join(outDir, `voice-${stamp}.mp3`)
+  fs.writeFileSync(file, buf)
+  const seconds = await probeDuration(file)
+  return { url: `/voices/voice-${stamp}.mp3`, engine: `minimax:${vid}`, seconds }
 }
 
 async function synthesizeEleven(
@@ -478,6 +690,7 @@ async function synthesizeEleven(
   key: string,
   outDir: string,
   stamp: string,
+  model?: string,
 ): Promise<{ url: string; engine: string; seconds: number }> {
   const id = voiceId || '21m00Tcm4TlvDq8ikWAM'
   const r = await fetch(`${ELEVEN_TTS}/${encodeURIComponent(id)}?output_format=mp3_44100_128`, {
@@ -485,7 +698,7 @@ async function synthesizeEleven(
     headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       text,
-      model_id: ELEVEN_MODEL,
+      model_id: model || ELEVEN_MODEL,
       voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15 },
     }),
   })
@@ -995,25 +1208,44 @@ function seedreamProxy(): Plugin {
             res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
             return
           }
-          const key = readApiKey()
-          if (!key) {
-            res.statusCode = 400
-            res.end(JSON.stringify({ ok: false, message: '未找到 ARK_API_KEY', kind: 'no-key' }))
-            return
-          }
           try {
             const body = await readJson(req)
             const system = String(body.system || '')
             const prompt = String(body.prompt || '')
             if (!prompt.trim()) throw new Error('prompt 不能为空')
-            const model = effTextModel(((body.model as 'lite' | 'pro') || 'lite') === 'pro' ? 'pro' : 'lite')
             const wantJson = Boolean(body.json)
+
+            // 选模型：modelKey（设置页里的模型表键）> 档位 lite/pro
+            const modelKey = String(body.modelKey || '').trim()
+            const tier: 'lite' | 'pro' = body.model === 'pro' ? 'pro' : 'lite'
+            const cap: Cap = modelKey ? 'text' : tier === 'pro' ? 'textPro' : 'text'
+            const { entry, provider } = pickModel(cap, modelKey)
+            const model = entry?.model || effTextModel(tier)
+            const kind: ProviderKind = provider?.kind || 'ark'
+            const key = providerKey(provider)
+            if (!key) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: `渠道「${provider?.label || kind}」没有 API Key，去设置页填一下`,
+                  kind: 'no-key',
+                }),
+              )
+              return
+            }
+            if (kind === 'elevenlabs') {
+              throw new Error('ElevenLabs 渠道不支持文本生成，请换文本模型')
+            }
+            const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            // MiniMax 走自家 chatcompletion_v2，其余是标准 OpenAI /chat/completions
+            const endpoint = kind === 'minimax' ? `${base}/text/chatcompletion_v2` : `${base}/chat/completions`
 
             const messages: { role: string; content: string }[] = []
             if (system) messages.push({ role: 'system', content: system })
             messages.push({ role: 'user', content: prompt })
 
-            const r = await fetch(ARK_CHAT, {
+            const r = await fetch(endpoint, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -1024,15 +1256,16 @@ function seedreamProxy(): Plugin {
               }),
             })
             const raw = await r.text()
-            if (!r.ok) throw new Error(`ARK ${r.status}: ${raw.slice(0, 300)}`)
+            if (!r.ok) throw new Error(`${provider?.label || kind} ${r.status}: ${raw.slice(0, 300)}`)
 
             const j = JSON.parse(raw)
-            const text = String(j?.choices?.[0]?.message?.content ?? '')
+            const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
+            const meta = { model, provider: provider?.label || kind }
             if (!wantJson) {
-              res.end(JSON.stringify({ ok: true, text, model }))
+              res.end(JSON.stringify({ ok: true, text, ...meta }))
               return
             }
-            res.end(JSON.stringify({ ok: true, json: extractJson(text), text, model }))
+            res.end(JSON.stringify({ ok: true, json: extractJson(text), text, ...meta }))
           } catch (e: any) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
@@ -1078,6 +1311,7 @@ function seedreamProxy(): Plugin {
               res.end(JSON.stringify({ ok: false, message: '单句台词过长（上限 400 字）' }))
               return
             }
+            const voiceKey = String(body.modelKey || '').trim()
             const voice = String(body.voice || 'Tingting')
             const rate = Math.min(260, Math.max(110, Number(body.rate) || 180))
 
@@ -1097,7 +1331,7 @@ function seedreamProxy(): Plugin {
                 if (t.length > 400) throw new Error(`第 ${i + 1} 句台词过长（上限 400 字）`)
                 const v = String(lines[i]?.voice || voice)
                 const r = Math.min(260, Math.max(110, Number(lines[i]?.rate) || rate))
-                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`)
+                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`, voiceKey)
                 parts.push({
                   file: path.join(root, 'public', one.url.replace(/^\//, '')),
                   seconds: one.seconds,
@@ -1147,7 +1381,7 @@ function seedreamProxy(): Plugin {
               return
             }
 
-            const result = await synthesize(text, voice, rate, outDir, stamp)
+            const result = await synthesize(text, voice, rate, outDir, stamp, voiceKey)
             res.end(
               JSON.stringify({
                 ok: true,
@@ -1266,11 +1500,6 @@ function seedreamProxy(): Plugin {
             res.end(JSON.stringify({ ok: false, message: '只支持 POST / GET' }))
             return
           }
-          if (!key) {
-            res.statusCode = 500
-            res.end(JSON.stringify({ ok: false, message: '未找到 ARK_API_KEY', kind: 'no-key' }))
-            return
-          }
           if (!fs.existsSync(SEEDANCE_CLI)) {
             res.statusCode = 500
             res.end(
@@ -1347,8 +1576,38 @@ function seedreamProxy(): Plugin {
             const outDir = path.join(root, 'public', 'videos')
             fs.mkdirSync(outDir, { recursive: true })
 
-            // 参考图模式走 Lite I2V（reference_image），首帧模式走已开通的 pro
-            const model = refMode ? effVideoRefModel() : effVideoModel()
+            // 参考图模式走 reference_image 模型，首帧模式走 video 模型；都可由前端指定 modelKey
+            const wantKey = String(body.modelKey || '').trim()
+            const refPick = pickModel('videoRef', wantKey)
+            const pick = refMode
+              ? refPick.entry
+                ? refPick
+                : pickModel('video', wantKey)
+              : pickModel('video', wantKey)
+            const model = pick.entry?.model || (refMode ? effVideoRefModel() : effVideoModel())
+            const provider = pick.provider
+            const runKey = providerKey(provider)
+            if (!runKey) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: `渠道「${provider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                  kind: 'no-key',
+                }),
+              )
+              return
+            }
+            if (provider && provider.kind !== 'ark') {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: '视频出片目前只走方舟 Seedance CLI，请在设置里选方舟渠道的视频模型',
+                }),
+              )
+              return
+            }
             const cliArgs = [
               'create',
               '-p', prompt,
@@ -1384,7 +1643,7 @@ function seedreamProxy(): Plugin {
             ;(async () => {
               const t0 = Date.now()
               try {
-                const stdout = await runSeedance(cliArgs, key)
+                const stdout = await runSeedance(cliArgs, runKey)
                 const m = stdout.match(/Saved to:\s*(.+?\.(?:mp4|mov))/)
                 if (!m) throw new Error('未解析到视频产物路径')
                 const src = m[1].trim()
@@ -1448,40 +1707,65 @@ function seedreamProxy(): Plugin {
             return
           }
 
+          // 渠道分发：方舟 Seedream 支持参考图；第三方走 OpenAI 兼容 images/generations（纯文生图）
+          const cap: Cap = body.cap === 'view' ? 'view' : 'image'
+          const { entry: imgEntry, provider: imgProvider } = pickModel(cap, String(body.modelKey || ''))
+          const kind: ProviderKind = imgProvider?.kind || 'ark'
+          const model = imgEntry?.model || effImageModel(cap)
+          const imgKey = providerKey(imgProvider)
+          if (!imgKey) {
+            res.statusCode = 400
+            res.end(
+              JSON.stringify({
+                ok: false,
+                message: `渠道「${imgProvider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                kind: 'no-key',
+              }),
+            )
+            return
+          }
+          const base = String(imgProvider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(
+            /\/+$/,
+            '',
+          )
+          const imgEndpoint = `${base}/images/generations`
+          const refSupported = kind === 'ark'
+
           const ratio = String(body.ratio || '16:9')
           const size = RATIO_SIZE[ratio] || RATIO_SIZE['16:9']
           const n = Math.min(4, Math.max(1, Number(body.n) || 1))
           const payload: Record<string, unknown> = {
-            model: effImageModel(),
+            model,
             prompt,
             size,
             response_format: 'url',
-            watermark: false,
+            ...(refSupported ? { watermark: false } : {}),
           }
-          if (body.refImage) {
+          const dropRefs: string[] = []
+          if (refSupported && body.refImage) {
             const ref = String(body.refImage)
             // 方舟不接受 svg 参考图；示例占位图是 svg，直接跳过
             if (!ref.startsWith('data:image/svg')) payload.image = resolveRef(ref, root)
           }
           // 多参考图（角色三视图 / 场景图 / 道具图）：Seedream 4.5 的 image 字段收数组，上限 10 张。
-          // refImage（单张构图参考）排第一，其余按传入顺序追加。
           const multiRefs: string[] = Array.isArray(body.refImages) ? body.refImages.map(String) : []
-          if (multiRefs.length) {
+          if (refSupported && multiRefs.length) {
             const single = payload.image ? [payload.image as string] : []
             const resolved = multiRefs
               .filter((r) => r && !r.startsWith('data:image/svg'))
               .map((r) => resolveRef(r, root))
             payload.image = [...single, ...resolved].slice(0, 10)
           }
+          if (!refSupported) dropRefs.push(...[body.refImage, ...multiRefs].filter(Boolean).map(String))
 
           const t0 = Date.now()
 
           // n 张 = n 次独立请求（不是 sequential 组图：组图出的是一组连贯故事板，
           // 不是同一提示词的多个变体，做"候选选优"语义不对）
           const callArk = async (pl: Record<string, unknown>) => {
-            const r = await fetch(ARK_URL, {
+            const r = await fetch(imgEndpoint, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              headers: { Authorization: `Bearer ${imgKey}`, 'Content-Type': 'application/json' },
               body: JSON.stringify(pl),
             })
             const text = await r.text()
@@ -1561,6 +1845,9 @@ function seedreamProxy(): Plugin {
               urls,
               url: urls[0],
               size,
+              model,
+              provider: imgProvider?.label || kind,
+              ...(dropRefs.length ? { warning: '该渠道不支持参考图，已按纯文生图处理', droppedRefs: dropRefs.length } : {}),
               elapsed: Date.now() - t0,
             }),
           )

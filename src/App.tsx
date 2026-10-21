@@ -54,6 +54,8 @@ import {
   patchProject,
   startVideo,
   waitVideo,
+  type AppSettings,
+  type Cap,
   type ProjectEpisode,
   type ProjectShot,
   type VoiceOption,
@@ -317,6 +319,34 @@ function Shell() {
     },
     [migrateCharRefs],
   )
+
+  /** 设置页的渠道/模型表：给 Inspector 的模型下拉用 */
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+  /** 手动选的模型（cap → modelKey），空 = 用设置页默认；存本地，刷新不丢 */
+  const [modelPick, setModelPick] = useState<Partial<Record<Cap, string>>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('storyboard-model-pick') || '{}')
+    } catch {
+      return {}
+    }
+  })
+  const pickModelKey = useCallback((cap: Cap, key: string) => {
+    setModelPick((p) => {
+      const next = { ...p }
+      if (key) next[cap] = key
+      else delete next[cap]
+      localStorage.setItem('storyboard-model-pick', JSON.stringify(next))
+      return next
+    })
+  }, [])
+  const reloadSettings = useCallback(() => {
+    getSettings()
+      .then(({ settings }) => setAppSettings(settings as AppSettings))
+      .catch(() => setAppSettings(null))
+  }, [])
+  useEffect(() => {
+    reloadSettings()
+  }, [reloadSettings])
 
   /**
    * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。
@@ -1151,6 +1181,7 @@ function Shell() {
           refImage: ref,
           refImages: extraRefs,
           n: candCount,
+          modelKey: modelPick.image,
         })
         const urls = res.urls?.length ? res.urls : [res.url]
         patch(id, {
@@ -1166,7 +1197,7 @@ function Shell() {
         patch(id, { genState: 'error', genError: (e as Error).message })
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick],
   )
 
   /**
@@ -1252,6 +1283,7 @@ function Shell() {
           ratio,
           resolution: vidRes,
           cameraFixed: node.data.move === '固定',
+          modelKey: modelPick.video,
         })
         if (res.skipped?.length) {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
@@ -1268,7 +1300,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, collectRefImgs],
+    [patch, ratio, vidRes, collectRefImgs, modelPick],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
@@ -1308,13 +1340,13 @@ function Shell() {
         : { text, voice: pick.id, rate: node.data.voiceRate ?? 180 }
 
       try {
-        const r = await generateVoice(payload)
+        const r = await generateVoice({ ...payload, modelKey: modelPick.audio })
         patch(id, { voiceUrl: r.url, voiceState: 'idle', voiceSeconds: r.seconds })
       } catch (e) {
         patch(id, { voiceState: 'error', voiceError: (e as Error).message })
       }
     },
-    [patch],
+    [patch, modelPick],
   )
 
   const voiceAll = async () => {
@@ -1670,6 +1702,7 @@ function Shell() {
             onRename={renameCharacter}
             onExtract={extractCharacters}
             extracting={extracting}
+            viewModel={modelPick.view}
           />
         ) : (
         <main className="main">
@@ -1855,6 +1888,9 @@ function Shell() {
             vidRes={vidRes}
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
+            settings={appSettings}
+            pick={modelPick}
+            onPick={pickModelKey}
             onVoice={generateVoiceOne}
             voices={voices}
             voiceProvider={voiceProvider}

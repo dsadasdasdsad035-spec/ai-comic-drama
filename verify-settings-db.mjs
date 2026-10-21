@@ -43,23 +43,22 @@ check('规则文本非空', ((await p.locator('.st-rule textarea').first().input
 
 await p.screenshot({ path: '/tmp/settings.png' })
 
-// ---- 3. 改 lite 模型 → 保存 → 落库 → 恢复 ----
-const lite = p.locator('.st-field input').first()
-await lite.click()
-await p.keyboard.type('TEST-MODEL-ID')
+// ---- 3. 改默认模型（渠道 + 模型表结构）→ 保存 → 落库 → 恢复 ----
+const beforeDefaults = await p.evaluate(() =>
+  fetch('/api/settings').then((r) => r.json()).then((j) => j.settings.defaults),
+)
+const textSel = p.locator('.st-field', { hasText: '文本 · 常规' }).locator('select')
+await textSel.selectOption('deepseek-chat')
 await p.locator('.st-actions button').click()
 await p.waitForTimeout(900)
 const saved1 = await p.evaluate(() => fetch('/api/settings').then((r) => r.json()))
-check('设置落库', saved1.settings?.models?.lite === 'TEST-MODEL-ID', JSON.stringify(saved1.settings?.models))
+check('设置落库', saved1.settings?.defaults?.text === 'deepseek-chat', String(saved1.settings?.defaults?.text))
 
-// /api/text 应使用设置里的模型（拦截不了真实调用，直接看 settings 生效即可；这里再验证恢复）
-await lite.click()
-await p.keyboard.press('Meta+a')
-await p.keyboard.press('Backspace')
+await textSel.selectOption(beforeDefaults.text)
 await p.locator('.st-actions button').click()
 await p.waitForTimeout(900)
 const saved2 = await p.evaluate(() => fetch('/api/settings').then((r) => r.json()))
-check('恢复空值', !saved2.settings?.models?.lite, JSON.stringify(saved2.settings?.models))
+check('默认模型可恢复', saved2.settings?.defaults?.text === beforeDefaults.text, String(saved2.settings?.defaults?.text))
 
 // ---- 4. 写路径：POST 合并不丢数据（传相同 style 的 characters 无副作用） ----
 const before = await p.evaluate(() => fetch('/api/project?name=recycle').then((r) => r.json()))

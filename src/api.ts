@@ -17,6 +17,10 @@ export async function generateImage(opts: {
   /** 多参考图：角色三视图 / 场景图 / 道具图（Seedream 4.5 image 数组，上限 10 张） */
   refImages?: string[]
   n?: number
+  /** 设置页模型表里的键；不传走 image 默认 */
+  modelKey?: string
+  /** 三视图走 view 能力，其余走 image */
+  cap?: 'image' | 'view'
 }): Promise<GenResult> {
   let res: Response
   try {
@@ -71,6 +75,8 @@ export type VideoOpts = {
   ratio: string
   resolution?: '480p' | '720p'
   cameraFixed?: boolean
+  /** 设置页模型表里的键；不传走默认 */
+  modelKey?: string
 }
 
 async function readJsonRes(res: Response) {
@@ -215,6 +221,8 @@ export async function generateVoice(o: {
   voice?: string
   rate?: number
   lines?: VoiceLine[]
+  /** 设置页模型表里的音频模型键；不传走默认 */
+  modelKey?: string
 }): Promise<VoiceResult> {
   let res: Response
   try {
@@ -388,6 +396,8 @@ export async function saveProject(name: string, project: ProjectData): Promise<v
 export type TextOpts = {
   system?: string
   prompt: string
+  /** 设置页模型表里的键（优先级高于 model 档位） */
+  modelKey?: string
   model?: 'lite' | 'pro'
   json?: boolean
   maxTokens?: number
@@ -414,8 +424,29 @@ export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; te
 
 export type RulePack = { enabled: boolean; text: string }
 
+export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+export type ProviderKind = 'ark' | 'openai' | 'minimax' | 'elevenlabs'
+export type Provider = {
+  id: string
+  label: string
+  kind: ProviderKind
+  baseUrl: string
+  apiKey?: string
+  note?: string
+}
+export type ModelEntry = {
+  key: string
+  label: string
+  cap: Cap
+  provider: string
+  model: string
+  note?: string
+}
+
 export type AppSettings = {
-  models: { lite?: string; pro?: string; image?: string; video?: string }
+  providers: Provider[]
+  models: ModelEntry[]
+  defaults: Partial<Record<Cap, string>>
   apiKey: string
   rules: Record<string, RulePack>
 }
