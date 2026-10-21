@@ -164,7 +164,12 @@ try {
   check(hit, `选中节点业务 ID = ${editId}（不是重叠的示例卡）`)
   const secBox = page.locator('.inspector input[type=number]').first()
   check((await secBox.count()) > 0, 'Inspector 打开时长输入')
-  check((await secBox.inputValue()) === String(target), 'Inspector 时长与表格一致', await secBox.inputValue())
+  // number 输入不保留 .0，按数值比较（6 与 6.0 视为一致）
+  check(
+    Number(await secBox.inputValue()) === Number(target),
+    'Inspector 时长与表格一致',
+    `${await secBox.inputValue()} vs ${target}`,
+  )
   const wb = (Number(target) + 1).toFixed(1)
   await secBox.fill(wb)
   await secBox.blur()

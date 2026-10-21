@@ -66,6 +66,16 @@ CREATE TABLE IF NOT EXISTS characters (
   active_idx INTEGER,
   UNIQUE(project_id, name)
 );
+CREATE TABLE IF NOT EXISTS assets (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  kind     TEXT DEFAULT 'image',
+  title    TEXT DEFAULT '',
+  url      TEXT DEFAULT '',
+  note     TEXT DEFAULT '',
+  tags     TEXT DEFAULT '[]',
+  sort     INTEGER DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS episodes (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -359,6 +369,16 @@ function assemble(p) {
       ...(c.candidates && c.candidates !== '[]' ? { candidates: JSON.parse(c.candidates || '[]') } : {}),
       ...(c.active_idx == null ? {} : { activeIdx: Number(c.active_idx) }),
     }))
+  const assets = db
+    .prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((a) => ({
+      kind: a.kind || 'image',
+      title: a.title || '',
+      url: a.url || '',
+      note: a.note || '',
+      tags: JSON.parse(a.tags || '[]'),
+    }))
   const episodes = db
     .prepare('SELECT * FROM episodes WHERE project_id = ? ORDER BY sort, no')
     .all(pid)
@@ -394,6 +414,7 @@ function assemble(p) {
     created_at: p.created_at,
     updated_at: p.updated_at,
     characters,
+    assets,
     episodes,
     shots,
   }
@@ -441,6 +462,24 @@ export function writeProject(root, name, data = {}) {
     if (!Array.isArray(data.shots)) throw new Error('shots 必须是数组 —— 拒绝写入会丢掉镜头列表的内容')
     db.prepare('DELETE FROM shots WHERE project_id = ?').run(pid)
     for (const [i, s] of data.shots.entries()) insertShot(db, pid, s, i, now)
+  }
+
+  if (data.assets !== undefined) {
+    if (!Array.isArray(data.assets)) throw new Error('assets 必须是数组')
+    db.prepare('DELETE FROM assets WHERE project_id = ?').run(pid)
+    for (const [i, a] of data.assets.entries()) {
+      db.prepare(
+        'INSERT INTO assets (project_id,kind,title,url,note,tags,sort) VALUES (?,?,?,?,?,?,?)',
+      ).run(
+        pid,
+        String(a?.kind || 'image'),
+        String(a?.title || ''),
+        String(a?.url || ''),
+        String(a?.note || ''),
+        JSON.stringify(a?.tags ?? []),
+        i,
+      )
+    }
   }
 
   if (data.characters !== undefined) {

@@ -30,6 +30,13 @@ const check = (name, cond, extra = '') => {
   })
 }
 
+// 清空素材库：否则新会话会从 assets 表恢复卡片，干扰布局断言
+await fetch('http://localhost:5273/api/project?name=recycle', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ assets: [] }),
+})
+
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 p.on('dialog', (d) => d.accept())

@@ -1295,7 +1295,7 @@ function seedreamProxy(): Plugin {
               const patch: Record<string, unknown> = {}
               if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
               // 角色 / 集 / 原著 / 元信息整体替换（都是人改的结果，不是 LLM 增量）
-              for (const k of ['characters', 'episodes']) {
+              for (const k of ['characters', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]

@@ -46,6 +46,13 @@ await setShots([
   { id: firstTwo[1].id, keyframe: imgs[1], tail_image: undefined, refIds: [] },
 ])
 
+// 清空素材库：否则新会话会从 assets 表恢复卡片，干扰布局断言
+await fetch('http://localhost:5273/api/project?name=recycle', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ assets: [] }),
+})
+
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 const errors = []

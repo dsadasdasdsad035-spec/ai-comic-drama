@@ -56,6 +56,7 @@ import {
   waitVideo,
   type AppSettings,
   type Cap,
+  type ProjectAsset,
   type ProjectEpisode,
   type ProjectShot,
   type VoiceOption,
@@ -435,6 +436,7 @@ function Shell() {
     getProject(projectName)
       .then((p) => {
         if (!alive) return
+        setAssets((p.assets ?? []) as ProjectAsset[])
         const list = (p.characters ?? []) as ProjectChar[]
         if (list.length > 0) {
           // 项目文件里可能没有图（历史数据 / dataURL 不落盘），此时保留本地已有的图，
@@ -657,11 +659,45 @@ function Shell() {
     return cards
   }, [characters, charPos, shownNodes])
 
+  /** 素材库（DB assets 表）：画布素材卡是它的视图，结构化的场景/道具在这里 */
+  const [assets, setAssets] = useState<ProjectAsset[]>([])
+  const assetsSnapRef = useRef('')
+
   /** 素材卡：混在 nodes 状态里持久化（type==='asset'），不受集过滤，始终显示 */
   const assetNodes = useMemo(
     () => nodes.filter((n) => (n as unknown as AssetNodeType).type === 'asset') as unknown as ShotNodeType[],
     [nodes],
   )
+
+  /** 画布素材卡 → 素材库（DB assets 表）：卡片只是视图，数据落库才能跨会话/跨集复用 */
+  useEffect(() => {
+    if (!projectName) return
+    const cards = assetNodes.map((a) => {
+      const d = a.data as unknown as { kind?: string; title?: string; url?: string }
+      return { kind: d.kind || 'image', title: d.title || '', url: d.url || '' }
+    })
+    const sig = JSON.stringify(cards)
+    if (sig === assetsSnapRef.current) return
+    const t = window.setTimeout(() => {
+      assetsSnapRef.current = sig
+      setAssets(cards)
+      patchProject(projectName, { assets: cards } as never).catch(() => {})
+    }, 1200)
+    return () => window.clearTimeout(t)
+  }, [assetNodes, projectName])
+
+  /** 首次打开（画布上没有素材卡）时，用素材库把卡片补回来 */
+  useEffect(() => {
+    if (!projectName || assets.length === 0 || assetNodes.length > 0) return
+    const cards = assets.map((a, i) => ({
+      id: `asset-${uid()}`,
+      type: 'asset',
+      position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
+      data: { title: a.title, kind: a.kind, url: a.url },
+    })) as unknown as ShotNodeType[]
+    setNodes((ns) => [...ns, ...cards])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName, assets.length])
 
   /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化）；素材卡始终在 */
   const canvasNodes = useMemo(
@@ -986,6 +1022,8 @@ function Shell() {
           if (n.data.shotId && !incoming.has(n.data.shotId)) {
             next.push({ ...n, data: { ...n.data, orphan: true } })
           } else if (!n.data.shotId) {
+            // 示例卡（id 形如 S01）在有真实镜头后退场，避免与推送的卡片重叠
+            if (/^S\d+$/.test(n.id)) continue
             next.push(n)
           }
         }

@@ -316,6 +316,14 @@ export type ProjectEpisode = {
   }[]
 }
 
+export type ProjectAsset = {
+  kind: string
+  title: string
+  url: string
+  note?: string
+  tags?: string[]
+}
+
 export type ProjectData = {
   name?: string
   logline?: string
@@ -324,6 +332,8 @@ export type ProjectData = {
   aspect?: string
   episodes?: ProjectEpisode[]
   characters?: unknown[]
+  /** 素材库：场景 / 道具 / 参考图（画布素材卡的数据源） */
+  assets?: ProjectAsset[]
   shots?: ProjectShot[]
   updated_at?: string
 }
