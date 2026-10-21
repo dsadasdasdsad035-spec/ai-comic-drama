@@ -32,7 +32,7 @@ function useImage(src?: string) {
 }
 
 export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, generateVideo } = useContext(CanvasCtx)
+  const { tool, guides, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
@@ -330,6 +330,22 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
         {data.genState === 'error' && (
           <div className="gen-error-badge" title={data.genError}>
             !
+          </div>
+        )}
+
+        {/* 出场角色头像（无图退回名字首字） */}
+        {!!data.cast?.length && (
+          <div className="cast-stack">
+            {data.cast.map((name) => {
+              const src = charImages[name]
+              return src ? (
+                <img key={name} src={src} alt={name} title={name} draggable={false} />
+              ) : (
+                <span key={name} className="cast-initial" title={name}>
+                  {name.slice(0, 1)}
+                </span>
+              )
+            })}
           </div>
         )}
 

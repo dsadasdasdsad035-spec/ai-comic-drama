@@ -1438,5 +1438,8 @@ export default defineConfig({
   server: {
     port: 5273,
     host: '127.0.0.1',
+    // ngrok / 反代 / 局域网访问时 Vite 默认按 Host 头拦请求（403 text/plain）。
+    // 这里显式放开，否则公网只能通 /api/*，页面和模块全被挡。
+    allowedHosts: true,
   },
 })

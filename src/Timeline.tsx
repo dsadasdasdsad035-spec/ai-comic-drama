@@ -5,6 +5,8 @@ import type { ShotData } from './types'
 type Props = {
   nodes: ShotNodeType[]
   activeId: string | null
+  /** 角色名 → 头像图，角色轨用 */
+  charImages?: Record<string, string>
   onPick: (id: string) => void
   onPatch: (id: string, p: Partial<ShotData>) => void
   /** 画面轨换序：把 id 移到 toIndex */
@@ -42,7 +44,7 @@ const px = (sec: number, zoom: number) => sec * zoom
 /** 吸附到 0.1s，避免拖出 0.033333 这种脏值 */
 const snap = (sec: number) => Math.round(sec * 10) / 10
 
-export default function Timeline({ nodes, activeId, onPick, onPatch, onReorder }: Props) {
+export default function Timeline({ nodes, activeId, charImages = {}, onPick, onPatch, onReorder }: Props) {
   const [zoom, setZoom] = useState(40)
   // 常驻 186px 会吃掉画布视野，允许收起
   const [open, setOpen] = useState(true)
@@ -274,18 +276,24 @@ export default function Timeline({ nodes, activeId, onPick, onPatch, onReorder }
                 })}
             </div>
 
-            {/* 角色轨：只读 */}
+            {/* 角色轨：只读，有头像显示头像，无图退回名字 */}
             <div className="ntl-track info" style={{ height: TRACK_H }}>
               {clips
                 .filter((c) => c.cast)
                 .map((c) => (
                   <span
                     key={c.id}
-                    className="ntl-chip"
+                    className="ntl-chip cast"
                     style={{ left: px(c.start, zoom), width: Math.max(24, px(c.dur, zoom)) }}
                     title={`${c.no} 出场：${c.cast}`}
                   >
-                    {c.cast}
+                    {c.cast.split('、').map((name) =>
+                      charImages[name] ? (
+                        <img key={name} src={charImages[name]} alt={name} draggable={false} />
+                      ) : (
+                        <i key={name}>{name}</i>
+                      ),
+                    )}
                   </span>
                 ))}
             </div>

@@ -12,12 +12,14 @@ import {
   useNodesState,
   useReactFlow,
   type Connection,
+  type Edge,
 } from '@xyflow/react'
 
 import '@xyflow/react/dist/style.css'
 import './theme.css'
 
 import ShotNode from './ShotNode'
+import CharNode from './CharNode'
 import ShotEdge from './ShotEdge'
 import Inspector from './Inspector'
 import Timeline from './Timeline'
@@ -33,7 +35,7 @@ import { endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
-import { initialEdges, initialNodes, type ShotEdgeType, type ShotNodeType } from './data'
+import { initialEdges, initialNodes, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
 import { PRICE_PER_IMAGE, cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
   checkHealth,
@@ -54,7 +56,7 @@ import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
 
-const nodeTypes = { shot: ShotNode }
+const nodeTypes = { shot: ShotNode, char: CharNode }
 const edgeTypes = { shot: ShotEdge }
 
 const COLORS = ['#fbbf24', '#f87171', '#38bdf8', '#a3e635', '#c084fc']
@@ -309,6 +311,56 @@ function Shell() {
     () => nodes.filter((n) => !n.data.shotId || (Number(n.data.episode) || 1) === epNo),
     [nodes, epNo],
   )
+
+  /** 角色上画布：开关 + 拖动位置（数据真相源在 characters，画布只存布局） */
+  const [charsOn, setCharsOn] = useState(() => localStorage.getItem('storyboard-chars-on') === '1')
+  const [charPos, setCharPos] = useState<Record<string, { x: number; y: number }>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('storyboard-char-pos') ?? '{}')
+    } catch {
+      return {}
+    }
+  })
+
+  const charNodes = useMemo<CharNodeType[]>(
+    () =>
+      characters.map((c, i) => ({
+        id: `char-${c.id}`,
+        type: 'char' as const,
+        position: charPos[c.id] ?? { x: 80 + i * 170, y: -280 },
+        data: { name: c.name, role: c.role, image: c.image },
+        deletable: false,
+      })),
+    [characters, charPos],
+  )
+
+  /** 角色节点加入渲染（不进 nodes 状态，避免污染镜头同步/持久化） */
+  const canvasNodes = useMemo(
+    () => (charsOn ? ([...charNodes, ...shownNodes] as unknown as ShotNodeType[]) : shownNodes),
+    [charsOn, charNodes, shownNodes],
+  )
+
+  /** cast 命中的 角色 → 镜头 虚线边（派生，不持久化） */
+  const castEdges = useMemo<Edge[]>(() => {
+    if (!charsOn) return []
+    const byName = new Map(charNodes.map((n) => [n.data.name, n.id]))
+    const out: Edge[] = []
+    for (const n of shownNodes) {
+      for (const name of n.data.cast ?? []) {
+        const cid = byName.get(name)
+        if (cid)
+          out.push({
+            id: `cast-${cid}-${n.id}`,
+            source: cid,
+            target: n.id,
+            type: 'default',
+            animated: true,
+            style: { stroke: '#34d399', strokeWidth: 1.4, strokeDasharray: '6 4' },
+          })
+      }
+    }
+    return out
+  }, [charsOn, charNodes, shownNodes])
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
   const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
@@ -358,10 +410,23 @@ function Shell() {
     return [...m.entries()].filter(([e]) => e !== epNo).sort((a, b) => a[0] - b[0])
   }, [nodes, epNo])
 
-  const shownEdges = useMemo(() => {
+  const shownEdges = useMemo<Edge[]>(() => {
     const ids = new Set(shownNodes.map((n) => n.id))
-    return edges.filter((e) => ids.has(e.source) && ids.has(e.target))
-  }, [edges, shownNodes])
+    return [...edges.filter((e) => ids.has(e.source) && ids.has(e.target)), ...castEdges]
+  }, [edges, shownNodes, castEdges])
+
+  /** 点角色节点 → 聚焦到它的出场镜头 */
+  const focusChar = (charName: string) => {
+    const targets = shownNodes
+      .filter((n) => (n.data.cast ?? []).includes(charName))
+      .map((n) => ({ id: n.id }))
+    if (targets.length === 0) {
+      setToast(`「${charName}」当前集没有出场镜头`)
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    fitView({ nodes: targets, padding: 0.35, duration: 500 })
+  }
 
   /** 画布上已有的业务 ID，给工作台标「在画布」 */
   const onCanvasIds = useMemo(() => {
@@ -805,9 +870,24 @@ function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const charImages = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const c of characters) if (c.name && c.image) m[c.name] = c.image
+    return m
+  }, [characters])
+
   const api = useMemo(
-    () => ({ tool, guides, color, patch, cycleEdge, generate: generateOne, generateVideo: generateVideoOne }),
-    [tool, guides, color, patch, cycleEdge, generateOne, generateVideoOne],
+    () => ({
+      tool,
+      guides,
+      color,
+      charImages,
+      patch,
+      cycleEdge,
+      generate: generateOne,
+      generateVideo: generateVideoOne,
+    }),
+    [tool, guides, color, charImages, patch, cycleEdge, generateOne, generateVideoOne],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
 
@@ -888,6 +968,19 @@ function Shell() {
                 {vbatch ? `配音 ${vbatch.done}/${vbatch.total}` : '批量配音'}
               </button>
               <button className="btn" onClick={() => fitView({ padding: 0.2, duration: 400 })}>适配</button>
+              <button
+                className={`btn ${charsOn ? 'primary' : ''}`}
+                onClick={() =>
+                  setCharsOn((v) => {
+                    const n = !v
+                    localStorage.setItem('storyboard-chars-on', n ? '1' : '0')
+                    return n
+                  })
+                }
+                title="把角色放上画布，并按出场名单连到镜头"
+              >
+                角色
+              </button>
               <button
                 className={`btn ${diagOn ? 'primary' : ''}`}
                 onClick={() => setDiagOn((v) => !v)}
@@ -1016,14 +1109,40 @@ function Shell() {
             )}
 
             <ReactFlow
-              nodes={shownNodes}
-              edges={shownEdges}
-              onNodesChange={onNodesChange}
+              nodes={canvasNodes}
+              edges={shownEdges as unknown as ShotEdgeType[]}
+              onNodesChange={(changes) => {
+                onNodesChange(changes)
+                // 角色节点不在 nodes 状态里，位置变更单独路由到 charPos
+                let moved = false
+                setCharPos((p) => {
+                  const next = { ...p }
+                  for (const ch of changes) {
+                    if (ch.type === 'position' && ch.id.startsWith('char-') && ch.position) {
+                      next[ch.id.slice(5)] = ch.position
+                      moved = true
+                    }
+                  }
+                  return moved ? next : p
+                })
+              }}
+              onNodeDragStop={(_, node) => {
+                if (node.id.startsWith('char-')) {
+                  setCharPos((p) => {
+                    const next = { ...p, [node.id.slice(5)]: node.position }
+                    localStorage.setItem('storyboard-char-pos', JSON.stringify(next))
+                    return next
+                  })
+                }
+              }}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
-              onNodeClick={(_, n) => setSelId(n.id)}
+              onNodeClick={(_, n) => {
+                if (n.id.startsWith('char-')) focusChar(n.id.slice(5))
+                else setSelId(n.id)
+              }}
               onPaneClick={() => setSelId(null)}
               onNodesDelete={() => setSelId(null)}
               defaultEdgeOptions={{ type: 'shot' }}
@@ -1052,6 +1171,7 @@ function Shell() {
             <Timeline
               nodes={shownNodes}
               activeId={selId}
+              charImages={charImages}
               onPick={pickShot}
               onPatch={patch}
               onReorder={reorderShot}
