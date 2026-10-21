@@ -393,13 +393,14 @@ export default function Inspector({
           </span>
         </div>
         <p className="vid-note">
-          以卡片当前画面为首帧，提示词沿用画面描述。时长取镜头时长（2~12 秒），按 tokens 计费。
+          首帧取卡片当前画面；没有画面时用画布上连线的参考图（右击卡片选）。时长取镜头时长（2~12 秒），按
+          tokens 计费。
         </p>
         <button
           className="btn primary block"
-          disabled={d.vidState === 'running' || !d.refImage}
+          disabled={d.vidState === 'running'}
           onClick={() => onGenerateVideo(node.id)}
-          title={d.refImage ? '' : '先生成画面'}
+          title={d.refImage ? '' : '无画面时用连线的参考图作首帧'}
         >
           {d.vidState === 'running' ? '出片中…' : d.videoUrl ? '重出视频' : '生成视频'}
         </button>

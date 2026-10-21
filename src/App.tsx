@@ -988,14 +988,28 @@ function Shell() {
     [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters],
   )
 
-  /** 图生视频：以卡片当前画面为首帧，提交后轮询出片 */
+  /** 图生视频：以卡片当前画面（或连线选中的参考图）为首帧，提交后轮询出片 */
   const generateVideoOne = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      const first = node.data.refImage
+      // 首帧取值：卡片当前画面 → 连线的素材/角色图（右键选的那张，免填 URL）
+      let first = node.data.refImage
       if (!first) {
-        patch(id, { vidState: 'error', vidError: '先生成画面，出片需要首帧' })
+        for (const rid of (node.data as unknown as { refIds?: string[] }).refIds ?? []) {
+          if (rid.startsWith('char-')) {
+            const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
+            first = characters.find((c) => c.id === key || c.name === key)?.image
+          } else if (rid.startsWith('asset-')) {
+            const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
+            const d = a?.data as unknown as { kind?: string; url?: string } | undefined
+            if (d && d.kind !== 'video') first = d.url
+          }
+          if (first) break
+        }
+      }
+      if (!first) {
+        patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
         return
       }
       patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
@@ -1027,7 +1041,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes],
+    [patch, ratio, vidRes, characters],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
