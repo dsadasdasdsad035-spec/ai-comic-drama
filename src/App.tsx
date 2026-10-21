@@ -217,6 +217,104 @@ function Shell() {
     [],
   )
 
+  /**
+   * 角色 id 就是名字 → 改名/删除时连线要跟着迁移。
+   * 画布只加载了当前集的卡片，所以除了改内存节点，还得改后端 shots 上的 refIds。
+   */
+  const migrateCharRefs = useCallback(
+    async (from: string, to: string | null) => {
+      const rid = `char-${from}`
+      try {
+        const p = await getProject(projectName)
+        const changed = (p.shots ?? [])
+          .filter((s) => (s.refIds ?? []).includes(rid))
+          .map((s) => ({
+            ...s,
+            refIds: to
+              ? (s.refIds ?? []).map((x) => (x === rid ? `char-${to}` : x))
+              : (s.refIds ?? []).filter((x) => x !== rid),
+          }))
+        if (changed.length) await mergeProjectShots(projectName, changed)
+      } catch {
+        /* 迁移失败不阻塞界面；下次打开画布仍可从 refIds 看到原值 */
+      }
+    },
+    [projectName],
+  )
+
+  /** 新建角色卡：id 就是名字，先给个不重名的占位名 */
+  const addCharacter = useCallback(() => {
+    setCharacters((cs) => {
+      let i = cs.length + 1
+      while (cs.some((c) => c.name === `新角色${i}`)) i += 1
+      const name = `新角色${i}`
+      return [...cs, { id: name, name, role: '待定', lookCn: '', lookEn: '', palette: '', keywords: [] }]
+    })
+    setToast('已新建角色：先补英文外观锚点，再生成三视图')
+    window.setTimeout(() => setToast(''), 3000)
+  }, [])
+
+  /** 删角色卡：连带解除所有镜头上指向它的参考连线 */
+  const deleteCharacter = useCallback(
+    (id: string) => {
+      const rid = `char-${id}`
+      setCharacters((cs) => cs.filter((c) => c.id !== id))
+      setNodes((ns) =>
+        ns.map((n) => {
+          const cur = (n.data as unknown as { refIds?: string[] }).refIds
+          if (!cur?.includes(rid)) return n
+          return { ...n, data: { ...n.data, refIds: cur.filter((x) => x !== rid) } } as typeof n
+        }),
+      )
+      setCharPos((p) => {
+        if (!(id in p)) return p
+        const next = { ...p }
+        delete next[id]
+        return next
+      })
+      setSelRef(null)
+      void migrateCharRefs(id, null)
+      setToast(`已删除角色「${id}」，相关连线已解除`)
+      window.setTimeout(() => setToast(''), 2600)
+    },
+    [migrateCharRefs],
+  )
+
+  /** 改名：id 跟着名字走，所以连线（char-名字）与画布布局都要迁移 */
+  const renameCharacter = useCallback(
+    (oldId: string, raw: string) => {
+      const name = raw.trim()
+      if (!name || name === oldId) return
+      if (charactersRef.current.some((c) => c.id === name)) {
+        setToast(`已有同名角色「${name}」`)
+        window.setTimeout(() => setToast(''), 2400)
+        return
+      }
+      setCharacters((cs) => cs.map((c) => (c.id === oldId ? { ...c, id: name, name } : c)))
+      setNodes((ns) =>
+        ns.map((n) => {
+          const cur = (n.data as unknown as { refIds?: string[] }).refIds
+          const from = `char-${oldId}`
+          if (!cur?.includes(from)) return n
+          return {
+            ...n,
+            data: { ...n.data, refIds: cur.map((x) => (x === from ? `char-${name}` : x)) },
+          } as typeof n
+        }),
+      )
+      setCharPos((p) => {
+        if (!(oldId in p)) return p
+        const next = { ...p, [name]: p[oldId] }
+        delete next[oldId]
+        return next
+      })
+      setToast(`角色已改名为「${name}」，连线已同步`)
+      window.setTimeout(() => setToast(''), 2400)
+      void migrateCharRefs(oldId, name)
+    },
+    [migrateCharRefs],
+  )
+
   // 角色以 project.json 为准：绑定项目后加载进来，替换掉 localStorage 的那份
   useEffect(() => {
     if (!projectName) return
@@ -1484,6 +1582,9 @@ function Shell() {
             selectedShot={selected ? { id: selected.id, no: selected.data.no } : null}
             onInject={injectCharacter}
             voices={voices}
+            onAdd={addCharacter}
+            onDelete={deleteCharacter}
+            onRename={renameCharacter}
           />
         ) : (
         <main className="main">

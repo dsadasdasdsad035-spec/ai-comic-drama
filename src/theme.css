@@ -4735,3 +4735,147 @@ button:not(:disabled),
   color: var(--warn);
   font-size: var(--fs-2xs);
 }
+
+/* ===== 角色板：新建 / 编辑 / 删除 ===== */
+.board-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.char-head-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.btn-mini.danger {
+  color: var(--danger);
+  border-color: var(--line);
+}
+.btn-mini.danger:hover {
+  background: var(--danger-dim);
+  border-color: var(--danger);
+}
+.char-empty-board {
+  grid-column: 1 / -1;
+  padding: 34px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+.char-edit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+}
+.char-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.char-edit label.wide {
+  grid-column: 1 / -1;
+}
+.char-edit label span {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+.char-edit input,
+.char-edit textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  resize: vertical;
+}
+.char-edit input:focus,
+.char-edit textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.char-card.editing {
+  border-color: var(--accent);
+}
+
+/* ===== 角色板：新建 / 编辑 / 删除 ===== */
+.board-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.char-head-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.btn-mini.danger {
+  color: var(--danger);
+  border-color: var(--line);
+}
+.btn-mini.danger:hover {
+  background: var(--danger-dim);
+  border-color: var(--danger);
+}
+.char-empty-board {
+  grid-column: 1 / -1;
+  padding: 34px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+}
+.char-edit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+}
+.char-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.char-edit label.wide {
+  grid-column: 1 / -1;
+}
+.char-edit label span {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+.char-edit input,
+.char-edit textarea {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  resize: vertical;
+}
+.char-edit input:focus,
+.char-edit textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.char-card.editing {
+  border-color: var(--accent);
+}

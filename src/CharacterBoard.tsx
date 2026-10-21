@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { generateImage } from './api'
 import { TURNAROUND_SUFFIX, type CharacterSheet } from './characters'
 
@@ -9,9 +9,22 @@ type Props = {
   onInject: (charId: string) => void
   /** 可用音色（一镜多说话人时按角色取） */
   voices: { id: string; label: string }[]
+  onAdd: () => void
+  onDelete: (charId: string) => void
+  /** 改名 = 换 id，需要同步连线与布局 */
+  onRename: (oldId: string, name: string) => void
 }
 
-export default function CharacterBoard({ characters, patch, selectedShot, onInject, voices }: Props) {
+export default function CharacterBoard({
+  characters,
+  patch,
+  selectedShot,
+  onInject,
+  voices,
+  onAdd,
+  onDelete,
+  onRename,
+}: Props) {
   return (
     <div className="board">
       <div className="board-head">
@@ -21,8 +34,13 @@ export default function CharacterBoard({ characters, patch, selectedShot, onInje
             三视图锁定外观，<code>lookEn</code> 会原样注入到每个镜头的提示词，保证多镜头长相一致。
           </p>
         </div>
-        <div className="board-hint">
-          {selectedShot ? `当前镜头 ${selectedShot.no}` : '先在分镜视图里选一个镜头'}
+        <div className="board-acts">
+          <div className="board-hint">
+            {selectedShot ? `当前镜头 ${selectedShot.no}` : '先在分镜视图里选一个镜头'}
+          </div>
+          <button className="btn" onClick={onAdd} title="新建一张角色卡">
+            + 新建角色
+          </button>
         </div>
       </div>
 
@@ -35,8 +53,13 @@ export default function CharacterBoard({ characters, patch, selectedShot, onInje
             canInject={Boolean(selectedShot)}
             onInject={() => onInject(c.id)}
             voices={voices}
+            onDelete={() => onDelete(c.id)}
+            onRename={(name) => onRename(c.id, name)}
           />
         ))}
+        {characters.length === 0 && (
+          <div className="char-empty-board">还没有角色，点右上角「+ 新建角色」开始</div>
+        )}
       </div>
     </div>
   )
@@ -48,18 +71,29 @@ function CharCard({
   canInject,
   onInject,
   voices,
+  onDelete,
+  onRename,
 }: {
   c: CharacterSheet
   patch: (id: string, p: Partial<CharacterSheet>) => void
   canInject: boolean
   onInject: () => void
   voices: { id: string; label: string }[]
+  onDelete: () => void
+  onRename: (name: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(c.name)
+  const [kw, setKw] = useState(c.keywords.join('、'))
   const candidates = c.candidates ?? []
   const activeIdx = c.activeIdx ?? 0
 
   const generate = async () => {
+    if (!c.lookEn.trim()) {
+      patch(c.id, { state: 'error', error: '先填英文外观锚点（lookEn）再生成' })
+      return
+    }
     patch(c.id, { state: 'running', error: undefined })
     try {
       const res = await generateImage({
@@ -80,12 +114,118 @@ function CharCard({
     reader.readAsDataURL(file)
   }
 
+  const commitName = () => {
+    if (name.trim() && name.trim() !== c.name) onRename(name.trim())
+    else setName(c.name)
+  }
+
   return (
-    <div className="char-card">
+    <div className={`char-card ${editing ? 'editing' : ''}`}>
       <div className="char-head">
         <span className="char-name">{c.name}</span>
         <span className="char-role">{c.role}</span>
+        <span className="char-head-acts">
+          <button
+            className="btn-mini"
+            onClick={() => {
+              setName(c.name)
+              setKw(c.keywords.join('、'))
+              setEditing((v) => !v)
+            }}
+            title="编辑名字 / 外观锚点 / 关键词"
+          >
+            {editing ? '收起' : '编辑'}
+          </button>
+          <button
+            className="btn-mini danger"
+            onClick={() => {
+              if (window.confirm(`删除角色「${c.name}」？相关参考连线会一起解除`)) onDelete()
+            }}
+            title="删除这张角色卡"
+          >
+            删除
+          </button>
+        </span>
       </div>
+
+      {editing && (
+        <div className="char-edit">
+          <label>
+            <span>角色名</span>
+            <input
+              data-char-field="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setName(c.name)
+              }}
+            />
+          </label>
+          <label>
+            <span>定位</span>
+            <input
+              data-char-field="role"
+              value={c.role}
+              onChange={(e) => patch(c.id, { role: e.target.value })}
+              placeholder="主角 · 义体回收人"
+            />
+          </label>
+          <label>
+            <span>年龄</span>
+            <input
+              data-char-field="age"
+              value={c.age ?? ''}
+              onChange={(e) => patch(c.id, { age: e.target.value })}
+              placeholder="28 岁"
+            />
+          </label>
+          <label className="wide">
+            <span>中文外观</span>
+            <textarea
+              data-char-field="lookCn"
+              rows={2}
+              value={c.lookCn}
+              onChange={(e) => patch(c.id, { lookCn: e.target.value })}
+            />
+          </label>
+          <label className="wide">
+            <span>英文锚点（lookEn，注入提示词）</span>
+            <textarea
+              data-char-field="lookEn"
+              rows={3}
+              value={c.lookEn}
+              onChange={(e) => patch(c.id, { lookEn: e.target.value })}
+            />
+          </label>
+          <label>
+            <span>配色</span>
+            <input
+              data-char-field="palette"
+              value={c.palette}
+              onChange={(e) => patch(c.id, { palette: e.target.value })}
+              placeholder="暗灰 + 黄铜"
+            />
+          </label>
+          <label>
+            <span>关键词（顿号/逗号分隔）</span>
+            <input
+              data-char-field="keywords"
+              value={kw}
+              onChange={(e) => {
+                setKw(e.target.value)
+                patch(c.id, {
+                  keywords: e.target.value
+                    .split(/[、,，]/)
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }}
+            />
+          </label>
+        </div>
+      )}
 
       {voices.length > 0 && (
         <label className="char-voice" title="这个角色的配音音色；一镜多说话人时按行取">
@@ -137,14 +277,16 @@ function CharCard({
 
       <div className="char-look">
         <span className="char-label">外观锚点</span>
-        <p>{c.lookCn}</p>
-        <code className="char-en">{c.lookEn}</code>
+        <p>{c.lookCn || '（未填）'}</p>
+        <code className="char-en">{c.lookEn || '（未填，生成三视图前必须补）'}</code>
       </div>
 
       <div className="char-tags">
-        <span className="char-palette">{c.palette}</span>
+        {c.palette && <span className="char-palette">{c.palette}</span>}
         {c.keywords.map((k) => (
-          <span key={k} className="char-tag">{k}</span>
+          <span key={k} className="char-tag">
+            {k}
+          </span>
         ))}
       </div>
 
@@ -154,7 +296,9 @@ function CharCard({
         <button className="btn" disabled={c.state === 'running'} onClick={generate}>
           {c.image ? '重出三视图' : '生成三视图'} · ¥0.44
         </button>
-        <button className="btn-ghost" onClick={() => fileRef.current?.click()}>上传</button>
+        <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
+          上传
+        </button>
         <input
           ref={fileRef}
           type="file"
