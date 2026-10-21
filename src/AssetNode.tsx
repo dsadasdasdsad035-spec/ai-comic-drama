@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { AssetNodeType } from './data'
 
@@ -13,7 +14,7 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
  * 连到分镜卡的边 = 参考关系（生成画面时按连线取参考图）。
  * 节点数据（title/kind/url）存画布 localStorage，位置随拖拽持久化。
  */
-export default function AssetNode({ data, selected }: NodeProps<AssetNodeType>) {
+function AssetNodeInner({ data, selected }: NodeProps<AssetNodeType>) {
   const meta = KIND_META[data.kind] ?? KIND_META.image
   return (
     <div className={`asset-node ${selected ? 'sel' : ''}`} title={`${meta.label} · ${data.title || '未命名'}`}>
@@ -39,3 +40,5 @@ export default function AssetNode({ data, selected }: NodeProps<AssetNodeType>) 
     </div>
   )
 }
+
+export default memo(AssetNodeInner)

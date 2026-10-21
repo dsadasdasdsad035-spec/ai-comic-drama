@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { memo, useContext, useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Stage, Layer, Image as KImage, Line, Rect as KRect, Group } from 'react-konva'
 import type Konva from 'konva'
@@ -31,7 +31,7 @@ function useImage(src?: string) {
   return img
 }
 
-export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>) {
+function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
   const { tool, guides, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
@@ -131,6 +131,12 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
   /** 配音比镜头长 → 成片会被截断 */
   const voiceOver = (data.voiceSeconds ?? 0) > data.seconds + 0.2
   const vidRunning = data.vidState === 'running'
+  /**
+   * 静态图模式：不画标注、没有出片、没有视频时不必挂 Konva Stage。
+   * 每张卡一个 canvas 是缩放卡顿的主因（几十张卡 = 几十个 canvas 跟着缩放）。
+   */
+  const stageMode = tool !== 'none' || (data.marks?.length ?? 0) > 0
+  const stillUrl = !hasVideo ? data.refImage : undefined
 
   // 出片期间每秒重算已等待时长
   const [, tick] = useState(0)
@@ -189,6 +195,13 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
         className={`stage-wrap ${tool !== 'none' ? 'drawing nodrag nowheel' : ''}`}
         style={{ width: W, height: H }}
       >
+        {!stageMode ? (
+          stillUrl ? (
+            <img className="shot-still" src={stillUrl} alt="" draggable={false} decoding="async" />
+          ) : (
+            <div className="shot-blank" />
+          )
+        ) : (
         <Stage
           width={W}
           height={H}
@@ -285,6 +298,7 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
             </Group>
           </Layer>
         </Stage>
+        )}
 
         {/* 出片后视频盖在静帧上播放，Konva 的标注层留在下面 */}
         {hasVideo && showVideo && (
@@ -413,3 +427,6 @@ export default function ShotNode({ id, data, selected }: NodeProps<ShotNodeType>
     </div>
   )
 }
+
+/** 节点很重（内嵌 Konva Stage）：memo 掉，缩放/其它节点变动时不重渲染 */
+export default memo(ShotNodeInner)

@@ -755,6 +755,10 @@ function Shell() {
     return () => document.removeEventListener('keydown', onKey)
   }, [selRef, patch])
 
+  /** 缩得很小时切到精简渲染（CSS 隐藏卡片里的次要信息） */
+  const [zoomLite, setZoomLite] = useState(false)
+  const zoomLiteRef = useRef(false)
+
   /** 右键菜单：不填 URL，直接从画布里的卡片点选参考 */
   const [ctx, setCtx] = useState<{ x: number; y: number; id: string } | null>(null)
 
@@ -1706,7 +1710,7 @@ function Shell() {
           />
         ) : (
         <main className="main">
-          <div className="canvas">
+          <div className={`canvas ${zoomLite ? 'zoom-lite' : ''}`}>
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
             {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
               <div className="canvas-hint">
@@ -1777,6 +1781,13 @@ function Shell() {
                   })
                 }
               }}
+              onMove={(_, vp) => {
+                const lite = vp.zoom < 0.55
+                if (lite !== zoomLiteRef.current) {
+                  zoomLiteRef.current = lite
+                  setZoomLite(lite)
+                }
+              }}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onEdgesDelete={onEdgesDeleted}
@@ -1809,6 +1820,7 @@ function Shell() {
               defaultEdgeOptions={{ type: 'shot' }}
               connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}
               proOptions={{ hideAttribution: true }}
+              onlyRenderVisibleElements
               minZoom={0.2}
               maxZoom={2.2}
               fitView
