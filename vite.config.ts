@@ -13,6 +13,7 @@ import {
   pollVideoTask,
   submitVideoTask,
 } from './server/video.mjs'
+import { FileError, ensureUploadedVideo } from './server/files.mjs'
 import {
   DEFAULT_VOLC_TTS_VOICE,
   VOLC_TTS_VOICES,
@@ -90,6 +91,10 @@ type RulePack = { enabled: boolean; text: string }
 /** 能力：文本两档 / 图像 / 三视图 / 视频两档 / 音频 */
 type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 
+/** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
+type Stage = 'script' | 'character' | 'shot' | 'prompt'
+const STAGES: Stage[] = ['script', 'character', 'shot', 'prompt']
+
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 
@@ -116,6 +121,10 @@ type ModelEntry = {
   /** 真实模型 ID */
   model: string
   note?: string
+  /** 这个模型能否把视频作为 reference_video（Seedance 2.0/2.5） */
+  supportsVideoRef?: boolean
+  /** 2.5 需要显式指定 reference；2.0 留空 */
+  videoRefTaskType?: 'reference'
 }
 
 /** 计价（设置页可改；默认值为估算，对不上账单时按实际单价校准） */
@@ -125,12 +134,25 @@ type AppSettings = {
   providers: Provider[]
   models: ModelEntry[]
   defaults: Partial<Record<Cap, string>>
+  /** 每个生成环节的默认模型键；空 = 沿用 defaults.text */
+  stageModels?: Partial<Record<Stage, string>>
   pricing?: Pricing
   /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
   /** 预设迁移版本：只在升级时合并一次新渠道/模型 */
   presetsVersion?: number
+}
+
+/** 环节绑定只接受已知环节与合法模型键 */
+function normalizeStageModels(raw: unknown): Partial<Record<Stage, string>> {
+  const out: Partial<Record<Stage, string>> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const stage of STAGES) {
+    const value = (raw as Record<string, unknown>)[stage]
+    if (typeof value === 'string' && value.trim()) out[stage] = value.trim()
+  }
+  return out
 }
 
 /** 预置渠道：用户不用配也能跑（Key 留空时 ARK 走 .env） */
@@ -229,7 +251,8 @@ const DEFAULT_MODELS: ModelEntry[] = [
     provider: 'deepseek',
     model: 'deepseek-reasoner',
   },
-  { key: 'minimax-text', label: 'MiniMax M1', cap: 'text', provider: 'minimax', model: 'MiniMax-M1' },
+  { key: 'minimax-text', label: 'MiniMax M3', cap: 'text', provider: 'minimax', model: 'MiniMax-M3' },
+  { key: 'minimax-text-pro', label: 'MiniMax M3（高质量）', cap: 'textPro', provider: 'minimax', model: 'MiniMax-M3' },
   { key: 'ark-image', label: 'Seedream 4.5', cap: 'image', provider: 'ark', model: MODEL },
   { key: 'ark-view', label: 'Seedream 4.5（三视图）', cap: 'view', provider: 'ark', model: MODEL },
   {
@@ -256,19 +279,36 @@ const DEFAULT_MODELS: ModelEntry[] = [
   },
   { key: 'ark-video', label: 'Seedance 1.0 pro', cap: 'video', provider: 'ark', model: VIDEO_MODEL },
   { key: 'ark-video-ref', label: 'Seedance Lite I2V（多参考）', cap: 'videoRef', provider: 'ark', model: VIDEO_REF_MODEL },
+  {
+    key: 'ark-video-2-0',
+    label: 'Seedance 2.0（视频参考）',
+    cap: 'video',
+    provider: 'ark',
+    model: 'doubao-seedance-2-0-260128',
+    supportsVideoRef: true,
+  },
+  {
+    key: 'ark-video-2-5',
+    label: 'Seedance 2.5（视频参考）',
+    cap: 'video',
+    provider: 'ark',
+    model: 'doubao-seedance-2-5-260628',
+    supportsVideoRef: true,
+    videoRefTaskType: 'reference',
+  },
   { key: 'eleven-tts', label: 'ElevenLabs 多语言 v2', cap: 'audio', provider: 'elevenlabs', model: 'eleven_multilingual_v2' },
   { key: 'volc-tts', label: '火山 Seed TTS 2.0', cap: 'audio', provider: 'volc-tts', model: 'doubao-seed-tts-2.0' },
-  { key: 'minimax-tts', label: 'MiniMax speech-02-hd', cap: 'audio', provider: 'minimax', model: 'speech-02-hd' },
+  { key: 'minimax-tts', label: 'MiniMax speech-2.8-hd', cap: 'audio', provider: 'minimax', model: 'speech-2.8-hd' },
 ]
 
 const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
-  text: 'ark-plan-text-lite',
-  textPro: 'ark-plan-text-pro',
+  text: 'minimax-text',
+  textPro: 'minimax-text-pro',
   image: 'ark-plan-image',
   view: 'ark-plan-view',
   video: 'ark-video',
   videoRef: 'ark-video-ref',
-  audio: 'volc-tts',
+  audio: 'minimax-tts',
 }
 
 /** 老渠道没有 caps 字段时按协议推一个默认用途 */
@@ -281,29 +321,39 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
   return ['audio']
 }
 
-/** 预设迁移版本：只在升级时合并一次 v2 新增的 Agent Plan / 火山语音预设 */
-const CURRENT_PRESETS_VERSION = 2
+/** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
+const CURRENT_PRESETS_VERSION = 3
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
 )
+/** v3：Seedance 2.x 视频参考模型；不改变默认 video 仍指向 1.0 */
+const V3_PRESET_MODEL_KEYS = new Set(['ark-video-2-0', 'ark-video-2-5'])
 
 function mergePresets(cur: AppSettings, version: number): AppSettings {
   if (version >= CURRENT_PRESETS_VERSION) return { ...cur, presetsVersion: version }
-  const providerIds = new Set(cur.providers.map((p) => p.id))
-  const modelKeys = new Set(cur.models.map((m) => m.key))
-  return {
-    ...cur,
-    providers: [
-      ...cur.providers,
+  let providers = cur.providers
+  let models = cur.models
+  if (version < 2) {
+    const providerIds = new Set(providers.map((p) => p.id))
+    const modelKeys = new Set(models.map((m) => m.key))
+    providers = [
+      ...providers,
       ...DEFAULT_PROVIDERS.filter((p) => V2_PRESET_PROVIDER_IDS.has(p.id) && !providerIds.has(p.id)),
-    ],
-    models: [
-      ...cur.models,
+    ]
+    models = [
+      ...models,
       ...DEFAULT_MODELS.filter((m) => V2_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
-    ],
-    presetsVersion: CURRENT_PRESETS_VERSION,
+    ]
   }
+  if (version < 3) {
+    const modelKeys = new Set(models.map((m) => m.key))
+    models = [
+      ...models,
+      ...DEFAULT_MODELS.filter((m) => V3_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
+    ]
+  }
+  return { ...cur, providers, models, presetsVersion: CURRENT_PRESETS_VERSION }
 }
 
 /** 老结构（models.lite/pro/image/video/videoRef）→ 新结构，只做读时转换 */
@@ -324,11 +374,18 @@ function normalizeSettings(raw: any): AppSettings {
       }
     })
     const version = Number(raw.presetsVersion) || 1
+    const models = (raw.models as ModelEntry[]).map((m) => {
+      const next: ModelEntry = { ...m, supportsVideoRef: Boolean(m.supportsVideoRef) }
+      if (m.videoRefTaskType === 'reference') next.videoRefTaskType = 'reference'
+      else delete next.videoRefTaskType
+      return next
+    })
     return mergePresets(
       {
         providers,
-        models: raw.models as ModelEntry[],
+        models,
         defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
+        stageModels: normalizeStageModels(raw.stageModels),
         pricing: raw.pricing || {},
         apiKey,
         rules,
@@ -352,6 +409,7 @@ function normalizeSettings(raw: any): AppSettings {
     providers,
     models,
     defaults: { ...DEFAULT_DEFAULTS },
+    stageModels: {},
     pricing: {},
     apiKey,
     rules,
@@ -393,6 +451,11 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     providers: Array.isArray(patch.providers) ? patch.providers : cur.providers,
     models: Array.isArray(patch.models) ? patch.models : cur.models,
     defaults: { ...cur.defaults, ...(patch.defaults || {}) },
+    // 设置页提交完整映射：整体替换才能清空某个环节；patch 省略时保留原值
+    stageModels:
+      patch.stageModels !== undefined
+        ? normalizeStageModels(patch.stageModels)
+        : normalizeStageModels(cur.stageModels),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
@@ -412,6 +475,78 @@ function pickModel(cap: Cap, keyOverride?: string): { entry?: ModelEntry; provid
     s.models.find((m) => m.cap === cap)
   const provider = entry ? s.providers.find((p) => p.id === entry.provider) : undefined
   return { entry, provider }
+}
+
+type VideoPick = {
+  entry?: ModelEntry
+  provider?: Provider
+  error?: 'model-key-not-found' | 'video-ref-unsupported'
+}
+
+/**
+ * 视频族解析：显式 key 在 video / videoRef 两族里精确命中，找不到就报错，
+ * 不静默换成另一档。视频参考还必须由条目显式声明 supportsVideoRef。
+ */
+function pickVideoModel(
+  keyOverride?: string,
+  opts: { needVideoRef?: boolean; refMode?: boolean } = {},
+): VideoPick {
+  const s = getAppSettings()
+  const key = String(keyOverride || '').trim()
+  const family = s.models.filter((m) => m.cap === 'video' || m.cap === 'videoRef')
+  const withProvider = (entry: ModelEntry): VideoPick => ({
+    entry,
+    provider: s.providers.find((p) => p.id === entry.provider),
+  })
+  if (key) {
+    const entry = family.find((m) => m.key === key)
+    if (!entry) return { error: 'model-key-not-found' }
+    if (opts.needVideoRef && !entry.supportsVideoRef) {
+      return { ...withProvider(entry), error: 'video-ref-unsupported' }
+    }
+    return withProvider(entry)
+  }
+  const cap: Cap = opts.refMode ? 'videoRef' : 'video'
+  const entry =
+    family.find((m) => m.key === s.defaults[cap] && m.cap === cap) ||
+    family.find((m) => m.cap === cap) ||
+    (opts.refMode ? family.find((m) => m.cap === 'video') : undefined)
+  if (!entry) return { error: 'model-key-not-found' }
+  if (opts.needVideoRef && !entry.supportsVideoRef) {
+    return { ...withProvider(entry), error: 'video-ref-unsupported' }
+  }
+  return withProvider(entry)
+}
+
+/** 文本族：text / textPro 只是档位，手选时两族都算合法 */
+const isTextCap = (cap: Cap) => cap === 'text' || cap === 'textPro'
+
+type TextPick = {
+  entry?: ModelEntry
+  provider?: Provider
+  error?: 'model-key-not-found' | 'no-text-model'
+}
+
+/**
+ * 文本模型解析。
+ * 显式 modelKey 必须是 text/textPro 里真实存在的键，找不到就报错 —— 不静默换成别的模型。
+ * 不带 modelKey 时保留旧档位：defaults.text / defaults.textPro，再退到族内第一条。
+ */
+function pickTextModel(keyOverride?: string, tier: 'lite' | 'pro' = 'lite'): TextPick {
+  const s = getAppSettings()
+  const key = String(keyOverride || '').trim()
+  if (key) {
+    const entry = s.models.find((m) => m.key === key && isTextCap(m.cap))
+    if (!entry) return { error: 'model-key-not-found' }
+    return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+  }
+  const cap: Cap = tier === 'pro' ? 'textPro' : 'text'
+  const entry =
+    s.models.find((m) => m.key === s.defaults[cap] && isTextCap(m.cap)) ||
+    s.models.find((m) => m.cap === cap) ||
+    s.models.find((m) => isTextCap(m.cap))
+  if (!entry) return { error: 'no-text-model' }
+  return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
 }
 
 /** 渠道 Key：设置库里的值优先；没有时再读本地 .env / 环境变量，避免重建库后丢 Key */
@@ -442,10 +577,6 @@ function providerKey(p?: Provider): string {
   return ''
 }
 
-/** 生效的模型 ID（兼容旧调用点） */
-function effTextModel(tier: 'lite' | 'pro'): string {
-  return pickModel(tier === 'pro' ? 'textPro' : 'text').entry?.model || TEXT_MODELS[tier]
-}
 function effImageModel(cap: 'image' | 'view' = 'image'): string {
   return pickModel(cap).entry?.model || MODEL
 }
@@ -515,6 +646,28 @@ function resolveRef(ref: string, root: string): string {
   const buf = fs.readFileSync(file)
   const ext = path.extname(file).slice(1) || 'png'
   return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buf.toString('base64')}`
+}
+
+/** 参考视频：asset:// / http(s) 原样用；本地路径只接受 public 下的文件 */
+function resolveVideoRef(ref: string, root: string): { local: string; external: string } {
+  const s = String(ref || '').trim()
+  if (!s) throw new Error('参考视频为空')
+  if (s.startsWith('asset://') || /^https?:\/\//i.test(s)) return { local: '', external: s }
+  const clean = s.split('?')[0].replace(/^\//, '')
+  const file = path.join(root, 'public', clean)
+  if (!fs.existsSync(file)) throw new Error(`参考视频不存在：${ref}`)
+  return { local: file, external: '' }
+}
+
+/** Files API 只收 mp4/mov；调度视频偶尔是 webm 兜底，先转成 mp4 */
+async function ensureMp4Video(file: string): Promise<{ file: string; temp: boolean }> {
+  const ext = path.extname(file).toLowerCase()
+  if (ext === '.mp4' || ext === '.mov') return { file, temp: false }
+  if (ext !== '.webm') throw new Error(`参考视频只支持 mp4 / mov，当前是 ${ext || '未知格式'}`)
+  const out = file.replace(/\.webm$/i, '') + `-ref-${Date.now()}.mp4`
+  await runFfmpeg(['-y', '-i', file, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out])
+  if (!fs.existsSync(out) || fs.statSync(out).size < 1024) throw new Error('调度视频转 mp4 失败')
+  return { file: out, temp: true }
 }
 
 // ---------- 视频任务 ----------
@@ -837,7 +990,7 @@ async function synthesizeMinimax(
   model?: string,
 ): Promise<{ url: string; engine: string; seconds: number }> {
   const base = String(provider.baseUrl || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')
-  const vid = voiceId && /^[a-zA-Z0-9_-]+$/.test(voiceId) ? voiceId : 'male-qn-qingse'
+  const vid = MINIMAX_VOICES.some((v) => v.id === voiceId) ? voiceId : 'male-qn-qingse'
   const r = await fetch(`${base}/t2a_v2`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1614,12 +1767,27 @@ function seedreamProxy(): Plugin {
             if (!prompt.trim()) throw new Error('prompt 不能为空')
             const wantJson = Boolean(body.json)
 
-            // 选模型：modelKey（设置页里的模型表键）> 档位 lite/pro
+            // 选模型：modelKey（设置页里的模型表键，text/textPro 都算）> 档位 lite/pro
             const modelKey = String(body.modelKey || '').trim()
             const tier: 'lite' | 'pro' = body.model === 'pro' ? 'pro' : 'lite'
-            const cap: Cap = modelKey ? 'text' : tier === 'pro' ? 'textPro' : 'text'
-            const { entry, provider } = pickModel(cap, modelKey)
-            const model = entry?.model || effTextModel(tier)
+            const picked = pickTextModel(modelKey, tier)
+            if (picked.error || !picked.entry) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: picked.error || 'no-text-model',
+                  message:
+                    picked.error === 'model-key-not-found'
+                      ? `模型表里找不到可用的文本模型「${modelKey}」，请到设置页检查环节模型或重新选择`
+                      : '设置页还没有可用的文本模型，先添加一条 text / textPro 模型',
+                }),
+              )
+              return
+            }
+            const entry = picked.entry
+            const provider = picked.provider
+            const model = entry.model
             const kind: ProviderKind = provider?.kind || 'ark'
             const key = providerKey(provider)
             if (!key) {
@@ -1659,7 +1827,12 @@ function seedreamProxy(): Plugin {
 
             const j = JSON.parse(raw)
             const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
-            const meta = { model, provider: provider?.label || kind }
+            const meta = {
+              model,
+              modelKey: entry.key,
+              modelLabel: entry.label,
+              provider: provider?.label || kind,
+            }
             if (!wantJson) {
               res.end(JSON.stringify({ ok: true, text, ...meta }))
               return
@@ -2077,12 +2250,18 @@ function seedreamProxy(): Plugin {
             const refImages: string[] = Array.isArray(body.refImages)
               ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 4)
               : []
+            // 3D 调度视频参考（reference_video）：1~3 段
+            const refVideos: string[] = Array.isArray(body.refVideos)
+              ? body.refVideos.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 3)
+              : []
+            const videoRefMode = refVideos.length > 0
             const refMode = refImages.length > 0
+            // 全模态参考（图 / 视频）与首尾帧互斥
+            const referenceMode = refMode || videoRefMode
             const lastFrame = String(body.lastFrame || '')
-            // 尾帧约束只在首帧模式有意义（方舟 content 里 last_frame 与 reference_image 互斥）
-            const useLastFrame = Boolean(lastFrame) && !refMode
+            const useLastFrame = Boolean(lastFrame) && !referenceMode
             const returnLastFrame = body.returnLastFrame !== false
-            if (!image && !refMode) {
+            if (!image && !referenceMode) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
               return
@@ -2096,15 +2275,28 @@ function seedreamProxy(): Plugin {
             const prompt = String(body.prompt || '').trim() || '镜头缓慢推进，环境细节自然流动，人物保持姿态'
             const cameraFixed = Boolean(body.cameraFixed)
 
-            // 参考图模式走 reference_image 模型，首帧模式走 video 模型；都可由前端指定 modelKey
+            // 视频族解析：显式 key 在 video / videoRef 两族精确命中；视频参考必须由条目声明能力
             const wantKey = String(body.modelKey || '').trim()
-            const refPick = pickModel('videoRef', wantKey)
-            const pick = refMode
-              ? refPick.entry
-                ? refPick
-                : pickModel('video', wantKey)
-              : pickModel('video', wantKey)
-            const model = pick.entry?.model || (refMode ? effVideoRefModel() : effVideoModel())
+            const pick = videoRefMode
+              ? pickVideoModel(wantKey, { needVideoRef: true, refMode: true })
+              : refMode
+                ? pickVideoModel(wantKey, { refMode: true })
+                : pickVideoModel(wantKey)
+            if (pick.error) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: pick.error,
+                  message:
+                    pick.error === 'model-key-not-found'
+                      ? `模型不存在：${wantKey || '（未选择）'}`
+                      : `当前模型不支持视频参考，请选 Seedance 2.0/2.5（${pick.entry?.label || pick.entry?.model || '未命名'}）`,
+                }),
+              )
+              return
+            }
+            const model = pick.entry?.model || (referenceMode ? effVideoRefModel() : effVideoModel())
             const provider = pick.provider
             const runKey = providerKey(provider)
             if (!runKey) {
@@ -2137,7 +2329,9 @@ function seedreamProxy(): Plugin {
             let firstUrl = ''
             let lastUrl = ''
             const refUrls: string[] = []
+            const refVideoUrls: string[] = []
             const skipped: string[] = []
+            const tempVideos: string[] = []
             try {
               if (refMode) {
                 for (const r of refImages) {
@@ -2148,21 +2342,64 @@ function seedreamProxy(): Plugin {
                   }
                 }
                 if (refUrls.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
-              } else {
+              } else if (!videoRefMode && image) {
                 firstUrl = resolveRef(image, root)
                 if (useLastFrame) lastUrl = resolveRef(lastFrame, root)
               }
+
+              if (videoRefMode) {
+                // 2.5 的参考视频可到 30 秒；2.0 是 15 秒
+                const maxDuration = pick.entry?.videoRefTaskType === 'reference' ? 30 : 15
+                for (const r of refVideos) {
+                  const v = resolveVideoRef(r, root)
+                  if (v.external) {
+                    refVideoUrls.push(v.external)
+                    continue
+                  }
+                  const mp4 = await ensureMp4Video(v.local)
+                  if (mp4.temp) tempVideos.push(mp4.file)
+                  const dur = await probeDuration(mp4.file).catch(() => 0)
+                  const uploaded = await ensureUploadedVideo({
+                    baseUrl: base,
+                    apiKey: runKey,
+                    filePath: mp4.file,
+                    seconds: dur,
+                    maxDuration,
+                  })
+                  refVideoUrls.push(uploaded.downloadUrl)
+                }
+              }
             } catch (e) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: (e as Error).message,
+                  kind: e instanceof FileError ? e.kind : 'video-ref',
+                }),
+              )
               return
+            } finally {
+              for (const f of tempVideos) {
+                try {
+                  fs.unlinkSync(f)
+                } catch {
+                  /* 临时文件删不掉不影响结果 */
+                }
+              }
             }
+
+            // 直接调 API 的调用方可能没写 @视频1；服务端补一句范围约束，避免白模风格被整段照搬
+            const finalPrompt =
+              videoRefMode && !prompt.includes('@视频1')
+                ? `${prompt}\n\n参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。`
+                : prompt
 
             let payload: Record<string, unknown>
             try {
               payload = buildVideoPayload({
                 model,
-                prompt,
+                prompt: finalPrompt,
                 ratio,
                 seconds,
                 resolution,
@@ -2171,6 +2408,8 @@ function seedreamProxy(): Plugin {
                 firstFrame: firstUrl,
                 lastFrame: useLastFrame ? lastUrl : '',
                 referenceImages: refUrls,
+                referenceVideos: refVideoUrls,
+                videoRefTaskType: videoRefMode ? pick.entry?.videoRefTaskType || '' : '',
               })
             } catch (e) {
               if (!(e instanceof VideoParamError)) throw e
@@ -2186,13 +2425,14 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            const mode = videoRefMode ? 'video' : refMode ? 'ref' : 'first'
             // dryRun：只回显将要提交的请求体，不真的出片（调试 / 验证用）
             if (body.dryRun) {
               res.end(
                 JSON.stringify({
                   ok: true,
                   id: 'dry-run',
-                  mode: refMode ? 'ref' : 'first',
+                  mode,
                   model,
                   skipped,
                   request: payload,
@@ -2209,7 +2449,7 @@ function seedreamProxy(): Plugin {
             const frameDir = path.join(root, 'public', 'generated')
             fs.mkdirSync(outDir, { recursive: true })
 
-            res.end(JSON.stringify({ ok: true, id, mode: refMode ? 'ref' : 'first', model, skipped }))
+            res.end(JSON.stringify({ ok: true, id, mode, model, skipped }))
 
             // 提交后后台轮询，前端继续用本地 job id 查询
             ;(async () => {

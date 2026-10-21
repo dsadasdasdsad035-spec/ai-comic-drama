@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
-import { generateImage } from './api'
+import { generateImage, type AppSettings, type Stage } from './api'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
 import { TURNAROUND_SUFFIX, type CharacterSheet } from './characters'
+import { CapModelSelect, StageModelSelect, type StagePick } from './ModelSelect'
 
 type Props = {
   characters: CharacterSheet[]
@@ -20,6 +21,11 @@ type Props = {
   extracting: '' | 'episode' | 'script'
   /** 三视图用的图像模型（设置页 view 能力的默认或手选） */
   viewModel?: string
+  onPickViewModel: (key: string) => void
+  /** App 统一加载的设置；拆角色/三视图的默认都从这里取 */
+  settings: AppSettings | null
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
   /** 计价单价 */
   price?: Pricing
 }
@@ -36,6 +42,10 @@ export default function CharacterBoard({
   onExtract,
   extracting,
   viewModel,
+  onPickViewModel,
+  settings,
+  stagePick,
+  onPickStage,
   price,
 }: Props) {
   return (
@@ -71,6 +81,24 @@ export default function CharacterBoard({
             + 新建角色
           </button>
         </div>
+      </div>
+
+      <div className="board-models">
+        <StageModelSelect
+          stage="character"
+          label="拆角色模型"
+          settings={settings}
+          pick={stagePick}
+          onChange={onPickStage}
+        />
+        <CapModelSelect
+          cap="view"
+          label="三视图模型"
+          settings={settings}
+          value={viewModel}
+          onChange={onPickViewModel}
+          className="wb-field"
+        />
       </div>
 
       <div className="char-grid">

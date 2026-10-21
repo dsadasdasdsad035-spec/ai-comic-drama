@@ -1,4 +1,4 @@
-import { callText, getSettings } from './api'
+import { callText } from './api'
 import { DEFAULT_LAYOUT, type ShotData, type ShotLayout } from './types'
 
 /**
@@ -25,11 +25,14 @@ const clamp01 = (v: unknown, d: number) => {
   return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d
 }
 
-export async function generateLayout(d: ShotData, cast?: string[]): Promise<ShotLayout> {
-  await getSettings() // 确保设置已加载（规则包在服务端生效，这里只是同源）
+export async function generateLayout(
+  d: ShotData,
+  cast?: string[],
+  modelKey?: string,
+): Promise<ShotLayout> {
   const r = await callText<{ actors?: unknown; camera?: any; w?: number; h?: number }>({
     system: '你是场记兼分镜调度师。把一镜的画面拆成俯视平面上的站位与机位坐标，用于检查轴线与遮挡。',
-    model: 'lite',
+    modelKey: modelKey || undefined,
     json: true,
     maxTokens: 1200,
     prompt:

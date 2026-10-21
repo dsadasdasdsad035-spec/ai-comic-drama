@@ -32,6 +32,10 @@ export interface VideoPayloadOptions {
   firstFrame?: string
   lastFrame?: string
   referenceImages?: string[]
+  /** Seedance 2.0/2.5 的参考视频；非空时进入全模态参考模式 */
+  referenceVideos?: string[]
+  /** 2.5 传 'reference' 显式指定参考生视频；2.0 留空 */
+  videoRefTaskType?: 'reference' | ''
 }
 
 export declare function buildVideoPayload(opts: VideoPayloadOptions): Record<string, unknown>

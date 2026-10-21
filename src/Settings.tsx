@@ -10,6 +10,7 @@ import {
   type ProviderKind,
   type ProviderTestResult,
   type RulePack,
+  type Stage,
   testProvider,
 } from './api'
 import { DEFAULT_RULES, normalizeRules } from './prompts'
@@ -21,15 +22,15 @@ import { DEFAULT_PRICING, normalizePricing, type Pricing } from './pricing'
  * 为什么要渠道抽象：文字可能用 DeepSeek、生图可能用第三方中转、配音可能用 MiniMax，
  * 每种渠道的协议不同。模型表把「能力 → 渠道 + 模型 ID」绑起来，生成时只报一个 modelKey。
  */
-type Props = { toast: (m: string) => void }
+type Props = { toast: (m: string) => void; onSaved?: () => void }
 
 const CAP_META: { cap: Cap; label: string; hint: string }[] = [
   { cap: 'text', label: '文本 · 常规', hint: '拆镜/提示词之外的批量生成' },
   { cap: 'textPro', label: '文本 · 高质量', hint: '拆镜 / 拆角色 / 长输出' },
   { cap: 'image', label: '图像 · 出画面', hint: '画布生成画面' },
   { cap: 'view', label: '图像 · 角色三视图', hint: '角色板生成三视图' },
-  { cap: 'video', label: '视频 · 首帧出片', hint: '单图图生视频' },
-  { cap: 'videoRef', label: '视频 · 多参考图', hint: 'reference_image 1~4 张' },
+  { cap: 'video', label: '视频 · 首帧出片', hint: '单图图生视频；2.0+ 可带视频参考' },
+  { cap: 'videoRef', label: '视频 · 多参考图 / 视频参考', hint: 'reference_image 1~4 张；2.0+ 可带 reference_video' },
   { cap: 'audio', label: '音频 · 配音', hint: '台词合成' },
 ]
 
@@ -68,10 +69,19 @@ const RULE_META = [
   { key: 'prompt', title: '提示词规范', source: 'video-prompting-guide', hint: '挂在「生成提示词」的系统提示词后' },
 ] as const
 
-export default function Settings({ toast }: Props) {
+/** 四个生成环节的默认模型：只列文本族，空 = 沿用「文本 · 常规」默认 */
+const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
+  { stage: 'script', label: '剧本（拆集）', hint: '原著 → 分集剧本' },
+  { stage: 'character', label: '角色（拆角色）', hint: '剧本/分镜 → 角色外观锚点' },
+  { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 调度也用它' },
+  { stage: 'prompt', label: '提示词（首帧/视频）', hint: '镜头 → keyframe_prompt / video_prompt' },
+]
+
+export default function Settings({ toast, onSaved }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
+  const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [apiKey, setApiKey] = useState('')
   const [rules, setRules] = useState<Record<string, RulePack>>(() => normalizeRules())
@@ -88,6 +98,7 @@ export default function Settings({ toast }: Props) {
         setProviders(s.providers || [])
         setModels(s.models || [])
         setDefaults(s.defaults || {})
+        setStageModels(s.stageModels || {})
         setPricing(normalizePricing(s.pricing))
         setApiKey(s.apiKey || '')
         setRules(normalizeRules(s.rules))
@@ -100,8 +111,9 @@ export default function Settings({ toast }: Props) {
   const save = async () => {
     setSaving(true)
     try {
-      await saveSettings({ providers, models, defaults, pricing, apiKey, rules } as Partial<AppSettings>)
+      await saveSettings({ providers, models, defaults, stageModels, pricing, apiKey, rules } as Partial<AppSettings>)
       toast('设置已保存（存入 SQLite），生成时立即生效')
+      onSaved?.()
     } catch (e: any) {
       toast(e.message || '保存失败')
     } finally {
@@ -152,6 +164,12 @@ export default function Settings({ toast }: Props) {
     }
     return m
   }, [models])
+
+  /** 环节默认只接受文本族：text / textPro 只是档位，不是两种能力 */
+  const textModels = useMemo(
+    () => models.filter((m) => m.cap === 'text' || m.cap === 'textPro'),
+    [models],
+  )
 
   if (loading) return <main className="settings"><div className="wb-empty">加载中…</div></main>
 
@@ -300,6 +318,43 @@ export default function Settings({ toast }: Props) {
 
         <section className="st-sec">
           <header className="st-sec-head">
+            <h3>生成环节默认模型</h3>
+            <span className="st-hint">
+              剧本 / 角色 / 镜头表 / 提示词各自选一个文本模型；工作台里还能临时改，手选只保存在本机。空着 =
+              用「文本 · 常规」默认。
+            </span>
+          </header>
+          <div className="st-grid">
+            {STAGE_META.map((s) => (
+              <label key={s.stage} className="st-field">
+                <span>{s.label}</span>
+                <select
+                  value={stageModels[s.stage] || ''}
+                  onChange={(e) => {
+                    const next = { ...stageModels }
+                    if (e.target.value) next[s.stage] = e.target.value
+                    else delete next[s.stage]
+                    setStageModels(next)
+                  }}
+                >
+                  <option value="">（未绑定 · 用文本默认）</option>
+                  {textModels.map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.label} · {m.model || '未填模型 ID'}
+                    </option>
+                  ))}
+                </select>
+                <em>{s.hint}</em>
+              </label>
+            ))}
+          </div>
+          <div className="st-hint" style={{ marginTop: 8 }}>
+            角色三视图使用上方「图像 · 角色三视图」默认；角色板里可以单独手选。
+          </div>
+        </section>
+
+        <section className="st-sec">
+          <header className="st-sec-head">
             <h3>模型表</h3>
             <span className="st-hint">
               一行 = 一个可选模型。协议由所属渠道决定：方舟支持参考图，第三方兼容渠道按纯文生图处理。
@@ -315,39 +370,67 @@ export default function Settings({ toast }: Props) {
                   </button>
                 </div>
                 {(byCap.get(c.cap) || []).map((m) => (
-                  <div key={m.key} className="st-model-row">
-                    <input
-                      className="st-model-label"
-                      value={m.label}
-                      placeholder="显示名"
-                      onChange={(e) => patchModel(m.key, { label: e.target.value })}
-                    />
-                    <select
-                      value={m.provider}
-                      onChange={(e) => patchModel(m.key, { provider: e.target.value })}
-                      title={`这里只列支持「${c.label}」的渠道，渠道用途在下方渠道卡片里勾`}
-                    >
-                      {providers
-                        .filter((p) => capsOf(p).includes(CAP_TO_PC[c.cap]))
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.label}
-                          </option>
-                        ))}
-                    </select>
-                    <input
-                      className="st-model-id"
-                      value={m.model}
-                      placeholder="模型 ID，如 doubao-seedream-4-5-251128"
-                      onChange={(e) => patchModel(m.key, { model: e.target.value })}
-                    />
-                    <button
-                      className="btn-mini danger"
-                      onClick={() => setModels((ms) => ms.filter((x) => x.key !== m.key))}
-                      title="删除模型"
-                    >
-                      ✕
-                    </button>
+                  <div key={m.key} className="st-model-item">
+                    <div className="st-model-row">
+                      <input
+                        className="st-model-label"
+                        value={m.label}
+                        placeholder="显示名"
+                        onChange={(e) => patchModel(m.key, { label: e.target.value })}
+                      />
+                      <select
+                        value={m.provider}
+                        onChange={(e) => patchModel(m.key, { provider: e.target.value })}
+                        title={`这里只列支持「${c.label}」的渠道，渠道用途在下方渠道卡片里勾`}
+                      >
+                        {providers
+                          .filter((p) => capsOf(p).includes(CAP_TO_PC[c.cap]))
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.label}
+                            </option>
+                          ))}
+                      </select>
+                      <input
+                        className="st-model-id"
+                        value={m.model}
+                        placeholder="模型 ID，如 doubao-seedream-4-5-251128"
+                        onChange={(e) => patchModel(m.key, { model: e.target.value })}
+                      />
+                      <button
+                        className="btn-mini danger"
+                        onClick={() => setModels((ms) => ms.filter((x) => x.key !== m.key))}
+                        title="删除模型"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {(m.cap === 'video' || m.cap === 'videoRef') && (
+                      <div className="st-model-video-ref">
+                        <label className="chk" title="只有 Seedance 2.0/2.5 能勾；1.0/1.5 不支持视频参考">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(m.supportsVideoRef)}
+                            onChange={(e) => patchModel(m.key, { supportsVideoRef: e.target.checked })}
+                          />
+                          支持视频参考
+                        </label>
+                        {m.supportsVideoRef && (
+                          <select
+                            value={m.videoRefTaskType || ''}
+                            onChange={(e) =>
+                              patchModel(m.key, {
+                                videoRefTaskType: e.target.value === 'reference' ? 'reference' : undefined,
+                              })
+                            }
+                            title="Seedance 2.5 建议显式指定，避免被判定成视频编辑/延长"
+                          >
+                            <option value="">任务类型：自动（2.0）</option>
+                            <option value="reference">任务类型：参考生视频（2.5）</option>
+                          </select>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
                 {(byCap.get(c.cap) || []).length === 0 && (

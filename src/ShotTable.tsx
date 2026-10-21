@@ -4,12 +4,14 @@ import {
   callText,
   createProject,
   getProject,
-  getSettings,
   listProjects,
   mergeProjectShots,
+  type AppSettings,
   type ProjectShot,
   type ProjectSummary,
+  type Stage,
 } from './api'
+import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
 import { dialogueToText, parseDialogue, storyboardSys } from './prompts'
 import { mergeGenerated } from './shotSync'
 import { endTask, startTask } from './tasks'
@@ -23,13 +25,28 @@ type Props = {
   toast: (m: string) => void
   /** 当前集：由 App 统一管理，两个工作台共用 */
   epNo: number
+  /** App 统一加载的设置；环节默认与规则包都从这里取 */
+  settings: AppSettings | null
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
   /** 保存成功后通知 App 刷新集栏镜数 */
   onSaved?: () => void
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-export default function ShotTable({ projectName, setProjectName, onCanvas, onPush, toast, epNo, onSaved }: Props) {
+export default function ShotTable({
+  projectName,
+  setProjectName,
+  onCanvas,
+  onPush,
+  toast,
+  epNo,
+  settings,
+  stagePick,
+  onPickStage,
+  onSaved,
+}: Props) {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [root, setRoot] = useState('')
   const [shots, setShots] = useState<ProjectShot[]>([])
@@ -41,8 +58,6 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [genning, setGenning] = useState(false)
-  // 拆镜实测：lite 约 40s，pro 要 130s+。默认走快的，需要更好措辞再切 pro
-  const [model, setModel] = useState<'pro' | 'lite'>('lite')
   const [elapsed, setElapsed] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -154,21 +169,24 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
       toast('先写本集内容或梗概，再来拆镜')
       return
     }
+    if (!hasTextModels(settings)) {
+      toast('设置页还没有可用的文本模型，先加一条再拆镜')
+      return
+    }
     setGenning(true)
     setElapsed(0)
     const t0 = Date.now()
     const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
     const tid = startTask('text', `E${pad(epNo)} 拆镜`)
     try {
-      const { settings } = await getSettings()
       const r = await callText<{ shots: any[] }>({
-        system: storyboardSys(settings.rules),
+        system: storyboardSys(settings?.rules),
         prompt:
           `画风：${style || '近未来科幻写实'}\n画幅：${aspect}\n\n` +
           `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +
           `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。` +
           `只在台词/描述里被提到、实际在画外的角色不要写进去。`,
-        model,
+        modelKey: stageModelKey(settings, 'shot', stagePick),
         json: true,
         maxTokens: 8192,
       })
@@ -198,6 +216,7 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
       endTask(tid)
       toast(
         `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${Math.round((Date.now() - t0) / 1000)}s` +
+          (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
           (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
           '，记得先审阅再保存',
       )
@@ -259,13 +278,12 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           <span className="label">秒</span>
         </div>
 
-        <div className="wb-field">
-          <span className="label">模型</span>
-          <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
-            <option value="lite">lite（快，约 40s）</option>
-            <option value="pro">pro（慢，2 分钟+）</option>
-          </select>
-        </div>
+        <StageModelSelect
+          stage="shot"
+          settings={settings}
+          pick={stagePick}
+          onChange={onPickStage}
+        />
 
         <div className="spacer" />
 
@@ -311,7 +329,11 @@ export default function ShotTable({ projectName, setProjectName, onCanvas, onPus
           placeholder="本集内容 / 梗概 / 场景 beats —— 拆镜的输入。从项目里加载到 episodes 时会自动带上。"
           rows={3}
         />
-        <button className="btn primary wb-genbtn" onClick={generate} disabled={genning || !brief.trim()}>
+        <button
+          className="btn primary wb-genbtn"
+          onClick={generate}
+          disabled={genning || !brief.trim() || !hasTextModels(settings)}
+        >
           {genning ? `拆镜中 ${elapsed}s` : '拆镜'}
         </button>
       </div>

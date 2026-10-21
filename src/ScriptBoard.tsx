@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
-import { callText, getProject, getSettings, patchProject, type ProjectEpisode } from './api'
+import {
+  callText,
+  getProject,
+  patchProject,
+  type AppSettings,
+  type ProjectEpisode,
+  type Stage,
+} from './api'
+import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
 import { scriptSys } from './prompts'
 
 type Props = {
   projectName: string
   epNo: number
   setEpNo: (n: number) => void
+  /** App 统一加载的设置；环节默认与规则包都从这里取 */
+  settings: AppSettings | null
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
   /** 跳去镜头表拆这一集 */
   onGotoShotTable: () => void
   onSaved: () => void
@@ -20,14 +32,23 @@ const pad = (n: number) => String(n).padStart(2, '0')
  * 为什么不做成画布：这是线性长文本，价值在「通读 + 改」，不是空间排布。
  * 左栏原著、右栏分集，唯一出口是把某一集交给镜头表。
  */
-export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTable, onSaved, toast }: Props) {
+export default function ScriptBoard({
+  projectName,
+  epNo,
+  setEpNo,
+  settings,
+  stagePick,
+  onPickStage,
+  onGotoShotTable,
+  onSaved,
+  toast,
+}: Props) {
   const [source, setSource] = useState('')
   const [logline, setLogline] = useState('')
   const [style, setStyle] = useState('')
   const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
   const [epCount, setEpCount] = useState(3)
   const [targetSeconds, setTargetSeconds] = useState(75)
-  const [model, setModel] = useState<'pro' | 'lite'>('lite')
   const [loading, setLoading] = useState(false)
   const [genning, setGenning] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -63,14 +84,17 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
       toast('先把原著粘到左栏')
       return
     }
+    if (!hasTextModels(settings)) {
+      toast('设置页还没有可用的文本模型，先加一条再生成')
+      return
+    }
     setGenning(true)
     setElapsed(null)
     const t0 = Date.now()
     try {
-      const { settings } = await getSettings()
       const r = await callText<{ logline?: string; episodes?: ProjectEpisode[] }>({
-        system: scriptSys(settings.rules),
-        model,
+        system: scriptSys(settings?.rules),
+        modelKey: stageModelKey(settings, 'script', stagePick),
         json: true,
         maxTokens: 8192,
         prompt:
@@ -85,7 +109,9 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
       setDirty(true)
       const secs = Math.round((Date.now() - t0) / 1000)
       setElapsed(secs)
-      toast(`生成 ${eps.length} 集 · ${secs}s，先审阅再保存`)
+      toast(
+        `生成 ${eps.length} 集 · ${secs}s${r.modelLabel ? ` · 模型：${r.modelLabel}` : ''}，先审阅再保存`,
+      )
     } catch (e: any) {
       toast(e.message || '生成失败')
     } finally {
@@ -185,17 +211,20 @@ export default function ScriptBoard({ projectName, epNo, setEpNo, onGotoShotTabl
             />
             <span className="label">秒</span>
           </div>
-          <div className="wb-field">
-            <span className="label">模型</span>
-            <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
-              <option value="lite">lite（快）</option>
-              <option value="pro">pro（质量）</option>
-            </select>
-          </div>
+          <StageModelSelect
+            stage="script"
+            settings={settings}
+            pick={stagePick}
+            onChange={onPickStage}
+          />
         </div>
 
         <div className="sb-actions">
-          <button className="btn primary" onClick={generate} disabled={genning || !source.trim()}>
+          <button
+            className="btn primary"
+            onClick={generate}
+            disabled={genning || !source.trim() || !hasTextModels(settings)}
+          >
             {genning ? '生成分集中…' : episodes.length > 0 ? '重新生成分集' : '生成分集'}
           </button>
           <button className="btn" onClick={save} disabled={saving || !dirty}>

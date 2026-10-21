@@ -58,6 +58,7 @@ import {
   waitVideo,
   type AppSettings,
   type Cap,
+  type Stage,
   type ProjectAsset,
   type ProjectEpisode,
   type ProjectShot,
@@ -71,6 +72,7 @@ import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './c
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
+import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 
 const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
 const edgeTypes = { shot: ShotEdge }
@@ -341,6 +343,23 @@ function Shell() {
       return next
     })
   }, [])
+  /** 环节手选（script/character/shot/prompt → modelKey），空 = 用设置页环节默认 */
+  const [stagePick, setStagePick] = useState<StagePick>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(STAGE_PICK_KEY) || '{}')
+    } catch {
+      return {}
+    }
+  })
+  const pickStageModel = useCallback((stage: Stage, key: string) => {
+    setStagePick((p) => {
+      const next = { ...p }
+      if (key) next[stage] = key
+      else delete next[stage]
+      localStorage.setItem(STAGE_PICK_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [])
   /** 生效单价：设置页 > 默认估算 */
   const price: Pricing = normalizePricing(appSettings?.pricing)
   const reloadSettings = useCallback(() => {
@@ -415,7 +434,7 @@ function Shell() {
         }
         const r = await callText<{ characters?: unknown[] }>({
           system: characterSys(st.settings.rules),
-          model: 'pro',
+          modelKey: stageModelKey(st.settings as AppSettings, 'character', stagePick),
           json: true,
           maxTokens: 6000,
           prompt:
@@ -432,6 +451,7 @@ function Shell() {
         const secs = Math.round((Date.now() - t0) / 1000)
         setToast(
           `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
+            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
             (filled.length ? ` · 补全 ${filled.length}` : '') +
             (skipped.length ? ` · 跳过已有 ${skipped.length}` : ''),
         )
@@ -443,7 +463,7 @@ function Shell() {
         setExtracting('')
       }
     },
-    [extracting, projectName, epNo],
+    [extracting, projectName, epNo, stagePick],
   )
 
   // 角色以 project.json 为准：绑定项目后加载进来，替换掉 localStorage 的那份
@@ -901,7 +921,11 @@ function Shell() {
       try {
         let layout = node.data.layout
         if (!layout?.actors?.length) {
-          layout = await generateLayout(node.data, node.data.cast).catch(() => fallbackLayout(node.data.cast ?? []))
+          layout = await generateLayout(
+            node.data,
+            node.data.cast,
+            stageModelKey(appSettings, 'shot', stagePick),
+          ).catch(() => fallbackLayout(node.data.cast ?? []))
           patch(nodeId, { layout } as never)
         }
         const blob = await renderScheduleVideo(layout, { seconds: 3 })
@@ -930,7 +954,7 @@ function Shell() {
       }
       window.setTimeout(() => setToast(''), 3000)
     },
-    [patch],
+    [patch, appSettings, stagePick],
   )
 
   /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
@@ -1415,20 +1439,22 @@ function Shell() {
     [findPrevTail, patch],
   )
 
-  /** 图生视频：多张连线图走 reference_image，否则用首帧图生视频 */
+  /** 图生视频：多张连线图走 reference_image；勾了 3D 视频参考则走 reference_video，否则用首帧图生视频 */
   const generateVideoOne = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
       const { imgs, labels } = collectRefImgs(node)
       const first = node.data.refImage
+      // 视频参考与首尾帧互斥：勾了就用整段调度视频，不再抽帧/带尾帧约束
+      const useVideoRef = Boolean(node.data.useScheduleVideoRef && node.data.scheduleVideo)
       // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
       const nextShot = findNextShot(node.id)
-      const wantLock = Boolean(tailLock && nextShot?.data.refImage)
+      const wantLock = Boolean(!useVideoRef && tailLock && nextShot?.data.refImage)
       // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图
       const refList: string[] = []
       const refNotes: string[] = []
-      if (imgs.length > 0 || node.data.useScheduleFrames) {
+      if (imgs.length > 0 || node.data.useScheduleFrames || useVideoRef) {
         if (node.data.refImage) {
           refList.push(node.data.refImage)
           refNotes.push('画面构图与上一镜连贯')
@@ -1438,8 +1464,8 @@ function Shell() {
           refList.push(imgs[i])
           refNotes.push(labels[i] || '参考素材')
         }
-        // 3D 调度关键帧：白模风格会污染画面，必须用户显式勾选才传
-        if (node.data.useScheduleFrames) {
+        // 3D 调度关键帧：白模风格会污染画面，必须用户显式勾选才传；视频参考优先，抽帧忽略
+        if (node.data.useScheduleFrames && !useVideoRef) {
           for (const f of node.data.scheduleFrames ?? []) {
             if (refList.length >= 4) break
             if (refList.includes(f)) continue
@@ -1450,7 +1476,7 @@ function Shell() {
       }
       const tailConstraint = wantLock ? String(nextShot?.data.refImage || '') : ''
       const useTailConstraint = Boolean(tailConstraint) && refList.length === 0
-      if (refList.length === 0 && !first) {
+      if (refList.length === 0 && !first && !useVideoRef) {
         patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
         return
       }
@@ -1461,27 +1487,43 @@ function Shell() {
       const fallback = `${node.data.size}，${
         node.data.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${node.data.move}`
       }，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
-      // 多参考图模式：提示词里用 [图N] 指代，模型才知道每张图管什么
+      // 多参考图模式：提示词里用 [图N] / @图像N 指代，模型才知道每张图管什么
       const refHint =
         refList.length > 0
-          ? `\n\n参考图：${refNotes.map((n, i) => `[图${i + 1}]=${n}`).join('，')}。主体外观、场景与道具必须与参考图一致。`
+          ? useVideoRef
+            ? `\n\n参考图：${refNotes.map((n, i) => `@图像${i + 1}=${n}`).join('，')}。画面风格、人物外观、场景以参考图为准。`
+            : `\n\n参考图：${refNotes.map((n, i) => `[图${i + 1}]=${n}`).join('，')}。主体外观、场景与道具必须与参考图一致。`
           : ''
+      // 视频参考只约束运动关系，画风交给参考图或文字，避免白模污染
+      const videoHint = useVideoRef
+        ? `\n\n参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。${
+            refList.length === 0 ? '画面风格、人物外观与场景以文字描述为准。' : ''
+          }`
+        : ''
       const tid = startTask('video', `${node.data.no} 出片`, {
         cost: videoCost(price, Math.round(node.data.seconds), vidRes),
         retry: () => void generateVideoOne(id),
       })
       try {
         const res = await startVideo({
-          ...(refList.length > 0 ? { refImages: refList } : { image: first }),
+          ...(useVideoRef
+            ? {
+                refVideos: [String(node.data.scheduleVideo)],
+                ...(refList.length > 0 ? { refImages: refList } : {}),
+              }
+            : refList.length > 0
+              ? { refImages: refList }
+              : { image: first }),
           prompt:
             (motion || fallback) +
             (node.data.motionNote ? `\n【运镜与走位】${node.data.motionNote}` : '') +
-            refHint,
+            refHint +
+            videoHint,
           seconds: Math.round(node.data.seconds),
           ratio,
           resolution: vidRes,
-          cameraFixed: node.data.move === '固定',
-          modelKey: modelPick.video,
+          ...(useVideoRef ? {} : { cameraFixed: node.data.move === '固定' }),
+          modelKey: modelPick.video || appSettings?.defaults?.video || '',
           ...(useTailConstraint ? { lastFrame: tailConstraint, returnLastFrame: true } : { returnLastFrame: true }),
         })
         if (res.skipped?.length) {
@@ -1509,7 +1551,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, collectRefImgs, modelPick, tailLock, findNextShot],
+    [patch, ratio, vidRes, collectRefImgs, modelPick, appSettings, tailLock, findNextShot],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
@@ -1854,6 +1896,9 @@ function Shell() {
             setProjectName={setProjectName}
             onCanvas={onCanvasIds}
             epNo={epNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
             onSaved={() => setEpVersion((v) => v + 1)}
             onPush={pushShotsToCanvas}
             toast={(m) => {
@@ -1866,6 +1911,9 @@ function Shell() {
             projectName={projectName}
             epNo={epNo}
             setEpNo={setEpNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
             onGotoShotTable={() => setView('table')}
             onSaved={() => setEpVersion((v) => v + 1)}
             toast={(m) => {
@@ -1878,6 +1926,9 @@ function Shell() {
             projectName={projectName}
             onCanvas={onCanvasIds}
             epNo={epNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
             onPush={pushShotsToCanvas}
             toast={(m) => {
               setToast(m)
@@ -1886,6 +1937,7 @@ function Shell() {
           />
         ) : view === 'settings' ? (
           <Settings
+            onSaved={reloadSettings}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2800)
@@ -1903,7 +1955,11 @@ function Shell() {
             onRename={renameCharacter}
             onExtract={extractCharacters}
             extracting={extracting}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
             viewModel={modelPick.view}
+            onPickViewModel={(key) => pickModelKey('view', key)}
             price={price}
           />
         ) : (

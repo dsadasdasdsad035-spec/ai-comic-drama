@@ -40,6 +40,8 @@ export type ShotData = {
   motionNote?: string
   /** 出片时是否把调度关键帧当参考图（白模风格可能污染画面，默认关） */
   useScheduleFrames?: boolean
+  /** 出片时是否把调度视频本身当 reference_video（需 Seedance 2.0+，默认关） */
+  useScheduleVideoRef?: boolean
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number

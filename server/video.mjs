@@ -75,6 +75,8 @@ function errorFromResponse(text, status) {
 /**
  * 组装方舟视频任务请求体。图片入参必须是可访问的 http URL 或 data URL。
  * 参考图与首/尾帧互斥：有参考图时忽略首帧和尾帧。
+ * 参考视频（Seedance 2.0/2.5）进入全模态参考模式：与首/尾帧互斥，
+ * 图片改为 reference_image，不再发送 camera_fixed。
  */
 export function buildVideoPayload({
   model,
@@ -87,6 +89,8 @@ export function buildVideoPayload({
   firstFrame = '',
   lastFrame = '',
   referenceImages = [],
+  referenceVideos = [],
+  videoRefTaskType = '',
 }) {
   const text = String(prompt || '').trim()
   if (!text) throw new VideoParamError('提示词为空')
@@ -117,11 +121,23 @@ export function buildVideoPayload({
     .map(String)
     .filter(Boolean)
     .slice(0, 4)
+  const vids = (Array.isArray(referenceVideos) ? referenceVideos : [])
+    .map(String)
+    .filter(Boolean)
+    .slice(0, 3)
   const first = String(firstFrame || '')
   const last = String(lastFrame || '')
 
   const content = [{ type: 'text', text }]
-  if (refs.length > 0) {
+  if (vids.length > 0) {
+    // 全模态参考：图片只能是 reference_image，视频是 reference_video
+    for (const url of refs) {
+      content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+    }
+    for (const url of vids) {
+      content.push({ type: 'video_url', video_url: { url }, role: 'reference_video' })
+    }
+  } else if (refs.length > 0) {
     for (const url of refs) {
       content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
     }
@@ -138,8 +154,13 @@ export function buildVideoPayload({
     ratio: ratioValue,
     duration,
     ...(res ? { resolution: res } : {}),
-    camera_fixed: Boolean(cameraFixed),
+    // 参考视频模式属于全模态参考，camera_fixed 不适用
+    ...(vids.length === 0 ? { camera_fixed: Boolean(cameraFixed) } : {}),
     ...(returnLastFrame ? { return_last_frame: true } : {}),
+    // 2.5 显式指定参考生视频，避免被判定成视频编辑/延长；2.0 不传
+    ...(vids.length > 0 && videoRefTaskType === 'reference'
+      ? { omni_reference_task_type: 'reference' }
+      : {}),
   }
 }
 

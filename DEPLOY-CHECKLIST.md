@@ -14,6 +14,7 @@
 | 文本生成（剧本/拆镜/提示词） | ✅ | ❌ 需注入 ARK Key |
 | 出图（Seedream） | ✅ | ❌ 同上 |
 | 出片（Seedance） | ✅（HTTP API） | ⚠️ 需注入 ARK Key，不再依赖 Python CLI |
+| 3D 调度视频参考 | ✅（方舟 Files API + Seedance 2.0/2.5） | ⚠️ 同上；需模型权限，默认关闭 |
 | 配音 | ✅（macOS say） | ❌ Linux 无 say，且未配 ElevenLabs |
 | 合成 / 字幕 | ✅（Homebrew ffmpeg-full） | ❌ 只探测 macOS 路径 |
 

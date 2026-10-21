@@ -70,6 +70,8 @@ export type VideoOpts = {
   image?: string
   /** 多参考图模式（方舟 reference_image，1~4 张）；有值时忽略 image */
   refImages?: string[]
+  /** 3D 调度视频参考（方舟 reference_video，1~3 段）；有值时进入全模态参考模式 */
+  refVideos?: string[]
   prompt: string
   seconds: number
   ratio: string
@@ -94,7 +96,7 @@ async function readJsonRes(res: Response) {
 /** 提交视频任务，返回任务 id（生成需要 1~4 分钟，不阻塞 HTTP） */
 export async function startVideo(
   o: VideoOpts,
-): Promise<{ id: string; mode?: 'ref' | 'first'; skipped?: string[] }> {
+): Promise<{ id: string; mode?: 'ref' | 'first' | 'video'; skipped?: string[] }> {
   let res: Response
   try {
     res = await fetch('/api/seedance', {
@@ -303,6 +305,8 @@ export type ProjectShot = {
   schedule_frames?: string[]
   motion_note?: string
   use_schedule_frames?: boolean
+  /** 出片时把调度视频本身当 reference_video（需 Seedance 2.0+） */
+  use_schedule_video_ref?: boolean
 }
 
 export type ProjectEpisode = {
@@ -427,7 +431,9 @@ export type TextOpts = {
   temperature?: number
 }
 
-export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; text: string; model: string }> {
+export async function callText<T = unknown>(
+  o: TextOpts,
+): Promise<{ json?: T; text: string; model: string; modelKey: string; modelLabel: string }> {
   let res: Response
   try {
     res = await fetch('/api/text', {
@@ -440,7 +446,13 @@ export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; te
   }
   const j = await readJsonRes(res)
   if (!j.ok) throw new Error(j.message || '文本生成失败')
-  return { json: j.json as T, text: j.text ?? '', model: j.model ?? '' }
+  return {
+    json: j.json as T,
+    text: j.text ?? '',
+    model: j.model ?? '',
+    modelKey: j.modelKey ?? '',
+    modelLabel: j.modelLabel ?? '',
+  }
 }
 
 // ---------------------------------------------------------------- 设置页
@@ -448,6 +460,9 @@ export async function callText<T = unknown>(o: TextOpts): Promise<{ json?: T; te
 export type RulePack = { enabled: boolean; text: string }
 
 export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+/** 生成环节：环节默认值只引用模型表键 */
+export type Stage = 'script' | 'character' | 'shot' | 'prompt'
+export const STAGES: Stage[] = ['script', 'character', 'shot', 'prompt']
 export type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {
@@ -467,12 +482,18 @@ export type ModelEntry = {
   provider: string
   model: string
   note?: string
+  /** 这个模型能否把视频作为 reference_video（Seedance 2.0/2.5） */
+  supportsVideoRef?: boolean
+  /** 2.5 需要显式指定 reference；2.0 留空 */
+  videoRefTaskType?: 'reference'
 }
 
 export type AppSettings = {
   providers: Provider[]
   models: ModelEntry[]
   defaults: Partial<Record<Cap, string>>
+  /** 每个生成环节绑定的默认模型键；空 = 沿用 defaults.text */
+  stageModels?: Partial<Record<Stage, string>>
   /** 计价单价（估算，可校准） */
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   apiKey: string

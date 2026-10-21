@@ -6,6 +6,7 @@ import type { AppSettings, Cap } from './api'
 import { listMedia, listVideoFiles, type MediaBundle, type VideoFile } from './api'
 import { useEffect, useRef, useState } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
+import { CapModelSelect } from './ModelSelect'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
 function AssetPanel({
@@ -259,6 +260,16 @@ export default function Inspector({
 
   const d = node.data
   const set = (p: Partial<ShotData>) => patch(node.id, p)
+  const videoModelFamily = (settings?.models ?? []).filter(
+    (m) => m.cap === 'video' || m.cap === 'videoRef',
+  )
+  const selectedVideoKey = pick.video || settings?.defaults?.video || ''
+  const selectedVideoModel =
+    videoModelFamily.find((m) => m.key === selectedVideoKey) ||
+    videoModelFamily.find((m) => m.key === settings?.defaults?.video) ||
+    videoModelFamily[0]
+  const canVideoRef = Boolean(selectedVideoModel?.supportsVideoRef)
+  const videoRefOn = Boolean(d.useScheduleVideoRef)
 
   return (
     <aside className="inspector">
@@ -354,7 +365,13 @@ export default function Inspector({
           </select>
         </div>
 
-        <ModelPicker cap="audio" label="配音模型" settings={settings} pick={pick} onPick={onPick} />
+        <CapModelSelect
+          cap="audio"
+          label="配音模型"
+          settings={settings}
+          value={pick.audio}
+          onChange={(key) => onPick('audio', key)}
+        />
         <button
           className="btn primary block"
           disabled={d.voiceState === 'running' || !d.dialogue.trim() || voices.length === 0}
@@ -471,7 +488,13 @@ export default function Inspector({
           </select>
         </div>
 
-        <ModelPicker cap="image" label="出图模型" settings={settings} pick={pick} onPick={onPick} />
+        <CapModelSelect
+          cap="image"
+          label="出图模型"
+          settings={settings}
+          value={pick.image}
+          onChange={(key) => onPick('image', key)}
+        />
 
         <label className="chk">
           <input type="checkbox" checked={refMode} onChange={(e) => setRefMode(e.target.checked)} />
@@ -519,14 +542,21 @@ export default function Inspector({
           </span>
         </div>
 
-        <ModelPicker cap="video" label="出片模型" settings={settings} pick={pick} onPick={onPick} />
+        <CapModelSelect
+          cap="video"
+          caps={['video', 'videoRef']}
+          label="出片模型"
+          settings={settings}
+          value={pick.video}
+          onChange={(key) => onPick('video', key)}
+        />
 
         {d.scheduleVideo && (
           <div className="sched-row">
             <video src={d.scheduleVideo} muted loop autoPlay playsInline preload="metadata" />
             <div className="sched-info">
               <b>3D 调度</b>
-              <span>推演运镜与走位（给人看）</span>
+              <span>推演运镜与走位（2.0+ 可直接当参考）</span>
             </div>
             <a href={d.scheduleVideo} target="_blank" rel="noreferrer">
               查看
@@ -534,31 +564,71 @@ export default function Inspector({
           </div>
         )}
 
+        <label
+          className={`chk ${d.scheduleVideo && canVideoRef ? '' : 'dim'}`}
+          title="把整段调度视频作为 reference_video；只约束走位与运镜，画风以参考图/提示词为准"
+        >
+          <input
+            type="checkbox"
+            checked={videoRefOn}
+            disabled={!d.scheduleVideo || !canVideoRef}
+            onChange={(e) =>
+              set({
+                useScheduleVideoRef: e.target.checked,
+                ...(e.target.checked ? { useScheduleFrames: false } : {}),
+              })
+            }
+          />
+          用 3D 调度视频作参考（Seedance 2.0+）
+          <span className="chk-note">
+            {!d.scheduleVideo
+              ? '（先生成 3D 调度）'
+              : !canVideoRef
+                ? '（当前模型不支持）'
+                : '（只参考走位/运镜）'}
+          </span>
+        </label>
+
         {d.motionNote && <p className="motion-hint">运镜：{d.motionNote}</p>}
 
         {d.scheduleVideo && (
-          <label className="chk" title="调度视频抽的帧是白模，可能把画面带成 3D 风格，默认不传">
+          <label
+            className={`chk ${videoRefOn ? 'dim' : ''}`}
+            title="调度视频抽的帧是白模，可能把画面带成 3D 风格，默认不传"
+          >
             <input
               type="checkbox"
-              checked={Boolean(d.useScheduleFrames)}
+              checked={!videoRefOn && Boolean(d.useScheduleFrames)}
+              disabled={videoRefOn}
               onChange={(e) => set({ useScheduleFrames: e.target.checked })}
             />
             带调度关键帧作参考
-            <span className="chk-note">（白模可能影响画风）</span>
+            <span className="chk-note">
+              {videoRefOn ? '（视频参考优先，抽帧已忽略）' : '（白模可能影响画风）'}
+            </span>
           </label>
         )}
 
         {tail && (
-          <label className={`chk ${tail.nextHasImage ? '' : 'dim'}`} title="用下一镜的画面当本镜落点，衔接更顺">
+          <label
+            className={`chk ${tail.nextHasImage && !videoRefOn ? '' : 'dim'}`}
+            title="用下一镜的画面当本镜落点，衔接更顺"
+          >
             <input
               type="checkbox"
-              checked={tail.lock && tail.nextHasImage}
-              disabled={!tail.nextHasImage}
+              checked={!videoRefOn && tail.lock && tail.nextHasImage}
+              disabled={!tail.nextHasImage || videoRefOn}
               onChange={(e) => tail.setLock(e.target.checked)}
             />
             以下一镜画面作尾帧约束
             <span className="chk-note">
-              {tail.nextNo ? (tail.nextHasImage ? `（${tail.nextNo}）` : `（${tail.nextNo} 还没有画面）`) : '（没有下一镜）'}
+              {videoRefOn
+                ? '（视频参考模式下不再有首帧/尾帧硬锁）'
+                : tail.nextNo
+                  ? tail.nextHasImage
+                    ? `（${tail.nextNo}）`
+                    : `（${tail.nextNo} 还没有画面）`
+                  : '（没有下一镜）'}
             </span>
           </label>
         )}
@@ -666,37 +736,5 @@ export default function Inspector({
         <div>坐标：{Math.round(node.position.x)}, {Math.round(node.position.y)}</div>
       </div>
     </aside>
-  )
-}
-
-/** 生成时选模型：空值 = 用设置页该能力的默认模型 */
-function ModelPicker({
-  cap,
-  label,
-  settings,
-  pick,
-  onPick,
-}: {
-  cap: Cap
-  label: string
-  settings: AppSettings | null
-  pick: Partial<Record<Cap, string>>
-  onPick: (cap: Cap, key: string) => void
-}) {
-  const list = (settings?.models ?? []).filter((m) => m.cap === cap)
-  const defKey = settings?.defaults?.[cap] || ''
-  const def = list.find((m) => m.key === defKey) || list[0]
-  return (
-    <label className="mp-row" title="这个环节用哪个模型；不选就用设置页的默认">
-      <span>{label}</span>
-      <select value={pick[cap] || ''} onChange={(e) => onPick(cap, e.target.value)}>
-        <option value="">{def ? `默认 · ${def.label}` : '默认（未配置）'}</option>
-        {list.map((m) => (
-          <option key={m.key} value={m.key}>
-            {m.label} · {m.model}
-          </option>
-        ))}
-      </select>
-    </label>
   )
 }

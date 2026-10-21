@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { callText, getProject, getSettings, patchProject, type ProjectShot, type RulePack } from './api'
+import {
+  callText,
+  getProject,
+  patchProject,
+  type AppSettings,
+  type ProjectShot,
+  type RulePack,
+  type Stage,
+} from './api'
 import { characterBible, toSheet, type ProjectChar } from './charMap'
 import type { CharacterSheet } from './characters'
+import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
 import { chunk, expandAnchors, hasUnresolvedAnchor, promptSys } from './prompts'
 import { endTask, startTask } from './tasks'
 
@@ -11,6 +20,10 @@ type Props = {
   onPush: (shots: ProjectShot[]) => void
   toast: (m: string) => void
   epNo: number
+  /** App 统一加载的设置；环节默认与规则包都从这里取 */
+  settings: AppSettings | null
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
 }
 
 type Audit = {
@@ -86,7 +99,16 @@ function auditByHeuristic(s: ProjectShot, chars: CharacterSheet[]): Audit {
   }
 }
 
-export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo }: Props) {
+export default function PromptTable({
+  projectName,
+  onCanvas,
+  onPush,
+  toast,
+  epNo,
+  settings,
+  stagePick,
+  onPickStage,
+}: Props) {
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [chars, setChars] = useState<CharacterSheet[]>([])
   const [style, setStyle] = useState('')
@@ -94,8 +116,6 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
   const [genning, setGenning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
-  // 实测：lite 44s / pro 261s（15 镜 3 批并行），质量差异主要在电影感措辞，默认走快的
-  const [model, setModel] = useState<'pro' | 'lite'>('lite')
   const [batchSize, setBatchSize] = useState(5)
   const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null)
 
@@ -159,7 +179,7 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
       try {
         const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
           system: promptSys(rules),
-          model,
+          modelKey: stageModelKey(settings, 'prompt', stagePick),
           json: true,
           maxTokens: 4096,
           prompt:
@@ -190,18 +210,30 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
         )
         setDirty(true)
         endTask(tid)
-        return { ok: true, filled: g.filter((x) => patch.has(String(x.no))).length, unresolved: bad, groups: 1, total: g.length, t0 }
+        return {
+          ok: true,
+          filled: g.filter((x) => patch.has(String(x.no))).length,
+          unresolved: bad,
+          groups: 1,
+          total: g.length,
+          t0,
+          modelLabel: r.modelLabel,
+        }
       } catch (e: any) {
         endTask(tid, String(e?.message || '生成失败'))
-        return { ok: false, filled: 0, unresolved: 0, groups: 1, total: g.length, t0 }
+        return { ok: false, filled: 0, unresolved: 0, groups: 1, total: g.length, t0, modelLabel: '' }
       }
     },
-    [chars, epNo, model, style],
+    [chars, epNo, settings, stagePick, style],
   )
 
   const generate = async () => {
     if (visible.length === 0) {
       toast(`E${String(epNo).padStart(2, '0')} 还没有镜头，先去「镜头表」拆镜`)
+      return
+    }
+    if (!hasTextModels(settings)) {
+      toast('设置页还没有可用的文本模型，先加一条再生成提示词')
       return
     }
     // 分片并行：输出量受镜头数线性影响，切批并发是唯一能真正缩短墙钟时间的手段
@@ -210,13 +242,8 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
     setProgress({ done: 0, total: groups.length, failed: 0 })
     const t0 = Date.now()
 
-    // 生成前拉一次设置：规则包可能刚在设置页改过
-    let rules: Record<string, RulePack> | undefined
-    try {
-      rules = (await getSettings()).settings.rules
-    } catch {
-      /* 设置读不到就用默认规则 */
-    }
+    // 规则包由 App 统一加载；设置页保存后会 reload，不在生成时另读一份
+    const rules: Record<string, RulePack> | undefined = settings?.rules
     let done = 0
     const results = await Promise.all(
       groups.map(async (g, idx) => {
@@ -231,12 +258,14 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
     const filled = results.reduce((a, r) => a + r.filled, 0)
     const unresolved = results.reduce((a, r) => a + r.unresolved, 0)
     const failed = groups.length - okCount
+    const modelLabel = results.find((r) => r.ok)?.modelLabel || ''
     setProgress({ done: groups.length, total: groups.length, failed })
     setGenning(false)
     window.setTimeout(() => setProgress(null), 2600)
     const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
     toast(
       `E${String(epNo).padStart(2, '0')} ${filled}/${visible.length} 镜 · ${elapsed}s（${okCount}/${groups.length} 批）` +
+        (modelLabel ? ` · 模型：${modelLabel}` : '') +
         (failed > 0 ? ` · ${failed} 批失败，可在任务台账里重试` : '') +
         (unresolved > 0 ? ` · ${unresolved} 条占位符未替换，检查角色名` : ''),
     )
@@ -287,13 +316,12 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
           <span className="label">角色锚点</span>
           <span className="wb-name">{chars.filter((c) => c.lookEn).length} 个可用</span>
         </div>
-        <div className="wb-field">
-          <span className="label">模型</span>
-          <select value={model} onChange={(e) => setModel(e.target.value as 'pro' | 'lite')}>
-            <option value="pro">pro（质量）</option>
-            <option value="lite">lite（快）</option>
-          </select>
-        </div>
+        <StageModelSelect
+          stage="prompt"
+          settings={settings}
+          pick={stagePick}
+          onChange={onPickStage}
+        />
         <div className="wb-field">
           <span className="label">每批</span>
           <select value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))}>
@@ -402,7 +430,11 @@ export default function PromptTable({ projectName, onCanvas, onPush, toast, epNo
         <button className="btn" onClick={fixAnchors} disabled={stat.miss === 0}>
           补齐锚点
         </button>
-        <button className="btn" onClick={generate} disabled={genning || visible.length === 0}>
+        <button
+          className="btn"
+          onClick={generate}
+          disabled={genning || visible.length === 0 || !hasTextModels(settings)}
+        >
           {genning && progress
             ? `生成中 ${progress.done}/${progress.total} 批`
             : progress && progress.failed > 0

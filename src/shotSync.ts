@@ -53,6 +53,7 @@ export function bizSignature(d: ShotData): string {
     scheduleFrames: d.scheduleFrames ?? [],
     motionNote: d.motionNote ?? '',
     useScheduleFrames: d.useScheduleFrames ? 1 : 0,
+    useScheduleVideoRef: d.useScheduleVideoRef ? 1 : 0,
   })
 }
 
@@ -79,6 +80,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     schedule_frames: (d.scheduleFrames ?? []).map((u) => localPath(u)).filter((x): x is string => Boolean(x)),
     motion_note: d.motionNote ?? '',
     use_schedule_frames: Boolean(d.useScheduleFrames),
+    use_schedule_video_ref: Boolean(d.useScheduleVideoRef),
   }
 }
 
@@ -103,6 +105,7 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     scheduleFrames: (s.schedule_frames as string[] | undefined) ?? fallback.scheduleFrames,
     motionNote: s.motion_note ?? fallback.motionNote,
     useScheduleFrames: Boolean(s.use_schedule_frames ?? fallback.useScheduleFrames),
+    useScheduleVideoRef: Boolean(s.use_schedule_video_ref ?? fallback.useScheduleVideoRef),
     refIds: s.refIds,
     shotId: s.id,
     episode: s.episode,

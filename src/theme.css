@@ -1051,6 +1051,23 @@ kbd {
   font-size: var(--fs-xs);
 }
 
+/* 角色板：拆角色 / 三视图的模型选择 */
+.board-models {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  max-width: 1320px;
+  margin: -8px auto 16px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.board-models .wb-field > span {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
 .board-hint {
   flex: 0 0 auto;
   padding: 5px 11px;
@@ -5491,4 +5508,29 @@ button:not(:disabled),
   color: var(--accent);
   font-size: var(--fs-2xs);
   text-decoration: none;
+}
+
+/* 设置页：视频模型行下的视频参考能力 */
+.st-model-item {
+  padding: 3px 0;
+}
+.st-model-item .st-model-row {
+  padding: 0;
+}
+.st-model-video-ref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 4px 4px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+.st-model-video-ref .chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+.st-model-video-ref select {
+  max-width: 210px;
 }
