@@ -40,7 +40,7 @@ import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
-import { PRICE_PER_IMAGE, cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
+import { cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
   callText,
   checkHealth,
@@ -62,6 +62,7 @@ import {
   type VoiceOption,
 } from './api'
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
+import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
@@ -152,7 +153,7 @@ function Shell() {
   const [ratio, setRatio] = useState('16:9')
   const [refMode, setRefMode] = useState(false)
   const [marksAsGuide, setMarksAsGuide] = useState(true)
-  const [candCount, setCandCount] = useState(4)
+  const [candCount, setCandCount] = useState(1)
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
   const [vbatch, setVbatch] = useState<{ total: number; done: number } | null>(null)
   const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
@@ -340,6 +341,8 @@ function Shell() {
       return next
     })
   }, [])
+  /** 生效单价：设置页 > 默认估算 */
+  const price: Pricing = normalizePricing(appSettings?.pricing)
   const reloadSettings = useCallback(() => {
     getSettings()
       .then(({ settings }) => setAppSettings(settings as AppSettings))
@@ -1160,6 +1163,11 @@ function Shell() {
         return
       }
       patch(id, { genState: 'running', genError: undefined })
+      // 单镜也要记账：之前只有批量才记，导致右上角金额偏低
+      const tid = startTask('image', `${node.data.no} 出图`, {
+        cost: imageCost(price, candCount),
+        retry: () => void generateOne(id),
+      })
       try {
         let ref: string | undefined
         let composed = false
@@ -1235,11 +1243,13 @@ function Shell() {
           videoUrl: undefined,
           vidState: 'idle',
         })
+        endTask(tid)
       } catch (e) {
         patch(id, { genState: 'error', genError: (e as Error).message })
+        endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price],
   )
 
   /**
@@ -1381,6 +1391,7 @@ function Shell() {
           ? `\n\n参考图：${refNotes.map((n, i) => `[图${i + 1}]=${n}`).join('，')}。主体外观、场景与道具必须与参考图一致。`
           : ''
       const tid = startTask('video', `${node.data.no} 出片`, {
+        cost: videoCost(price, Math.round(node.data.seconds), vidRes),
         retry: () => void generateVideoOne(id),
       })
       try {
@@ -1502,17 +1513,8 @@ function Shell() {
     if (list.length === 0) return
     setBatch({ total: list.length, done: 0 })
     for (const n of list) {
-      const tid = startTask('image', `${n.data.no} 出图`, {
-        cost: PRICE_PER_IMAGE,
-        retry: () => void generateOne(n.id),
-      })
-      try {
-        await generateOne(n.id)
-        const after = nodesRef.current.find((x) => x.id === n.id)
-        endTask(tid, after?.data.genState === 'error' ? after.data.genError || '出图失败' : undefined)
-      } catch (e: any) {
-        endTask(tid, String(e?.message || e))
-      }
+      // 记账在 generateOne 内部完成，这里只管进度
+      await generateOne(n.id)
       setBatch((b) => (b ? { ...b, done: b.done + 1 } : b))
       await new Promise((r) => setTimeout(r, 350))
     }
@@ -1715,6 +1717,7 @@ function Shell() {
           {view === 'board' ? (
             <>
               <BoardMenu
+              perImage={money(price.image)}
                 canGen={hasKey !== false}
                 batch={batch}
                 vidBatch={vidBatch}
@@ -1822,6 +1825,7 @@ function Shell() {
             onExtract={extractCharacters}
             extracting={extracting}
             viewModel={modelPick.view}
+            price={price}
           />
         ) : (
         <main className="main">
@@ -2015,6 +2019,7 @@ function Shell() {
             vidRes={vidRes}
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
+            price={price}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}

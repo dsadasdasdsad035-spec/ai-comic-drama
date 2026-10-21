@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 
 type Props = {
+  /** 每张图单价（来自设置页计价，默认 0.22） */
+  perImage?: string
   /** 有 ARK key 才能批量出图 */
   canGen: boolean
   batch: { total: number; done: number } | null
@@ -23,6 +25,7 @@ type Props = {
  * 批量任务在跑时，触发器上直接显示进度 —— 收进菜单也不能丢可见性。
  */
 export default function BoardMenu({
+  perImage = '0.22',
   canGen,
   batch,
   vidBatch,
@@ -91,10 +94,10 @@ export default function BoardMenu({
             className="bm-item"
             onClick={act(onGenAll)}
             disabled={busy || !canGen}
-            title={canGen ? '按顺序逐镜生成画面（约 ¥0.22/张）' : '未配置 ARK_API_KEY'}
+            title={canGen ? `按顺序逐镜生成画面（约 ¥${perImage}/张）` : '未配置 ARK_API_KEY'}
           >
             批量生成画面
-            <span className="bm-hint">{batch ? `${batch.done}/${batch.total}` : '¥0.22/张'}</span>
+            <span className="bm-hint">{batch ? `${batch.done}/${batch.total}` : `¥${perImage}/张`}</span>
           </button>
           <button
             className="bm-item"

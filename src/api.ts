@@ -466,6 +466,8 @@ export type AppSettings = {
   providers: Provider[]
   models: ModelEntry[]
   defaults: Partial<Record<Cap, string>>
+  /** 计价单价（估算，可校准） */
+  pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   apiKey: string
   rules: Record<string, RulePack>
 }

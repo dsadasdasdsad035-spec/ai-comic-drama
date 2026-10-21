@@ -13,6 +13,7 @@ import {
   testProvider,
 } from './api'
 import { DEFAULT_RULES, normalizeRules } from './prompts'
+import { DEFAULT_PRICING, normalizePricing, type Pricing } from './pricing'
 
 /**
  * 设置页：渠道 + 模型表 + 各能力默认模型 + 技能规则包，存 SQLite settings 表（key=app）。
@@ -69,6 +70,7 @@ export default function Settings({ toast }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
+  const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [apiKey, setApiKey] = useState('')
   const [rules, setRules] = useState<Record<string, RulePack>>(() => normalizeRules())
   const [dbFile, setDbFile] = useState('')
@@ -84,6 +86,7 @@ export default function Settings({ toast }: Props) {
         setProviders(s.providers || [])
         setModels(s.models || [])
         setDefaults(s.defaults || {})
+        setPricing(normalizePricing(s.pricing))
         setApiKey(s.apiKey || '')
         setRules(normalizeRules(s.rules))
         setDbFile(db || '')
@@ -95,7 +98,7 @@ export default function Settings({ toast }: Props) {
   const save = async () => {
     setSaving(true)
     try {
-      await saveSettings({ providers, models, defaults, apiKey, rules } as Partial<AppSettings>)
+      await saveSettings({ providers, models, defaults, pricing, apiKey, rules } as Partial<AppSettings>)
       toast('设置已保存（存入 SQLite），生成时立即生效')
     } catch (e: any) {
       toast(e.message || '保存失败')
@@ -362,6 +365,61 @@ export default function Settings({ toast }: Props) {
                 onChange={(e) => setApiKey(e.target.value)}
               />
               <em>建议改在「渠道」里填；这里留作兼容</em>
+            </label>
+          </div>
+        </section>
+
+        <section className="st-sec">
+          <header className="st-sec-head">
+            <h3>计价</h3>
+            <span className="st-hint">
+              默认值是估算，对不上账单就按实际单价改。图片按张、视频按秒（480p/720p 分开）、配音按次。
+            </span>
+          </header>
+          <div className="st-grid">
+            <label className="st-field">
+              <span>图片 · 每张</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pricing.image}
+                onChange={(e) => setPricing({ ...pricing, image: Number(e.target.value) || 0 })}
+              />
+              <em>Seedream 一次生成 N 张 = N × 单价</em>
+            </label>
+            <label className="st-field">
+              <span>视频 · 480p 每秒</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pricing.video480}
+                onChange={(e) => setPricing({ ...pricing, video480: Number(e.target.value) || 0 })}
+              />
+              <em>方舟按 tokens 计费，秒单价是最接近的近似</em>
+            </label>
+            <label className="st-field">
+              <span>视频 · 720p 每秒</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pricing.video720}
+                onChange={(e) => setPricing({ ...pricing, video720: Number(e.target.value) || 0 })}
+              />
+              <em>720p 一般比 480p 贵一倍左右</em>
+            </label>
+            <label className="st-field">
+              <span>配音 · 每次</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={pricing.audio}
+                onChange={(e) => setPricing({ ...pricing, audio: Number(e.target.value) || 0 })}
+              />
+              <em>0 = 不计入（ElevenLabs / MiniMax 价格差异大）</em>
             </label>
           </div>
         </section>

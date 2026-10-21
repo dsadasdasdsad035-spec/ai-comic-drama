@@ -73,7 +73,6 @@ export const RATIOS = ['16:9', '9:16', '4:3', '1:1']
 export const CANDIDATE_COUNTS = [1, 2, 4]
 /** 语速档位（say 的每分钟词数；ElevenLabs 走 voice_settings，此值仅本地生效） */
 export const VOICE_RATES = [150, 180, 210]
-export const PRICE_PER_IMAGE = 0.22
 
 export const uid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto

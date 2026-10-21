@@ -113,10 +113,14 @@ type ModelEntry = {
   note?: string
 }
 
+/** 计价（设置页可改；默认值为估算，对不上账单时按实际单价校准） */
+type Pricing = { image?: number; video480?: number; video720?: number; audio?: number }
+
 type AppSettings = {
   providers: Provider[]
   models: ModelEntry[]
   defaults: Partial<Record<Cap, string>>
+  pricing?: Pricing
   /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
@@ -234,6 +238,7 @@ function normalizeSettings(raw: any): AppSettings {
       providers,
       models: raw.models,
       defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
+      pricing: raw.pricing || {},
       apiKey,
       rules,
     }
@@ -249,7 +254,7 @@ function normalizeSettings(raw: any): AppSettings {
     if (m.key === 'ark-video-ref' && legacy.videoRef) return { ...m, model: legacy.videoRef }
     return { ...m }
   })
-  return { providers, models, defaults: { ...DEFAULT_DEFAULTS }, apiKey, rules }
+  return { providers, models, defaults: { ...DEFAULT_DEFAULTS }, pricing: {}, apiKey, rules }
 }
 
 let settingsReady = false
@@ -276,6 +281,7 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     providers: Array.isArray(patch.providers) ? patch.providers : cur.providers,
     models: Array.isArray(patch.models) ? patch.models : cur.models,
     defaults: { ...cur.defaults, ...(patch.defaults || {}) },
+    pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
   }

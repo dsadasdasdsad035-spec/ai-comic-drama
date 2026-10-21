@@ -1,5 +1,6 @@
 import type { ShotData } from './types'
-import { CANDIDATE_COUNTS, MOVES, PRICE_PER_IMAGE, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
+import { CANDIDATE_COUNTS, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
+import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
@@ -100,6 +101,8 @@ type Props = {
   /** 当前手动选的模型（键），空 = 用设置页默认 */
   pick: Partial<Record<Cap, string>>
   onPick: (cap: Cap, key: string) => void
+  /** 计价单价（设置页可校准） */
+  price: Pricing
   /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
   tail?: {
     lock: boolean
@@ -135,6 +138,7 @@ export default function Inspector({
   settings,
   pick,
   onPick,
+  price,
   tail,
 }: Props) {
   if (!node) {
@@ -351,7 +355,10 @@ export default function Inspector({
       <div className="gen-box">
         <div className="gen-head">
           <span>AI 生成画面</span>
-          <span className="gen-cost">Seedream 4.5 · ¥{(candCount * PRICE_PER_IMAGE).toFixed(2)} / 次</span>
+          <span className="gen-cost">
+            Seedream 4.5 · ¥{money(imageCost(price, candCount))} / 次
+            {candCount > 1 ? ` · ${candCount} 张 × ¥${money(price.image)}` : ''}
+          </span>
         </div>
 
         <div className="gen-controls">
@@ -405,7 +412,9 @@ export default function Inspector({
       <div className="gen-box vid-box">
         <div className="gen-head">
           <span>AI 生成视频</span>
-          <span className="gen-cost">Seedance 图生视频</span>
+          <span className="gen-cost">
+            Seedance · 约 ¥{money(videoCost(price, Math.round(d.seconds), vidRes))} / 次
+          </span>
         </div>
         <div className="gen-controls">
           <select value={vidRes} onChange={(e) => setVidRes(e.target.value as '480p' | '720p')} title="分辨率">
@@ -531,16 +540,6 @@ function ModelPicker({
   settings: AppSettings | null
   pick: Partial<Record<Cap, string>>
   onPick: (cap: Cap, key: string) => void
-  /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
-  tail?: {
-    lock: boolean
-    setLock: (v: boolean) => void
-    nextNo?: string
-    nextHasImage: boolean
-    prevTail?: string
-    toNext: () => void
-    fromPrev: () => void
-  }
 }) {
   const list = (settings?.models ?? []).filter((m) => m.cap === cap)
   const defKey = settings?.defaults?.[cap] || ''

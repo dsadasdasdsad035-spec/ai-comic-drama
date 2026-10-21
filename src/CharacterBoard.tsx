@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
 import { generateImage } from './api'
+import { imageCost, money, type Pricing } from './pricing'
+import { endTask, startTask } from './tasks'
 import { TURNAROUND_SUFFIX, type CharacterSheet } from './characters'
 
 type Props = {
@@ -18,6 +20,8 @@ type Props = {
   extracting: '' | 'episode' | 'script'
   /** 三视图用的图像模型（设置页 view 能力的默认或手选） */
   viewModel?: string
+  /** 计价单价 */
+  price?: Pricing
 }
 
 export default function CharacterBoard({
@@ -32,6 +36,7 @@ export default function CharacterBoard({
   onExtract,
   extracting,
   viewModel,
+  price,
 }: Props) {
   return (
     <div className="board">
@@ -80,6 +85,7 @@ export default function CharacterBoard({
             onDelete={() => onDelete(c.id)}
             onRename={(name) => onRename(c.id, name)}
             viewModel={viewModel}
+            price={price}
           />
         ))}
         {characters.length === 0 && (
@@ -99,6 +105,7 @@ function CharCard({
   onDelete,
   onRename,
   viewModel,
+  price,
 }: {
   c: CharacterSheet
   patch: (id: string, p: Partial<CharacterSheet>) => void
@@ -108,6 +115,7 @@ function CharCard({
   onDelete: () => void
   onRename: (name: string) => void
   viewModel?: string
+  price?: Pricing
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
@@ -122,6 +130,9 @@ function CharCard({
       return
     }
     patch(c.id, { state: 'running', error: undefined })
+    const tid = startTask('image', `三视图 ${c.name}`, {
+      cost: price ? imageCost(price, 2) : undefined,
+    })
     try {
       const res = await generateImage({
         prompt: `${c.lookEn}, ${TURNAROUND_SUFFIX}`,
@@ -132,8 +143,10 @@ function CharCard({
       })
       const urls = res.urls?.length ? res.urls : [res.url]
       patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
+      endTask(tid)
     } catch (e) {
       patch(c.id, { state: 'error', error: (e as Error).message })
+      endTask(tid, (e as Error).message)
     }
   }
 
@@ -323,7 +336,8 @@ function CharCard({
 
       <div className="char-actions">
         <button className="btn" disabled={c.state === 'running'} onClick={generate}>
-          {c.image ? '重出三视图' : '生成三视图'} · ¥0.44
+          {c.image ? '重出三视图' : '生成三视图'}
+          {price ? ` · ¥${money(imageCost(price, 2))}` : ''}
         </button>
         <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
           上传
