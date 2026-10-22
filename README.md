@@ -23,6 +23,15 @@ npm run dev      # http://127.0.0.1:5273
 - **拆角色**：全剧读项目 `source + episodes`；本集读当前集的 `project.shots`（cast / 台词 / 画面），不依赖浏览器里残留的画布节点。
 - **素材**：场景/道具设定存项目的 `designs`，和画布素材库分开；设定图可以单卡或批量发布成 `scene` / `prop` 素材卡。素材守则在设置页默认启用，按地点/道具去重，场景图固定空镜、道具图固定多角度隔离表。
 
+## 项目媒体
+
+角色三视图和场景/道具设定图是长效参考图，存放在 `projects/<项目名>/assets/`，项目数据里引用 `/project-assets/<项目名>/<文件>`。它们和 `projects/` 下的 SQLite 同生命周期：把整个 `projects/` 目录搬到新工作区，角色和设定图仍然可用；清空 `public/generated/` 也不会影响它们。
+
+- `public/generated/` 只放镜头首帧、调度帧、视频等可重生成产物。
+- 打开项目时会把仍存在的旧 `/generated/...` 引用复制进项目目录并改写；找不到文件的引用会保留并标记「图片文件缺失」。
+- 恢复缺失图：把同名文件放进 `projects/<项目名>/assets/` 后重新打开项目（迁移按文件名命中），或在角色板重新生成。
+- `projects/*/assets/` 与 `projects/*.sqlite` 一样不提交 git，需要随项目目录一起备份。
+
 ## 能力
 
 | 区块 | 说明 |
@@ -69,6 +78,8 @@ src/
   designExtract.ts   素材摘要、拆解合并、空镜/道具提示词
   subtitles.ts       无 libass 时的字幕位图渲染
   vite.config.ts     同时作为 dev 后端（所有 API + ffmpeg 合成）
+server/
+  media.mjs          项目媒体目录 / URL / 旧图迁移 / 参考图解析
 verify-*.mjs         Playwright 端到端验证脚本（需先 npm run dev）
 ```
 
@@ -82,4 +93,5 @@ node verify-video.mjs    # 图生视频
 node verify-voice.mjs    # 配音
 node verify-project-scope.mjs  # 项目切换 / 画布隔离 / 剧本守卫 / 拆角色数据源（自起临时库）
 node verify-asset-board.mjs    # 素材守则 / 场景道具拆解 / 生图约束 / 发布幂等 / A-B 隔离（自起临时库，mock 模型）
+node verify-media-persistence.mjs  # 项目媒体落盘 / 刷新恢复 / 旧图迁移 / 缺失标记与出图保护（自起临时库）
 ```

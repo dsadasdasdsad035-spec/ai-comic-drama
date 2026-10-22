@@ -5,7 +5,15 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath } from './server/db.mjs'
+import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath, safeProjectName } from './server/db.mjs'
+import {
+  MAX_REF_BYTES,
+  listProjectImages,
+  migrateProjectMedia,
+  resolveProjectMediaPath,
+  resolveRef,
+  saveProjectImage,
+} from './server/media.mjs'
 import {
   VideoParamError,
   buildVideoPayload,
@@ -633,19 +641,6 @@ function extractJson(text: string): any {
     }
   }
   throw new Error(`模型返回的不是合法 JSON：${body.slice(0, 120)}`)
-}
-
-/** 本地相对路径 / dataURL / http URL → 可直接给方舟的 image 字段 */
-function resolveRef(ref: string, root: string): string {
-  if (ref.startsWith('data:') || ref.startsWith('http')) return ref
-  const clean = ref.split('?')[0].replace(/^\//, '')
-  const file = path.join(root, 'public', clean)
-  if (!fs.existsSync(file)) throw new Error(`参考图不存在：${ref}`)
-  const size = fs.statSync(file).size
-  if (size > 30 * 1024 * 1024) throw new Error(`参考图超过 30MB：${ref}`)
-  const buf = fs.readFileSync(file)
-  const ext = path.extname(file).slice(1) || 'png'
-  return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buf.toString('base64')}`
 }
 
 /** 参考视频：asset:// / http(s) 原样用；本地路径只接受 public 下的文件 */
@@ -1413,6 +1408,30 @@ function seedreamProxy(): Plugin {
       server.middlewares.use(async (req, res, next) => {
         const url = (req.url || '').split('?')[0]
 
+        // 项目媒体：<projects>/<项目>/assets/，和项目数据同生命周期
+        if (url.startsWith('/project-assets/')) {
+          const parts = url.split('/').filter(Boolean)
+          if (parts.length !== 3) {
+            res.statusCode = 404
+            res.end()
+            return
+          }
+          let file = ''
+          try {
+            file = resolveProjectMediaPath(
+              root,
+              decodeURIComponent(parts[1]),
+              decodeURIComponent(parts[2]),
+            )
+          } catch {
+            res.statusCode = 400
+            res.end()
+            return
+          }
+          serveFile(res, req, file, mimeOf(path.extname(file).slice(1) || 'png'))
+          return
+        }
+
         // 直接提供生成产物：vite 的 public 索引在启动时建立，
         // 运行中新写入的文件在 watcher 更新前会被 SPA fallback 吃掉（返回 index.html）
         for (const dir of ['generated', 'videos', 'exports', 'voices']) {
@@ -1693,7 +1712,29 @@ function seedreamProxy(): Plugin {
             }
 
             if (req.method === 'GET') {
-              res.end(JSON.stringify({ ok: true, project: readProject(rootDir, name) }))
+              const cur = readProject(rootDir, name)
+              // 旧 /generated 引用幂等迁移：复制进项目目录并改写；缺失项只标记不猜
+              const migrated = migrateProjectMedia(root, name, cur)
+              let project = cur
+              let copied = 0
+              if (migrated.changed) {
+                try {
+                  writeProject(rootDir, name, {
+                    characters: migrated.characters,
+                    designs: migrated.designs,
+                  })
+                  project = { ...cur, characters: migrated.characters, designs: migrated.designs }
+                  copied = migrated.migrated
+                } catch {
+                  /* 迁移失败不阻塞项目读取；下次打开再试 */
+                }
+              }
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  project: { ...project, media: { migrated: copied, missing: migrated.missing } },
+                }),
+              )
               return
             }
 
@@ -1963,7 +2004,17 @@ function seedreamProxy(): Plugin {
                 .sort((a, b) => b.mtime - a.mtime)
                 .slice(0, limit)
             }
-            const images = scan('generated', /\.(png|jpe?g|webp)$/i, 120)
+            let projectImages: ReturnType<typeof scan> = []
+            if (name) {
+              try {
+                projectImages = listProjectImages(root, name, 120)
+              } catch {
+                projectImages = []
+              }
+            }
+            const images = [...projectImages, ...scan('generated', /\.(png|jpe?g|webp)$/i, 120)]
+              .sort((a, b) => b.mtime - a.mtime)
+              .slice(0, 120)
             const videos = scan('videos', /\.(mp4|mov|webm)$/i, 60)
             let assets: unknown[] = []
             if (name) {
@@ -1997,10 +2048,18 @@ function seedreamProxy(): Plugin {
             if (!m) throw new Error('dataUrl 格式不对')
             const ext = m[1] === 'jpeg' ? 'jpg' : m[1]
             const prefix = String(body.prefix || 'sheet').replace(/[^a-z0-9-]/gi, '') || 'sheet'
+            const bytes = Buffer.from(m[2], 'base64')
+            if (bytes.length > MAX_REF_BYTES) throw new Error('图片超过 30MB，无法保存')
+            const projectName = String(body.project || '').trim()
+            if (projectName) {
+              const saved = saveProjectImage(root, safeProjectName(projectName), bytes, ext, prefix)
+              res.end(JSON.stringify({ ok: true, url: saved.url }))
+              return
+            }
             const dir = path.join(root, 'public', 'generated')
             fs.mkdirSync(dir, { recursive: true })
             const name = `${prefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
-            fs.writeFileSync(path.join(dir, name), Buffer.from(m[2], 'base64'))
+            fs.writeFileSync(path.join(dir, name), bytes)
             res.end(JSON.stringify({ ok: true, url: `/generated/${name}` }))
           } catch (e: any) {
             res.statusCode = 400
@@ -2534,6 +2593,22 @@ function seedreamProxy(): Plugin {
 
         try {
           const body = await readJson(req)
+          let mediaProject = ''
+          if (body.project) {
+            try {
+              mediaProject = safeProjectName(String(body.project).trim())
+            } catch (e) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: (e as Error).message,
+                  kind: 'bad-request',
+                }),
+              )
+              return
+            }
+          }
           const prompt = String(body.prompt || '').trim()
           if (!prompt) {
             res.statusCode = 400
@@ -2668,9 +2743,21 @@ function seedreamProxy(): Plugin {
             } else {
               bytes = Buffer.from(item.b64_json, 'base64')
             }
-            const name = `shot-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
-            fs.writeFileSync(path.join(outDir, name), bytes)
-            urls.push(`/generated/${name}`)
+            if (mediaProject) {
+              // 角色三视图 / 场景道具设定图：跟随项目目录
+              const saved = saveProjectImage(
+                root,
+                mediaProject,
+                bytes,
+                ext,
+                cap === 'view' ? 'char' : 'design',
+              )
+              urls.push(saved.url)
+            } else {
+              const name = `shot-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
+              fs.writeFileSync(path.join(outDir, name), bytes)
+              urls.push(`/generated/${name}`)
+            }
           }
 
           res.end(

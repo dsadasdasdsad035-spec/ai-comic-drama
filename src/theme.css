@@ -1176,6 +1176,17 @@ kbd {
   color: var(--line-2);
 }
 
+.char-missing {
+  color: var(--warn);
+  background: var(--warn-dim);
+  border: 1px dashed rgba(251, 191, 36, 0.45);
+  border-radius: 6px;
+}
+
+.char-missing .char-empty-sub {
+  color: var(--line-2);
+}
+
 .char-sheet .cand-bar {
   position: absolute;
   bottom: 7px;

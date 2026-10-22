@@ -8,7 +8,8 @@
  */
 import { chromium } from 'playwright-core'
 
-const URL = 'http://localhost:5273'
+const URL = process.env.VERIFY_URL || 'http://localhost:5273'
+const CANVAS_KEY = `storyboard-canvas-v1:${encodeURIComponent('recycle')}`
 let bad = 0
 const check = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' | ' + extra : ''}`)
@@ -82,10 +83,10 @@ await p.getByRole('button', { name: '生成到画布' }).click()
 await p.waitForTimeout(1000)
 await p.getByRole('button', { name: '画布', exact: true }).click()
 await p.waitForTimeout(800)
-const shotNodeId = await p.evaluate(() => {
-  const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+const shotNodeId = await p.evaluate((key) => {
+  const s = JSON.parse(localStorage.getItem(key) || '{}')
   return (s.nodes || []).find((x) => x.type !== 'asset' && x.data?.shotId)?.id
-})
+}, CANVAS_KEY)
 // 用右键菜单连「陈默」
 await p.locator(`[data-id="${shotNodeId}"]`).dispatchEvent('contextmenu', {
   clientX: 640,
@@ -97,12 +98,12 @@ await p.locator('.ctx-row[data-ref="char-陈默"] .ctx-main').click()
 await p.waitForTimeout(400)
 await p.keyboard.press('Escape')
 await p.waitForTimeout(2600)
-const linkedBefore = await p.evaluate(async (nid) => {
-  const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+const linkedBefore = await p.evaluate(async ({ nid, base, key }) => {
+  const s = JSON.parse(localStorage.getItem(key) || '{}')
   const sid = (s.nodes || []).find((x) => x.id === nid)?.data?.shotId
-  const j = await fetch('http://localhost:5273/api/project?name=recycle').then((r) => r.json())
+  const j = await fetch(`${base}/api/project?name=recycle`).then((r) => r.json())
   return (j.project.shots.find((x) => x.id === sid)?.refIds ?? [])
-}, shotNodeId)
+}, { nid: shotNodeId, base: URL, key: CANVAS_KEY })
 check('已连上 char-陈默', linkedBefore.includes('char-陈默'), JSON.stringify(linkedBefore))
 
 // 角色视图里把「陈默」改名
@@ -113,12 +114,12 @@ await chenmo.locator('.btn-mini', { hasText: '编辑' }).click()
 await chenmo.locator('[data-char-field="name"]').fill('陈默测')
 await chenmo.locator('[data-char-field="name"]').press('Enter')
 await p.waitForTimeout(2600)
-const linkedAfter = await p.evaluate(async (nid) => {
-  const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+const linkedAfter = await p.evaluate(async ({ nid, base, key }) => {
+  const s = JSON.parse(localStorage.getItem(key) || '{}')
   const sid = (s.nodes || []).find((x) => x.id === nid)?.data?.shotId
-  const j = await fetch('http://localhost:5273/api/project?name=recycle').then((r) => r.json())
+  const j = await fetch(`${base}/api/project?name=recycle`).then((r) => r.json())
   return (j.project.shots.find((x) => x.id === sid)?.refIds ?? [])
-}, shotNodeId)
+}, { nid: shotNodeId, base: URL, key: CANVAS_KEY })
 check('连线跟着改名迁移', linkedAfter.includes('char-陈默测') && !linkedAfter.includes('char-陈默'), JSON.stringify(linkedAfter))
 
 // 改回来
@@ -137,18 +138,18 @@ check('删除后库里没有', !chars.some((c) => c.name === '测试角色A'))
 check('卡片数回落', (await p.locator('.char-card').count()) === before.length, String(before.length))
 
 // 清理连线残留
-await p.evaluate(async () => {
-  const j = await fetch('http://localhost:5273/api/project?name=recycle').then((r) => r.json())
+await p.evaluate(async (base) => {
+  const j = await fetch(`${base}/api/project?name=recycle`).then((r) => r.json())
   const shots = j.project.shots.map((x) => ({
     ...x,
     refIds: (x.refIds ?? []).filter((r) => !r.startsWith('char-') || r === 'char-陈默'),
   }))
-  await fetch('http://localhost:5273/api/project?name=recycle', {
+  await fetch(`${base}/api/project?name=recycle`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ shots }),
   })
-})
+}, URL)
 
 if (errors.length) console.log('\n--- pageerror ---\n' + errors.join('\n---\n'))
 check('无 pageerror', errors.length === 0, errors[0]?.split('\n')[0] ?? '')

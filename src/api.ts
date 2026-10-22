@@ -21,6 +21,8 @@ export async function generateImage(opts: {
   modelKey?: string
   /** 三视图走 view 能力，其余走 image */
   cap?: 'image' | 'view'
+  /** 传入项目名时结果写项目媒体目录（角色三视图 / 设定图），不传写公共产物池 */
+  project?: string
 }): Promise<GenResult> {
   let res: Response
   try {
@@ -53,6 +55,21 @@ export async function generateImage(opts: {
   }
   const urls: string[] = Array.isArray(j.urls) ? j.urls : [j.url]
   return { ...(j as GenResult), urls }
+}
+
+/** 上传图片：dataURL 交给服务端落盘，返回站内文件 URL */
+export async function saveImageDataUrl(
+  dataUrl: string,
+  opts: { project?: string; prefix?: string } = {},
+): Promise<string> {
+  const r = await fetch('/api/save-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl, ...opts }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '图片保存失败')
+  return String(j.url || '')
 }
 
 export async function checkHealth(): Promise<{ hasKey: boolean; model: string } | null> {
@@ -369,6 +386,8 @@ export type ProjectData = {
   designs?: DesignSheet[]
   shots?: ProjectShot[]
   updated_at?: string
+  /** GET /api/project 附带：本次打开迁移了几张旧图、哪些引用文件缺失 */
+  media?: { migrated?: number; missing?: string[] }
 }
 
 export async function listProjects(): Promise<{ root: string; projects: ProjectSummary[] }> {

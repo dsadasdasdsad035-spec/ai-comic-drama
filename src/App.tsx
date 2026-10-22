@@ -294,6 +294,8 @@ function Shell() {
   const [voiceProvider, setVoiceProvider] = useState('')
   const [assets, setAssets] = useState<ProjectAsset[]>([])
   const assetsSnapRef = useRef('')
+  /** 服务端报告的缺失媒体引用（角色三视图 / 设定图） */
+  const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
   const { fitView, setCenter, getZoom } = useReactFlow()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
@@ -373,6 +375,7 @@ function Shell() {
       setEdges(initialEdges)
       setCharacters(defaultCharacters)
       setAssets([])
+      setMissingMedia(new Set())
       setEpNo(1)
       syncedRef.current = new Map()
       charSnapRef.current = JSON.stringify(defaultCharacters.map(toProject))
@@ -420,6 +423,11 @@ function Shell() {
         }
         charSnapRef.current = JSON.stringify(sheets.map(toProject))
         assetsSnapRef.current = JSON.stringify(projectAssets)
+        setMissingMedia(new Set(Array.isArray(p.media?.missing) ? p.media.missing : []))
+        if (p.media?.migrated) {
+          setToast(`已把 ${p.media.migrated} 张参考图收进项目目录`)
+          window.setTimeout(() => setToast(''), 3600)
+        }
         setReadyProject(projectName)
       } catch (e) {
         if (!alive || epoch !== projectEpochRef.current) return
@@ -427,6 +435,7 @@ function Shell() {
         setEdges([])
         setCharacters([])
         setAssets([])
+        setMissingMedia(new Set())
         setToast(`加载项目失败：${(e as Error).message}`)
         window.setTimeout(() => setToast(''), 3200)
       }
@@ -458,10 +467,42 @@ function Shell() {
   )
 
   const patchCharacter = useCallback(
-    (id: string, p: Partial<CharacterSheet>) =>
-      setCharacters((cs) => cs.map((c) => (c.id === id ? { ...c, ...p } : c))),
+    (id: string, p: Partial<CharacterSheet>): CharacterSheet[] => {
+      const next = charactersRef.current.map((c) => (c.id === id ? { ...c, ...p } : c))
+      charactersRef.current = next
+      setCharacters(next)
+      return next
+    },
     [],
   )
+
+  /** 角色图片类变更立即落库：不等 1.2s 防抖，刷新不会丢 */
+  const saveCharactersNow = useCallback(
+    async (next: CharacterSheet[]) => {
+      if (!projectName || readyProject !== projectName) return
+      const payload = next.map(toProject)
+      const sig = JSON.stringify(payload)
+      try {
+        await patchProject(projectName, { characters: payload })
+        charSnapRef.current = sig
+      } catch (e) {
+        setToast(`角色图片保存失败：${(e as Error).message}`)
+        window.setTimeout(() => setToast(''), 4200)
+      }
+    },
+    [projectName, readyProject],
+  )
+
+  /** <img> 加载失败时补记缺失；服务端清单之外的文件被删也能提示 */
+  const markMissing = useCallback((ref: string) => {
+    if (!ref) return
+    setMissingMedia((s) => {
+      if (s.has(ref)) return s
+      const next = new Set(s)
+      next.add(ref)
+      return next
+    })
+  }, [])
 
   /**
    * 角色 id 就是名字 → 改名/删除时连线要跟着迁移。
@@ -886,7 +927,11 @@ function Shell() {
     const cards = characters.map((c, i) =>
       keep(
         `char-${c.id}`,
-        { name: c.name, role: c.role, image: c.image },
+        {
+          name: c.name,
+          role: c.role,
+          image: c.image && !missingMedia.has(c.image) ? c.image : undefined,
+        },
         charPos[c.id] ?? { x: 80 + i * 170, y: -280 },
       ),
     )
@@ -907,7 +952,7 @@ function Shell() {
       )
     }
     return cards
-  }, [characters, charPos, shownNodes])
+  }, [characters, charPos, shownNodes, missingMedia])
 
   /** 素材库（DB assets 表）：画布素材卡是它的视图，结构化的场景/道具在这里 */
   /** 素材卡：混在 nodes 状态里持久化（type==='asset'），不受集过滤，始终显示 */
@@ -1398,7 +1443,7 @@ function Shell() {
    */
   const pushDesigns = useCallback(
     (list: DesignSheet[]) => {
-      const withImage = list.filter((d) => Boolean(d.image))
+      const withImage = list.filter((d) => Boolean(d.image) && !missingMedia.has(String(d.image)))
       const skipped = list.length - withImage.length
       if (withImage.length === 0) {
         setToast(skipped ? `跳过 ${skipped} 张无图素材；先生成设定图` : '先生成设定图，再加入画布')
@@ -1462,7 +1507,7 @@ function Shell() {
       window.setTimeout(() => setToast(''), 2600)
       window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.5, duration: 400 }), 80)
     },
-    [setNodes, fitView],
+    [setNodes, fitView, missingMedia],
   )
 
   /** 打开角色上画布；本集一条名单都没有时明确告知，而不是静默无反应 */
@@ -1580,12 +1625,18 @@ function Shell() {
             const card = characters.find((c) => c.id === key || c.name === key)
             img = card?.image
             label = `角色「${card?.name ?? key}」外观基准`
+            if (img && missingMedia.has(img)) {
+              throw new Error(`角色「${card?.name ?? key}」的三视图文件缺失，请先重新生成`)
+            }
           } else if (rid.startsWith('asset-')) {
             const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
             const d = a?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
             if (d && d.kind !== 'video' && d.url) {
               img = d.url
               label = `素材「${d.title ?? ''}」`
+              if (missingMedia.has(img)) {
+                throw new Error(`素材「${d.title ?? ''}」的图片文件缺失，请先重新生成`)
+              }
             }
           }
           if (img && !extraRefs.includes(img) && img !== ref) {
@@ -1598,6 +1649,9 @@ function Shell() {
           for (const name of node.data.cast ?? []) {
             const key = matchChar(name, characters)?.name ?? name
             const img = charImages[key]
+            if (img && missingMedia.has(img)) {
+              throw new Error(`角色「${name}」的三视图文件缺失，请先重新生成`)
+            }
             if (img && !extraRefs.includes(img)) {
               extraRefs.push(img)
               refLabels.push(`图${extraRefs.length + 1}=角色「${name}」外观基准`)
@@ -1605,6 +1659,7 @@ function Shell() {
           }
         }
         for (const r of node.data.refExtras ?? []) {
+          if (r && missingMedia.has(r)) throw new Error(`参考图文件缺失：${r}`)
           if (r && !extraRefs.includes(r) && r !== ref) {
             extraRefs.push(r)
             refLabels.push(`图${extraRefs.length + 1}=场景/道具参考`)
@@ -1637,7 +1692,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia],
   )
 
   /**
@@ -2269,6 +2324,8 @@ function Shell() {
             onCanvasDesignIds={onCanvasDesignIds}
             onPush={pushDesigns}
             price={price}
+            missing={missingMedia}
+            onImageMissing={markMissing}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)
@@ -2292,6 +2349,10 @@ function Shell() {
             viewModel={modelPick.view}
             onPickViewModel={(key) => pickModelKey('view', key)}
             price={price}
+            projectName={projectName}
+            onPersist={saveCharactersNow}
+            missing={missingMedia}
+            onImageMissing={markMissing}
           />
         ) : (
         <main className="main">

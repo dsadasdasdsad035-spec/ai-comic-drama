@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { generateImage, type AppSettings, type Stage } from './api'
+import { generateImage, saveImageDataUrl, type AppSettings, type Stage } from './api'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
 import { TURNAROUND_SUFFIX, type CharacterSheet } from './characters'
@@ -7,7 +7,7 @@ import { CapModelSelect, StageModelSelect, type StagePick } from './ModelSelect'
 
 type Props = {
   characters: CharacterSheet[]
-  patch: (id: string, p: Partial<CharacterSheet>) => void
+  patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   selectedShot: { id: string; no: string } | null
   onInject: (charId: string) => void
   /** 可用音色（一镜多说话人时按角色取） */
@@ -28,6 +28,14 @@ type Props = {
   onPickStage: (stage: Stage, key: string) => void
   /** 计价单价 */
   price?: Pricing
+  /** 当前项目：生成的图写入项目媒体目录 */
+  projectName: string
+  /** 图片/候选变更后立即落库，不等防抖 */
+  onPersist: (next: CharacterSheet[]) => void
+  /** 服务端报告的缺失图片引用 */
+  missing: Set<string>
+  /** 图片加载失败时补记缺失 */
+  onImageMissing: (ref: string) => void
 }
 
 export default function CharacterBoard({
@@ -47,6 +55,10 @@ export default function CharacterBoard({
   stagePick,
   onPickStage,
   price,
+  projectName,
+  onPersist,
+  missing,
+  onImageMissing,
 }: Props) {
   return (
     <div className="board">
@@ -114,6 +126,10 @@ export default function CharacterBoard({
             onRename={(name) => onRename(c.id, name)}
             viewModel={viewModel}
             price={price}
+            projectName={projectName}
+            onPersist={onPersist}
+            missing={missing}
+            onImageMissing={onImageMissing}
           />
         ))}
         {characters.length === 0 && (
@@ -134,9 +150,13 @@ function CharCard({
   onRename,
   viewModel,
   price,
+  projectName,
+  onPersist,
+  missing,
+  onImageMissing,
 }: {
   c: CharacterSheet
-  patch: (id: string, p: Partial<CharacterSheet>) => void
+  patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   canInject: boolean
   onInject: () => void
   voices: { id: string; label: string }[]
@@ -144,6 +164,10 @@ function CharCard({
   onRename: (name: string) => void
   viewModel?: string
   price?: Pricing
+  projectName: string
+  onPersist: (next: CharacterSheet[]) => void
+  missing: Set<string>
+  onImageMissing: (ref: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
@@ -153,6 +177,10 @@ function CharCard({
   const activeIdx = c.activeIdx ?? 0
 
   const generate = async () => {
+    if (!projectName) {
+      patch(c.id, { state: 'error', error: '先选择项目再生成三视图' })
+      return
+    }
     if (!c.lookEn.trim()) {
       patch(c.id, { state: 'error', error: '先填英文外观锚点（lookEn）再生成' })
       return
@@ -168,9 +196,11 @@ function CharCard({
         n: 2,
         cap: 'view',
         modelKey: viewModel,
+        project: projectName,
       })
       const urls = res.urls?.length ? res.urls : [res.url]
-      patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
+      const next = patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
+      onPersist(next)
       endTask(tid)
     } catch (e) {
       patch(c.id, { state: 'error', error: (e as Error).message })
@@ -178,11 +208,46 @@ function CharCard({
     }
   }
 
-  const upload = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => patch(c.id, { image: String(reader.result), candidates: undefined })
-    reader.readAsDataURL(file)
+  const upload = async (file: File) => {
+    if (!projectName) {
+      patch(c.id, { state: 'error', error: '先选择项目再上传图片' })
+      return
+    }
+    patch(c.id, { state: 'running', error: undefined })
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result || ''))
+        reader.onerror = () => reject(new Error('读取图片失败'))
+        reader.readAsDataURL(file)
+      })
+      const url = await saveImageDataUrl(dataUrl, { project: projectName, prefix: 'char' })
+      const next = patch(c.id, {
+        image: url,
+        candidates: undefined,
+        activeIdx: undefined,
+        state: 'idle',
+        error: undefined,
+      })
+      onPersist(next)
+    } catch (e) {
+      patch(c.id, { state: 'error', error: (e as Error).message })
+    }
   }
+
+  /** 清除选中的缺失引用；候选图一并清空，回到待生成状态 */
+  const clearImage = () => {
+    const next = patch(c.id, {
+      image: undefined,
+      candidates: undefined,
+      activeIdx: undefined,
+      state: 'idle',
+      error: undefined,
+    })
+    onPersist(next)
+  }
+
+  const imageMissing = Boolean(c.image && missing.has(c.image))
 
   const commitName = () => {
     if (name.trim() && name.trim() !== c.name) onRename(name.trim())
@@ -315,8 +380,13 @@ function CharCard({
       )}
 
       <div className="char-sheet">
-        {c.image ? (
-          <img src={c.image} alt={c.name} />
+        {imageMissing ? (
+          <div className="char-empty char-missing">
+            <span>图片文件缺失</span>
+            <span className="char-empty-sub">文件已不在项目媒体目录，请重新生成或清除引用</span>
+          </div>
+        ) : c.image ? (
+          <img src={c.image} alt={c.name} onError={() => c.image && onImageMissing(c.image)} />
         ) : (
           <div className="char-empty">
             <span>还没有三视图</span>
@@ -337,7 +407,7 @@ function CharCard({
               <button
                 key={u}
                 className={`cand-dot ${i === activeIdx ? 'on' : ''}`}
-                onClick={() => patch(c.id, { activeIdx: i, image: u })}
+                onClick={() => onPersist(patch(c.id, { activeIdx: i, image: u }))}
                 title={`候选 ${i + 1}`}
               />
             ))}
@@ -370,6 +440,11 @@ function CharCard({
         <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
           上传
         </button>
+        {imageMissing && (
+          <button className="btn-ghost" onClick={clearImage} title="清空这个角色缺失的图片引用">
+            清除引用
+          </button>
+        )}
         <input
           ref={fileRef}
           type="file"

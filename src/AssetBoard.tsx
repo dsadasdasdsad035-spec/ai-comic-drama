@@ -35,6 +35,10 @@ type Props = {
   onPush: (designs: DesignSheet[]) => void
   toast: (m: string) => void
   price?: Pricing
+  /** 服务端报告的缺失图片引用 */
+  missing: Set<string>
+  /** <img> 加载失败时补记缺失 */
+  onImageMissing: (ref: string) => void
 }
 
 const KIND_LABEL: Record<DesignKind, string> = { scene: '场景', prop: '道具' }
@@ -55,6 +59,8 @@ export default function AssetBoard({
   onPush,
   toast,
   price,
+  missing,
+  onImageMissing,
 }: Props) {
   const [project, setProject] = useState<ProjectData | null>(null)
   const [designs, setDesigns] = useState<DesignSheet[]>([])
@@ -214,6 +220,10 @@ export default function AssetBoard({
       delete next[d.id]
       return next
     })
+    if (!projectName) {
+      setErrors((x) => ({ ...x, [d.id]: '先选择项目再生成设定图' }))
+      return
+    }
     setRunning((x) => ({ ...x, [d.id]: true }))
     const tid = startTask('image', `设定图 ${d.name}`, {
       cost: price ? imageCost(price, 2) : undefined,
@@ -225,9 +235,21 @@ export default function AssetBoard({
         n: 2,
         cap: 'image',
         modelKey: imageModelKey,
+        project: projectName,
       })
       const urls = res.urls?.length ? res.urls : [res.url]
-      updateDesign(d.id, { candidates: urls, activeIdx: 0, image: urls[0] })
+      const next = designsRef.current.map((x) =>
+        x.id === d.id ? { ...x, candidates: urls, activeIdx: 0, image: urls[0] } : x,
+      )
+      designsRef.current = next
+      setDesigns(next)
+      // 立即落库：生成后马上刷新也不会丢；失败时保留防抖重试
+      const sig = JSON.stringify(next)
+      patchProject(projectName, { designs: next })
+        .then(() => {
+          savedSigRef.current = sig
+        })
+        .catch((e) => toast((e as Error).message || '保存设定图失败'))
       endTask(tid)
     } catch (e) {
       const msg = (e as Error).message || '生成设定图失败'
@@ -252,6 +274,10 @@ export default function AssetBoard({
       toast('先生成或上传这张设定图，再加入画布')
       return
     }
+    if (missing.has(d.image)) {
+      toast('这张设定图的文件缺失，请先重新生成')
+      return
+    }
     onPush([d])
   }
 
@@ -260,13 +286,14 @@ export default function AssetBoard({
       toast('还没有场景/道具设定，先拆解')
       return
     }
+    // 无图/缺图的卡片交给 App 统一跳过并报告，保留「跳过 N 张」的计数
     onPush(designs)
   }
 
   const shown = useMemo(() => designs.filter((d) => d.kind === tab), [designs, tab])
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
-  const withImage = designs.filter((d) => d.image).length
+  const withImage = designs.filter((d) => d.image && !missing.has(d.image)).length
   const canPush = Boolean(projectName && ready === projectName && withImage > 0)
 
   return (
@@ -358,6 +385,8 @@ export default function AssetBoard({
               onGenerate={() => void generate(d)}
               onChoose={(idx) => chooseCandidate(d, idx)}
               onPush={() => pushOne(d)}
+              missing={missing}
+              onImageMissing={onImageMissing}
             />
           ))
         )}
@@ -378,6 +407,8 @@ function DesignCard({
   onGenerate,
   onChoose,
   onPush,
+  missing,
+  onImageMissing,
 }: {
   d: DesignSheet
   projectStyle?: string
@@ -390,6 +421,8 @@ function DesignCard({
   onGenerate: () => void
   onChoose: (idx: number) => void
   onPush: () => void
+  missing: Set<string>
+  onImageMissing: (ref: string) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [kw, setKw] = useState(d.keywords.join('、'))
@@ -404,6 +437,7 @@ function DesignCard({
   }
 
   const candidates = d.candidates ?? []
+  const imageMissing = Boolean(d.image && missing.has(d.image))
 
   return (
     <div className={`char-card design-card ${editing ? 'editing' : ''}`}>
@@ -464,8 +498,13 @@ function DesignCard({
       )}
 
       <div className={`char-sheet design-sheet ${d.kind}`}>
-        {d.image ? (
-          <img src={d.image} alt={d.name} />
+        {imageMissing ? (
+          <div className="char-empty char-missing">
+            <span>图片文件缺失</span>
+            <span className="char-empty-sub">文件已不在项目媒体目录，请重新生成</span>
+          </div>
+        ) : d.image ? (
+          <img src={d.image} alt={d.name} onError={() => d.image && onImageMissing(d.image)} />
         ) : (
           <div className="char-empty">
             <span>还没有设定图</span>
@@ -517,7 +556,7 @@ function DesignCard({
           {d.image ? '重出设定图' : '生成设定图'}
           {price ? ` · ¥${money(imageCost(price, 2))}` : ''}
         </button>
-        <button className="btn-ghost" disabled={!d.image} onClick={onPush}>
+        <button className="btn-ghost" disabled={!d.image || imageMissing} onClick={onPush}>
           {onCanvas ? '更新画布' : '加入画布'}
         </button>
       </div>
