@@ -2,7 +2,7 @@
 
 ## Context
 
-当前渠道抽象只有 `ark`、`openai`、`minimax`、`elevenlabs` 四种 `ProviderKind`。标准方舟渠道使用 `/api/v3`，改造前的默认模型是 `doubao-seed-2-0-lite-260428` / `doubao-seed-2-1-pro-260915` / `doubao-seedream-4-5-251128` / `doubao-seedance-1-0-pro-250528`。文本路由对非 MiniMax/ElevenLabs 的渠道走 `{base}/chat/completions`，图片路由只对 `kind === 'ark'`（改造后含 `ark-plan`）启用参考图，视频路由只接受 `kind === 'ark'`。本次把全新实例的初始默认值切到 Agent Plan；已有设置保留用户保存的默认值。
+当前渠道抽象只有 `ark`、`openai`、`minimax`、`elevenlabs` 四种 `ProviderKind`。标准方舟渠道使用 `/api/v3`，改造前的默认模型是 `doubao-seed-2-0-lite-260428` / `doubao-seed-2-1-pro-260915` / `doubao-seedream-4-5-251128` / `doubao-seedance-1-0-pro-250528`。文本路由对非 MiniMax/ElevenLabs 的渠道走 `{base}/chat/completions`，图片路由只对 `kind === 'ark'`（改造后含 `ark-plan`）启用参考图，视频路由只接受 `kind === 'ark'`。本次把全新实例的文本/配音默认切到 MiniMax，图片/三视图切到 Agent Plan；已有设置保留用户保存的默认值。
 
 Agent Plan 的约束已经实测：
 
@@ -19,7 +19,7 @@ Agent Plan 的约束已经实测：
 
 - 用独立渠道类型承接 Agent Plan 的文本/图片与火山 TTS，避免和标准方舟 Key 串用。
 - 新增预设后，已有设置也能一次性拿到新渠道/模型，同时不覆盖用户已改的默认值。
-- 全新实例的文本、高质量文本、图片、三视图、配音默认指向 Agent Plan / 火山 TTS；Key 允许留空后填。
+- 全新实例的文本、高质量文本、配音默认指向 MiniMax；图片、三视图指向 Agent Plan；Key 允许留空后填。
 - 本地设置库或本地 `.env` / 环境变量有 Key 时自动使用；设置库优先。
 - 渠道测试对新协议给出可操作结果，尤其是 TTS 扣减未开启。
 - TTS 解析与下载逻辑可以脱离 Vite、用本地 mock 验证。
@@ -29,7 +29,7 @@ Agent Plan 的约束已经实测：
 - 不做运行时自动渠道回退；每个能力只认设置里显式选定的渠道/模型。
 - 不为 Agent Plan 添加视频模型；视频继续走标准 `ark`。
 - 不实现 ASR、向量检索 UI、AFP 精确计价。
-- 不覆盖已有设置里保存的默认值；全新实例才使用 Agent Plan 初始默认。
+- 不覆盖已有设置里保存的默认值；全新实例才使用 MiniMax / Agent Plan 初始默认。
 - Key 允许留空后填；缺 Key 时返回明确错误，不做标准 Key 兜底。
 
 ## Decisions
@@ -66,16 +66,18 @@ ark-plan  -> 文本 lite   doubao-seed-2.1-lite-260915
 volc-tts  -> 音频        doubao-seed-tts-2.0
 ```
 
-`DEFAULT_DEFAULTS` 指向 Agent Plan / 火山 TTS：
+`DEFAULT_DEFAULTS` 指向 MiniMax（文本/配音）与 Agent Plan（图片）：
 
 ```
-text / textPro -> ark-plan-text-lite / ark-plan-text-pro
+text / textPro -> minimax-text / minimax-text-pro（MiniMax-M3）
 image / view   -> ark-plan-image / ark-plan-view
-audio          -> volc-tts
+audio          -> minimax-tts（speech-2.8-hd）
 video / videoRef -> ark-video / ark-video-ref（标准方舟，不变）
 ```
 
-全新实例没有保存过设置时使用这组初始默认；Key 允许为空，文本/图片/配音会在生成时返回明确的缺 Key 错误，且不会回退到标准方舟 Key。
+MiniMax 复用现有 `minimax` kind，文本/高质量文本都用 `MiniMax-M3`（实测 3 集约 30 秒，快于 Agent Plan lite 的约 116 秒），配音用 `speech-2.8-hd`。音色不在 `MINIMAX_VOICES` 时回落到 `male-qn-qingse`，避免把 macOS 的 `Tingting` 发给 MiniMax 报 `2054 voice id not exist`。Key 解析：设置库 > `MINIMAX_API_KEY` > 空。
+
+全新实例没有保存过设置时使用这组初始默认；Key 允许为空，文本/图片/配音会在生成时返回明确的缺 Key 错误，且不会回退到其他渠道的 Key。
 
 **理由**：直接改 `DEFAULT_MODELS` 对已有 `raw.models` 无效；每次读时无条件合并又会把用户删掉的预设置回。版本化迁移只跑一次；默认值只在没有用户保存值时才生效。
 
@@ -128,6 +130,12 @@ body: { user, req_params: { text, speaker, audio_params: { format: "mp3", sample
 
 **理由**：当前套餐没有任何可用的 Seedance 模型，提前放宽只会制造 404。
 
+### 9. MiniMax 文本走 `/chat/completions`，结构化请求关闭 thinking
+
+MiniMax 的 `/text/chatcompletion_v2` 与 `/chat/completions` 都能用，但只有后者支持 `thinking` 开关。实测拆镜 prompt 下 `MiniMax-M3` 默认思考把 8192 token 全部用于 reasoning（`reasoning_tokens=8192`），content 为空，前端只看到“不是合法 JSON”。同一 prompt 传 `thinking: { type: "disabled" }` 后 13.5 秒返回 14 个镜头 JSON。
+
+因此 MiniMax 文本统一走 `/chat/completions`；`MiniMax-M3` + `json: true` 时传 `thinking.type = disabled`，非 JSON 用 `adaptive`；content 为空时返回包含 `finish_reason`、completion 与 reasoning token 的明确错误。**替代方案**：换 `MiniMax-M2.7-highspeed`，同 prompt 约 60 秒能出 JSON，但更慢；保留为可选模型。
+
 ## Risks / Trade-offs
 
 - **TTS 扣减未开启** → 合成和测试都返回 `AgentPlanDeductNotEnabled`；错误提示直接告诉用户去控制台开启，代码不做自动重试。
@@ -145,7 +153,7 @@ body: { user, req_params: { text, speaker, audio_params: { format: "mp3", sample
 
 1. 新增 `server/volc-tts.mjs` 与 mock 验证脚本。
 2. 扩展 `ProviderKind`、`capsOfKind`、`KIND_META`、`Provider` 预设与模型预设。
-3. 加 `presetsVersion` 一次性合并；`DEFAULT_DEFAULTS` 指向 Agent Plan；已有设置保存的默认值不被覆盖；全新实例无 Key 时生成返回 `no-key`，不回退标准 Key。Key 解析增加本地 `.env` 兜底（设置库优先）。
+3. 加 `presetsVersion` 一次性合并；`DEFAULT_DEFAULTS` 文本/配音指向 MiniMax、图片/三视图指向 Agent Plan；已有设置保存的默认值不被覆盖；全新实例无 Key 时生成返回 `no-key`，不回退其他渠道 Key。Key 解析增加本地 `.env` 兜底（设置库优先）。
 4. 图片路由把 `ark-plan` 视为方舟协议；文本路由沿用 OpenAI 兼容分支。
 5. 测试端点增加 `ark-plan` / `volc-tts` 分支。
 6. 音频路由增加 `volc-tts` 合成分支；音色接口与前端联动。

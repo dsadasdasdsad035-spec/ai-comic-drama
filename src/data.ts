@@ -15,7 +15,7 @@ export type AssetKind = 'scene' | 'prop' | 'image' | 'video'
 
 /** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
 export type AssetNodeType = Node<
-  { title: string; kind: AssetKind; url?: string },
+  { title: string; kind: AssetKind; url?: string; designId?: string },
   'asset'
 >
 

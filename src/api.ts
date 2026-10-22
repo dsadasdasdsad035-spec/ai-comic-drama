@@ -333,6 +333,26 @@ export type ProjectAsset = {
   url: string
   note?: string
   tags?: string[]
+  /** 来自场景/道具设定卡的稳定标识；手工素材卡为空 */
+  designId?: string
+}
+
+export type DesignKind = 'scene' | 'prop'
+
+/** 场景/道具设定卡：画布发布前的真相源，和 characters 同属项目级设定 */
+export type DesignSheet = {
+  id: string
+  kind: DesignKind
+  name: string
+  /** 出现过的镜号，如 E01-S03；同一地点/道具取并集 */
+  refs: string[]
+  summaryCn: string
+  /** 英文生图锚点，定稿后逐字复用 */
+  promptEn: string
+  keywords: string[]
+  image?: string
+  candidates?: string[]
+  activeIdx?: number
 }
 
 export type ProjectData = {
@@ -345,6 +365,8 @@ export type ProjectData = {
   characters?: unknown[]
   /** 素材库：场景 / 道具 / 参考图（画布素材卡的数据源） */
   assets?: ProjectAsset[]
+  /** 场景/道具设定卡：发布前的工作区，不随 assets 整表回写 */
+  designs?: DesignSheet[]
   shots?: ProjectShot[]
   updated_at?: string
 }
@@ -379,6 +401,7 @@ export async function createProject(
 export type ProjectPatch = {
   shots?: ProjectShot[]
   characters?: unknown[]
+  designs?: DesignSheet[]
   episodes?: unknown[]
   source?: string
   logline?: string
@@ -461,8 +484,8 @@ export type RulePack = { enabled: boolean; text: string }
 
 export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 /** 生成环节：环节默认值只引用模型表键 */
-export type Stage = 'script' | 'character' | 'shot' | 'prompt'
-export const STAGES: Stage[] = ['script', 'character', 'shot', 'prompt']
+export type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt'
+export const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt']
 export type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {

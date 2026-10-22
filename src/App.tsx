@@ -25,11 +25,13 @@ import ShotEdge from './ShotEdge'
 import Inspector from './Inspector'
 import Timeline from './Timeline'
 import CharacterBoard from './CharacterBoard'
+import AssetBoard from './AssetBoard'
 import Preview from './Preview'
 import ShotTable from './ShotTable'
 import PromptTable from './PromptTable'
 import EpisodeBar from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
+import ProjectSelect from './ProjectSelect'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
@@ -60,8 +62,10 @@ import {
   type Cap,
   type Stage,
   type ProjectAsset,
+  type DesignSheet,
   type ProjectEpisode,
   type ProjectShot,
+  type ProjectSummary,
   type VoiceOption,
 } from './api'
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
@@ -79,6 +83,10 @@ const edgeTypes = { shot: ShotEdge }
 
 const COLORS = ['#fbbf24', '#f87171', '#38bdf8', '#a3e635', '#c084fc']
 const STORAGE_KEY = 'storyboard-canvas-v1'
+/** 旧全局画布的备份 key：迁移前先保留一份，可回退 */
+const LEGACY_BACKUP_KEY = `${STORAGE_KEY}:legacy-backup`
+/** 画布按项目隔离：项目名编码后作为后缀，避免 A/B 串状态 */
+const projectCanvasKey = (name: string) => `${STORAGE_KEY}:${encodeURIComponent(name)}`
 
 /** 没有角色卡的出场名字 → 占位节点 id（和角色卡 id 用不同前缀，避免撞名） */
 const missCharId = (name: string) => `char-miss-${name}`
@@ -116,9 +124,9 @@ type Saved = {
   epNo?: number
 }
 
-function loadSaved(): Saved | null {
+function readSavedKey(key: string): Saved | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return null
     const p = JSON.parse(raw)
     if (!Array.isArray(p?.nodes)) return null
@@ -139,13 +147,128 @@ function loadSaved(): Saved | null {
   }
 }
 
+function loadSaved(): Saved | null {
+  return readSavedKey(STORAGE_KEY)
+}
+
+/**
+ * 项目级画布：
+ * - 有项目 key 直接用；
+ * - 没有时检查旧全局画布，先备份，再只迁移能归属当前项目的节点；
+ * - 旧画布只有演示/其他项目节点时不写入项目，画布改由 project.shots 水合。
+ */
+function loadProjectSaved(name: string, shots: ProjectShot[]): Saved | null {
+  const key = projectCanvasKey(name)
+  const current = readSavedKey(key)
+  if (current) return current
+
+  let legacyRaw = ''
+  try {
+    legacyRaw = localStorage.getItem(STORAGE_KEY) || ''
+  } catch {
+    return null
+  }
+  if (!legacyRaw) return null
+  const legacy = readSavedKey(STORAGE_KEY)
+  if (!legacy) return null
+
+  try {
+    if (!localStorage.getItem(LEGACY_BACKUP_KEY)) localStorage.setItem(LEGACY_BACKUP_KEY, legacyRaw)
+  } catch {
+    /* 备份失败不阻塞读取，但迁移仍然只依赖项目 shotId 判断 */
+  }
+
+  const ids = new Set(shots.map((s) => s.id))
+  const relevant = legacy.nodes.some((n) => {
+    const id = n.data?.shotId
+    return Boolean(id && ids.has(String(id)))
+  })
+  if (relevant || shots.length === 0) {
+    try {
+      localStorage.setItem(key, legacyRaw)
+    } catch {
+      /* 配额不足时退回内存状态 */
+    }
+    return legacy
+  }
+  return null
+}
+
+/** project.shots → 画布节点；保留同 shotId 节点的位置，新增镜头按集栅格排 */
+function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): ShotNodeType[] {
+  const byShot = new Map<string, ShotNodeType>()
+  for (const n of prev) if (n.data?.shotId) byShot.set(String(n.data.shotId), n)
+  const counters = new Map<number, { col: number; row: number }>()
+  return shots.map((sh, i) => {
+    const old = byShot.get(sh.id)
+    const ep = Number(sh.episode) || 1
+    const c = counters.get(ep) ?? { col: 0, row: 0 }
+    const position = old?.position ?? {
+      x: c.col * (cardWidth(Number(sh.seconds) || 3) + 56),
+      y: (ep - 1) * 380 + c.row * 340,
+    }
+    c.col += 1
+    if (c.col >= 6) {
+      c.col = 0
+      c.row += 1
+    }
+    counters.set(ep, c)
+    const base: ShotData = old?.data ?? {
+      no: sh.no ?? `S${String(i + 1).padStart(2, '0')}`,
+      seconds: 3,
+      size: '中景',
+      move: '固定',
+      dialogue: '',
+      prompt: '',
+      marks: [],
+    }
+    return {
+      id: old?.id ?? uid(),
+      type: 'shot' as const,
+      position,
+      data: shotToData(sh, base),
+    }
+  })
+}
+
+/** 每个集内按镜头号串一条 cut 边，画布没有项目级边时用 */
+function chainEdges(shotNodes: ShotNodeType[]): ShotEdgeType[] {
+  const byEp = new Map<number, ShotNodeType[]>()
+  for (const n of shotNodes) {
+    const ep = Number(n.data?.episode) || 1
+    const list = byEp.get(ep) ?? []
+    list.push(n)
+    byEp.set(ep, list)
+  }
+  const out: ShotEdgeType[] = []
+  for (const list of byEp.values()) {
+    list.sort((a, b) => String(a.data?.no ?? '').localeCompare(String(b.data?.no ?? ''), undefined, { numeric: true }))
+    for (let i = 1; i < list.length; i++) {
+      out.push({
+        id: `seq-${list[i - 1].id}-${list[i].id}`,
+        source: list[i - 1].id,
+        target: list[i].id,
+        type: 'shot',
+        data: { relation: 'cut' },
+      })
+    }
+  }
+  return out
+}
+
 function Shell() {
   const saved = useMemo(loadSaved, [])
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars' | 'table' | 'prompts' | 'script' | 'settings'>('board')
+  const [view, setView] = useState<'board' | 'chars' | 'assets' | 'table' | 'prompts' | 'script' | 'settings'>('board')
   const [projectName, setProjectName] = useState('')
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
+  const [readyProject, setReadyProject] = useState('')
+  /** 剧本页是否有未保存分集：切项目/全剧拆角色前检查 */
+  const [scriptDirty, setScriptDirty] = useState(false)
+  const projectEpochRef = useRef(0)
   /** 当前集：镜头表 / 提示词共用 */
   const [epNo, setEpNo] = useState(1)
   /** 工作台保存后自增，用来刷新集栏的镜数 */
@@ -169,6 +292,8 @@ function Shell() {
   const [assReady, setAssReady] = useState(false)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
+  const [assets, setAssets] = useState<ProjectAsset[]>([])
+  const assetsSnapRef = useRef('')
   const { fitView, setCenter, getZoom } = useReactFlow()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
@@ -192,15 +317,126 @@ function Shell() {
 
   // 项目选择必须在 App 层引导：否则先进入「提示词」标签时 projectName 还是空，
   // 工作台加载不到数据、按钮全灰（实测踩到过）
-  useEffect(() => {
-    listProjects()
-      .then(({ projects }) => {
-        setProjectName((cur) => cur || projects[0]?.name || '')
-      })
-      .catch(() => {
-        /* 没有项目目录时不阻塞画布使用 */
-      })
+  const reloadProjects = useCallback(async () => {
+    try {
+      const { projects: ps } = await listProjects()
+      setProjects(ps)
+      return ps
+    } catch {
+      setProjects([])
+      return [] as ProjectSummary[]
+    }
   }, [])
+
+  useEffect(() => {
+    reloadProjects().then((ps) => {
+      setProjectName((cur) => cur || ps[0]?.name || '')
+    })
+  }, [reloadProjects])
+
+  /** 切项目：剧本有未保存分集时先确认；切换期间禁止写回旧数据 */
+  const changeProject = useCallback(
+    (next: string) => {
+      if (next === projectName) return
+      if (scriptDirty && !window.confirm('剧本页有未保存的分集，切换项目会丢失。继续？')) return
+      setReadyProject('')
+      setProjectName(next)
+    },
+    [projectName, scriptDirty],
+  )
+
+  /** 离开剧本页也保护未保存分集；确认后才允许卸载剧本组件 */
+  const changeView = useCallback(
+    (next: typeof view) => {
+      if (next === view) return
+      if (
+        view === 'script' &&
+        scriptDirty &&
+        !window.confirm('剧本页有未保存的分集，离开会丢失。继续？')
+      ) {
+        return
+      }
+      setScriptDirty(false)
+      setView(next)
+    },
+    [view, scriptDirty],
+  )
+
+  /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
+  useEffect(() => {
+    const epoch = ++projectEpochRef.current
+    let alive = true
+    setReadyProject('')
+    setSelId(null)
+    if (!projectName) {
+      setNodes(initialNodes)
+      setEdges(initialEdges)
+      setCharacters(defaultCharacters)
+      setAssets([])
+      setEpNo(1)
+      syncedRef.current = new Map()
+      charSnapRef.current = JSON.stringify(defaultCharacters.map(toProject))
+      assetsSnapRef.current = '[]'
+      return () => {
+        alive = false
+      }
+    }
+    ;(async () => {
+      try {
+        const p = await getProject(projectName)
+        if (!alive || epoch !== projectEpochRef.current) return
+        const shots = (p.shots ?? []) as ProjectShot[]
+        const stored = loadProjectSaved(projectName, shots)
+        const storedNodes = stored?.nodes ?? []
+        const storedAssets = storedNodes.filter(
+          (n) => (n as unknown as { type?: string }).type === 'asset',
+        )
+        const hydrateShots = stored?.cleared !== true
+        const shotNodes = hydrateShots ? buildShotNodes(storedNodes, shots) : []
+        const projectAssets = (p.assets ?? []) as ProjectAsset[]
+        const assetCards: ShotNodeType[] = storedAssets.length
+          ? storedAssets
+          : (projectAssets.map((a, i) => ({
+              id: `asset-${uid()}`,
+              type: 'asset',
+              position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
+              data: { title: a.title, kind: a.kind, url: a.url, ...(a.designId ? { designId: a.designId } : {}) },
+            })) as unknown as ShotNodeType[])
+        const sheets = ((p.characters ?? []) as ProjectChar[]).map(toSheet)
+        const epSet = new Set<number>()
+        for (const e of p.episodes ?? []) epSet.add(Number(e.no) || 1)
+        for (const s of shots) epSet.add(Number(s.episode) || 1)
+        const maxEp = Math.max(1, ...epSet)
+        const wantedEp = Number(stored?.epNo) || 1
+
+        setNodes([...assetCards, ...shotNodes])
+        setEdges(stored?.edges?.length ? stored.edges : chainEdges(shotNodes))
+        setCharacters(sheets)
+        setAssets(projectAssets)
+        setEpNo(Math.min(Math.max(1, wantedEp), maxEp))
+        syncedRef.current = new Map()
+        for (const n of shotNodes) {
+          if (n.data.shotId) syncedRef.current.set(String(n.data.shotId), bizSignature(n.data))
+        }
+        charSnapRef.current = JSON.stringify(sheets.map(toProject))
+        assetsSnapRef.current = JSON.stringify(projectAssets)
+        setReadyProject(projectName)
+      } catch (e) {
+        if (!alive || epoch !== projectEpochRef.current) return
+        setNodes([])
+        setEdges([])
+        setCharacters([])
+        setAssets([])
+        setToast(`加载项目失败：${(e as Error).message}`)
+        window.setTimeout(() => setToast(''), 3200)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+    // 只在项目切换时加载；setNodes/setEdges 是稳定 setter，放进依赖会重复拉项目覆盖拆角色结果
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName])
 
   // 恢复上次停留的集：只做一次，避免与后续切换打架
   useEffect(() => {
@@ -397,6 +633,14 @@ function Shell() {
         setToast('先绑定一个项目')
         return
       }
+      if (readyProject !== projectName) {
+        setToast('项目还在加载，稍后再试')
+        return
+      }
+      if (scope === 'script' && scriptDirty) {
+        setToast('剧本页有未保存的分集，先保存再拆角色')
+        return
+      }
       setExtracting(scope)
       const t0 = Date.now()
       try {
@@ -412,24 +656,32 @@ function Shell() {
               ]
                 .filter(Boolean)
                 .join('\n\n')
-        const shotText =
-          scope === 'episode'
-            ? digestShots(
-                nodesRef.current
-                  .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === epNo)
-                  .map((n) => ({
-                    no: n.data.no,
-                    cast: n.data.cast,
-                    dialogue: n.data.dialogue,
-                    prompt: n.data.prompt,
-                  })),
-              )
-            : ''
+        const projectShotText = digestShots(
+          ((p.shots ?? []) as ProjectShot[])
+            .filter((s) => (Number(s.episode) || 1) === epNo)
+            .map((s) => ({
+              no: s.no,
+              cast: s.cast,
+              dialogue: dialogueToText(s.dialogue),
+              prompt: s.keyframe_prompt || s.desc,
+            })),
+        )
+        const canvasShotText = digestShots(
+          nodesRef.current
+            .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === epNo)
+            .map((n) => ({
+              no: n.data.no,
+              cast: n.data.cast,
+              dialogue: n.data.dialogue,
+              prompt: n.data.prompt,
+            })),
+        )
+        const shotText = scope === 'episode' ? projectShotText || canvasShotText : ''
         if (!sceneText.trim() && !shotText.trim()) {
           throw new Error(
             scope === 'episode'
-              ? `第 ${epNo} 集还没有剧本场次或分镜，先去「剧本」页拆集 / 「镜头表」拆镜`
-              : '项目里没有剧本素材（source 与场次都是空的）',
+              ? `第 ${epNo} 集还没有镜头。先在「镜头表」拆镜，或把项目镜头推到画布。`
+              : '当前项目没有剧本素材（source 与分集场次都为空）。先去「剧本」页生成并保存分集，或切换到有剧本的项目。',
           )
         }
         const r = await callText<{ characters?: unknown[] }>({
@@ -463,51 +715,12 @@ function Shell() {
         setExtracting('')
       }
     },
-    [extracting, projectName, epNo, stagePick],
+    [extracting, projectName, readyProject, scriptDirty, epNo, stagePick],
   )
-
-  // 角色以 project.json 为准：绑定项目后加载进来，替换掉 localStorage 的那份
-  useEffect(() => {
-    if (!projectName) return
-    let alive = true
-    getProject(projectName)
-      .then((p) => {
-        if (!alive) return
-        setAssets((p.assets ?? []) as ProjectAsset[])
-        const list = (p.characters ?? []) as ProjectChar[]
-        if (list.length > 0) {
-          // 项目文件里可能没有图（历史数据 / dataURL 不落盘），此时保留本地已有的图，
-          // 否则每次刷新三视图都会"消失"
-          const prev = charactersRef.current
-          const sheets = list.map((c) => {
-            const s = toSheet(c)
-            const old = prev.find((x) => x.id === s.id || x.name === s.name)
-            if (!old) return s
-            return {
-              ...s,
-              image: s.image || old.image,
-              candidates: s.candidates?.length ? s.candidates : old.candidates,
-              activeIdx: s.activeIdx ?? old.activeIdx,
-            }
-          })
-          setCharacters(sheets)
-          charSnapRef.current = JSON.stringify(sheets.map(toProject))
-        } else {
-          // 项目里还没角色：把画布现有的写上去，建立单一真相源
-          const seed = charactersRef.current.map(toProject)
-          charSnapRef.current = JSON.stringify(seed)
-          patchProject(projectName, { characters: seed }).catch(() => {})
-        }
-      })
-      .catch(() => {})
-    return () => {
-      alive = false
-    }
-  }, [projectName])
 
   // 角色改动回写（防抖 + 快照比对，避免首屏把整份角色重写一遍）
   useEffect(() => {
-    if (!projectName) return
+    if (!projectName || readyProject !== projectName) return
     const payload = characters.map(toProject)
     const sig = JSON.stringify(payload)
     if (sig === charSnapRef.current) return
@@ -516,7 +729,7 @@ function Shell() {
       patchProject(projectName, { characters: payload }).catch(() => {})
     }, 1200)
     return () => window.clearTimeout(t)
-  }, [characters, projectName])
+  }, [characters, projectName, readyProject])
 
   // 把角色的外观锚点追加到当前镜头提示词末尾；同一角色重复注入只保留一份
   const injectCharacter = useCallback(
@@ -697,21 +910,33 @@ function Shell() {
   }, [characters, charPos, shownNodes])
 
   /** 素材库（DB assets 表）：画布素材卡是它的视图，结构化的场景/道具在这里 */
-  const [assets, setAssets] = useState<ProjectAsset[]>([])
-  const assetsSnapRef = useRef('')
-
   /** 素材卡：混在 nodes 状态里持久化（type==='asset'），不受集过滤，始终显示 */
   const assetNodes = useMemo(
     () => nodes.filter((n) => (n as unknown as AssetNodeType).type === 'asset') as unknown as ShotNodeType[],
     [nodes],
   )
 
+  /** 已发布的设定 id：素材页据此显示「已在画布/更新」 */
+  const onCanvasDesignIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const n of assetNodes) {
+      const d = n.data as unknown as { designId?: string }
+      if (d.designId) ids.add(d.designId)
+    }
+    return ids
+  }, [assetNodes])
+
   /** 画布素材卡 → 素材库（DB assets 表）：卡片只是视图，数据落库才能跨会话/跨集复用 */
   useEffect(() => {
-    if (!projectName) return
+    if (!projectName || readyProject !== projectName) return
     const cards = assetNodes.map((a) => {
-      const d = a.data as unknown as { kind?: string; title?: string; url?: string }
-      return { kind: d.kind || 'image', title: d.title || '', url: d.url || '' }
+      const d = a.data as unknown as { kind?: string; title?: string; url?: string; designId?: string }
+      return {
+        kind: d.kind || 'image',
+        title: d.title || '',
+        url: d.url || '',
+        ...(d.designId ? { designId: d.designId } : {}),
+      }
     })
     const sig = JSON.stringify(cards)
     if (sig === assetsSnapRef.current) return
@@ -725,12 +950,12 @@ function Shell() {
 
   /** 首次打开（画布上没有素材卡）时，用素材库把卡片补回来 */
   useEffect(() => {
-    if (!projectName || assets.length === 0 || assetNodes.length > 0) return
+    if (!projectName || readyProject !== projectName || assets.length === 0 || assetNodes.length > 0) return
     const cards = assets.map((a, i) => ({
       id: `asset-${uid()}`,
       type: 'asset',
       position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
-      data: { title: a.title, kind: a.kind, url: a.url },
+      data: { title: a.title, kind: a.kind, url: a.url, ...(a.designId ? { designId: a.designId } : {}) },
     })) as unknown as ShotNodeType[]
     setNodes((ns) => [...ns, ...cards])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1167,6 +1392,79 @@ function Shell() {
     [setNodes, fitView],
   )
 
+  /**
+   * 素材设定 → 画布：按 designId 幂等 upsert。
+   * 已存在的卡只更新标题/类型/图片，保留位置和连线；新卡放在分镜上方的素材带。
+   */
+  const pushDesigns = useCallback(
+    (list: DesignSheet[]) => {
+      const withImage = list.filter((d) => Boolean(d.image))
+      const skipped = list.length - withImage.length
+      if (withImage.length === 0) {
+        setToast(skipped ? `跳过 ${skipped} 张无图素材；先生成设定图` : '先生成设定图，再加入画布')
+        window.setTimeout(() => setToast(''), 2400)
+        return
+      }
+      const byId = new Map(withImage.map((d) => [d.id, d]))
+      const existing = new Set<string>()
+      for (const n of nodesRef.current) {
+        if ((n as unknown as AssetNodeType).type !== 'asset') continue
+        const d = n.data as unknown as { designId?: string }
+        if (d.designId) existing.add(d.designId)
+      }
+      const fresh = withImage.filter((d) => !existing.has(d.id))
+      const updated = withImage.length - fresh.length
+      const base = nodesRef.current.filter(
+        (n) => (n as unknown as AssetNodeType).type === 'asset',
+      ).length
+
+      setNodes((prev) => {
+        const out = prev.map((n) => {
+          if ((n as unknown as AssetNodeType).type !== 'asset') return n
+          const data = n.data as unknown as { designId?: string }
+          const design = data.designId ? byId.get(data.designId) : undefined
+          if (!design) return n
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              title: design.name,
+              kind: design.kind,
+              url: design.image,
+              designId: design.id,
+            },
+          }
+        })
+        let i = 0
+        for (const design of fresh) {
+          const slot = base + i++
+          out.push({
+            id: `asset-${uid()}`,
+            type: 'asset',
+            position: {
+              x: 80 + (slot % 4) * 250,
+              y: -560 - Math.floor(slot / 4) * 180,
+            },
+            data: {
+              title: design.name,
+              kind: design.kind,
+              url: design.image,
+              designId: design.id,
+            },
+          } as unknown as ShotNodeType)
+        }
+        return out
+      })
+
+      setToast(
+        `已加入 ${fresh.length} 个素材${updated ? ` · 更新 ${updated}` : ''}${skipped ? ` · 跳过 ${skipped} 张无图` : ''}`,
+      )
+      window.setTimeout(() => setToast(''), 2600)
+      window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.5, duration: 400 }), 80)
+    },
+    [setNodes, fitView],
+  )
+
   /** 打开角色上画布；本集一条名单都没有时明确告知，而不是静默无反应 */
   const toggleChars = useCallback(() => {
     const next = !charsOn
@@ -1186,7 +1484,7 @@ function Shell() {
    * cast 不在 bizSignature 里 → 不会触发无谓写回。
    */
   useEffect(() => {
-    if (!charsOn || !projectName) return
+    if (!charsOn || !projectName || readyProject !== projectName) return
     const missing = nodesRef.current.filter((n) => n.data.shotId && !(n.data.cast ?? []).length)
     if (missing.length === 0) return
     let alive = true
@@ -1210,13 +1508,13 @@ function Shell() {
     return () => {
       alive = false
     }
-  }, [charsOn, projectName, setNodes])
+  }, [charsOn, projectName, readyProject, setNodes])
 
   /** 画布侧改动 → 写回 project.json。
    * 只在有实质性业务字段变化时才写，且靠快照对比避免首屏把所有镜头重写一遍。
    */
   useEffect(() => {
-    if (!projectName || view !== 'board') return
+    if (!projectName || readyProject !== projectName || view !== 'board') return
     if (syncedRef.current.size === 0) return
     const timer = window.setTimeout(() => {
       const changed: ProjectShot[] = []
@@ -1234,7 +1532,7 @@ function Shell() {
       })
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [nodes, projectName, view])
+  }, [nodes, projectName, readyProject, view])
 
   const charImages = useMemo(() => {
     const m: Record<string, string> = {}
@@ -1573,22 +1871,20 @@ function Shell() {
       const pick = available.find((v) => v.id === node.data.voiceName) ?? available[0]
       patch(id, { voiceState: 'running', voiceError: undefined, voiceName: pick.id })
 
-      // 一镜多说话人：按行拆开，各自用角色的音色；只有一行就走单句
+      // 一镜多说话人：按行拆开，各自用角色的音色；单行也要剥掉「角色名：」前缀
       const lines = parseDialogue(text)
-      const multi = lines.length > 1
       const usable = (v?: string) => (v && available.some((x) => x.id === v) ? v : undefined)
-      const payload = multi
+      const voiceOf = (speaker: string) =>
+        usable(charactersRef.current.find((c) => c.name === speaker)?.voiceId) ?? pick.id
+      const payload = lines.length > 1
         ? {
-            lines: lines.map((l) => {
-              const ch = charactersRef.current.find((c) => c.name === l.speaker)
-              return {
-                text: l.text,
-                voice: usable(ch?.voiceId) ?? pick.id,
-                rate: node.data.voiceRate ?? 180,
-              }
-            }),
+            lines: lines.map((l) => ({
+              text: l.text,
+              voice: voiceOf(l.speaker),
+              rate: node.data.voiceRate ?? 180,
+            })),
           }
-        : { text, voice: pick.id, rate: node.data.voiceRate ?? 180 }
+        : { text: lines[0]?.text ?? text, voice: voiceOf(lines[0]?.speaker ?? ''), rate: node.data.voiceRate ?? 180 }
 
       try {
         const r = await generateVoice({ ...payload, modelKey: modelPick.audio })
@@ -1703,14 +1999,16 @@ function Shell() {
 
   const resetAll = () => {
     try {
-      localStorage.removeItem(STORAGE_KEY)
+      if (projectName) localStorage.removeItem(projectCanvasKey(projectName))
+      else localStorage.removeItem(STORAGE_KEY)
     } catch {
       /* ignore */
     }
-    setNodes(initialNodes)
-    setEdges(initialEdges)
+    setNodes(projectName ? [] : initialNodes)
+    setEdges(projectName ? [] : initialEdges)
     setSelId(null)
     setTool('none')
+    syncedRef.current = new Map()
     window.setTimeout(() => fitView({ padding: 0.12, minZoom: 0.66, duration: 400 }), 60)
   }
 
@@ -1736,18 +2034,25 @@ function Shell() {
   }
 
   useEffect(() => {
+    if (!projectName || readyProject !== projectName) return
     const t = window.setTimeout(() => {
       try {
         localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ nodes, edges, characters, cleared: nodes.length === 0, epNo }),
+          projectCanvasKey(projectName),
+          JSON.stringify({
+            nodes,
+            edges,
+            characters,
+            cleared: !nodes.some((n) => n.data?.shotId),
+            epNo,
+          }),
         )
       } catch {
         /* 图片过大超出配额时静默失败，不影响使用 */
       }
     }, 400)
     return () => window.clearTimeout(t)
-  }, [nodes, edges, characters, epNo])
+  }, [nodes, edges, characters, epNo, projectName, readyProject])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1793,23 +2098,28 @@ function Shell() {
             <span className="brand-sub">React Flow × Konva</span>
           </div>
 
+          <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
+
           <div className="viewtabs">
-            <button className={view === 'script' ? 'on' : ''} onClick={() => setView('script')}>
+            <button className={view === 'script' ? 'on' : ''} onClick={() => changeView('script')}>
               剧本
             </button>
-            <button className={view === 'chars' ? 'on' : ''} onClick={() => setView('chars')}>
+            <button className={view === 'chars' ? 'on' : ''} onClick={() => changeView('chars')}>
               角色
             </button>
-            <button className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>
+            <button className={view === 'assets' ? 'on' : ''} onClick={() => changeView('assets')}>
+              素材
+            </button>
+            <button className={view === 'table' ? 'on' : ''} onClick={() => changeView('table')}>
               镜头表
             </button>
-            <button className={view === 'prompts' ? 'on' : ''} onClick={() => setView('prompts')}>
+            <button className={view === 'prompts' ? 'on' : ''} onClick={() => changeView('prompts')}>
               提示词
             </button>
-            <button className={view === 'board' ? 'on' : ''} onClick={() => setView('board')}>
+            <button className={view === 'board' ? 'on' : ''} onClick={() => changeView('board')}>
               画布
             </button>
-            <button className={view === 'settings' ? 'on' : ''} onClick={() => setView('settings')} title="大模型 / 技能规则包 / 存储">
+            <button className={view === 'settings' ? 'on' : ''} onClick={() => changeView('settings')} title="大模型 / 技能规则包 / 存储">
               设置
             </button>
           </div>
@@ -1873,6 +2183,8 @@ function Shell() {
             <span className="board-count">{projectName || '未选项目'}</span>
           ) : view === 'settings' ? (
             <span className="board-count">设置</span>
+          ) : view === 'assets' ? (
+            <span className="board-count">场景 / 道具</span>
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
           )}
@@ -1881,7 +2193,7 @@ function Shell() {
         </header>
 
         {/* 画布也按集过滤，所以集栏必须在画布上也能用，否则切不了集、也看不出当前是哪一集 */}
-        {(view === 'board' || view === 'table' || view === 'prompts' || view === 'script') && (
+        {(view === 'board' || view === 'table' || view === 'prompts' || view === 'script' || view === 'assets') && (
           <EpisodeBar
             projectName={projectName}
             epNo={epNo}
@@ -1893,7 +2205,8 @@ function Shell() {
         {view === 'table' ? (
           <ShotTable
             projectName={projectName}
-            setProjectName={setProjectName}
+            setProjectName={changeProject}
+            onProjectsChanged={reloadProjects}
             onCanvas={onCanvasIds}
             epNo={epNo}
             settings={appSettings}
@@ -1914,7 +2227,8 @@ function Shell() {
             settings={appSettings}
             stagePick={stagePick}
             onPickStage={pickStageModel}
-            onGotoShotTable={() => setView('table')}
+            onDirtyChange={setScriptDirty}
+            onGotoShotTable={() => changeView('table')}
             onSaved={() => setEpVersion((v) => v + 1)}
             toast={(m) => {
               setToast(m)
@@ -1941,6 +2255,23 @@ function Shell() {
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2800)
+            }}
+          />
+        ) : view === 'assets' ? (
+          <AssetBoard
+            projectName={projectName}
+            epNo={epNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
+            imageModelKey={modelPick.image}
+            onPickImageModel={(key) => pickModelKey('image', key)}
+            onCanvasDesignIds={onCanvasDesignIds}
+            onPush={pushDesigns}
+            price={price}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
             }}
           />
         ) : view === 'chars' ? (

@@ -979,6 +979,35 @@ kbd {
   font-family: var(--font-mono);
 }
 
+.topbar-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  flex: 0 0 auto;
+  max-width: 260px;
+}
+
+.topbar-project > span {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.topbar-project select {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+  cursor: pointer;
+  max-width: 210px;
+}
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed;
@@ -1221,6 +1250,58 @@ kbd {
 
 .char-actions .btn-ghost {
   flex: 0 0 auto;
+}
+
+/* ---------- asset design board ---------- */
+.asset-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 1320px;
+  margin: 0 auto 16px;
+}
+
+.asset-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.asset-tabs > button.on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-ink);
+}
+
+.asset-tabs > button span {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  text-align: center;
+}
+
+.asset-tabs-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.design-sheet.prop {
+  aspect-ratio: 1 / 1;
+}
+
+.design-card .char-en {
+  white-space: pre-wrap;
 }
 
 /* ---------- photo overlay: video stage ---------- */

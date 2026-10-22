@@ -51,4 +51,5 @@
 - `APP_URL=http://127.0.0.1:5280 node verify-video-ref-ui.mjs`：通过（设置页、Inspector、出片请求、Files API mock、webm 转码、1.0 首帧/多图/抽帧回归）。
 - `openspec validate --strict`：通过。
 - 未跑完整 `verify-all.mjs`：当前本地项目库没有 `recycle` 项目，`verify-videoref-multi.mjs` / `verify-schedule3d.mjs` 依赖它；等价的 1.0 首帧/多图/抽帧路径已在新 UI 测试里覆盖。
-- 5.3 真实 2.0 冒烟：待执行（按“测试用 1.0”的约定，没有自动消耗 2.0 额度）。
+- 5.3 真实 2.0 冒烟：2026-10-21 第一次尝试被鉴权拦住。`~/.canghe-skills/.env` 与设置里的 3 个 Key 都是 `ark-` 前缀的 Agent Plan Key：标准 `/api/v3/files` 与 `/api/v3/contents/generations/tasks` 均返回 401 `AuthenticationError`；Agent Plan 基座 `/api/plan/v3` 没有 Files API（404），`doubao-seedance-2-0-260128` 返回 `UnsupportedModel`。请求没有进入视频生成，未消耗 2.0 额度。需要换成标准 Ark Key（具备 Seedance 2.0 + Files API 权限）后重跑。
+- 冒烟用的真实 3D 调度视频已生成：`public/videos/schedule-1792591517891-2d036e.mp4`（3.03s / 960×540 / 30fps），可直接复用。

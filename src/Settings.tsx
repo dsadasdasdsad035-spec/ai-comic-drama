@@ -65,14 +65,21 @@ const KIND_META: { kind: ProviderKind; label: string }[] = [
 const RULE_META = [
   { key: 'script', title: '剧本守则', source: 'script-to-manga', hint: '挂在「生成分集」的系统提示词后' },
   { key: 'character', title: '角色一致性铁律', source: 'character-design-sheet', hint: '三视图/外观锚点生成' },
+  {
+    key: 'asset',
+    title: '素材守则',
+    source: 'script-to-manga / workrally / character-design-sheet',
+    hint: '挂在「拆场景/道具」的系统提示词后',
+  },
   { key: 'shot', title: '拆镜守则', source: 'script-to-manga / storyboard-creation', hint: '挂在「拆镜」的系统提示词后' },
   { key: 'prompt', title: '提示词规范', source: 'video-prompting-guide', hint: '挂在「生成提示词」的系统提示词后' },
 ] as const
 
-/** 四个生成环节的默认模型：只列文本族，空 = 沿用「文本 · 常规」默认 */
+/** 五个生成环节的默认模型：只列文本族，空 = 沿用「文本 · 常规」默认 */
 const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'script', label: '剧本（拆集）', hint: '原著 → 分集剧本' },
   { stage: 'character', label: '角色（拆角色）', hint: '剧本/分镜 → 角色外观锚点' },
+  { stage: 'asset', label: '素材（拆场景/道具）', hint: '剧本/分镜 → 场景空镜与关键道具' },
   { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 调度也用它' },
   { stage: 'prompt', label: '提示词（首帧/视频）', hint: '镜头 → keyframe_prompt / video_prompt' },
 ]
@@ -320,7 +327,7 @@ export default function Settings({ toast, onSaved }: Props) {
           <header className="st-sec-head">
             <h3>生成环节默认模型</h3>
             <span className="st-hint">
-              剧本 / 角色 / 镜头表 / 提示词各自选一个文本模型；工作台里还能临时改，手选只保存在本机。空着 =
+              剧本 / 角色 / 素材 / 镜头表 / 提示词各自选一个文本模型；工作台里还能临时改，手选只保存在本机。空着 =
               用「文本 · 常规」默认。
             </span>
           </header>
@@ -329,6 +336,7 @@ export default function Settings({ toast, onSaved }: Props) {
               <label key={s.stage} className="st-field">
                 <span>{s.label}</span>
                 <select
+                  data-stage-model-select={s.stage}
                   value={stageModels[s.stage] || ''}
                   onChange={(e) => {
                     const next = { ...stageModels }

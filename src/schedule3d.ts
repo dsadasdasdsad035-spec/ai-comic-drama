@@ -199,6 +199,10 @@ export function buildScheduleScene(layout: ShotLayout, opts: ScheduleOptions = {
     const look = new THREE.Vector3().lerpVectors(midLook, focus, Math.min(1, ease * 1.6))
     look.x += Math.sin(k * Math.PI * 2) * 0.15
     cam.lookAt(look)
+    // 镜头最终推到机位旁，机位标签会占满画面，推近时淡出
+    const camLabelMat = camTag.material as THREE.SpriteMaterial
+    camLabelMat.opacity = Math.min(1, Math.max(0, (cam.position.distanceTo(camTag.position) - 1.8) / 1.2))
+    camTag.visible = camLabelMat.opacity > 0.01
     renderer.render(scene, cam)
   }
   render(0)

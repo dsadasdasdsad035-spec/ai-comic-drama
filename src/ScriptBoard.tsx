@@ -18,6 +18,8 @@ type Props = {
   settings: AppSettings | null
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
+  /** 未保存状态报给 App：切项目/全剧拆角色前要检查 */
+  onDirtyChange?: (dirty: boolean) => void
   /** 跳去镜头表拆这一集 */
   onGotoShotTable: () => void
   onSaved: () => void
@@ -39,6 +41,7 @@ export default function ScriptBoard({
   settings,
   stagePick,
   onPickStage,
+  onDirtyChange,
   onGotoShotTable,
   onSaved,
   toast,
@@ -54,6 +57,11 @@ export default function ScriptBoard({
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [elapsed, setElapsed] = useState<number | null>(null)
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
 
   const load = useCallback(async () => {
     if (!projectName) return
@@ -80,6 +88,10 @@ export default function ScriptBoard({
   }, [projectName])
 
   const generate = async () => {
+    if (!projectName) {
+      toast('先在顶栏选择项目，再生成分集')
+      return
+    }
     if (!source.trim()) {
       toast('先把原著粘到左栏')
       return
@@ -141,7 +153,10 @@ export default function ScriptBoard({
   }
 
   const save = async () => {
-    if (!projectName) return
+    if (!projectName) {
+      toast('先在顶栏选择项目，再保存分集')
+      return
+    }
     setSaving(true)
     try {
       await patchProject(projectName, { source, logline, episodes, style })
@@ -223,11 +238,11 @@ export default function ScriptBoard({
           <button
             className="btn primary"
             onClick={generate}
-            disabled={genning || !source.trim() || !hasTextModels(settings)}
+            disabled={genning || !source.trim() || !hasTextModels(settings) || !projectName}
           >
             {genning ? '生成分集中…' : episodes.length > 0 ? '重新生成分集' : '生成分集'}
           </button>
-          <button className="btn" onClick={save} disabled={saving || !dirty}>
+          <button className="btn" onClick={save} disabled={saving || !dirty || !projectName}>
             {saving ? '保存中…' : dirty ? '保存' : '已保存'}
           </button>
           <button className="btn" onClick={addEpisode} title="手动加一集（也可以重新生成分集）">

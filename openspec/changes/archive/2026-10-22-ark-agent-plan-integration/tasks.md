@@ -6,8 +6,10 @@
 - [x] 1.2 给 `AppSettings` 增加 `presetsVersion`，在读取设置时一次性合并缺失的新渠道/模型，不覆盖现有 `defaults`。验证：用没有 `presetsVersion` 的旧 settings 读取后出现新预设且默认值不变；保存后删除一个预设，重新读取不会复活。
 - [x] 1.3 图片路由把 `ark-plan` 视为方舟协议（参考图可用），文本路由走既有 OpenAI 兼容分支。验证：新增 `verify-agent-plan.mjs`，用本地 mock 服务承载 `chat/completions` 与 `images/generations`，确认两个请求命中正确路径且参考图字段保留。
 - [x] 1.4 确认视频/视频参考默认模型仍绑定标准 `ark`，`ark-plan` 不出现在视频渠道列表。验证：设置页视频组只列标准方舟；`GET /api/settings` 的 `defaults.video/videoRef` 仍指向 `ark-video/ark-video-ref`。
-- [x] 1.5 把 `DEFAULT_DEFAULTS` 切到 Agent Plan 初始默认（文本/高质量文本/图片/三视图/配音），视频/视频参考仍标准 `ark`；Key 允许为空。验证：用临时 `SB_PROJECTS_DIR` 启动全新实例，`GET /api/settings` 默认指向 Agent Plan 且两个新渠道无 Key；不填 Key 调 `/api/text` 返回 `no-key`；已有本地设置默认不被覆盖。
-- [x] 1.6 渠道 Key 解析改为“设置库优先，其次本地 `.env` / 环境变量”：`ark-plan` 读 `ARK_AGENT_PLAN_API_KEY` / `ARK_PLAN_API_KEY` / `VOLC_API_KEY`，`volc-tts` 读 `VOLC_TTS_API_KEY` / `ARK_AGENT_PLAN_API_KEY` / `ARK_PLAN_API_KEY` / `VOLC_API_KEY`。验证：临时实例清空渠道 Key 后，仍能用 `~/.canghe-skills/.env` 的 `ARK_AGENT_PLAN_API_KEY` 调通文本与 TTS 测试。
+- [x] 1.5 把 `DEFAULT_DEFAULTS` 切到 MiniMax（文本/高质量文本/配音）与 Agent Plan（图片/三视图）初始默认，视频/视频参考仍标准 `ark`；Key 允许为空。验证：用临时 `SB_PROJECTS_DIR` 启动全新实例，`GET /api/settings` 默认指向 MiniMax/Agent Plan 且新渠道无 Key；不填 Key 调 `/api/text` 返回 `no-key`；已有本地设置默认不被覆盖。
+- [x] 1.6 渠道 Key 解析改为“设置库优先，其次本地 `.env` / 环境变量”：`ark-plan` 读 `ARK_AGENT_PLAN_API_KEY` / `ARK_PLAN_API_KEY` / `VOLC_API_KEY`，`volc-tts` 读 `VOLC_TTS_API_KEY` / `ARK_AGENT_PLAN_API_KEY` / `ARK_PLAN_API_KEY` / `VOLC_API_KEY`，`minimax` 读 `MINIMAX_API_KEY`。验证：临时实例清空渠道 Key 后，仍能用 `~/.canghe-skills/.env` 的 `ARK_AGENT_PLAN_API_KEY` 调通文本与 TTS 测试。
+- [x] 1.7 新增/更新 MiniMax 预设：`minimax-text` / `minimax-text-pro` 用 `MiniMax-M3`，`minimax-tts` 用 `speech-2.8-hd`；MiniMax 音色不在静态表时回落到 `male-qn-qingse`。验证：默认文本 200，默认配音生成 mp3，四个静态音色均可用，不再报 `2054 voice id not exist`。
+- [x] 1.8 修复 MiniMax 拆镜空 content：文本统一走 `/chat/completions`，`MiniMax-M3` 的 JSON 请求传 `thinking: {type:"disabled"}`，空 content 返回 finish/usage。验证：真实拆镜 prompt 通过 `/api/text` 返回 16 个镜头，不再报“不是合法 JSON”。
 
 ## 2. 渠道测试
 
@@ -36,8 +38,10 @@
 - `node verify-agent-plan.mjs`：全部通过（预设、Agent Plan 文本/图片路由、视频默认仍走标准 ark、ark-plan 测试、volc-tts 测试、音色列表）。
 - `node verify-volc-tts.mjs` 与 `node verify-volc-tts-route.mjs`：全部通过（多块音频拼接、结束标记、扣减/401/业务错误、单句 mp3 落盘、多说话人拼接为 m4a）。
 - `node verify-presets-migration.mjs`：v1 → v2 一次性合并、默认值不变、删除预设后不复活。
-- 全新实例（临时 `SB_PROJECTS_DIR`）：默认文本/高质量/图片/三视图/配音指向 Agent Plan，两个新渠道无 Key；不填 Key 时文本/图片返回 `no-key`、配音返回缺 Key；音色列表正常。已有本地设置仍保留自己的默认值与 Key。
-- 本地 Key 兜底：临时实例的渠道 Key 为空时，`~/.canghe-skills/.env` 里的 `ARK_AGENT_PLAN_API_KEY` 会被自动使用；文本默认请求 200，`ark-plan` 与 `volc-tts` 渠道测试均通过。
+- 全新实例（临时 `SB_PROJECTS_DIR`）：默认文本/高质量/配音指向 MiniMax，图片/三视图指向 Agent Plan，各新渠道无 Key；不填 Key 时文本/图片返回 `no-key`、配音返回缺 Key；音色列表正常。已有本地设置仍保留自己的默认值与 Key。
+- MiniMax 实测：默认文本 `MiniMax-M3` 返回 200；3 集生成约 30s / 3,073 completion tokens（Agent Plan lite 同请求约 116s / 5,891 tokens）；默认配音 `speech-2.8-hd` 生成 1.18s mp3；`male-qn-qingse` / `female-shaonv` / `male-qn-jingying` / `female-yujie` 四个音色均可用；无效音色回落到 `male-qn-qingse`，不再报 2054。
+- 拆镜复现：M3 默认 thinking 把 8192 token 全部用于 reasoning（content=0，80s 后报“不是合法 JSON”）；关闭 thinking 后同一 prompt 13.5s 返回 14 镜，应用 `/api/text` 34.6s 返回 16 镜。
+- 本地 Key 兜底：临时实例的渠道 Key 为空时，`~/.canghe-skills/.env` 里的 `ARK_AGENT_PLAN_API_KEY` / `MINIMAX_API_KEY` 会被自动使用；文本默认请求 200，`ark-plan`、`volc-tts`、`minimax` 渠道测试均通过。
 - UI：Playwright 实测切换 volc-tts / minimax-tts / eleven-tts，音色列表、引擎标签与无音色禁用状态均正确。
 - `npm run build`：通过。
 - 真实链路：Agent Plan 文本 200（返回“好”）、Seedream 图片 200（2048x2048）、火山 TTS 200（0.84s mp3）。验证后已恢复设置，未把 Key 留在库里；扣减开关当前已生效。

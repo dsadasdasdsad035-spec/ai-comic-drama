@@ -74,7 +74,24 @@ CREATE TABLE IF NOT EXISTS assets (
   url      TEXT DEFAULT '',
   note     TEXT DEFAULT '',
   tags     TEXT DEFAULT '[]',
+  design_id TEXT DEFAULT '',
   sort     INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS designs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  design_id  TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  refs       TEXT DEFAULT '[]',
+  summary_cn TEXT DEFAULT '',
+  prompt_en  TEXT DEFAULT '',
+  keywords   TEXT DEFAULT '[]',
+  image      TEXT DEFAULT '',
+  candidates TEXT DEFAULT '[]',
+  active_idx INTEGER,
+  sort       INTEGER DEFAULT 0,
+  UNIQUE(project_id, design_id)
 );
 CREATE TABLE IF NOT EXISTS episodes (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,15 +170,18 @@ function open(root) {
 
 /** 老库补列：SCHEMA 只在新建时生效，已有库缺列就走 ALTER */
 function ensureColumns() {
-  const cols = new Set(db.prepare('PRAGMA table_info(characters)').all().map((r) => r.name))
-  const need = [
+  const ensure = (table, need) => {
+    const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name))
+    for (const [name, def] of need) {
+      if (!cols.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`)
+    }
+  }
+  ensure('characters', [
     ['image', "TEXT DEFAULT ''"],
     ['candidates', "TEXT DEFAULT '[]'"],
     ['active_idx', 'INTEGER'],
-  ]
-  for (const [name, def] of need) {
-    if (!cols.has(name)) db.exec(`ALTER TABLE characters ADD COLUMN ${name} ${def}`)
-  }
+  ])
+  ensure('assets', [['design_id', "TEXT DEFAULT ''"]])
 }
 
 export function dbPath(root) {
@@ -378,6 +398,22 @@ function assemble(p) {
       url: a.url || '',
       note: a.note || '',
       tags: JSON.parse(a.tags || '[]'),
+      ...(a.design_id ? { designId: a.design_id } : {}),
+    }))
+  const designs = db
+    .prepare('SELECT * FROM designs WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((d) => ({
+      id: d.design_id,
+      kind: d.kind || 'scene',
+      name: d.name || '',
+      refs: JSON.parse(d.refs || '[]'),
+      summaryCn: d.summary_cn || '',
+      promptEn: d.prompt_en || '',
+      keywords: JSON.parse(d.keywords || '[]'),
+      ...(d.image ? { image: d.image } : {}),
+      ...(d.candidates && d.candidates !== '[]' ? { candidates: JSON.parse(d.candidates || '[]') } : {}),
+      ...(d.active_idx == null ? {} : { activeIdx: Number(d.active_idx) }),
     }))
   const episodes = db
     .prepare('SELECT * FROM episodes WHERE project_id = ? ORDER BY sort, no')
@@ -415,6 +451,7 @@ function assemble(p) {
     updated_at: p.updated_at,
     characters,
     assets,
+    designs,
     episodes,
     shots,
   }
@@ -469,7 +506,7 @@ export function writeProject(root, name, data = {}) {
     db.prepare('DELETE FROM assets WHERE project_id = ?').run(pid)
     for (const [i, a] of data.assets.entries()) {
       db.prepare(
-        'INSERT INTO assets (project_id,kind,title,url,note,tags,sort) VALUES (?,?,?,?,?,?,?)',
+        'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,sort) VALUES (?,?,?,?,?,?,?,?)',
       ).run(
         pid,
         String(a?.kind || 'image'),
@@ -477,6 +514,32 @@ export function writeProject(root, name, data = {}) {
         String(a?.url || ''),
         String(a?.note || ''),
         JSON.stringify(a?.tags ?? []),
+        String(a?.designId || ''),
+        i,
+      )
+    }
+  }
+
+  if (data.designs !== undefined) {
+    if (!Array.isArray(data.designs)) throw new Error('designs 必须是数组')
+    db.prepare('DELETE FROM designs WHERE project_id = ?').run(pid)
+    for (const [i, d] of data.designs.entries()) {
+      db.prepare(
+        `INSERT INTO designs
+         (project_id,design_id,kind,name,refs,summary_cn,prompt_en,keywords,image,candidates,active_idx,sort)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        pid,
+        String(d?.id || ''),
+        String(d?.kind || 'scene'),
+        String(d?.name || ''),
+        JSON.stringify(d?.refs ?? []),
+        String(d?.summaryCn || ''),
+        String(d?.promptEn || ''),
+        JSON.stringify(d?.keywords ?? []),
+        String(d?.image || ''),
+        JSON.stringify(d?.candidates ?? []),
+        typeof d?.activeIdx === 'number' ? d.activeIdx : null,
         i,
       )
     }

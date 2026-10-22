@@ -32,7 +32,7 @@
 
 ### Requirement: 提供经过验证的 Agent Plan 模型预设
 
-系统 SHALL 预置当前套餐可用的 Agent Plan 模型：文本使用 `doubao-seed-2.1-lite-260915` 与 `doubao-seed-2.1-pro-260915`，图片与三视图使用 `doubao-seedream-5-0-pro-260628`。全新实例的初始默认值 MUST 指向这些 Agent Plan 模型与火山 TTS；已有设置中保存的默认值 MUST 保持不变。Key 解析 MUST 优先使用设置库中的渠道 Key，其次使用本地 `.env` / 环境变量中的专用 Key；两者都没有时才返回明确缺 Key 错误。预设 MUST NOT 使用已标记下线的模型 ID。
+系统 SHALL 预置当前套餐可用的 Agent Plan 模型：文本使用 `doubao-seed-2.1-lite-260915` 与 `doubao-seed-2.1-pro-260915`，图片与三视图使用 `doubao-seedream-5-0-pro-260628`。图片与三视图的初始默认 MUST 指向 Agent Plan；文本、高质量文本与配音的初始默认 MUST 指向 MiniMax（见下一条）。已有设置中保存的默认值 MUST 保持不变。Key 解析 MUST 优先使用设置库中的渠道 Key，其次使用本地 `.env` / 环境变量中的专用 Key；两者都没有时才返回明确缺 Key 错误。预设 MUST NOT 使用已标记下线的模型 ID。
 
 #### Scenario: 文本预设可用
 
@@ -49,19 +49,19 @@
 - **WHEN** 用户查看 Agent Plan 预设
 - **THEN** 看不到截图中标记“即将下线”的模型作为预设默认值
 
-#### Scenario: 全新实例默认 Agent Plan
+#### Scenario: 全新实例图片默认 Agent Plan
 
 - **WHEN** 应用在一个没有保存过设置的环境里启动
-- **THEN** 文本、高质量文本、图片、三视图与配音的默认模型分别指向对应的 Agent Plan / 火山 TTS 模型，视频与视频参考仍指向标准方舟
+- **THEN** 图片与三视图默认指向 Agent Plan 的 Seedream 模型，视频与视频参考仍指向标准方舟
 
 #### Scenario: Key 留空不串号
 
-- **WHEN** 初始默认模型已指向 Agent Plan，但渠道和本地配置都没有 API Key
-- **THEN** 文本、图片或配音请求返回明确的缺 Key 错误，不回退使用标准方舟 Key
+- **WHEN** 初始默认模型所属渠道和本地配置都没有 API Key
+- **THEN** 文本、图片或配音请求返回明确的缺 Key 错误，不回退使用其他渠道的 Key
 
 #### Scenario: 本地配置有 Key
 
-- **WHEN** 渠道本身没有填 Key，但本地 `.env` 或环境变量里有 `ARK_AGENT_PLAN_API_KEY` / `VOLC_TTS_API_KEY`
+- **WHEN** 渠道本身没有填 Key，但本地 `.env` 或环境变量里有对应渠道的专用 Key（如 `MINIMAX_API_KEY`、`ARK_AGENT_PLAN_API_KEY`、`VOLC_TTS_API_KEY`）
 - **THEN** 文本、图片或配音请求使用本地配置的 Key，不返回缺 Key 错误
 
 #### Scenario: 设置库 Key 优先
@@ -73,6 +73,35 @@
 
 - **WHEN** 已有设置中保存了旧的文本或图片默认模型
 - **THEN** 升级后继续使用已保存的默认值，不被新的初始默认值覆盖
+
+### Requirement: MiniMax 作为文本与配音的默认渠道
+
+系统 SHALL 预置 MiniMax M3 文本模型与 MiniMax speech-2.8-hd 音频模型；全新实例的文本、高质量文本、配音默认 MUST 指向 MiniMax。MiniMax Key MUST 优先取设置库，其次取本地 `.env` / 环境变量的 `MINIMAX_API_KEY`。MiniMax-M3 的结构化 JSON 请求 MUST 使用 OpenAI 兼容 `/chat/completions` 并关闭 thinking；返回空 content 时 MUST 返回包含 finish/usage 的可读错误。选中的 MiniMax 音色不在可用表时 MUST 回落到默认音色，不得把其他渠道的音色名发给 MiniMax。
+
+#### Scenario: 全新实例文本默认 MiniMax
+
+- **WHEN** 应用在一个没有保存过设置的环境里启动
+- **THEN** 文本与高质量文本默认分别指向 `minimax-text` / `minimax-text-pro`，模型为 `MiniMax-M3`
+
+#### Scenario: 配音默认 MiniMax
+
+- **WHEN** 应用在一个没有保存过设置的环境里启动
+- **THEN** 配音默认指向 `minimax-tts`，模型为 `speech-2.8-hd`，音色列表包含 MiniMax 音色
+
+#### Scenario: 无效音色回落
+
+- **WHEN** 配音请求传入 `Tingting` 或其他渠道的音色名
+- **THEN** 系统改用 `male-qn-qingse` 提交，不返回 `2054 voice id not exist`
+
+#### Scenario: 结构化输出关闭思考
+
+- **WHEN** 拆镜/拆集等 JSON 请求使用 `MiniMax-M3`
+- **THEN** 请求发往 `/chat/completions` 且 `thinking.type` 为 `disabled`，返回非空 content；若 content 为空，错误信息包含 finish_reason 与 usage
+
+#### Scenario: 本地 Key
+
+- **WHEN** MiniMax 渠道本身没有填 Key，但本地 `.env` 或环境变量里有 `MINIMAX_API_KEY`
+- **THEN** 文本与配音请求使用本地 Key，不返回缺 Key 错误
 
 ### Requirement: 按能力显式路由且不做自动回退
 

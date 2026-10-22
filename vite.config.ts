@@ -92,8 +92,8 @@ type RulePack = { enabled: boolean; text: string }
 type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 
 /** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
-type Stage = 'script' | 'character' | 'shot' | 'prompt'
-const STAGES: Stage[] = ['script', 'character', 'shot', 'prompt']
+type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt'
+const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt']
 
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
@@ -186,7 +186,7 @@ const DEFAULT_PROVIDERS: Provider[] = [
     label: 'MiniMax',
     kind: 'minimax',
     baseUrl: 'https://api.minimaxi.com/v1',
-    note: '文本 chatcompletion_v2 / 语音 t2a_v2',
+    note: '文本 chat/completions / 语音 t2a_v2',
     caps: ['text', 'audio'],
   },
   {
@@ -1514,7 +1514,7 @@ function seedreamProxy(): Plugin {
             } else if (p.kind === 'minimax') {
               // MiniMax 没有稳定的 models 端点，用 1 token 文本对话验鉴权
               const m = s.models.find((x) => x.provider === p.id && x.cap === 'text')?.model || 'MiniMax-M1'
-              endpoint = `${base}/text/chatcompletion_v2`
+              endpoint = `${base}/chat/completions`
               init = {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1522,6 +1522,7 @@ function seedreamProxy(): Plugin {
                   model: m,
                   messages: [{ role: 'user', content: 'ping' }],
                   max_tokens: 1,
+                  ...(m === 'MiniMax-M3' ? { thinking: { type: 'disabled' } } : {}),
                 }),
               }
             } else if (p.kind === 'ark-plan') {
@@ -1711,8 +1712,8 @@ function seedreamProxy(): Plugin {
               const cur = readProject(rootDir, name)
               const patch: Record<string, unknown> = {}
               if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
-              // 角色 / 集 / 原著 / 元信息整体替换（都是人改的结果，不是 LLM 增量）
-              for (const k of ['characters', 'episodes', 'assets']) {
+              // 角色 / 场景道具设定 / 集 / 素材整体替换（都是人改的结果，不是 LLM 增量）
+              for (const k of ['characters', 'designs', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]
@@ -1723,7 +1724,7 @@ function seedreamProxy(): Plugin {
                 patch[k] = body[k]
               }
               if (Object.keys(patch).length === 0) {
-                throw new Error('POST 需要 shots / characters / episodes / source 等字段之一')
+                throw new Error('POST 需要 shots / characters / designs / episodes / source 等字段之一')
               }
               const saved = writeProject(rootDir, name, patch)
               res.end(
@@ -1805,13 +1806,14 @@ function seedreamProxy(): Plugin {
               throw new Error('ElevenLabs 渠道不支持文本生成，请换文本模型')
             }
             const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
-            // MiniMax 走自家 chatcompletion_v2，其余是标准 OpenAI /chat/completions
-            const endpoint = kind === 'minimax' ? `${base}/text/chatcompletion_v2` : `${base}/chat/completions`
+            // MiniMax 也走 OpenAI 兼容 /chat/completions；这个端点支持 thinking 开关
+            const endpoint = `${base}/chat/completions`
 
             const messages: { role: string; content: string }[] = []
             if (system) messages.push({ role: 'system', content: system })
             messages.push({ role: 'user', content: prompt })
 
+            const isMiniMaxM3 = kind === 'minimax' && /^MiniMax-M3$/i.test(model)
             const r = await fetch(endpoint, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1820,6 +1822,8 @@ function seedreamProxy(): Plugin {
                 messages,
                 max_tokens: Number(body.maxTokens) || 8192,
                 temperature: body.temperature ?? 0.7,
+                // M3 的 reasoning 会吃掉整个输出预算；结构化 JSON 直接关掉思考
+                ...(isMiniMaxM3 ? { thinking: { type: wantJson ? 'disabled' : 'adaptive' } } : {}),
               }),
             })
             const raw = await r.text()
@@ -1827,6 +1831,16 @@ function seedreamProxy(): Plugin {
 
             const j = JSON.parse(raw)
             const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
+            if (!text.trim()) {
+              const finish = j?.choices?.[0]?.finish_reason
+              const usage = j?.usage
+              const reasoning = usage?.completion_tokens_details?.reasoning_tokens
+              throw new Error(
+                `模型没有返回内容（finish=${finish || '?'}，completion=${usage?.completion_tokens ?? '?'}${
+                  reasoning != null ? `，reasoning=${reasoning}` : ''
+                }）`,
+              )
+            }
             const meta = {
               model,
               modelKey: entry.key,
@@ -1914,8 +1928,12 @@ function seedreamProxy(): Plugin {
             for (const [i, t] of times.entries()) {
               const name = `sched-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}.jpg`
               const out = path.join(dir, name)
-              await runFfmpeg(['-y', '-ss', String(t), '-i', local, '-frames:v', '1', '-q:v', '2', out])
-              if (fs.existsSync(out) && fs.statSync(out).size > 512) urls.push(`/generated/${name}`)
+              try {
+                await runFfmpeg(['-y', '-ss', String(t), '-i', local, '-frames:v', '1', '-q:v', '2', out])
+                if (fs.existsSync(out) && fs.statSync(out).size > 512) urls.push(`/generated/${name}`)
+              } catch {
+                /* 时间点可能落在最后一帧之后；跳过这一帧，别让整次抽帧失败 */
+              }
             }
             if (urls.length === 0) throw new Error('抽帧失败')
             res.end(JSON.stringify({ ok: true, urls, duration: Math.round(dur * 100) / 100 }))

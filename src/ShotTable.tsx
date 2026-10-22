@@ -8,7 +8,6 @@ import {
   mergeProjectShots,
   type AppSettings,
   type ProjectShot,
-  type ProjectSummary,
   type Stage,
 } from './api'
 import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
@@ -19,6 +18,8 @@ import { endTask, startTask } from './tasks'
 type Props = {
   projectName: string
   setProjectName: (v: string) => void
+  /** 项目列表变化（新建项目后）通知顶栏刷新 */
+  onProjectsChanged?: () => void | Promise<unknown>
   /** 已在画布上的 shotId */
   onCanvas: Set<string>
   onPush: (shots: ProjectShot[]) => void
@@ -38,6 +39,7 @@ const pad = (n: number) => String(n).padStart(2, '0')
 export default function ShotTable({
   projectName,
   setProjectName,
+  onProjectsChanged,
   onCanvas,
   onPush,
   toast,
@@ -47,7 +49,6 @@ export default function ShotTable({
   onPickStage,
   onSaved,
 }: Props) {
-  const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [root, setRoot] = useState('')
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [style, setStyle] = useState('')
@@ -89,7 +90,6 @@ export default function ShotTable({
   useEffect(() => {
     listProjects()
       .then(({ root: r, projects: ps }) => {
-        setProjects(ps)
         setRoot(r)
         if (!projectName && ps[0]) setProjectName(ps[0].name)
       })
@@ -134,8 +134,7 @@ export default function ShotTable({
     setMaking(true)
     try {
       await createProject(name, { title: newTitle.trim() || name })
-      const { projects: ps } = await listProjects()
-      setProjects(ps)
+      await onProjectsChanged?.()
       setProjectName(name)
       setCreating(false)
       setNewName('')
@@ -249,18 +248,6 @@ export default function ShotTable({
   return (
     <main className="wb">
       <div className="wb-bar">
-        <div className="wb-field">
-          <span className="label">项目</span>
-          <select value={projectName} onChange={(e) => setProjectName(e.target.value)}>
-            {projects.length === 0 && <option value="">（无）</option>}
-            {projects.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.title} · {p.shots} 镜
-              </option>
-            ))}
-          </select>
-        </div>
-
         <button className="btn-mini" onClick={() => setCreating((v) => !v)} title="新建一个空项目">
           {creating ? '取消' : '+ 新建'}
         </button>

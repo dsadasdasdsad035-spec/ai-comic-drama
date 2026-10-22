@@ -1,8 +1,8 @@
-import { CHARACTER_RULES, PROMPT_WRITING_RULES, SCRIPT_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
+import { ASSET_RULES, CHARACTER_RULES, PROMPT_WRITING_RULES, SCRIPT_RULES, SHOT_LANGUAGE_RULES } from './knowledge'
 import type { RulePack } from './api'
 
 /**
- * 四段系统提示词的「基础部分」（不含技能规则）。设置页可对规则包改写/停用，
+ * 五段系统提示词的「基础部分」（不含技能规则）。设置页可对规则包改写/停用，
  * 生成时用 *Sys() 构造；同名大写常量 = 基础 + 默认规则，保持与 Python 侧一字不差。
  */
 export const STORYBOARD_BASE = `你是分镜师。把一集剧本拆成可直接生产的镜头列表。
@@ -32,9 +32,10 @@ export function withRule(base: string, pack?: RulePack): string {
 }
 
 /** 默认规则包（来自技能库摘录），设置页首次展示/重置用 */
-export const DEFAULT_RULES: Record<'script' | 'character' | 'shot' | 'prompt', RulePack> = {
+export const DEFAULT_RULES: Record<'script' | 'character' | 'asset' | 'shot' | 'prompt', RulePack> = {
   script: { enabled: true, text: SCRIPT_RULES },
   character: { enabled: true, text: CHARACTER_RULES },
+  asset: { enabled: true, text: ASSET_RULES },
   shot: { enabled: true, text: SHOT_LANGUAGE_RULES },
   prompt: { enabled: true, text: PROMPT_WRITING_RULES },
 }
@@ -52,6 +53,8 @@ export const promptSys = (rules?: Record<string, RulePack>) =>
   withRule(PROMPT_BASE, normalizeRules(rules).prompt)
 export const characterSys = (rules?: Record<string, RulePack>) =>
   withRule(CHARACTER_BASE, normalizeRules(rules).character)
+export const assetSys = (rules?: Record<string, RulePack>) =>
+  withRule(ASSET_BASE, normalizeRules(rules).asset)
 
 /**
  * 与 manga-pipeline/prompts.py 保持一字不差的系统提示词。
@@ -129,6 +132,34 @@ export const CHARACTER_BASE = `你是角色设定师，为 AI 生图做「外观
 
 输出 JSON：{"characters": [ ... ]}`
 export const CHARACTER_SYS = CHARACTER_BASE + CHARACTER_RULES
+
+export const ASSET_BASE = `你是场景与道具设定师。从剧本场次和分镜里拆出可复用的场景与关键道具，供后续 AI 生图做参考。
+
+只做两类：
+- scenes：可复用的地点/空间，用于空镜设定，不是单个镜头的构图。
+- props：剧情关键道具，不是背景杂物或临时陈设。
+
+要求：
+- 合并同一地点/同一道具的多次出现；name 用稳定的中文名，不要按镜头重复起名。
+- refs 记录出现过的镜号（如 E01-S03）或分集场次；同一张卡的 refs 取并集。
+- summary_cn 写中文设定摘要（60-100 字）；prompt_en 写可直接生图的英文锚点（80-120 词，逗号分隔短语）。
+- keywords 给 3-5 个辨识度关键词。
+- 场景 prompt_en 不写人物和具体镜头；道具 prompt_en 不写手、人物和具体镜头。
+- 只输出 JSON，不要解释。
+
+输出 JSON：
+{
+  "scenes": [
+    {"name": "地下井道", "refs": ["E01-S13", "E01-S14"],
+     "summary_cn": "...", "prompt_en": "...", "keywords": ["..."]}
+  ],
+  "props": [
+    {"name": "机械义体手臂", "refs": ["E01-S03", "E01-S14"],
+     "summary_cn": "...", "prompt_en": "...", "keywords": ["..."]}
+  ]
+}`
+
+export const ASSET_SYS = ASSET_BASE + ASSET_RULES
 
 export const PROMPT_BASE = `你是 AI 影像提示词工程师，把分镜转成两类可直接执行的提示词。
 

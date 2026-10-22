@@ -14,13 +14,23 @@ npm run dev      # http://127.0.0.1:5273
 - `~/.canghe-skills/.env` → `ARK_API_KEY`（Seedream 出图 / Seedance 出片）
 - 任意上述 `.env` 或环境变量 → `ELEVENLABS_API_KEY`（可选，缺失则退回 macOS `say`）
 
+## 项目上下文
+
+顶栏的项目选择器是全站唯一数据边界：剧本、角色、镜头表、提示词和画布都只读写当前项目。
+
+- **剧本**：生成和保存都必须绑定项目；有未保存分集时切换项目或离开剧本页会先确认，保存后才写回项目。
+- **画布**：按项目存 `storyboard-canvas-v1:<project>`；切换项目时从该项目的 `project.shots` 水合，不再读写全局画布。旧全局画布会先备份到 `storyboard-canvas-v1:legacy-backup`，只迁移能归属当前项目的节点。
+- **拆角色**：全剧读项目 `source + episodes`；本集读当前集的 `project.shots`（cast / 台词 / 画面），不依赖浏览器里残留的画布节点。
+- **素材**：场景/道具设定存项目的 `designs`，和画布素材库分开；设定图可以单卡或批量发布成 `scene` / `prop` 素材卡。素材守则在设置页默认启用，按地点/道具去重，场景图固定空镜、道具图固定多角度隔离表。
+
 ## 能力
 
 | 区块 | 说明 |
 | --- | --- |
 | 分镜画布 | React Flow 卡片拓扑 + Konva 图层，可调坐标/景别/运镜/台词 |
 | 角色板 | 生成角色三视图，注入 `lookEn` 到分镜提示词保持一致性 |
-| 环节模型 | 剧本 / 角色 / 镜头表 / 提示词在设置页绑定默认模型，工作台可临时手选（本机记忆） |
+| 素材设定板 | 从本集/全剧拆场景与关键道具，生成空镜/道具参考图，单卡或批量加入画布 |
+| 环节模型 | 剧本 / 角色 / 素材 / 镜头表 / 提示词在设置页绑定默认模型，工作台可临时手选（本机记忆） |
 | AI 出图 | Seedream 4.5 多候选并发，选中的併入画布合成约束图 |
 | 图生视频 | Seedance 任务式生成 + 轮询，卡片内直出预览 |
 | 3D 调度参考 | 调度视频经方舟 Files API 上传后作为 `reference_video`（Seedance 2.0/2.5，默认关闭） |
@@ -49,11 +59,14 @@ npm run dev      # http://127.0.0.1:5273
 ```
 src/
   App.tsx            主布局 / 状态
+  ProjectSelect.tsx  顶栏全局项目选择
   ShotNode.tsx       分镜卡片（出图、出片、配音角标）
   Preview.tsx        连播预览 + 导出面板
   Inspector.tsx      右侧属性面板
   Timeline.tsx       底部时间轴
   CharacterBoard.tsx 角色板
+  AssetBoard.tsx     场景/道具素材设定板
+  designExtract.ts   素材摘要、拆解合并、空镜/道具提示词
   subtitles.ts       无 libass 时的字幕位图渲染
   vite.config.ts     同时作为 dev 后端（所有 API + ffmpeg 合成）
 verify-*.mjs         Playwright 端到端验证脚本（需先 npm run dev）
@@ -67,4 +80,6 @@ verify-*.mjs         Playwright 端到端验证脚本（需先 npm run dev）
 node verify-subs.mjs     # 配音 + 字幕 + 导出全链路
 node verify-video.mjs    # 图生视频
 node verify-voice.mjs    # 配音
+node verify-project-scope.mjs  # 项目切换 / 画布隔离 / 剧本守卫 / 拆角色数据源（自起临时库）
+node verify-asset-board.mjs    # 素材守则 / 场景道具拆解 / 生图约束 / 发布幂等 / A-B 隔离（自起临时库，mock 模型）
 ```
