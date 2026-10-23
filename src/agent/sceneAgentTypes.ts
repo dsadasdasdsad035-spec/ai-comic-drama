@@ -117,7 +117,6 @@ export type SceneAgentResult = {
 export const DEFAULT_AGENT_LIMITS = {
   maxCodeAttempts: 3,
   maxReviewAttempts: 2,
-  maxSteps: AGENT_LIMIT_DEFAULTS.maxSteps,
   totalMs: AGENT_LIMIT_DEFAULTS.totalSeconds * 1000,
   toolMs: 30_000,
   maxFrames: 5,

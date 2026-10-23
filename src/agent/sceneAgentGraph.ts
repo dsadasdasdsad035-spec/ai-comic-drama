@@ -17,6 +17,8 @@ import {
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
 import type { RunnableConfig } from '@langchain/core/runnables'
 import { createAgentEventBridge } from './sceneAgentEvents'
+import { checkSceneCode } from '../sceneCodeSanitize'
+import { codeHashOf } from '../sceneCodeFingerprint'
 import { resolveAgentLimits, type AgentRunLimits } from './agentLimits'
 
 const AgentState = Annotation.Root({
@@ -37,10 +39,12 @@ export type RunSceneAgentInput = {
   stagePick?: StagePick
   ask?: SceneCodeAsk
   requirements?: string[]
+  /** 可在本轮开始时作为运行基线的当前工作台代码 */
+  initialCode?: string
   /** 外部取消信号 */
   signal?: AbortSignal
   /** 仅供测试缩短超时；生产路径从 settings.agentLimits 解析 */
-  limits?: Partial<Pick<AgentRunLimits, 'maxSteps' | 'totalMs'>>
+  limits?: Partial<Pick<AgentRunLimits, 'totalMs'>>
 }
 
 function modelFacingResult(toolName: string, result: unknown): unknown {
@@ -87,11 +91,20 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
 
   const configured = resolveAgentLimits(input.settings)
   const limits = {
-    maxSteps: Math.max(1, Math.round(input.limits?.maxSteps ?? configured.maxSteps)),
     totalMs: Math.max(1, Math.round(input.limits?.totalMs ?? configured.totalMs)),
   }
   const timeoutMessage = `运行超时（${Math.round(limits.totalMs / 1000)} 秒）；可在设置页「Agent 运行上限」调整`
   const session = createSceneAgentSession()
+  const initialCode = String(input.initialCode || '').trim()
+  if (initialCode) {
+    const checked = checkSceneCode(initialCode)
+    if (checked.ok) {
+      session.code = checked.code
+      session.codeHash = await codeHashOf(checked.code)
+      session.lineCount = checked.code.split('\n').length
+      session.codeOrigin = 'baseline'
+    }
+  }
   const controller = new AbortController()
   const onExternalAbort = () => controller.abort()
   input.signal?.addEventListener('abort', onExternalAbort, { once: true })
@@ -110,6 +123,7 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
     [
       '你是当前镜头的 3D 场景 agent。只能通过工具操作当前镜头；不能访问网络、文件系统或保存。',
       '工作流：get_shot_context → set_scene_code → run_sandbox → capture_frames → review_frames → finish。',
+      '当前镜头已有有效代码时，如果用户只要求运行/验收，可以直接 run_sandbox；只有需要改变画面或场景时才先 set_scene_code。',
       '失败时根据工具错误修复代码，但不要伪造工具结果；完成前必须调用 finish。',
       '代码 ABI：必须定义 init(ctx)/renderAt(t)/dispose；所有可见对象必须加到 ctx.scene，镜头必须使用 ctx.camera；不要用 new THREE.Scene()/new THREE.PerspectiveCamera() 替换 ctx 提供的 scene/camera。',
       '代码必须多行书写，不要压成一行；renderAt(t) 用 t 驱动动画和相机环绕；至少添加一个可见 mesh。',
@@ -186,10 +200,6 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
       session.terminalError = `视觉验收达到 ${DEFAULT_AGENT_LIMITS.maxReviewAttempts} 次上限`
       return {}
     }
-    if (state.steps >= limits.maxSteps) {
-      session.terminalError = `agent 步骤达到上限（${limits.maxSteps}）；可在设置页「Agent 运行上限」调整`
-      return {}
-    }
     const ai = lastAiMessage(state.messages)
     if (!ai?.tool_calls?.length) {
       return {
@@ -214,7 +224,7 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
   }
   const routeAfterGate = (state: typeof AgentState.State): 'agent' | typeof END => {
     if (session.finished || session.terminalError) return END
-    if (state.steps >= limits.maxSteps) return END
+    if (state.steps >= 512) return END
     return 'agent'
   }
 
@@ -243,7 +253,7 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
       },
       {
         version: 'v2',
-        recursionLimit: Math.max(32, limits.maxSteps * 4 + 16),
+        recursionLimit: 512,
         signal: controller.signal,
       },
     )

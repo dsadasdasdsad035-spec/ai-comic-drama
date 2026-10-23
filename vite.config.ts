@@ -159,6 +159,11 @@ type ModelEntry = {
   supportsVideoRef?: boolean
   /** 2.5 需要显式指定 reference；2.0 留空 */
   videoRefTaskType?: 'reference'
+  /**
+   * DeepSeek Flash 混合推理开关：
+   * auto（默认）= 普通文本开思考、JSON/工具协议关思考；enabled/disabled = 强制。
+   */
+  thinking?: 'auto' | 'enabled' | 'disabled'
 }
 
 /** 计价（设置页可改；默认值为估算，对不上账单时按实际单价校准） */
@@ -277,6 +282,24 @@ const DEFAULT_MODELS: ModelEntry[] = [
     model: 'doubao-seed-evolving',
   },
   { key: 'ark-plan-text-deepseek', label: 'DeepSeek V4 Pro（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'deepseek-v4-pro' },
+  {
+    key: 'ark-plan-text-deepseek-flash',
+    label: 'DeepSeek Flash（Agent Plan · 混合推理）',
+    cap: 'text',
+    provider: 'ark-plan',
+    model: 'deepseek-v4-flash',
+    note: '普通文本启用思考，JSON / 工具协议自动关闭思考',
+    thinking: 'auto',
+  },
+  {
+    key: 'ark-plan-vision-deepseek-flash',
+    label: 'DeepSeek Flash Vision（Agent Plan · 混合推理）',
+    cap: 'vision',
+    provider: 'ark-plan',
+    model: 'deepseek-v4-flash',
+    note: '关键帧/参考板视觉理解；JSON 验收自动关闭思考',
+    thinking: 'auto',
+  },
   { key: 'ark-plan-text-kimi', label: 'Kimi K3（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'kimi-k3' },
   { key: 'ark-plan-text-glm', label: 'GLM 5.3（Agent Plan）', cap: 'text', provider: 'ark-plan', model: 'glm-5.3' },
   { key: 'deepseek-chat', label: 'DeepSeek Chat', cap: 'text', provider: 'deepseek', model: 'deepseek-chat' },
@@ -358,13 +381,17 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
 }
 
 /** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
-const CURRENT_PRESETS_VERSION = 3
+const CURRENT_PRESETS_VERSION = 5
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
 )
 /** v3：Seedance 2.x 视频参考模型；不改变默认 video 仍指向 1.0 */
 const V3_PRESET_MODEL_KEYS = new Set(['ark-video-2-0', 'ark-video-2-5'])
+/** v4：DeepSeek Flash 混合推理文本模型；不改变任何默认模型 */
+const V4_PRESET_MODEL_KEYS = new Set(['ark-plan-text-deepseek-flash'])
+/** v5：DeepSeek Flash 视觉模型；没有其它视觉模型时成为默认视觉候选 */
+const V5_PRESET_MODEL_KEYS = new Set(['ark-plan-vision-deepseek-flash'])
 
 function mergePresets(cur: AppSettings, version: number): AppSettings {
   if (version >= CURRENT_PRESETS_VERSION) return { ...cur, presetsVersion: version }
@@ -387,6 +414,20 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
     models = [
       ...models,
       ...DEFAULT_MODELS.filter((m) => V3_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
+    ]
+  }
+  if (version < 4) {
+    const modelKeys = new Set(models.map((m) => m.key))
+    models = [
+      ...models,
+      ...DEFAULT_MODELS.filter((m) => V4_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
+    ]
+  }
+  if (version < 5) {
+    const modelKeys = new Set(models.map((m) => m.key))
+    models = [
+      ...models,
+      ...DEFAULT_MODELS.filter((m) => V5_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
     ]
   }
   return { ...cur, providers, models, presetsVersion: CURRENT_PRESETS_VERSION }
@@ -414,6 +455,8 @@ function normalizeSettings(raw: any): AppSettings {
       const next: ModelEntry = { ...m, supportsVideoRef: Boolean(m.supportsVideoRef) }
       if (m.videoRefTaskType === 'reference') next.videoRefTaskType = 'reference'
       else delete next.videoRefTaskType
+      if (m.thinking === 'auto' || m.thinking === 'enabled' || m.thinking === 'disabled') next.thinking = m.thinking
+      else delete next.thinking
       return next
     })
     return mergePresets(
@@ -650,6 +693,31 @@ function providerKey(p?: Provider): string {
   if (p.kind === 'minimax') return readEnvKey('MINIMAX_API_KEY') || ''
   if (p.kind === 'openai') return readEnvKey('OPENAI_API_KEY') || ''
   return ''
+}
+
+/** DeepSeek Flash 的模型 ID 在官方渠道是 deepseek-flash，在 Agent Plan 是 deepseek-v4-flash */
+function isDeepSeekFlash(provider: Provider | undefined, model: string): boolean {
+  if (!/^deepseek-(?:v[\d.]+-)?flash(?:$|[-.])/i.test(String(model || '').trim())) return false
+  return (
+    provider?.id === 'ark-plan' ||
+    provider?.id === 'deepseek' ||
+    /deepseek\.com/i.test(String(provider?.baseUrl || ''))
+  )
+}
+
+/**
+ * DeepSeek Flash 混合推理：普通文本默认开思考，JSON / 工具协议默认关思考，
+ * 避免 reasoning 吃掉结构化输出的 token 预算。模型条目可显式覆盖。
+ */
+function deepSeekThinking(
+  entry: ModelEntry,
+  provider: Provider | undefined,
+  model: string,
+  wantJson: boolean,
+): 'enabled' | 'disabled' | undefined {
+  if (!isDeepSeekFlash(provider, model)) return undefined
+  if (entry.thinking === 'enabled' || entry.thinking === 'disabled') return entry.thinking
+  return wantJson ? 'disabled' : 'enabled'
 }
 
 function effImageModel(cap: 'image' | 'view' = 'image'): string {
@@ -1631,6 +1699,7 @@ function seedreamProxy(): Plugin {
                   model: m,
                   messages: [{ role: 'user', content: 'ping' }],
                   max_tokens: 1,
+                  ...(isDeepSeekFlash(p, m) ? { thinking: { type: 'disabled' } } : {}),
                 }),
               }
             } else if (p.kind === 'volc-tts') {
@@ -1725,6 +1794,7 @@ function seedreamProxy(): Plugin {
                   model: m,
                   messages: [{ role: 'user', content: 'ping' }],
                   max_tokens: 1,
+                  ...(isDeepSeekFlash(p, m) ? { thinking: { type: 'disabled' } } : {}),
                 }),
               })
             }
@@ -1910,6 +1980,7 @@ function seedreamProxy(): Plugin {
                 { type: 'image_url', image_url: { url: image } },
               ],
             })
+            const deepThink = deepSeekThinking(entry, provider, entry.model, Boolean(body.json))
             const r = await fetch(`${base}/chat/completions`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1918,6 +1989,7 @@ function seedreamProxy(): Plugin {
                 messages,
                 max_tokens: Number(body.maxTokens) || 1800,
                 temperature: 0.2,
+                ...(deepThink ? { thinking: { type: deepThink } } : {}),
               }),
             })
             const raw = await r.text()
@@ -1998,6 +2070,7 @@ function seedreamProxy(): Plugin {
                 { type: 'video_url', video_url: { url: video } },
               ],
             })
+            const deepThink = deepSeekThinking(entry, provider, entry.model, Boolean(body.json))
             const r = await fetch(`${base}/chat/completions`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -2006,6 +2079,7 @@ function seedreamProxy(): Plugin {
                 messages,
                 max_tokens: Number(body.maxTokens) || 1800,
                 temperature: 0.2,
+                ...(deepThink ? { thinking: { type: deepThink } } : {}),
               }),
             })
             const raw = await r.text()
@@ -2090,6 +2164,7 @@ function seedreamProxy(): Plugin {
             messages.push({ role: 'user', content: prompt })
 
             const isMiniMaxM3 = kind === 'minimax' && /^MiniMax-M3$/i.test(model)
+            const deepThink = deepSeekThinking(entry, provider, model, wantJson)
             const r = await fetch(endpoint, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -2100,6 +2175,7 @@ function seedreamProxy(): Plugin {
                 temperature: body.temperature ?? 0.7,
                 // M3 的 reasoning 会吃掉整个输出预算；结构化 JSON 直接关掉思考
                 ...(isMiniMaxM3 ? { thinking: { type: wantJson ? 'disabled' : 'adaptive' } } : {}),
+                ...(deepThink ? { thinking: { type: deepThink } } : {}),
               }),
             })
             const raw = await r.text()
@@ -2122,6 +2198,7 @@ function seedreamProxy(): Plugin {
               modelKey: entry.key,
               modelLabel: entry.label,
               provider: provider?.label || kind,
+              ...(deepThink ? { thinking: deepThink } : {}),
             }
             if (!wantJson) {
               res.end(JSON.stringify({ ok: true, text, ...meta }))

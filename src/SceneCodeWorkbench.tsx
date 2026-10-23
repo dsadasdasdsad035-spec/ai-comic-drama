@@ -1096,6 +1096,7 @@ export default function SceneCodeWorkbench({
                   onDraftCode={applyAgentDraft}
                   onOpenCode={() => switchSideTab('code')}
                   onToast={toast}
+                  currentCode={draftCode}
                   width={width}
                   height={height}
                   aspect={projectAspect}

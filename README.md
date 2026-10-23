@@ -90,11 +90,14 @@ function dispose() {}
 - `@langchain/langgraph` 的 `StateGraph` 管状态和工具循环；`ZCodeChatModel` 把现有 `/api/text` 包装成 JSON action 模型（`{content, tool_calls}`），不要求 provider 原生 tool calling。
 - 工具白名单只有 `get_shot_context`、`set_scene_code`、`run_sandbox`、`capture_frames`、`review_frames`、`finish`。没有 shell、网络、保存、渲染或写其他镜头的工具。
 - `set_scene_code` 只接受当前镜头完整代码；代码必须通过 `run_sandbox` 才进入工作台草稿。`capture_frames` 抓 5 个关键帧；`review_frames` 用视觉清单初筛；`finish` 必须已有沙箱通过，且视觉验收通过或明确转人工。
-- 运行上限可在设置页「Agent 运行上限」调整：最大执行步数默认 24（范围 12–120），总运行时长默认 300 秒（范围 60–1800）；步数按图执行节点计算，约 3 步对应一轮模型/工具循环。代码修复 3 次、视觉验收 2 次、单工具 30 秒、5 帧上限仍固定。超时会显示“运行超时”，用户取消仍显示“已取消”；两者都会释放沙箱，旧代码保持不变。
+- 运行只开放可配置的总运行时长：默认 300 秒（范围 60–1800），不再有用户可配置的步骤上限。代码修复 3 次、视觉验收 2 次、单工具 30 秒、5 帧预算仍固定；LangGraph 内部有不可配置的递归安全阀。总时长超时会显示“运行超时”，用户取消仍显示“已取消”；两者都会释放沙箱，旧代码保持不变。
+- 工作台当前镜头的有效代码会作为每轮 agent 的初始运行基线；已有代码时可以直接 `run_sandbox`，空镜头或无效草稿仍必须先 `set_scene_code`。
 - agent 执行由 `graph.streamEvents`（v2）驱动：浏览器内的模型轮次取自 `agent` 节点的链事件，工具生命周期取自 `on_tool_*`，代码/帧/验收/完成继续走工具领域事件；事件按 run id 和轮次去重。
 - 聊天展示每轮模型状态和面向用户的简短说明、工具开始/结束、代码摘要、帧、清单和摘要，不展示隐藏 chain-of-thought 或 reasoning token；模型 content 为空时仍显示“模型调用完成”。当前只消费每轮结束事件，不做 token 级打字流。
 - 聊天和代码两个页签在打开的工作台内保持挂载，切换到代码页签不会清空消息/帧/清单/滚动位置，也不会取消运行中的 agent；关闭工作台仍会结束会话并释放沙箱。聊天记录不跨关闭、刷新或项目切换持久化。
 - 不把帧的 base64 回灌给模型，模型只看到抓帧时间；工具参数中的完整代码和 data URL 会裁剪成摘要。
+- 聊天消息里的 fenced code block 默认折叠，只显示语言/行数和“展开代码”；完整代码仍在代码页签查看。
+
 - 当前镜上下文包含画面/运动提示词、出场角色、选中台词、景别/运镜、标记、场次、已选素材稳定键和媒体 brief；不会把其他镜头或项目素材写回当前镜。
 - 前端用 `@assistant-ui/react` 的 `ExternalStoreRuntime`、`Thread`、`Composer` 和 `makeAssistantToolUI`；视觉层在 `src/chat-ui/`，用 Tailwind v4 + shadcn primitives，样式通过 `.chat-ui` scoped token 映射现有日夜主题，不启用全局 preflight。面板懒加载，900px 以下默认收起参考栏，参考内容仍可从顶部按钮打开。
 - 「3D 代码」环节模型决定 agent 使用哪个文本模型；视觉模型缺失时 `review_frames` 返回「需人工验收」，不会伪造通过。真实模型必须遵守 JSON action 协议和沙箱 ABI；代码保持多行、使用 `ctx.scene`/`ctx.camera`。
@@ -118,6 +121,8 @@ function dispose() {}
 ### 模型设置
 
 设置页「模型表」增加 `视觉 · 视频理解`；「生成环节默认模型」增加 `3D 代码（生成/聊天）` 和 `视频理解（首次 3D）`。`3D 代码` 走文本族，未绑定则沿用文本默认；`视频理解` 只列声明 `videoVision` 的模型。没有代码模型时 AI 生成禁用，手写代码仍可运行。建议把 `3D 代码` 绑定到编码能力更强的模型（本机验收使用 `ark-plan-text-deepseek`）；首次试运行报错时会带错误自动修复一次，仍失败则保留旧代码。
+
+预置 `ark-plan-text-deepseek-flash`（DeepSeek Flash · `deepseek-v4-flash`）复用现有 Agent Plan Key。它是混合推理模型：普通文本默认开启思考；JSON / 工具协议（包括 3D agent 的 JSON action 和代码生成）自动关闭思考，避免 reasoning 吃掉结构化输出预算。模型条目上的 `thinking` 可显式覆盖为 `enabled` / `disabled`；默认 `auto` 不改变任何现有默认模型。另有 `ark-plan-vision-deepseek-flash` 用于参考板/关键帧视觉理解；agent 聊天里的 `review_frames` 会通过 `/api/vision` 调用它，JSON 验收同样自动关闭思考。`presetsVersion` 升到 5，旧设置只补一次新模型，已删除的预设不会复活。
 
 ### 明确不做
 
@@ -268,6 +273,7 @@ APP_URL=http://127.0.0.1:5280 node verify-agent-limits.mjs  # Agent 运行上限
 node verify-agent-limits-api.mjs  # Agent 运行上限设置的服务端 round-trip（自起临时库）
 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs  # 固定山/男女/双剑/环绕场景 + 4 秒 mp4
 AGENT_REAL=1 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs  # 真实 sceneCode 模型
+APP_URL=http://127.0.0.1:5280 node verify-deepseek-flash.mjs  # DeepSeek Flash：文本思考/JSON 关思考/视觉调用/设置页绑定
 node verify-3d-geometry.mjs    # 场景 sanitize / 走位校验 / 路径穿墙 / 插值 / 运镜文案 / 指纹
 node verify-3d-ai.mjs          # 场景/走位上下文 / 稳定 id / 修复一次 / 取消 / 兜底（mock ask）
 node verify-scene-blocking-api.mjs  # 场景布局与镜头场次/走位持久化 / 隔离 / 非法拒绝

@@ -2,87 +2,80 @@
 
 ## Context
 
-见 [proposal.md](proposal.md)。当前上限集中在 `DEFAULT_AGENT_LIMITS`（[sceneAgentTypes.ts](../../../src/agent/sceneAgentTypes.ts)），设置页只持久化模型、环节绑定、计价和规则。`state.steps` 是 LangGraph 图节点计数，每个 `agent -> tools -> gate` 循环约 3 步；本次保留这个语义，只在设置层开放它。
+见 [proposal.md](proposal.md)。当前 `configurable-agent-limits` 已经实现 `maxSteps` 设置和 gate 终止，但该值实际是 LangGraph 图节点计数，用户无法把它理解为工具调用或重试次数。总运行时长和用户取消仍需要保留。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 设置页可配置最大步数和总运行时长，保存到现有 settings SQLite，旧设置自动补默认值。
-- 运行时按保存值执行；达到步骤上限的错误包含当前值，总超时显示“运行超时”而不是“已取消”。
-- 输入有明确默认值和范围，避免无上限或明显无效配置。
-- 保持现有 3D agent 工具、沙箱和聊天 UI 契约不变。
+- 删除用户可见的步骤上限和 `agentLimits.maxSteps` 数据。
+- 保留可配置的总运行时长，默认 300 秒、范围 60–1800。
+- 总超时显示“运行超时”，用户取消显示“已取消”。
+- 用一个不可配置、取值较高的 LangGraph `recursionLimit` 作为框架安全阀，不把它包装成产品步骤上限。
+- 保持代码修复/验收预算和现有工具行为不变。
 
 **Non-Goals:**
 
-- 不做工作台按次覆盖；本次只做全局默认。
-- 不重算 `state.steps` 为模型轮次；设置文案说明约 3 步/轮。
-- 不开放代码修复次数、视觉验收次数、单工具超时或抓帧数量。
-- 不新增数据库表或迁移脚本；不改变模型渠道与 API Key 逻辑。
+- 不增加迭代/循环检测算法（本次先移除错误的步数设置，运行仍由总时长和取消约束）。
+- 不开放代码修复、验收、单工具或抓帧上限。
+- 不改变 agent 工具、聊天 UI 或项目数据。
+- 不把 `recursionLimit` 作为设置项或错误提示暴露给用户。
 
 ## Decisions
 
-### 1. 设置结构使用秒，运行时转换为毫秒
+### 1. 设置只保留总运行时长
 
-`AppSettings` 增加可选：
+`AppSettings.agentLimits` 收敛为：
 
 ```ts
 agentLimits?: {
-  maxSteps?: number
   totalSeconds?: number
 }
 ```
 
-默认 `{ maxSteps: 24, totalSeconds: 300 }`，范围分别为 `12–120` 和 `60–1800`。运行时把秒转换成毫秒；设置页直接显示秒，避免用户面对 `300000`。服务端和客户端各有一份轻量 normalize 逻辑（项目现有 `AppSettings` 也是双份声明），保证读旧数据、非法值和保存后回显一致。
+默认 300 秒，范围 60–1800。旧 JSON 中已有的 `maxSteps` 字段保留但不读取、不显示；保存时不再写回该字段。设置页删除最大执行步数输入和说明。
 
-### 2. 设置页新增独立“Agent 运行上限”区
+### 2. 不再按图节点数终止
 
-放在“生成环节默认模型”之后、“模型表”之前或“计价”之前，复用现有 `.st-grid` / `.st-field` 数字输入。两个字段：
+删除 `gate` 中的 `state.steps >= limits.maxSteps` 终止、`routeAfterGate` 的同条件，以及 `recursionLimit` 随 `maxSteps` 推导的逻辑。模型可以连续进行工具调用，直到：
 
-- 最大执行步数：hint 说明按图节点计，约 3 步/轮；低于默认值可能提前结束。
-- 总运行时长（秒）：hint 说明与“取消”不同，超时会终止并保留旧代码。
+- 总运行时长到期；
+- 用户取消；
+- 代码修复/视觉验收预算耗尽；
+- LangGraph 内部递归安全阀触发。
 
-保存继续走现有“保存”按钮和 `/api/settings`，不增加独立接口。
+### 3. LangGraph 内部安全阀固定且不暴露
 
-### 3. 运行时从 settings 解析一次并冻结本次运行
+LangGraph 必须有一个有限 `recursionLimit`；将其固定为 512（或一个足够高但有限的常量），只作为框架级异常保护，不作为设置项和正常流程的步骤预算。正常 5 分钟运行应由总时长先结束；若内部安全阀先触发，错误应显示为内部安全限制，而不是“agent 步骤达到上限”。
 
-新增轻量 `resolveAgentLimits(settings)`（客户端 normalization 的一部分），`runSceneAgent` 在开始处解析一次，后续 gate、路由和 `recursionLimit` 使用同一个值。这样运行中修改设置不会改变当前运行，避免半途改变上限。`runSceneAgent` 保留一个可选的 `limits` 注入点仅供测试缩短总超时；生产路径不传，始终从 settings 解析。
+### 4. 总超时和取消分流
 
-`maxSteps` 仍来自 `state.steps`；`recursionLimit` 继续按 `maxSteps * 4 + 16` 计算，保证 LangGraph 递归限制不小于业务上限。
-
-### 4. 总超时和用户取消分流
-
-当前 timer 触发 `controller.abort()`，随后被统一识别为 cancelled。新逻辑记录 `timedOut`：
+保留当前 timer 与 `timedOut` 标记：
 
 ```text
 timer fires -> timedOut = true -> abort
 external signal/user cancel -> timedOut = false -> abort
 ```
 
-最终结果：
-
 - `timedOut`：`error = "运行超时（N 秒）；可在设置页调整"`，不标记 cancelled。
-- 用户取消：保持 `cancelled`，显示“已取消”。
+- 用户取消：保持 cancelled。
 - 两者都不写入半成品，旧代码不变。
 
-步骤上限错误改为包含 `maxSteps` 和设置入口提示；不把错误静默截断。
+### 5. 其他预算保持常量
 
-### 5. 其他上限保持常量
-
-`maxCodeAttempts`、`maxReviewAttempts`、`toolMs`、`maxFrames` 继续使用 `DEFAULT_AGENT_LIMITS`。本次只处理用户遇到的步骤/总时长交互，减少设置页复杂度；如果后续需要开放，在同一 settings 结构上扩展。
+`maxCodeAttempts=3`、`maxReviewAttempts=2`、`toolMs=30s`、`maxFrames=5` 继续使用 `DEFAULT_AGENT_LIMITS`；它们是修复/验收/单工具预算，不是总图步骤。
 
 ## Risks / Trade-offs
 
-- [用户把最大步数调得很低] → 范围下限 12，且 hint 说明低于默认可能提前结束；设置本身不能保证任务完成。
-- [只调步数仍被 5 分钟截断] → 同时开放总时长并在设置页相邻展示，超时错误明确指向设置。
-- [旧设置没有字段] → normalize 使用默认值，保存时只补该字段，不覆盖模型、渠道、计价和规则。
-- [设置页和运行时 normalize 不一致] → 两侧共享同一组默认值和范围常量（允许双份声明时），并加设置保存/重载测试与运行时边界测试。
-- [步数语义被误解为模型轮次] → UI 和错误文案都写“图执行步数，约 3 步/轮”，不在本次改计数方式。
+- [没有步骤上限后模型持续循环] → 总运行时长仍是硬边界，用户可随时取消；本次不扩大为自动进展检测。
+- [内部 recursionLimit 先于总时长触发] → 使用足够高的固定常量和明确的内部错误文案；不把它当作正常产品限制。
+- [旧设置仍带 `maxSteps`] → 读取时忽略，保存时不写回；不迁移、不破坏其他设置。
+- [用户误以为总时长也是“调用次数”] → 设置标签只写“总运行时长（秒）”，不显示步骤/轮次。
+- [代码修复预算与总时长混淆] → 保留 3/2 的独立预算并在设置提示外保持文档说明。
 
 ## Migration Plan
 
-1. 在客户端和服务端设置类型/规范化中加入 `agentLimits`，旧数据读取时补默认值。
-2. 设置页加输入和保存；保存后回显规范化结果。
-3. 运行时解析设置，接入 gate、递归限制和 timer；补超时/取消分流。
-4. 加设置页、图运行时和错误文案测试，更新 README。
-5. 回滚时删除字段消费和 UI 区即可，数据库中的 `agentLimits` 作为未知 JSON 字段保留，不影响旧版本读取。
+1. 客户端/服务端设置移除 `maxSteps` normalizer 和 UI 输入，只保留 `totalSeconds`；旧字段不读取。
+2. 运行时移除 gate/route 的步骤判断，固定内部 `recursionLimit`。
+3. 更新超时/取消错误文案和测试：长序列不被步骤上限截断、总时长仍生效。
+4. 更新 README；回滚时恢复旧 `maxSteps` 字段和 gate，但旧设置中的 `totalSeconds` 可保留。

@@ -48,6 +48,8 @@ src/chat-ui/
   ChatViewport      原生滚动容器 + ThreadPrimitive.Viewport
   ChatMessage       用户/助手消息
   ChatStep          模型轮次
+  ChatText          普通文本 + fenced code block 拆分
+  ChatCodeBlock     默认折叠代码块
   ChatComposer      输入/发送/取消
   ChatEmpty         空状态
   tools/            各工具卡（代码、沙箱、帧、清单、结束）
@@ -88,7 +90,14 @@ chat-composer, chat-input
 
 先完成 Tailwind/shadcn 基础设施和组件，再替换 JSX，最后删除 `.cw-agent*` 旧样式。测试从类名断言逐步改为 `data-testid`/role，避免测试和实现互相绑死。
 
-### 6. 样式加载与构建
+### 6. 代码块默认折叠
+
+新增 `ChatText` 解析 assistant/step 文本中的 fenced code block（```lang ... ```），把普通文本和代码段拆开；代码段交给 `ChatCodeBlock`。`ChatCodeBlock` 使用 shadcn `Collapsible`（或等价的 Radix collapsible primitive），默认 `open=false`，首行显示语言、行数和“展开代码”，展开后显示 `<pre><code>`。
+
+不引入完整 Markdown 渲染器；只处理 fenced code，避免大依赖。`set_scene_code` 工具卡继续只显示行数/hash 和“查看代码”，完整代码始终在代码页签。
+
+### 7. 样式加载与构建
+
 
 聊天是懒加载 chunk。`chat.css` 由聊天入口 import，让 CSS 随 agent chunk 加载；Tailwind 只扫描 `src/chat-ui` 和 `SceneAgentChat`，不扫描全项目，减少无关 utilities。构建后检查主应用 CSS 不因聊天样式膨胀。
 
@@ -99,6 +108,7 @@ chat-composer, chat-input
 - [日夜主题出现第二套色板] → 所有 shadcn token 映射到现有变量，禁止默认主题覆盖；日夜截图验证。
 - [懒加载 CSS 未随 chunk 加载] → 在聊天入口 import `chat.css`，检查构建产物和实际打开面板后的样式。
 - [测试选择器大面积失效] → 先加 `data-chat-*` 稳定钩子，再迁移组件；保留 `.chat-ui` 外层。
+- [代码 fence 解析误伤普通文本/不完整 fence] → 只识别成对 fenced block，未闭合时按普通文本显示；单测覆盖多种语言和正文混排。
 - [shadcn 组件/依赖增加包体] → 只复制实际用到的 primitives，不引入大型 chat kit；比较 agent chunk 大小。
 - [Tailwind 类被全项目扫描导致 CSS 膨胀] → 配置 content/source 为 `src/chat-ui` 与 `SceneAgentChat`。
 
@@ -107,7 +117,8 @@ chat-composer, chat-input
 1. 增加 Tailwind/shadcn 配置、alias、`chat.css` 和最小 primitives。
 2. 建立 `src/chat-ui` 组件和稳定 `data-chat-*` 钩子，先并排渲染/替换单个工具卡。
 3. 替换 `SceneAgentChat` 的 JSX，保留 runtime/tool UI 注册和事件处理。
-4. 更新聊天测试选择器，删除旧 `.cw-agent*` 样式。
-5. 跑构建、聊天 UI/失败取消、工作台/沙箱/主题回归；比较包体和截图。
+4. 加 `ChatText`/`ChatCodeBlock`，聊天代码默认折叠；更新聊天工具卡/页签说明。
+5. 更新聊天测试选择器，删除旧 `.cw-agent*` 样式。
+6. 跑构建、聊天 UI/失败取消、工作台/沙箱/主题回归；比较包体和截图。
 
 回滚时恢复 `SceneAgentChat` 旧 JSX 和 `.cw-agent*` 样式、移除 Tailwind/shadcn 配置；agent runtime 和数据不变。

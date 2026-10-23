@@ -9,6 +9,8 @@ import path from 'node:path'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const NAME = `agent-ui-${Date.now()}`
+const evidence = 'openspec/changes/chat-ui-tailwind-shadcn/evidence'
+fs.mkdirSync(evidence, { recursive: true })
 let bad = 0
 const check = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ` | ${extra}` : ''}`)
@@ -70,8 +72,15 @@ const secondCalls = [
   { name: 'review_frames', args: { requirements: ['山体', '人物'] } },
   { name: 'finish', args: { summary: '切页签后完成' } },
 ]
+const baselineCalls = [
+  { name: 'run_sandbox', args: {} },
+  { name: 'capture_frames', args: { times: [0, 1, 2] } },
+  { name: 'review_frames', args: { requirements: ['山体', '人物'] } },
+  { name: 'finish', args: { summary: '当前基线运行完成' } },
+]
 let phase = 'first'
 let secondIndex = 0
+let baselineIndex = 0
 let delaySecond = false
 page.on('pageerror', (e) => { errors.push(e.message); console.log('PAGEERROR', e.message) })
 page.on('console', (m) => {
@@ -86,7 +95,10 @@ await page.route('**/api/text', async (route) => {
   textCalls.push(JSON.parse(route.request().postData() || '{}'))
   let c
   let content = '已完成'
-  if (phase === 'second') {
+  if (phase === 'baseline') {
+    c = baselineCalls[baselineIndex++]
+    content = baselineIndex === 1 ? '运行当前已有代码' : ''
+  } else if (phase === 'second') {
     c = secondCalls[secondIndex++]
     content = secondIndex === 1 ? '切换后继续执行' : ''
     if (delaySecond) {
@@ -96,7 +108,7 @@ await page.route('**/api/text', async (route) => {
   } else {
     const before = toolIndex
     c = calls[toolIndex++]
-    content = before === 0 ? '先读取当前镜头' : before === 1 ? '准备提交场景代码' : ''
+    content = before === 0 ? '先读取当前镜头\n```js\nconst a = 1\nconst b = 2\n```' : before === 1 ? '准备提交场景代码' : ''
   }
   return route.fulfill({
     contentType: 'application/json',
@@ -158,6 +170,14 @@ const panel = await page.locator('[data-chat-root]').innerText()
 check('工具卡按顺序出现', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('沙箱'), panel.slice(0, 600))
 check('模型轮次说明显示', panel.includes('第 1 轮') && panel.includes('先读取当前镜头'), panel.slice(0, 600))
 check('模型说明在工具卡之前', panel.indexOf('先读取当前镜头') < panel.indexOf('已读取镜头上下文'), panel.slice(0, 600))
+check('代码块默认折叠', await page.locator('[data-chat-code]').count() === 1 && await page.locator('[data-chat-code]').getAttribute('data-open') === 'false')
+await page.locator('[data-chat-code]').screenshot({ path: `${evidence}/chat-code-collapsed.png` })
+check('折叠时源码不可见', await page.locator('[data-chat-code] pre').count() === 0)
+const codeToggle = page.locator('[data-chat-code-toggle]')
+await codeToggle.click()
+check('展开代码后可见', await page.locator('[data-chat-code]').getAttribute('data-open') === 'true' && await page.locator('[data-chat-code] pre').count() === 1)
+await codeToggle.click()
+check('再次点击可收起', await page.locator('[data-chat-code]').getAttribute('data-open') === 'false')
 check('5 张关键帧缩略图', await page.locator('[data-chat-frames] img').count() === 5, String(await page.locator('[data-chat-frames] img').count()))
 check('验收清单显示', panel.includes('验收通过') && panel.includes('山体') && panel.includes('两把剑'), panel.slice(-600))
 check('完成摘要显示', panel.includes('山、男女双剑对打和环绕镜头已完成'), panel.slice(-200))
@@ -165,8 +185,6 @@ check('模型调用 6 次', textCalls.length === 6, String(textCalls.length))
 check('没有旧聊天日志', (await page.locator('.cw-chat-log').count()) === 0)
 await page.locator('[data-chat-input]').focus()
 check('聊天输入可聚焦', await page.locator('[data-chat-input]').evaluate((el) => document.activeElement === el))
-const evidence = 'openspec/changes/chat-ui-tailwind-shadcn/evidence'
-fs.mkdirSync(evidence, { recursive: true })
 await page.locator('.cw-shell').screenshot({ path: `${evidence}/agent-chat.png` })
 
 // 主题与窄屏：工具卡、缩略图、清单在日间/夜间和 900px 仍可读。
@@ -227,6 +245,18 @@ check('后台运行完成', backgroundText.includes('切页签后完成') && bac
 await page.getByRole('button', { name: '聊天', exact: true }).click()
 await page.waitForTimeout(200)
 check('切回看到后台完成摘要', (await page.locator('[data-chat-root]').innerText()).includes('切页签后完成'))
+
+// 当前工作台已有代码：run_sandbox 可直接运行，不要求先 set_scene_code。
+phase = 'baseline'
+await page.setViewportSize({ width: 1600, height: 1000 })
+await page.waitForTimeout(300)
+await page.locator('[data-chat-input]').fill('运行当前场景，不要重新生成代码')
+await page.getByRole('button', { name: '发送', exact: true }).click()
+await page.waitForFunction(() => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false', null, { timeout: 60000 })
+const baselinePanel = await page.locator('[data-chat-root]').innerText()
+check('已有代码直接运行不报未提交', !baselinePanel.includes('还没有提交代码') && baselinePanel.includes('沙箱通过'), baselinePanel.slice(-1000))
+check('已有代码可直接抓帧', await page.locator('[data-chat-frames] img').count() >= 3)
+check('基线运行完成', baselinePanel.includes('当前基线运行完成'))
 
 check('页面无未捕获异常', errors.length === 0, errors.join(' | '))
 await browser.close()

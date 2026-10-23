@@ -43,9 +43,7 @@
   --secondary: var(--panel-2);
   --secondary-foreground: var(--text);
   --muted: var(--bg-2);
-  --muted-foreground: var(--muted);
-  --accent: var(--accent-dim);
-  --accent-foreground: var(--text);
+  --muted-foreground: var(--text-2);
   --destructive: var(--danger);
   --destructive-foreground: #fff;
   --border: var(--line);

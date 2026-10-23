@@ -13,6 +13,7 @@ assistant-ui 已经负责聊天 runtime、消息、Composer、取消和 tool UI 
 - `SceneAgentChat` 保留 assistant-ui 的 `ExternalStoreRuntime`、`ThreadPrimitive`、`ComposerPrimitive` 和 `makeAssistantToolUI`，只把渲染交给 `chat-ui` 组件。
 - shadcn token 映射到现有日间/夜间语义变量；Tailwind preflight 不得污染工作台、画布、Inspector 和 React Flow。
 - 保留现有聊天行为：工具卡顺序、帧缩略图、清单、页签切换、滚动恢复、取消和超时状态。
+- 聊天消息/模型说明中出现 fenced code block 时默认折叠，只显示语言、行数和展开入口；完整代码仍在代码页签查看，代码工具卡继续只显示摘要。
 - 增加聊天视觉/布局回归，覆盖日夜主题、900/760px、焦点和工具卡可读性。
 
 **BREAKING**：聊天 DOM 的 `.cw-agent*` 类名会调整；需要同步测试选择器，但保留稳定的 `data-testid`/role。
@@ -30,7 +31,7 @@ assistant-ui 已经负责聊天 runtime、消息、Composer、取消和 tool UI 
 ## Impact
 
 - 前端依赖与配置：`tailwindcss`、`@tailwindcss/vite`、shadcn copy-in primitives、`clsx`、`tailwind-merge`、少量 Radix/图标依赖；`tsconfig`/Vite 的 `@/` alias 和 `components.json`。
-- 代码：`src/agent/SceneAgentChat.tsx`、新增 `src/chat-ui/**`、`src/theme.css` 中聊天段落的迁移。
+- 代码：`src/agent/SceneAgentChat.tsx`、新增 `src/chat-ui/**`（含 `ChatText`/`ChatCodeBlock`）、`src/theme.css` 中聊天段落的迁移。
 - 测试：`verify-agent-chat-ui.mjs`、`verify-agent-chat-failure.mjs`、工作台/主题回归。
 - 不改变 LangGraph runtime、工具白名单、agent 上限、项目数据结构或服务端 API。
 - 不把整个工作台迁移到 Tailwind，也不替换 assistant-ui。

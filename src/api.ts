@@ -687,6 +687,8 @@ export type ModelEntry = {
   supportsVideoRef?: boolean
   /** 2.5 需要显式指定 reference；2.0 留空 */
   videoRefTaskType?: 'reference'
+  /** DeepSeek Flash 混合推理：auto = 普通文本思考、JSON/工具协议关思考 */
+  thinking?: 'auto' | 'enabled' | 'disabled'
 }
 
 export type AppSettings = {

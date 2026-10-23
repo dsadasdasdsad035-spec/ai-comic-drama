@@ -392,29 +392,10 @@ export default function Settings({ toast, onSaved }: Props) {
           <header className="st-sec-head">
             <h3>Agent 运行上限</h3>
             <span className="st-hint">
-              3D 调度 agent 的安全上限。步数按图执行节点计算，约 3 步对应一轮模型/工具循环；调高会增加运行时间和模型消耗。总时长超时会显示“运行超时”，与手动取消不同。
+3D 调度 agent 的总运行时长上限。没有可配置的步骤上限；超过时长会显示“运行超时”，与手动取消不同。
             </span>
           </header>
           <div className="st-grid">
-            <label className="st-field">
-              <span>最大执行步数</span>
-              <input
-                type="number"
-                min={AGENT_LIMIT_RANGES.maxSteps.min}
-                max={AGENT_LIMIT_RANGES.maxSteps.max}
-                step="1"
-                value={agentLimits.maxSteps}
-                onChange={(e) => {
-                  const raw = e.target.value
-                  setAgentLimits((prev) => ({
-                    ...prev,
-                    maxSteps: raw.trim() === '' ? AGENT_LIMIT_DEFAULTS.maxSteps : Number(raw),
-                  }))
-                }}
-                onBlur={() => setAgentLimits(normalizeAgentLimits(agentLimits))}
-              />
-              <em>默认 {AGENT_LIMIT_DEFAULTS.maxSteps}；范围 {AGENT_LIMIT_RANGES.maxSteps.min}–{AGENT_LIMIT_RANGES.maxSteps.max}，低于默认可能提前结束</em>
-            </label>
             <label className="st-field">
               <span>总运行时长（秒）</span>
               <input

@@ -22,6 +22,13 @@
 - [x] 3.3 运行 `verify-agent-chat-ui.mjs`、`verify-agent-chat-failure.mjs`，确认视觉迁移没有改变聊天行为；验证：两个脚本全部通过。
 - [x] 3.4 回归 `verify-code-workbench.mjs`、`verify-code-sandbox.mjs`、`verify-theme.mjs`，确认 Tailwind/shadcn 没有污染工作台、沙箱和主题；验证：回归脚本全部通过。
 
+## 4. 聊天代码折叠
+
+- [x] 4.1 增加 `@radix-ui/react-collapsible`（或等价 primitives），新增 `ChatCodeBlock`，默认折叠并显示语言/行数/展开按钮；验证：单元/组件测试默认不渲染代码正文。
+- [x] 4.2 新增 `ChatText` 解析 fenced code block，并接入 assistant 文本渲染；普通文本和未闭合 fence 保持文本显示；验证：混合文本/代码测试通过。
+- [x] 4.3 更新聊天 UI 测试：消息代码默认折叠、展开/收起、代码工具卡仍只显示摘要、代码页签仍显示完整代码；验证：Playwright 通过。
+- [x] 4.4 更新 README 的聊天代码展示说明：默认折叠、展开入口、代码页签是完整代码来源；验证：文档与组件行为一致。
+
 ## Workflow follow-up
 
 - 归档前确认旧 `.cw-agent*` 已移除、聊天视觉截图已保存，并同步 `chat-ui-design-system` 主 spec。

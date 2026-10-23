@@ -2,32 +2,32 @@
 
 ## Why
 
-3D agent 的运行上限目前硬编码在 `DEFAULT_AGENT_LIMITS`：24 个图执行步骤、5 分钟总超时。真实模型遇到修复或多次抓帧时会直接报“agent 步骤达到上限”，用户无法像切换模型一样调整，只能改代码。
+3D agent 目前把 LangGraph 图节点数（`state.steps`）作为用户可配置的“最大执行步数”。这个计数约 3 个节点才对应一轮模型/工具循环，既不是工具调用次数，也不是重试次数；真实模型很容易在多轮修复中被 24 步提前截断。用户需要的是不因总步数中止，而不是继续暴露内部图计数。
 
-同时，总超时触发时走的是取消路径，聊天显示“已取消”而不是“超时”，用户无法判断该调大步骤、调大总时长，还是模型本身有问题。
+总运行时长和用户取消仍然保留：没有时间边界时，模型持续循环会无限消耗模型调用和沙箱资源。
 
 ## What Changes
 
-- 设置页新增“Agent 运行上限”配置：最大执行步数（默认 24）和总运行时长秒数（默认 300 秒），保存到现有设置 SQLite，不新增表。
-- 旧设置没有这两个字段时使用默认值；非法/越界输入按范围夹取，避免把 agent 配成永远跑不完。
-- 运行 3D agent 时从设置解析上限；步骤上限仍使用当前图执行步数（约 3 步/模型工具轮），设置项和提示明确说明这一点。
-- 达到步骤上限的错误显示当前配置值，并提示可在设置页调整；总超时单独显示“运行超时”，不再伪装成用户取消。
-- 本次只开放 `maxSteps` 和 `totalSeconds`；代码修复 3 次、视觉验收 2 次、单工具 30 秒、5 帧上限保持不变。不做工作台按次覆盖，也不改 agent 计数语义。
+- 删除设置页的“最大执行步数”配置和 `agentLimits.maxSteps` 数据；旧的 `maxSteps` 字段读取时忽略，不再显示。
+- 删除 `gate`/路由中的 `state.steps >= maxSteps` 终止条件，不再出现“agent 步骤达到上限”。
+- 保留可配置的总运行时长（默认 300 秒，范围 60–1800）；超时仍显示“运行超时”，用户取消仍显示“已取消”。
+- LangGraph 仍使用一个**不可配置的内部递归安全阀**（取值足够高，正常流程由总时长先结束）；它不是用户设置，也不作为产品步骤上限展示。
+- 保留代码修复 3 次、视觉验收 2 次的预算；它们不是总图节点数。
+- 更新设置页、运行时、图测试、README 和聊天错误文案。
 
 ## Capabilities
 
 ### New Capabilities
 
-- `agent-run-settings`: 定义 3D agent 运行上限在设置页的配置项、默认值、范围校验和持久化行为。
+- `agent-run-settings`: 只定义 Agent 总运行时长的设置、默认值、范围校验和持久化；明确不提供步骤上限配置。
 
 ### Modified Capabilities
 
-- `scene-agent-runtime`: “修复与验收循环必须有上限”改为使用配置值，并区分步骤上限、总超时和用户取消。
+- `scene-agent-runtime`: “修复与验收循环必须有上限”改为不再使用图步骤上限，仅保留修复/验收预算、总时长和取消。
 
 ## Impact
 
-- 客户端设置：`src/api.ts` 的 `AppSettings`、`src/Settings.tsx` 的新配置区和保存逻辑。
-- 服务端设置：`vite.config.ts` 的 `AppSettings`、`normalizeSettings` / `saveAppSettings`；仍存 settings 表的 `app` JSON，无数据库迁移。
-- Agent 运行时：`src/agent/sceneAgentTypes.ts`、`sceneAgentGraph.ts`、`SceneAgentChat.tsx`；运行上限从设置解析，超时状态与取消分开。
-- 测试与文档：设置页保存/重载、图测试的自定义上限与超时、README 上限说明。
-- 不涉及模型渠道、API Key、沙箱 ABI 或项目数据结构。
+- 设置：`src/api.ts`、`vite.config.ts`、`src/Settings.tsx`；移除 `maxSteps`，保留 `totalSeconds`。
+- Agent：`src/agent/agentLimits.ts`、`src/agent/sceneAgentGraph.ts`、`src/SceneCodeWorkbench`/聊天错误文案。
+- 测试：`verify-agent-graph.mjs`、`verify-agent-limits.mjs`、`verify-agent-limits-api.mjs`、聊天 UI/失败取消。
+- 不新增数据库表；旧设置中的 `maxSteps` 作为未知字段保留但不读取，不改变模型、项目或沙箱 ABI。

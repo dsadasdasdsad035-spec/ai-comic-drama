@@ -26,10 +26,10 @@ const check = (name, cond, extra = '') => {
   if (!cond) bad++
 }
 
-check('默认值 24/300', JSON.stringify(lim.normalizeAgentLimits(undefined)) === JSON.stringify({ maxSteps: 24, totalSeconds: 300 }))
-check('越界夹取', JSON.stringify(lim.normalizeAgentLimits({ maxSteps: 0, totalSeconds: 9999 })) === JSON.stringify({ maxSteps: 12, totalSeconds: 1800 }))
-check('空值/非数字回退默认', JSON.stringify(lim.normalizeAgentLimits({ maxSteps: '', totalSeconds: 'abc' })) === JSON.stringify({ maxSteps: 24, totalSeconds: 300 }))
-check('秒换算毫秒', lim.resolveAgentLimits({ agentLimits: { maxSteps: 48, totalSeconds: 600 } }).totalMs === 600000)
+check('默认值 300 秒', JSON.stringify(lim.normalizeAgentLimits(undefined)) === JSON.stringify({ totalSeconds: 300 }))
+check('越界夹取', JSON.stringify(lim.normalizeAgentLimits({ totalSeconds: 9999 })) === JSON.stringify({ totalSeconds: 1800 }))
+check('空值/非数字回退默认', JSON.stringify(lim.normalizeAgentLimits({ totalSeconds: 'abc' })) === JSON.stringify({ totalSeconds: 300 }))
+check('秒换算毫秒', lim.resolveAgentLimits({ agentLimits: { totalSeconds: 600 } }).totalMs === 600000)
 
 const oldSettings = {
   providers: [{ id: 'p-text', label: 'Text', kind: 'openai', baseUrl: 'https://mock', caps: ['text'], apiKey: 'mock' }],
@@ -66,31 +66,26 @@ await page.route('**/api/settings', async (route) => {
 await page.goto(URL, { waitUntil: 'networkidle' })
 await page.getByRole('button', { name: '设置', exact: true }).click()
 await page.waitForTimeout(500)
-const stepsInput = page.locator('label.st-field', { hasText: '最大执行步数' }).locator('input')
 const timeInput = page.locator('label.st-field', { hasText: '总运行时长' }).locator('input')
-check('旧设置显示默认步数', await stepsInput.inputValue() === '24', await stepsInput.inputValue())
 check('旧设置显示默认总时长', await timeInput.inputValue() === '300', await timeInput.inputValue())
 
-await stepsInput.fill('48')
 await timeInput.fill('600')
 await page.getByRole('button', { name: '保存设置', exact: true }).click()
 await page.waitForTimeout(500)
-check('保存发送 agentLimits', saved?.agentLimits?.maxSteps === 48 && saved?.agentLimits?.totalSeconds === 600, JSON.stringify(saved?.agentLimits))
+check('保存发送 agentLimits', saved?.agentLimits?.totalSeconds === 600, JSON.stringify(saved?.agentLimits))
 check('保存保留模型和其他设置', saved?.providers?.length === 1 && saved?.models?.length === 1 && saved?.rules?.script?.text === 'keep-me')
-check('保存后回显 48/600', await stepsInput.inputValue() === '48' && await timeInput.inputValue() === '600')
+check('保存后回显 600', await timeInput.inputValue() === '600')
 
-await stepsInput.fill('0')
 await timeInput.fill('9999')
 await page.getByRole('button', { name: '保存设置', exact: true }).click()
 await page.waitForTimeout(500)
-check('越界保存夹取 12/1800', saved?.agentLimits?.maxSteps === 12 && saved?.agentLimits?.totalSeconds === 1800, JSON.stringify(saved?.agentLimits))
-check('夹取后回显有效值', await stepsInput.inputValue() === '12' && await timeInput.inputValue() === '1800', `${await stepsInput.inputValue()}/${await timeInput.inputValue()}`)
+check('越界保存夹取 1800', saved?.agentLimits?.totalSeconds === 1800, JSON.stringify(saved?.agentLimits))
+check('夹取后回显有效值', await timeInput.inputValue() === '1800', await timeInput.inputValue())
 
-await stepsInput.fill('')
 await timeInput.fill('')
 await page.getByRole('button', { name: '保存设置', exact: true }).click()
 await page.waitForTimeout(500)
-check('空值回退默认 24/300', saved?.agentLimits?.maxSteps === 24 && saved?.agentLimits?.totalSeconds === 300, JSON.stringify(saved?.agentLimits))
+check('空值回退默认 300', saved?.agentLimits?.totalSeconds === 300, JSON.stringify(saved?.agentLimits))
 check('页面无未捕获异常', errors.length === 0, errors.join(' | '))
 
 await browser.close()

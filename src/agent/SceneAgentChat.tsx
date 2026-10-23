@@ -35,6 +35,7 @@ import type {
 import type { Shot3DContextItem } from '../shot3dContextCatalog'
 import { ChatRoot } from '@/chat-ui/ChatRoot'
 import { ChatChips } from '@/chat-ui/ChatChips'
+import { ChatText } from '@/chat-ui/ChatText'
 import { ChatComposer } from '@/chat-ui/ChatComposer'
 import { ChatEmpty } from '@/chat-ui/ChatEmpty'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
@@ -176,7 +177,7 @@ const FinishUI = makeAssistantToolUI({
 function UserMessage() {
   return (
     <ChatMessage role="user">
-      <MessagePrimitive.Parts />
+      <MessagePrimitive.Parts components={{ Text: ChatText }} />
     </ChatMessage>
   )
 }
@@ -184,7 +185,7 @@ function UserMessage() {
 function AssistantMessage() {
   return (
     <ChatMessage role="assistant">
-      <MessagePrimitive.Parts />
+      <MessagePrimitive.Parts components={{ Text: ChatText }} />
     </ChatMessage>
   )
 }
@@ -199,6 +200,8 @@ type Props = {
   onDraftCode: (code: string, check: SceneCodeCheck, prepared: PreparedCodeContext) => Promise<void> | void
   onOpenCode: () => void
   onToast?: (message: string) => void
+  /** 工作台当前代码；作为本轮可运行基线 */
+  currentCode?: string
   requirements?: string[]
   width: number
   height: number
@@ -216,6 +219,7 @@ export default function SceneAgentChat({
   onDraftCode,
   onOpenCode,
   onToast,
+  currentCode,
   requirements,
   width,
   height,
@@ -414,6 +418,7 @@ export default function SceneAgentChat({
         deps,
         settings,
         stagePick,
+        initialCode: currentCode,
         requirements: requirementsList,
         signal: controller.signal,
       })

@@ -52,23 +52,23 @@ if (!ok) {
 
 try {
   const s0 = (await api('/api/settings')).settings
-  check('旧设置补默认值', s0.agentLimits?.maxSteps === 24 && s0.agentLimits?.totalSeconds === 300, JSON.stringify(s0.agentLimits))
+  check('旧设置补默认值', s0.agentLimits?.totalSeconds === 300 && !('maxSteps' in (s0.agentLimits || {})), JSON.stringify(s0.agentLimits))
   const originalModels = JSON.stringify(s0.models)
   const originalRules = JSON.stringify(s0.rules)
 
   const saved = await put({ maxSteps: 48, totalSeconds: 600 })
-  check('保存新值返回规范化结果', saved.settings?.agentLimits?.maxSteps === 48 && saved.settings?.agentLimits?.totalSeconds === 600, JSON.stringify(saved.settings?.agentLimits))
+  check('保存新值返回规范化结果', saved.settings?.agentLimits?.totalSeconds === 600 && !('maxSteps' in (saved.settings?.agentLimits || {})), JSON.stringify(saved.settings?.agentLimits))
   const s1 = (await api('/api/settings')).settings
-  check('重新读取保留新值', s1.agentLimits?.maxSteps === 48 && s1.agentLimits?.totalSeconds === 600, JSON.stringify(s1.agentLimits))
+  check('重新读取保留新值且忽略 maxSteps', s1.agentLimits?.totalSeconds === 600 && !('maxSteps' in (s1.agentLimits || {})), JSON.stringify(s1.agentLimits))
   check('保存不丢模型和规则', JSON.stringify(s1.models) === originalModels && JSON.stringify(s1.rules) === originalRules)
 
-  await put({ maxSteps: 0, totalSeconds: 9999 })
+  await put({ totalSeconds: 9999 })
   const s2 = (await api('/api/settings')).settings
-  check('服务端夹取越界值', s2.agentLimits?.maxSteps === 12 && s2.agentLimits?.totalSeconds === 1800, JSON.stringify(s2.agentLimits))
+  check('服务端夹取越界值', s2.agentLimits?.totalSeconds === 1800, JSON.stringify(s2.agentLimits))
 
-  await put({ maxSteps: '', totalSeconds: 'abc' })
+  await put({ totalSeconds: 'abc' })
   const s3 = (await api('/api/settings')).settings
-  check('服务端空值回退默认', s3.agentLimits?.maxSteps === 24 && s3.agentLimits?.totalSeconds === 300, JSON.stringify(s3.agentLimits))
+  check('服务端空值回退默认', s3.agentLimits?.totalSeconds === 300, JSON.stringify(s3.agentLimits))
 } finally {
   child.kill()
   fs.rmSync(TMP, { recursive: true, force: true })

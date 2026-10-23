@@ -120,7 +120,102 @@ check('模型调用 6 次', asks.length === 6, String(asks.length))
 check('工具轨迹不含源码', result.events.find((e) => e.type === 'code')?.codeHash?.length === 64, JSON.stringify(result.events.find((e) => e.type === 'code')))
 
 
+// 已有代码基线：模型可以 run_sandbox 先行，无需 set_scene_code
+let baselineDraft = ''
+const baselineCalls = [
+  { name: 'run_sandbox', args: {} },
+  { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
+  { name: 'review_frames', args: { requirements: ['山体', '两人'] } },
+  { name: 'finish', args: { summary: '当前代码运行完成' } },
+]
+let baselineIndex = 0
+const baseline = await lib.runSceneAgent({
+  prompt: '运行当前场景',
+  settings,
+  initialCode: CODE,
+  ask: async () => {
+    const c = baselineCalls[baselineIndex++]
+    return { json: { content: '', tool_calls: c ? [c] : [] } }
+  },
+  deps: {
+    getShotContext: () => 'S01',
+    runTrial: async () => ({ ok: true, firstFrame: 'data:image/jpeg;base64,AA' }),
+    captureFrames: async (_c, times) => times.map((t) => ({ t, url: `data:image/jpeg;base64,${t}` })),
+    reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
+    onDraftCode: () => { baselineDraft = 'should-not-be-written' },
+  },
+})
+check('已有代码可直接 run_sandbox', !baseline.error && baseline.trial?.ok === true && baseline.attempts === 1, JSON.stringify({ error: baseline.error, trial: baseline.trial }))
+check('baseline 不重复写草稿', baselineDraft === '', baselineDraft)
+check('baseline 后续运行复用', await (async () => {
+  let i = 0
+  const again = await lib.runSceneAgent({
+    prompt: '再运行一次',
+    settings,
+    initialCode: CODE,
+    ask: async () => {
+      const c = baselineCalls[i++]
+      return { json: { content: '', tool_calls: c ? [c] : [] } }
+    },
+    deps: {
+      getShotContext: () => 'S01',
+      runTrial: async () => ({ ok: true, firstFrame: 'data:image/jpeg;base64,AA' }),
+      captureFrames: async (_c, times) => times.map((t) => ({ t, url: `data:image/jpeg;base64,${t}` })),
+      reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
+    },
+  })
+  return !again.error && again.trial?.ok === true
+})())
+
+// 空镜头 / 无效初始代码：run_sandbox 仍拒绝，随后可提交代码恢复
+const emptySeq = [
+  { name: 'run_sandbox', args: {} },
+  { name: 'set_scene_code', args: { code: CODE } },
+  { name: 'run_sandbox', args: {} },
+  { name: 'capture_frames', args: { times: [0, 1, 2] } },
+  { name: 'review_frames', args: { requirements: ['山体'] } },
+  { name: 'finish', args: { summary: '恢复完成' } },
+]
+let emptyIndex = 0
+const emptyRun = await lib.runSceneAgent({
+  prompt: '空镜头运行',
+  settings,
+  ask: async () => {
+    const c = emptySeq[emptyIndex++]
+    return { json: { content: '', tool_calls: c ? [c] : [] } }
+  },
+  deps: {
+    getShotContext: () => 'S01',
+    runTrial: async () => ({ ok: true, firstFrame: 'data:image/jpeg;base64,AA' }),
+    captureFrames: async (_c, times) => times.map((t) => ({ t, url: `data:image/jpeg;base64,${t}` })),
+    reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
+  },
+})
+const emptyErrors = emptyRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_sandbox' && e.isError)
+check('空镜头仍拒绝运行', emptyErrors.length >= 1 && String(emptyErrors[0].result?.error || '').includes('还没有提交代码'), JSON.stringify(emptyErrors.slice(0, 1)))
+check('空镜头提交代码后可恢复', !emptyRun.error && emptyRun.trial?.ok === true, JSON.stringify({ error: emptyRun.error, trial: emptyRun.trial }))
+
+let invalidIndex = 0
+const invalidRun = await lib.runSceneAgent({
+  prompt: '无效基线',
+  settings,
+  initialCode: 'function broken(',
+  ask: async () => {
+    const c = emptySeq[invalidIndex++]
+    return { json: { content: '', tool_calls: c ? [c] : [] } }
+  },
+  deps: {
+    getShotContext: () => 'S01',
+    runTrial: async () => ({ ok: true, firstFrame: 'data:image/jpeg;base64,AA' }),
+    captureFrames: async (_c, times) => times.map((t) => ({ t, url: `data:image/jpeg;base64,${t}` })),
+    reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
+  },
+})
+const invalidErrors = invalidRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_sandbox' && e.isError)
+check('无效初始代码不 seed', invalidErrors.length >= 1 && !invalidRun.error, JSON.stringify({ error: invalidRun.error, first: invalidErrors[0] }))
+
 // 事件桥：只映射可观察动作
+
 const ev = lib.mapLangGraphEvent({ event: 'on_tool_start', name: 'run_sandbox', run_id: 'r1', data: { input: { x: 1 } } })
 check('tool_start 映射', ev?.type === 'tool_start' && ev.toolCallId === 'r1' && ev.toolName === 'run_sandbox')
 const evEnd = lib.mapLangGraphEvent({ event: 'on_tool_end', name: 'run_sandbox', run_id: 'r1', data: { output: { ok: true } } })
@@ -187,12 +282,15 @@ const repaired = await lib.runSceneAgent({
 })
 check('沙箱失败后修复成功', !repaired.error && repaired.attempts === 2 && repaired.trial?.ok, JSON.stringify({ error: repaired.error, attempts: repaired.attempts }))
 
-// 可配置步骤上限：触顶错误包含配置值
-const stepLimitRun = await lib.runSceneAgent({
-  prompt: '多步循环',
+// 不再按图步骤上限终止：持续工具调用只由总时长/取消约束
+const noStepCap = await lib.runSceneAgent({
+  prompt: '持续调用工具',
   settings,
-  limits: { maxSteps: 4 },
-  ask: async () => ({ json: { content: '', tool_calls: [{ name: 'get_shot_context', args: {} }] } }),
+  limits: { totalMs: 1000 },
+  ask: async () => {
+    await new Promise((r) => setTimeout(r, 20))
+    return { json: { content: '', tool_calls: [{ name: 'get_shot_context', args: {} }] } }
+  },
   deps: {
     getShotContext: () => 'S01',
     runTrial: async () => ({ ok: true }),
@@ -200,7 +298,7 @@ const stepLimitRun = await lib.runSceneAgent({
     reviewFrames: async () => ({ passed: false, usedVision: false, needsHumanReview: true, items: [] }),
   },
 })
-check('步骤上限可配置', Boolean(stepLimitRun.error) && stepLimitRun.error.includes('步骤达到上限（4）') && !stepLimitRun.cancelled, JSON.stringify({ error: stepLimitRun.error, cancelled: stepLimitRun.cancelled }))
+check('不再出现步骤上限错误', Boolean(noStepCap.error) && noStepCap.error.includes('运行超时') && !noStepCap.error.includes('步骤达到上限'), JSON.stringify({ error: noStepCap.error, cancelled: noStepCap.cancelled }))
 
 // 可配置总超时：显示运行超时，不是取消，也不产生草稿
 const timedOut = await lib.runSceneAgent({

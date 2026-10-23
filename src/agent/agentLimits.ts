@@ -1,25 +1,21 @@
 /**
  * 3D agent 的可配置运行上限。
- * 设置里存秒；运行时再换算毫秒，避免 UI 出现 300000。
+ * 只开放总运行时长；图节点/步骤不暴露为产品设置。
  */
 export type AgentLimitSettings = {
-  maxSteps?: number
   totalSeconds?: number
 }
 
 export type AgentRunLimits = {
-  maxSteps: number
   totalSeconds: number
   totalMs: number
 }
 
 export const AGENT_LIMIT_DEFAULTS = {
-  maxSteps: 24,
   totalSeconds: 300,
 } as const
 
 export const AGENT_LIMIT_RANGES = {
-  maxSteps: { min: 12, max: 120 },
   totalSeconds: { min: 60, max: 1800 },
 } as const
 
@@ -33,7 +29,6 @@ function normalizeInt(value: unknown, fallback: number, min: number, max: number
 export function normalizeAgentLimits(raw: unknown): Required<AgentLimitSettings> {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   return {
-    maxSteps: normalizeInt(o.maxSteps, AGENT_LIMIT_DEFAULTS.maxSteps, AGENT_LIMIT_RANGES.maxSteps.min, AGENT_LIMIT_RANGES.maxSteps.max),
     totalSeconds: normalizeInt(
       o.totalSeconds,
       AGENT_LIMIT_DEFAULTS.totalSeconds,

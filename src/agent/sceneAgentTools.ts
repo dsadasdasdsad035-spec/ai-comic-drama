@@ -18,6 +18,7 @@ export type SceneAgentSession = {
   code?: string
   codeHash?: string
   lineCount?: number
+  codeOrigin?: 'baseline' | 'agent'
   trial?: AgentTrial
   frames?: AgentFrame[]
   review?: AgentReview
@@ -101,6 +102,7 @@ export function createSceneAgentTools(
       const checked = checkSceneCode(code)
       if (!checked.ok) return fail(`代码不可用：${checked.errors.slice(0, 3).join('；')}`)
       session.code = checked.code
+      session.codeOrigin = 'agent'
       session.codeHash = await codeHashOf(checked.code)
       session.lineCount = checked.code.split('\n').length
       session.trial = undefined
@@ -135,7 +137,7 @@ export function createSceneAgentTools(
         session.trial = trial
         if (trial.ok) {
           const checked = checkSceneCode(session.code)
-          if (checked.ok) deps.onDraftCode?.(session.code, checked)
+          if (checked.ok && session.codeOrigin !== 'baseline') deps.onDraftCode?.(session.code, checked)
           return resultOk({
             summary: '沙箱试运行通过',
             attempts: session.attempts,
