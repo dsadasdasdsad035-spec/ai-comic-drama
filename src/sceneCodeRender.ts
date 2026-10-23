@@ -63,18 +63,30 @@ export async function renderSceneCodeVideo(opts: RenderSceneCodeOptions): Promis
   }
 }
 
-export function blobToDataUrl(blob: Blob): Promise<string> {
+export function blobToDataUrl(blob: Blob, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('已取消', 'AbortError'))
+      return
+    }
     const fr = new FileReader()
-    fr.onload = () => resolve(String(fr.result || ''))
+    fr.onload = () => {
+      if (signal?.aborted) reject(new DOMException('已取消', 'AbortError'))
+      else resolve(String(fr.result || ''))
+    }
     fr.onerror = () => reject(new Error('读取录制结果失败'))
     fr.readAsDataURL(blob)
   })
 }
 
-export async function saveSceneCodeVideo(blob: Blob): Promise<string> {
-  const dataUrl = await blobToDataUrl(blob)
-  return saveScheduleVideo(dataUrl)
+export async function saveSceneCodeVideo(
+  blob: Blob,
+  signal?: AbortSignal,
+  duration?: number,
+): Promise<string> {
+  const dataUrl = await blobToDataUrl(blob, signal)
+  if (signal?.aborted) throw new DOMException('已取消', 'AbortError')
+  return saveScheduleVideo(dataUrl, signal, duration)
 }
 
 export function sceneCodeRenderError(e: unknown): string {

@@ -285,6 +285,7 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
     ...(session.frames ? { frames: session.frames } : {}),
     ...(session.review ? { review: session.review } : {}),
     summary: session.summary || (error ? `失败：${error}` : cancelled ? '已取消' : '场景未完成'),
+    finished: session.finished,
     cancelled,
     ...(error ? { error } : {}),
     attempts: session.attempts,

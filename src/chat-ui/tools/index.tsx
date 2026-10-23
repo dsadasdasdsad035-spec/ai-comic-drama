@@ -3,6 +3,9 @@ import { Button } from '@/chat-ui/ui/button'
 import { Code2, Flag, ImageIcon, ListChecks, Play, ScanEye } from 'lucide-react'
 import { ToolCard, type ToolCardStatus } from './ToolCard'
 
+export { VideoPart, VideoReviewPart } from './VideoTools'
+export { VideoUiContext, useVideoUi } from './videoUiContext'
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }
@@ -139,10 +142,15 @@ export function FinishTool({ running, result }: { running: boolean; result: unkn
     <ToolCard
       tool="finish"
       status={statusOf(running, result)}
-      title={running ? '正在收尾…' : '场景完成'}
+      title={running ? '正在收尾…' : '代码阶段完成'}
       aside={<Flag className="size-3.5 text-muted-foreground" />}
     >
-      {typeof r.summary === 'string' && <p>{r.summary}</p>}
+      {typeof r.summary === 'string' && (
+        <p>
+          <span className="text-muted-foreground">代码阶段说明：</span>
+          {r.summary}
+        </p>
+      )}
     </ToolCard>
   )
 }

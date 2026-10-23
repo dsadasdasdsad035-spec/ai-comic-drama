@@ -14,6 +14,7 @@ import { videoFrameInputs } from './videoFrames'
 import { buildMediaBrief, type MediaBrief } from './mediaBrief'
 
 export type PreparedCodeContext = {
+  context: Shot3DContext
   contextFp: string
   assets: PreparedSceneAsset[]
   missing: { key: string; label: string; url: string; reason: string }[]
@@ -102,6 +103,7 @@ export async function prepareSceneCodeContext(input: {
     }
   }
   return {
+    context: input.context,
     contextFp: contextFingerprint(input.context),
     assets: prepared.assets,
     missing: prepared.missing,

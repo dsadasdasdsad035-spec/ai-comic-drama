@@ -90,6 +90,10 @@ function dispose() {}
 - `@langchain/langgraph` 的 `StateGraph` 管状态和工具循环；`ZCodeChatModel` 把现有 `/api/text` 包装成 JSON action 模型（`{content, tool_calls}`），不要求 provider 原生 tool calling。
 - 工具白名单只有 `get_shot_context`、`set_scene_code`、`run_sandbox`、`capture_frames`、`review_frames`、`finish`。没有 shell、网络、保存、渲染或写其他镜头的工具。
 - `set_scene_code` 只接受当前镜头完整代码；代码必须通过 `run_sandbox` 才进入工作台草稿。`capture_frames` 抓 5 个关键帧；`review_frames` 用视觉清单初筛；`finish` 必须已有沙箱通过，且视觉验收通过或明确转人工。
+- `finish` 只结束代码阶段，不再直接表示场景完成。finish 后聊天自动进入视频验收：用最终代码和本次运行上下文渲染 clean MP4，从 MP4 按镜头有效时长抽 5–9 帧（短镜头 5、长镜头 9，包含首尾），再交给视觉清单；最终结论只使用 MP4 帧，不使用沙箱帧。
+- 只有 MP4 帧验收通过才原子保存代码、参考上下文、MP4、`sceneCodeMeta` 和 `scheduleMeta`。未通过、渲染失败、抽帧失败、取消或超时保留草稿和旧项目视频；无视觉模型或抽帧失败时展示 MP4 预览并转人工，人工采用后才保存。
+- 代码卡、视频卡和验收卡共享 `codeHash`；代码变化后旧视频/旧验收标记过期。工作台「最近视频」显示生效/已过期；工作台存在未保存草稿时，画布右键 3D 出片会被阻止并提示先在编辑器保存或渲染。
+- 视频验收是 finish 后的应用编排，不是 agent 工具；agent 工具白名单保持不变。未采用的 MP4 文件可能留在 `public/videos`，但不会写入镜头数据，清理不在当前范围。
 - 运行只开放可配置的总运行时长：默认 300 秒（范围 60–1800），不再有用户可配置的步骤上限。代码修复 3 次、视觉验收 2 次、单工具 30 秒、5 帧预算仍固定；LangGraph 内部有不可配置的递归安全阀。总时长超时会显示“运行超时”，用户取消仍显示“已取消”；两者都会释放沙箱，旧代码保持不变。
 - 工作台当前镜头的有效代码会作为每轮 agent 的初始运行基线；已有代码时可以直接 `run_sandbox`，空镜头或无效草稿仍必须先 `set_scene_code`。
 - agent 执行由 `graph.streamEvents`（v2）驱动：浏览器内的模型轮次取自 `agent` 节点的链事件，工具生命周期取自 `on_tool_*`，代码/帧/验收/完成继续走工具领域事件；事件按 run id 和轮次去重。
@@ -274,6 +278,12 @@ node verify-agent-limits-api.mjs  # Agent 运行上限设置的服务端 round-t
 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs  # 固定山/男女/双剑/环绕场景 + 4 秒 mp4
 AGENT_REAL=1 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs  # 真实 sceneCode 模型
 APP_URL=http://127.0.0.1:5280 node verify-deepseek-flash.mjs  # DeepSeek Flash：文本思考/JSON 关思考/视觉调用/设置页绑定
+node verify-agent-video-acceptance.mjs  # 视频验收编排：通过/未通过/无视觉/抽帧失败/取消/超时/保存失败
+APP_URL=http://127.0.0.1:5280 node verify-agent-video-acceptance-ui.mjs  # 真实浏览器 MP4→MP4 帧→验收→保存
+APP_URL=http://127.0.0.1:5280 VIDEO_TEST_REJECT=1 node verify-agent-video-acceptance-ui.mjs  # 视频验收失败不覆盖
+APP_URL=http://127.0.0.1:5280 VIDEO_TEST_NO_VISION=1 node verify-agent-video-acceptance-ui.mjs  # 无视觉人工采用
+APP_URL=http://127.0.0.1:5280 SHOT_SECONDS=8 node verify-agent-video-acceptance-ui.mjs  # 长镜头 9 帧覆盖结尾
+APP_URL=http://127.0.0.1:5280 REAL=1 node verify-agent-video-acceptance-ui.mjs  # 真实模型/视觉的 4 秒视频验收
 node verify-3d-geometry.mjs    # 场景 sanitize / 走位校验 / 路径穿墙 / 插值 / 运镜文案 / 指纹
 node verify-3d-ai.mjs          # 场景/走位上下文 / 稳定 id / 修复一次 / 取消 / 兜底（mock ask）
 node verify-scene-blocking-api.mjs  # 场景布局与镜头场次/走位持久化 / 隔离 / 非法拒绝

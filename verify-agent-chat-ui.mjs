@@ -161,13 +161,19 @@ await input.waitFor({ timeout: 10000 })
 check('assistant-ui composer 存在', await input.count() === 1)
 await input.fill('生成山、男女双剑对打，镜头环绕并始终正对两人')
 await page.getByRole('button', { name: '发送', exact: true }).click()
-for (let i = 0; i < 60; i++) {
-  await page.waitForTimeout(500)
-  const text = await page.locator('[data-chat-root]').innerText().catch(() => '')
-  if (text.includes('已完成') && text.includes('验收通过')) break
-}
+await page.waitForFunction(
+  () => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false',
+  null,
+  { timeout: 240000 },
+)
 const panel = await page.locator('[data-chat-root]').innerText()
 check('工具卡按顺序出现', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('沙箱'), panel.slice(0, 600))
+check('finish 只显示代码阶段完成', panel.includes('代码阶段完成') && !panel.includes('场景完成'), panel.slice(-800))
+check('MP4 视频卡出现', (await page.locator('[data-chat-video]').count()) === 1)
+check('MP4 播放器出现', (await page.locator('[data-chat-video-player]').count()) === 1)
+check('MP4 帧至少 5 张', (await page.locator('[data-chat-video-frames] img').count()) >= 5, String(await page.locator('[data-chat-video-frames] img').count()))
+check('MP4 帧验收通过', (await page.locator('[data-chat-video-review]').getAttribute('data-status')) === 'passed')
+check('MP4 已保存', (await page.locator('[data-chat-video]').getAttribute('data-status')) === 'passed' && panel.includes('已保存'))
 check('模型轮次说明显示', panel.includes('第 1 轮') && panel.includes('先读取当前镜头'), panel.slice(0, 600))
 check('模型说明在工具卡之前', panel.indexOf('先读取当前镜头') < panel.indexOf('已读取镜头上下文'), panel.slice(0, 600))
 check('代码块默认折叠', await page.locator('[data-chat-code]').count() === 1 && await page.locator('[data-chat-code]').getAttribute('data-open') === 'false')

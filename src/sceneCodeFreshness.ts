@@ -51,3 +51,12 @@ export function scheduleFreshnessForShot(data: ShotData, aspect: string): boolea
   }
   return false
 }
+
+/** 画布右键出片时，工作台有未保存草稿则必须阻止静默使用已保存旧代码。 */
+export function shouldBlockCanvasCodeRender(
+  editorNodeId: string | null,
+  editorDirty: boolean,
+  nodeId: string,
+): boolean {
+  return Boolean(editorNodeId && editorDirty && editorNodeId === nodeId)
+}

@@ -2239,6 +2239,7 @@ function seedreamProxy(): Plugin {
           try {
             const body = await readJson(req)
             const dataUrl = String(body.dataUrl || '')
+            const duration = Number(body.duration) || 0
             const m = dataUrl.match(/^data:video\/(webm|mp4);base64,(.+)$/)
             if (!m) throw new Error('dataUrl 不是视频')
             const dir = path.join(root, 'public', 'videos')
@@ -2250,7 +2251,10 @@ function seedreamProxy(): Plugin {
             const mp4 = path.join(dir, `schedule-${stamp}.mp4`)
             let out = `/videos/schedule-${stamp}.webm`
             try {
-              await runFfmpeg(['-y', '-i', src, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', mp4])
+              const args = ['-y', '-i', src, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart']
+              if (duration > 0) args.push('-t', String(duration))
+              args.push(mp4)
+              await runFfmpeg(args)
               if (fs.existsSync(mp4) && fs.statSync(mp4).size > 1024) {
                 try {
                   fs.unlinkSync(src)
@@ -2294,18 +2298,23 @@ function seedreamProxy(): Plugin {
             const dir = path.join(root, 'public', 'generated')
             fs.mkdirSync(dir, { recursive: true })
             const urls: string[] = []
+            const usedTimes: number[] = []
             for (const [i, t] of times.entries()) {
+              const safeT = Math.max(0, Math.min(Number(t) || 0, Math.max(0, (dur || 3) - 0.05)))
               const name = `sched-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}.jpg`
               const out = path.join(dir, name)
               try {
-                await runFfmpeg(['-y', '-ss', String(t), '-i', local, '-frames:v', '1', '-q:v', '2', out])
-                if (fs.existsSync(out) && fs.statSync(out).size > 512) urls.push(`/generated/${name}`)
+                await runFfmpeg(['-y', '-ss', String(safeT), '-i', local, '-frames:v', '1', '-q:v', '2', out])
+                if (fs.existsSync(out) && fs.statSync(out).size > 512) {
+                  urls.push(`/generated/${name}`)
+                  usedTimes.push(Math.round(safeT * 100) / 100)
+                }
               } catch {
                 /* 时间点可能落在最后一帧之后；跳过这一帧，别让整次抽帧失败 */
               }
             }
             if (urls.length === 0) throw new Error('抽帧失败')
-            res.end(JSON.stringify({ ok: true, urls, duration: Math.round(dur * 100) / 100 }))
+            res.end(JSON.stringify({ ok: true, urls, duration: Math.round(dur * 100) / 100, times: usedTimes }))
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e), urls: [] }))

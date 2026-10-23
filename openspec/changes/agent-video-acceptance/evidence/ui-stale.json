@@ -1,0 +1,13 @@
+{
+  "project": "agent-video-ui-1792739272808",
+  "newHash": "073f02401c85e7766d3b560c80197998ebcb17bef56d71f012e6ee00df2fc688",
+  "lastVideoUrl": "/videos/schedule-1792739288376-9bf60a.mp4",
+  "oldVideoUrl": "/videos/schedule-1792739282821-290ec7.mp4",
+  "savedVideoUrl": "/videos/schedule-1792739288376-9bf60a.mp4",
+  "staleFlags": {
+    "oldVideo": "true",
+    "newVideo": "false",
+    "oldReview": "true",
+    "newReview": "false"
+  }
+}

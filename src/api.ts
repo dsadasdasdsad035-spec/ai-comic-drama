@@ -779,23 +779,38 @@ export async function listMedia(projectName: string): Promise<MediaBundle> {
 }
 
 /** 保存浏览器录制的调度视频（webm dataURL），后端转 mp4 后返回站内路径 */
-export async function saveScheduleVideo(dataUrl: string): Promise<string> {
+export async function saveScheduleVideo(
+  dataUrl: string,
+  signal?: AbortSignal,
+  duration?: number,
+): Promise<string> {
   const r = await fetch('/api/save-video', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl }),
+    body: JSON.stringify({ dataUrl, ...(duration && duration > 0 ? { duration } : {}) }),
+    signal,
   }).then((x) => x.json())
   if (!r.ok) throw new Error(r.message || '调度视频保存失败')
   return r.url as string
 }
 
 /** 从调度视频抽关键帧，供出片时作结构性参考 */
-export async function extractFrames(video: string, count = 3): Promise<{ urls: string[]; duration: number }> {
+export async function extractFrames(
+  video: string,
+  count = 3,
+  signal?: AbortSignal,
+  times?: number[],
+): Promise<{ urls: string[]; duration: number; times: number[] }> {
   const r = await fetch('/api/frames', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ video, count }),
+    body: JSON.stringify({ video, count, ...(times?.length ? { times } : {}) }),
+    signal,
   }).then((x) => x.json())
   if (!r.ok) throw new Error(r.message || '抽帧失败')
-  return { urls: (r.urls ?? []) as string[], duration: Number(r.duration) || 0 }
+  return {
+    urls: (r.urls ?? []) as string[],
+    duration: Number(r.duration) || 0,
+    times: Array.isArray(r.times) ? r.times.map(Number) : [],
+  }
 }

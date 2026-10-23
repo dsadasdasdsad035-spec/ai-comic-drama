@@ -126,9 +126,13 @@ export async function reviewFramesWithVision(input: {
   }
   try {
     const r = await askVision({
-      system: '你是 3D 场景验收员。只根据关键帧判断清单，每项给出 ok 和 reason；不要臆造画面里没有的内容。',
+      system:
+        '你是 3D 场景验收员。你会看到一张由多帧关键帧拼成的联系表：每个格子是一帧，标签是 FRAME @ 秒；不要把整张联系表当成一帧。' +
+        '请对比不同格子判断时间/运动要求，只根据画面中真实可见的内容判断清单，每项给出 ok 和 reason；不要臆造画面里没有的内容。',
       prompt:
+        `这是一张包含 ${input.frames.length} 帧的关键帧联系表，按时间顺序排列。\n` +
         `请检查以下场景要求：\n${input.requirements.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\n` +
+        '涉及时间或运动的要求必须比较不同格子的变化；无法从联系表确认时判 false 并说明原因。\n' +
         '只输出 JSON：{"summary":"...","items":[{"key":"要求原文或短键","label":"要求","ok":true,"reason":"..."}]}',
       image: sheet,
       modelKey,

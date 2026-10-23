@@ -1,0 +1,29 @@
+{
+  "project": "agent-video-ui-1792739905278",
+  "panelTail": "SC01 · 山顶\n×\n工具轨迹 · 不展示隐藏推理\n运行当前场景，不要重新生成代码\n第 1 轮 · 模型调用完成\n完成\n沙箱通过\n第 2 轮 · 模型调用完成\n完成\n关键帧 · 5 张\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n第 3 轮 · 模型调用完成\n完成\n验收通过\n✓ 主体可见 · 可见\n✓ 镜头运动连续 · 可见\n\n视频帧通过\n\n第 4 轮 · 模型调用完成\n完成\n代码阶段完成\n\n代码阶段说明：代码阶段完成\n\n代码阶段完成，开始 MP4 视频验收…\n完成\nMP4 视频验收通过\n69c730cf58\n4.0s\n16:9\n帧来自 MP4\n已保存\n打开 MP4\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n完成\nMP4 帧验收通过 · 2/2\n\n帧来源：最终 MP4 · 视觉模型 video-ui-vision · 已保存\n\n查看这次验收的 MP4\n✓ 主体可见 · 可见\n✓ 镜头运动连续 · 可见\n\n视频帧通过\n\n代码 69c730cf58 已通过沙箱；MP4 4.0s 已保存；MP4 帧 0.0s / 1.0s / 2.0s / 3.0s / 4.0s；MP4 帧验收 2/2 通过；视频 /videos/schedule-1792739916105-ca3f43.mp4。\n取消\n发送",
+  "videoUrl": "/videos/schedule-1792739916105-ca3f43.mp4",
+  "shot": {
+    "codeHash": "69c730cf5885ff958a066a95d9d4651119e3e2cee455cf8763ee5c5672c718fe",
+    "metaCodeHash": "69c730cf5885ff958a066a95d9d4651119e3e2cee455cf8763ee5c5672c718fe",
+    "metaDuration": 4,
+    "scheduleVideo": "/videos/schedule-1792739916105-ca3f43.mp4"
+  },
+  "probe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "width": 960,
+        "height": 540,
+        "nb_frames": "120"
+      }
+    ],
+    "format": {
+      "duration": "4.011142"
+    }
+  },
+  "checks": {
+    "frameCount": 5,
+    "bad": 0
+  }
+}

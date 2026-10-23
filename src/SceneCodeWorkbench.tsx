@@ -36,8 +36,10 @@ import {
   sceneCodeRenderError,
 } from './sceneCodeRender'
 import { codeHashOf, sceneCodeFingerprint } from './sceneCodeFingerprint'
+import { isSceneCodeFresh } from './sceneCodeFreshness'
 import { runSceneCodeJob } from './sceneCodeJob'
 import { checkSceneCode } from './sceneCodeSanitize'
+import type { AgentVideoAcceptedInput } from './agent/sceneAgentTypes'
 
 const LazySceneAgentChat = lazy(() => import('./agent/SceneAgentChat'))
 
@@ -55,6 +57,7 @@ type Props = {
   onClose: () => void
   onSave: (input: CodeEditorSave) => Promise<void>
   onRendered: (input: CodeEditorRendered) => Promise<void>
+  onDirtyChange?: (dirty: boolean) => void
   toast: (message: string) => void
 }
 
@@ -158,6 +161,7 @@ export default function SceneCodeWorkbench({
   onClose,
   onSave,
   onRendered,
+  onDirtyChange,
   toast,
 }: Props) {
   const shotId = node.data.shotId || node.id
@@ -228,7 +232,25 @@ export default function SceneCodeWorkbench({
   const dirtyRef = useRef(false)
   useEffect(() => {
     dirtyRef.current = dirty
-  }, [dirty])
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
+
+  const renderedVideoFresh = Boolean(
+    renderedVideo &&
+      savedCode &&
+      node.data.sceneCodeMeta &&
+      savedCode.code === draftCode &&
+      isSceneCodeFresh({
+        sceneCode: savedCode,
+        meta: node.data.sceneCodeMeta,
+        context: context ?? undefined,
+        seconds: duration,
+        aspect: projectAspect,
+        hasVideo: true,
+      }),
+  )
+  const renderedVideoStatus = !renderedVideo ? '未渲染' : renderedVideoFresh ? '生效' : '已过期'
 
   const switchSideTab = (next: 'chat' | 'code') => {
     if (next === sideTab) return
@@ -654,6 +676,66 @@ export default function SceneCodeWorkbench({
     updatedAt: new Date().toISOString(),
   })
 
+  const acceptAgentVideo = async (input: AgentVideoAcceptedInput) => {
+    const code = await buildSceneCode(input.code, 'ai', draftMotionNote)
+    const renderedAt = new Date().toISOString()
+    const assets = input.prepared.assets.map((a) => a.ref)
+    const fingerprint = sceneCodeFingerprint({
+      codeHash: code.codeHash,
+      abiVersion: 1,
+      assets,
+      duration: input.duration,
+      aspect: input.aspect,
+      mode: 'clean',
+    })
+    const size = renderSize(input.aspect)
+    const sceneCodeMeta: SceneCodeMeta = {
+      version: 1,
+      fingerprint,
+      codeHash: code.codeHash,
+      abiVersion: 1,
+      assets,
+      selectionFingerprint: contextFingerprint(input.context),
+      duration: input.duration,
+      aspect: input.aspect,
+      width: size.width,
+      height: size.height,
+      fps: 30,
+      mode: 'clean',
+      renderedAt,
+    }
+    const scheduleMeta: ScheduleMeta = {
+      version: 1,
+      fingerprint,
+      mode: 'clean',
+      duration: input.duration,
+      aspect: input.aspect,
+      width: size.width,
+      height: size.height,
+      renderedAt,
+    }
+    await onRendered({
+      sceneCode: code,
+      shot3DContext: input.context,
+      sceneCodeMeta,
+      video: input.video,
+      scheduleMeta,
+      useFrames: false,
+    })
+    setSavedCode(code)
+    setDraftCode(input.code)
+    setContext(input.context)
+    setCodeSource('ai')
+    setLegacyMode(false)
+    setRenderedVideo(input.video)
+    setLastValidatedCode(input.code)
+    setLastValidatedHash(code.codeHash)
+    setLastValidatedContextFp(contextFingerprint(input.context))
+    setBaseline({ code: input.code, context: input.context, motionNote: draftMotionNote })
+    setPast([])
+    setFuture([])
+  }
+
   const saveNow = async (): Promise<boolean> => {
     if (!context || !catalog) return false
     const checked = checkSceneCode(draftCode)
@@ -719,7 +801,7 @@ export default function SceneCodeWorkbench({
         onProgress: (value) => setRenderBusy({ progress: value }),
       })
       if (ac.signal.aborted) return
-      const url = await saveSceneCodeVideo(blob)
+      const url = await saveSceneCodeVideo(blob, ac.signal, duration)
       const code = await buildSceneCode(draftCode, codeSource, draftMotionNote)
       const renderedAt = new Date().toISOString()
       const fingerprint = sceneCodeFingerprint({
@@ -1001,7 +1083,23 @@ export default function SceneCodeWorkbench({
                 )}
                 {generating && <button className="btn-mini" onClick={cancelGenerate}>取消</button>}
                 {!legacyMode && !draftCode && <button className="btn-mini" onClick={() => void useEmptyCode()}>空白模板</button>}
-                {renderedVideo && <a className="cw-link" href={renderedVideo} target="_blank" rel="noreferrer">最近视频</a>}
+                {renderedVideo && (
+                  <a
+                    className="cw-link"
+                    data-video-status={renderedVideoStatus}
+                    style={{ color: renderedVideoStatus === '生效' ? 'var(--ok)' : 'var(--warn)' }}
+                    href={renderedVideo}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={
+                      renderedVideoStatus === '生效'
+                        ? '最近渲染的视频与当前草稿一致'
+                        : '旧视频：当前代码/参考内容已变化，需要重新渲染'
+                    }
+                  >
+                    最近视频 · {renderedVideoStatus}
+                  </a>
+                )}
               </div>
             </div>
 
@@ -1094,6 +1192,7 @@ export default function SceneCodeWorkbench({
                   getShotContext={agentContextText}
                   prepareAgent={prepareAgent}
                   onDraftCode={applyAgentDraft}
+                  onVideoAccepted={acceptAgentVideo}
                   onOpenCode={() => switchSideTab('code')}
                   onToast={toast}
                   currentCode={draftCode}

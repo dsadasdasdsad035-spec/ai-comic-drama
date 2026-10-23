@@ -76,7 +76,7 @@ import {
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
-import { isSceneCodeFresh } from './sceneCodeFreshness'
+import { isSceneCodeFresh, shouldBlockCanvasCodeRender } from './sceneCodeFreshness'
 import { buildShot3DContextCatalog } from './shot3dContextCatalog'
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, resolveNeighborToken, SHOT_NEXT, SHOT_PREV } from './shotReferences'
 import { contextFingerprint, sanitizeShot3DContext } from './shot3dContext'
@@ -314,6 +314,7 @@ function Shell() {
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
   const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
+  const [editorDirty, setEditorDirty] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
   const [voices, setVoices] = useState<VoiceOption[]>([])
@@ -402,6 +403,7 @@ function Shell() {
     setReadyProject('')
     setSelId(null)
     setEditorNodeId(null)
+    setEditorDirty(false)
     setSceneLayouts([])
     setProjectAspect('16:9')
     if (!projectName) {
@@ -1228,6 +1230,11 @@ function Shell() {
   /** 右击快速生成代码视频：代码镜头直接渲染；没有代码时先生成一次代码。 */
   const genSceneCodeVideo = useCallback(
     async (nodeId: string, useFrames = false) => {
+      if (shouldBlockCanvasCodeRender(editorNodeId, editorDirty, nodeId)) {
+        setToast('工作台有未保存的 3D 代码修改；请先在编辑器中保存或渲染视频')
+        window.setTimeout(() => setToast(''), 3200)
+        return
+      }
       const node = nodesRef.current.find((n) => n.id === nodeId)
       if (!node) return
       const data = node.data
@@ -1299,7 +1306,7 @@ function Shell() {
           aspect: projectAspect,
           mode: 'clean',
         })
-        const url = await saveSceneCodeVideo(blob)
+        const url = await saveSceneCodeVideo(blob, undefined, duration)
         const { width, height } = renderSize(projectAspect)
         const fingerprint = sceneCodeFingerprint({
           codeHash,
@@ -1362,7 +1369,7 @@ function Shell() {
       }
       window.setTimeout(() => setToast(''), 3200)
     },
-    [patch, appSettings, stagePick, projectName, projectAspect, characters, assets, epNo],
+    [patch, appSettings, stagePick, projectName, projectAspect, characters, assets, epNo, editorNodeId, editorDirty],
   )
 
   /**
@@ -1520,6 +1527,7 @@ function Shell() {
         return
       }
       setEditorNodeId(nodeId)
+      setEditorDirty(false)
     },
     [projectName],
   )
@@ -1558,13 +1566,14 @@ function Shell() {
         scheduleVideo: input.video,
         scheduleMeta: input.scheduleMeta,
         motionNote: input.sceneCode.motionNote ?? node.data.motionNote,
-        ...(input.frames ? { scheduleFrames: input.frames } : {}),
-        ...(input.useFrames ? { useScheduleFrames: true } : {}),
+        scheduleFrames: input.frames ?? [],
+        useScheduleFrames: Boolean(input.useFrames && input.frames?.length),
       } as ShotData
-      patch(node.id, nextData as never)
+      // 先落项目，再更新节点；项目写入失败时不留下“界面已保存、项目没保存”的假状态。
       if (node.data.shotId) {
         await mergeProjectShots(projectName, [nodeToShot(nextData, node.data.shotId)])
       }
+      patch(node.id, nextData as never)
     },
     [editorNodeId, patch, projectName],
   )
@@ -2971,9 +2980,13 @@ function Shell() {
             settings={appSettings}
             stagePick={stagePick}
             onPickStageModel={pickStageModel}
-            onClose={() => setEditorNodeId(null)}
+            onClose={() => {
+              setEditorNodeId(null)
+              setEditorDirty(false)
+            }}
             onSave={saveEditor}
             onRendered={applyEditorRender}
+            onDirtyChange={setEditorDirty}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)

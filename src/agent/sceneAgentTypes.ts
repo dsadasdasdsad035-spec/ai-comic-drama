@@ -1,4 +1,6 @@
 import type { SceneCodeCheck } from '../sceneCodeSanitize'
+import type { PreparedCodeContext } from '../sceneCodePrepare'
+import type { Shot3DContext } from '../types'
 import { AGENT_LIMIT_DEFAULTS } from './agentLimits'
 
 export type AgentToolName =
@@ -39,6 +41,8 @@ export type AgentMessagePart =
   | AgentCodePart
   | AgentFramesPart
   | AgentReviewPart
+  | AgentVideoPart
+  | AgentVideoReviewPart
   | AgentStepPart
 
 export type AgentMessage = {
@@ -76,6 +80,70 @@ export type AgentReview = {
   summary?: string
 }
 
+export type AgentVideoPhase = 'rendering' | 'saving' | 'extracting' | 'reviewing'
+export type AgentVideoStatus =
+  | 'running'
+  | 'passed'
+  | 'rejected'
+  | 'needs_human'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout'
+export type AgentVideoErrorCode =
+  | 'render_failed'
+  | 'save_failed'
+  | 'extract_failed'
+  | 'vision_unavailable'
+  | 'review_failed'
+  | 'cancelled'
+  | 'timeout'
+
+export type AgentVideoPart = {
+  type: 'video'
+  videoId: string
+  codeHash: string
+  status: AgentVideoStatus
+  phase?: AgentVideoPhase
+  progress?: number
+  videoUrl?: string
+  duration: number
+  aspect: string
+  frames: AgentFrame[]
+  error?: string
+  errorCode?: AgentVideoErrorCode
+  saved?: boolean
+  savedAt?: string
+  superseded?: boolean
+}
+
+export type AgentVideoReviewPart = {
+  type: 'video-review'
+  videoId: string
+  codeHash: string
+  videoUrl?: string
+  passed: boolean
+  needsHumanReview?: boolean
+  modelKey?: string
+  items: AgentReviewItem[]
+  summary?: string
+  saved?: boolean
+  error?: string
+  errorCode?: AgentVideoErrorCode
+  superseded?: boolean
+}
+
+export type AgentVideoAcceptedInput = {
+  code: string
+  codeHash: string
+  context: Shot3DContext
+  prepared: PreparedCodeContext
+  video: string
+  duration: number
+  aspect: string
+  frames: AgentFrame[]
+  review?: AgentReview
+}
+
 export type AgentTrial = {
   ok: boolean
   error?: string
@@ -107,6 +175,7 @@ export type SceneAgentResult = {
   frames?: AgentFrame[]
   review?: AgentReview
   summary: string
+  finished?: boolean
   cancelled?: boolean
   error?: string
   attempts: number
