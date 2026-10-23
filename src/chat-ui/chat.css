@@ -1,0 +1,94 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/*
+ * Chat-only Tailwind layer. Preflight is intentionally not imported globally:
+ * the rest of the workbench still uses theme.css and must not be reset.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+.chat-ui {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--panel);
+  --card-foreground: var(--text);
+  --popover: var(--panel);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: #fff;
+  --secondary: var(--panel-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--bg-2);
+  --muted-foreground: var(--muted);
+  --accent: var(--accent-dim);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --destructive-foreground: #fff;
+  --border: var(--line);
+  --input: var(--line);
+  --ring: var(--accent);
+  --radius: var(--r-md);
+  color: var(--foreground);
+}
+
+.chat-ui,
+.chat-ui *,
+.chat-ui *::before,
+.chat-ui *::after {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
+
+.chat-ui button,
+.chat-ui input,
+.chat-ui textarea {
+  font: inherit;
+}
+
+.chat-ui button {
+  cursor: pointer;
+}
+
+.chat-ui h1,
+.chat-ui h2,
+.chat-ui h3,
+.chat-ui h4,
+.chat-ui p {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.chat-ui a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.chat-ui ::selection {
+  background: var(--accent-dim);
+  color: var(--text);
+}

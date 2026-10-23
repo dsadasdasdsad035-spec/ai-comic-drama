@@ -11,6 +11,25 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // 在 React 挂载前应用主题，避免首屏闪白/闪黑
+      (() => {
+        let mode = 'night'
+        try {
+          const saved = localStorage.getItem('storyboard-theme')
+          if (saved === 'day' || saved === 'night') mode = saved
+          else if (window.matchMedia('(prefers-color-scheme: light)').matches) mode = 'day'
+        } catch {
+          try {
+            if (window.matchMedia('(prefers-color-scheme: light)').matches) mode = 'day'
+          } catch {
+            /* 保持夜间 */
+          }
+        }
+        document.documentElement.dataset.theme = mode
+        document.documentElement.style.colorScheme = mode === 'day' ? 'light' : 'dark'
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

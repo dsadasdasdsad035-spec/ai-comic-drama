@@ -14,6 +14,12 @@ import {
   testProvider,
 } from './api'
 import { DEFAULT_RULES, normalizeRules } from './prompts'
+import {
+  AGENT_LIMIT_DEFAULTS,
+  AGENT_LIMIT_RANGES,
+  normalizeAgentLimits,
+  type AgentLimitSettings,
+} from './agent/agentLimits'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from './pricing'
 
 /**
@@ -27,6 +33,8 @@ type Props = { toast: (m: string) => void; onSaved?: () => void }
 const CAP_META: { cap: Cap; label: string; hint: string }[] = [
   { cap: 'text', label: '文本 · 常规', hint: '拆镜/提示词之外的批量生成' },
   { cap: 'textPro', label: '文本 · 高质量', hint: '拆镜 / 拆角色 / 长输出' },
+  { cap: 'vision', label: '视觉 · 图像理解', hint: '3D 参考板 / 素材 brief；只选实际支持图像输入的模型' },
+  { cap: 'videoVision', label: '视觉 · 视频理解', hint: '首次 3D 代码生成的视频理解；本地视频渠道不支持时回退关键帧' },
   { cap: 'image', label: '图像 · 出画面', hint: '画布生成画面' },
   { cap: 'view', label: '图像 · 角色三视图', hint: '角色板生成三视图' },
   { cap: 'video', label: '视频 · 首帧出片', hint: '单图图生视频；2.0+ 可带视频参考' },
@@ -38,6 +46,8 @@ const CAP_META: { cap: Cap; label: string; hint: string }[] = [
 const CAP_TO_PC: Record<Cap, ProviderCap> = {
   text: 'text',
   textPro: 'text',
+  vision: 'text',
+  videoVision: 'text',
   image: 'image',
   view: 'image',
   video: 'video',
@@ -80,8 +90,11 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'script', label: '剧本（拆集）', hint: '原著 → 分集剧本' },
   { stage: 'character', label: '角色（拆角色）', hint: '剧本/分镜 → 角色外观锚点' },
   { stage: 'asset', label: '素材（拆场景/道具）', hint: '剧本/分镜 → 场景空镜与关键道具' },
-  { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 调度也用它' },
+  { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 文本编排也用它' },
   { stage: 'prompt', label: '提示词（首帧/视频）', hint: '镜头 → keyframe_prompt / video_prompt' },
+  { stage: 'sceneCode', label: '3D 代码（生成/聊天）', hint: '参考内容 → Three.js 代码；空则沿用文本默认' },
+  { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
+  { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
 ]
 
 export default function Settings({ toast, onSaved }: Props) {
@@ -90,6 +103,7 @@ export default function Settings({ toast, onSaved }: Props) {
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
   const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
+  const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
   const [apiKey, setApiKey] = useState('')
   const [rules, setRules] = useState<Record<string, RulePack>>(() => normalizeRules())
   const [dbFile, setDbFile] = useState('')
@@ -107,6 +121,7 @@ export default function Settings({ toast, onSaved }: Props) {
         setDefaults(s.defaults || {})
         setStageModels(s.stageModels || {})
         setPricing(normalizePricing(s.pricing))
+        setAgentLimits(normalizeAgentLimits(s.agentLimits))
         setApiKey(s.apiKey || '')
         setRules(normalizeRules(s.rules))
         setDbFile(db || '')
@@ -118,7 +133,8 @@ export default function Settings({ toast, onSaved }: Props) {
   const save = async () => {
     setSaving(true)
     try {
-      await saveSettings({ providers, models, defaults, stageModels, pricing, apiKey, rules } as Partial<AppSettings>)
+      const saved = await saveSettings({ providers, models, defaults, stageModels, pricing, agentLimits, apiKey, rules } as Partial<AppSettings>)
+      setAgentLimits(normalizeAgentLimits(saved.agentLimits))
       toast('设置已保存（存入 SQLite），生成时立即生效')
       onSaved?.()
     } catch (e: any) {
@@ -327,8 +343,8 @@ export default function Settings({ toast, onSaved }: Props) {
           <header className="st-sec-head">
             <h3>生成环节默认模型</h3>
             <span className="st-hint">
-              剧本 / 角色 / 素材 / 镜头表 / 提示词各自选一个文本模型；工作台里还能临时改，手选只保存在本机。空着 =
-              用「文本 · 常规」默认。
+              剧本 / 角色 / 素材 / 镜头表 / 提示词 / 3D 代码走文本族；视觉和视频理解分别选支持图像/视频输入的模型。
+              工作台里还能临时改，手选只保存在本机。文本环节空着 = 用「文本 · 常规」默认；视觉为空 = 素材只给标签；视频理解为空 = 回退关键帧。
             </span>
           </header>
           <div className="st-grid">
@@ -345,8 +361,19 @@ export default function Settings({ toast, onSaved }: Props) {
                     setStageModels(next)
                   }}
                 >
-                  <option value="">（未绑定 · 用文本默认）</option>
-                  {textModels.map((m) => (
+                  <option value="">
+                    {s.stage === 'vision'
+                      ? '（未绑定 · 素材只给标签）'
+                      : s.stage === 'videoVision'
+                        ? '（未绑定 · 回退关键帧）'
+                        : '（未绑定 · 用文本默认）'}
+                  </option>
+                  {(s.stage === 'vision'
+                    ? models.filter((m) => m.cap === 'vision')
+                    : s.stage === 'videoVision'
+                      ? models.filter((m) => m.cap === 'videoVision')
+                      : textModels
+                  ).map((m) => (
                     <option key={m.key} value={m.key}>
                       {m.label} · {m.model || '未填模型 ID'}
                     </option>
@@ -358,6 +385,55 @@ export default function Settings({ toast, onSaved }: Props) {
           </div>
           <div className="st-hint" style={{ marginTop: 8 }}>
             角色三视图使用上方「图像 · 角色三视图」默认；角色板里可以单独手选。
+          </div>
+        </section>
+
+        <section className="st-sec">
+          <header className="st-sec-head">
+            <h3>Agent 运行上限</h3>
+            <span className="st-hint">
+              3D 调度 agent 的安全上限。步数按图执行节点计算，约 3 步对应一轮模型/工具循环；调高会增加运行时间和模型消耗。总时长超时会显示“运行超时”，与手动取消不同。
+            </span>
+          </header>
+          <div className="st-grid">
+            <label className="st-field">
+              <span>最大执行步数</span>
+              <input
+                type="number"
+                min={AGENT_LIMIT_RANGES.maxSteps.min}
+                max={AGENT_LIMIT_RANGES.maxSteps.max}
+                step="1"
+                value={agentLimits.maxSteps}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  setAgentLimits((prev) => ({
+                    ...prev,
+                    maxSteps: raw.trim() === '' ? AGENT_LIMIT_DEFAULTS.maxSteps : Number(raw),
+                  }))
+                }}
+                onBlur={() => setAgentLimits(normalizeAgentLimits(agentLimits))}
+              />
+              <em>默认 {AGENT_LIMIT_DEFAULTS.maxSteps}；范围 {AGENT_LIMIT_RANGES.maxSteps.min}–{AGENT_LIMIT_RANGES.maxSteps.max}，低于默认可能提前结束</em>
+            </label>
+            <label className="st-field">
+              <span>总运行时长（秒）</span>
+              <input
+                type="number"
+                min={AGENT_LIMIT_RANGES.totalSeconds.min}
+                max={AGENT_LIMIT_RANGES.totalSeconds.max}
+                step="1"
+                value={agentLimits.totalSeconds}
+                onChange={(e) => {
+                  const raw = e.target.value
+                  setAgentLimits((prev) => ({
+                    ...prev,
+                    totalSeconds: raw.trim() === '' ? AGENT_LIMIT_DEFAULTS.totalSeconds : Number(raw),
+                  }))
+                }}
+                onBlur={() => setAgentLimits(normalizeAgentLimits(agentLimits))}
+              />
+              <em>默认 {AGENT_LIMIT_DEFAULTS.totalSeconds} 秒；范围 {AGENT_LIMIT_RANGES.totalSeconds.min}–{AGENT_LIMIT_RANGES.totalSeconds.max}</em>
+            </label>
           </div>
         </section>
 

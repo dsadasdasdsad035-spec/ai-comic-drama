@@ -1,4 +1,6 @@
 import { defineConfig, type Plugin } from 'vite'
+import tailwindcss from '@tailwindcss/vite'
+import { normalizeAgentLimits, type AgentLimitSettings } from './src/agent/agentLimits'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -43,6 +45,30 @@ const VIDEO_MODEL = 'doubao-seedance-1-0-pro-250528'
 const VIDEO_REF_MODEL = 'doubao-seedance-1-0-lite-i2v-250428'
 
 /** 画幅 → Seedream 合规像素（4.5 要求总像素 ≥ 3,686,400） */
+/** Seedream 单候选 / 下载超时；测试可用环境变量缩短 */
+const SEEDREAM_TIMEOUT_MS = Math.max(1000, Number(process.env.SEEDREAM_TIMEOUT_MS) || 180_000)
+const SEEDREAM_DOWNLOAD_TIMEOUT_MS = Math.max(1000, Number(process.env.SEEDREAM_DOWNLOAD_TIMEOUT_MS) || 60_000)
+
+function linkedTimeout(parent: AbortSignal | undefined, ms: number) {
+  const ctrl = new AbortController()
+  let timedOut = false
+  const onParent = () => ctrl.abort()
+  if (parent?.aborted) ctrl.abort()
+  else parent?.addEventListener('abort', onParent, { once: true })
+  const timer = setTimeout(() => {
+    timedOut = true
+    ctrl.abort()
+  }, ms)
+  return {
+    signal: ctrl.signal,
+    timedOut: () => timedOut,
+    dispose: () => {
+      clearTimeout(timer)
+      parent?.removeEventListener('abort', onParent)
+    },
+  }
+}
+
 const RATIO_SIZE: Record<string, string> = {
   '16:9': '2560x1440',
   '9:16': '1440x2560',
@@ -97,11 +123,11 @@ function readEnvKey(name: string): string | null {
 type RulePack = { enabled: boolean; text: string }
 
 /** 能力：文本两档 / 图像 / 三视图 / 视频两档 / 音频 */
-type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 
 /** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
-type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt'
-const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt']
+type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
+const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
 
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
@@ -145,6 +171,8 @@ type AppSettings = {
   /** 每个生成环节的默认模型键；空 = 沿用 defaults.text */
   stageModels?: Partial<Record<Stage, string>>
   pricing?: Pricing
+  /** 3D agent 的运行上限；缺省使用默认值 */
+  agentLimits?: AgentLimitSettings
   /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
@@ -395,6 +423,7 @@ function normalizeSettings(raw: any): AppSettings {
         defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
         stageModels: normalizeStageModels(raw.stageModels),
         pricing: raw.pricing || {},
+        agentLimits: normalizeAgentLimits(raw.agentLimits),
         apiKey,
         rules,
         presetsVersion: version,
@@ -419,6 +448,7 @@ function normalizeSettings(raw: any): AppSettings {
     defaults: { ...DEFAULT_DEFAULTS },
     stageModels: {},
     pricing: {},
+    agentLimits: normalizeAgentLimits(undefined),
     apiKey,
     rules,
     presetsVersion: CURRENT_PRESETS_VERSION,
@@ -465,6 +495,7 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
         ? normalizeStageModels(patch.stageModels)
         : normalizeStageModels(cur.stageModels),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
+    agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
     presetsVersion: CURRENT_PRESETS_VERSION,
@@ -554,6 +585,42 @@ function pickTextModel(keyOverride?: string, tier: 'lite' | 'pro' = 'lite'): Tex
     s.models.find((m) => m.cap === cap) ||
     s.models.find((m) => isTextCap(m.cap))
   if (!entry) return { error: 'no-text-model' }
+  return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+}
+
+type VisionPick = {
+  entry?: ModelEntry
+  provider?: Provider
+  error?: 'model-key-not-found' | 'no-vision-model' | 'no-video-vision-model'
+}
+
+/** 视觉模型解析：只认 cap=vision，显式 key 找不到就报错，不静默换文本模型 */
+function pickVisionModel(keyOverride?: string): VisionPick {
+  const s = getAppSettings()
+  const key = String(keyOverride || '').trim()
+  if (key) {
+    const entry = s.models.find((m) => m.key === key && m.cap === 'vision')
+    if (!entry) return { error: 'model-key-not-found' }
+    return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+  }
+  const entry = s.models.find((m) => m.key === s.defaults.vision && m.cap === 'vision') || s.models.find((m) => m.cap === 'vision')
+  if (!entry) return { error: 'no-vision-model' }
+  return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+}
+
+/** 视频理解只认 cap=videoVision；本地文件不能直接交给远端模型，由调用方回退关键帧。 */
+function pickVideoVisionModel(keyOverride?: string): VisionPick {
+  const s = getAppSettings()
+  const key = String(keyOverride || '').trim()
+  if (key) {
+    const entry = s.models.find((m) => m.key === key && m.cap === 'videoVision')
+    if (!entry) return { error: 'model-key-not-found' }
+    return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+  }
+  const entry =
+    s.models.find((m) => m.key === s.defaults.videoVision && m.cap === 'videoVision') ||
+    s.models.find((m) => m.cap === 'videoVision')
+  if (!entry) return { error: 'no-video-vision-model' }
   return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
 }
 
@@ -670,8 +737,6 @@ async function ensureMp4Video(file: string): Promise<{ file: string; temp: boole
 type VideoJob = {
   status: 'running' | 'succeeded' | 'failed'
   url?: string
-  /** 本镜真实尾帧（本地 /generated 路径），可作下一镜首帧 */
-  tail?: string
   message?: string
   startedAt: number
   elapsed?: number
@@ -1754,7 +1819,7 @@ function seedreamProxy(): Plugin {
               const patch: Record<string, unknown> = {}
               if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
               // 角色 / 场景道具设定 / 集 / 素材整体替换（都是人改的结果，不是 LLM 增量）
-              for (const k of ['characters', 'designs', 'episodes', 'assets']) {
+              for (const k of ['characters', 'designs', 'sceneLayouts', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]
@@ -1765,7 +1830,7 @@ function seedreamProxy(): Plugin {
                 patch[k] = body[k]
               }
               if (Object.keys(patch).length === 0) {
-                throw new Error('POST 需要 shots / characters / designs / episodes / source 等字段之一')
+                throw new Error('POST 需要 shots / characters / designs / sceneLayouts / episodes / source 等字段之一')
               }
               const saved = writeProject(rootDir, name, patch)
               res.end(
@@ -1789,6 +1854,176 @@ function seedreamProxy(): Plugin {
             res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT' }))
           } catch (e: any) {
             res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 视觉理解：只接受声明 vision 能力的模型与参考板 dataURL ----
+        if (url === '/api/vision') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const prompt = String(body.prompt || '').trim()
+            const image = String(body.image || '').trim()
+            if (!prompt) throw new Error('prompt 不能为空')
+            const m = image.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/)
+            if (!m) throw new Error('参考板必须是 png/jpeg/webp 的 dataURL')
+            if (Buffer.byteLength(m[2], 'base64') > 4 * 1024 * 1024) throw new Error('参考板超过 4MB')
+            const picked = pickVisionModel(String(body.modelKey || '').trim())
+            if (picked.error || !picked.entry) {
+              res.statusCode = 400
+              res.end(JSON.stringify({
+                ok: false,
+                kind: picked.error || 'no-vision-model',
+                message: picked.error === 'model-key-not-found'
+                  ? `模型表里找不到视觉模型「${body.modelKey}」`
+                  : '设置页还没有可用的视觉模型，3D 将回退为文本生成',
+              }))
+              return
+            }
+            const entry = picked.entry
+            const provider = picked.provider
+            if (!provider || !['ark', 'ark-plan', 'openai'].includes(provider.kind)) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'unsupported-vision-provider', message: '视觉模型只支持方舟 / OpenAI 兼容渠道' }))
+              return
+            }
+            const key = providerKey(provider)
+            if (!key) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'no-key', message: `渠道「${provider.label || provider.kind}」没有 API Key` }))
+              return
+            }
+            const base = String(provider.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            const messages: { role: string; content: unknown }[] = []
+            if (body.system) messages.push({ role: 'system', content: String(body.system) })
+            messages.push({
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: image } },
+              ],
+            })
+            const r = await fetch(`${base}/chat/completions`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: entry.model,
+                messages,
+                max_tokens: Number(body.maxTokens) || 1800,
+                temperature: 0.2,
+              }),
+            })
+            const raw = await r.text()
+            if (!r.ok) throw new Error(`${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}`)
+            const j = JSON.parse(raw)
+            const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
+            if (!text.trim()) throw new Error('视觉模型没有返回内容')
+            res.end(JSON.stringify({
+              ok: true,
+              text,
+              ...(body.json ? { json: extractJson(text) } : {}),
+              model: entry.model,
+              modelKey: entry.key,
+              modelLabel: entry.label,
+              provider: provider.label || provider.kind,
+            }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 视频理解：只接受公网可访问 URL；本地视频由前端回退关键帧 ----
+        if (url === '/api/video-vision') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const prompt = String(body.prompt || '').trim()
+            const video = String(body.video || '').trim()
+            if (!prompt) throw new Error('prompt 不能为空')
+            if (!/^https?:\/\//i.test(video)) {
+              res.statusCode = 400
+              res.end(JSON.stringify({
+                ok: false,
+                kind: 'unsupported-video-input',
+                message: '当前视频理解渠道不支持本地视频；请使用关键帧回退',
+              }))
+              return
+            }
+            const picked = pickVideoVisionModel(String(body.modelKey || '').trim())
+            if (picked.error || !picked.entry) {
+              res.statusCode = 400
+              res.end(JSON.stringify({
+                ok: false,
+                kind: picked.error || 'no-video-vision-model',
+                message: picked.error === 'model-key-not-found'
+                  ? `模型表里找不到视频理解模型「${body.modelKey}」`
+                  : '设置页还没有可用的视频理解模型，已回退关键帧',
+              }))
+              return
+            }
+            const entry = picked.entry
+            const provider = picked.provider
+            if (!provider || !['ark', 'ark-plan', 'openai'].includes(provider.kind)) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'unsupported-video-provider', message: '视频理解只支持方舟 / OpenAI 兼容渠道' }))
+              return
+            }
+            const key = providerKey(provider)
+            if (!key) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'no-key', message: `渠道「${provider.label || provider.kind}」没有 API Key` }))
+              return
+            }
+            const base = String(provider.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            const messages: { role: string; content: unknown }[] = []
+            if (body.system) messages.push({ role: 'system', content: String(body.system) })
+            messages.push({
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'video_url', video_url: { url: video } },
+              ],
+            })
+            const r = await fetch(`${base}/chat/completions`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: entry.model,
+                messages,
+                max_tokens: Number(body.maxTokens) || 1800,
+                temperature: 0.2,
+              }),
+            })
+            const raw = await r.text()
+            if (!r.ok) throw new Error(`${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}`)
+            const j = JSON.parse(raw)
+            const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
+            if (!text.trim()) throw new Error('视频理解模型没有返回内容')
+            res.end(JSON.stringify({
+              ok: true,
+              text,
+              ...(body.json ? { json: extractJson(text) } : {}),
+              model: entry.model,
+              modelKey: entry.key,
+              modelLabel: entry.label,
+              provider: provider.label || provider.kind,
+            }))
+          } catch (e: any) {
+            res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
           }
           return
@@ -1892,7 +2127,23 @@ function seedreamProxy(): Plugin {
               res.end(JSON.stringify({ ok: true, text, ...meta }))
               return
             }
-            res.end(JSON.stringify({ ok: true, json: extractJson(text), text, ...meta }))
+            let parsedJson: unknown
+            try {
+              parsedJson = extractJson(text)
+            } catch {
+              // 保留原始文本，让客户端按 action 协议报错/修复；不要把 provider 的原始 JSON 丢掉。
+              parsedJson = undefined
+            }
+            res.end(
+              JSON.stringify({
+                ok: true,
+                json: parsedJson,
+                text,
+                finishReason: j?.choices?.[0]?.finish_reason,
+                usage: j?.usage,
+                ...meta,
+              }),
+            )
           } catch (e: any) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
@@ -2333,11 +2584,8 @@ function seedreamProxy(): Plugin {
               : []
             const videoRefMode = refVideos.length > 0
             const refMode = refImages.length > 0
-            // 全模态参考（图 / 视频）与首尾帧互斥
+            // 全模态参考（图 / 视频）与首帧互斥
             const referenceMode = refMode || videoRefMode
-            const lastFrame = String(body.lastFrame || '')
-            const useLastFrame = Boolean(lastFrame) && !referenceMode
-            const returnLastFrame = body.returnLastFrame !== false
             if (!image && !referenceMode) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
@@ -2421,7 +2669,6 @@ function seedreamProxy(): Plugin {
                 if (refUrls.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
               } else if (!videoRefMode && image) {
                 firstUrl = resolveRef(image, root)
-                if (useLastFrame) lastUrl = resolveRef(lastFrame, root)
               }
 
               if (videoRefMode) {
@@ -2481,9 +2728,7 @@ function seedreamProxy(): Plugin {
                 seconds,
                 resolution,
                 cameraFixed,
-                returnLastFrame,
                 firstFrame: firstUrl,
-                lastFrame: useLastFrame ? lastUrl : '',
                 referenceImages: refUrls,
                 referenceVideos: refVideoUrls,
                 videoRefTaskType: videoRefMode ? pick.entry?.videoRefTaskType || '' : '',
@@ -2523,7 +2768,6 @@ function seedreamProxy(): Plugin {
             videoJobs.set(id, { status: 'running', startedAt })
 
             const outDir = path.join(root, 'public', 'videos')
-            const frameDir = path.join(root, 'public', 'generated')
             fs.mkdirSync(outDir, { recursive: true })
 
             res.end(JSON.stringify({ ok: true, id, mode, model, skipped }))
@@ -2540,14 +2784,11 @@ function seedreamProxy(): Plugin {
                 const done = await pollVideoTask({ baseUrl: base, apiKey: runKey, taskId })
                 const art = await downloadVideoArtifacts({
                   videoUrl: done.videoUrl,
-                  lastFrameUrl: done.lastFrameUrl,
                   videoDir: outDir,
-                  frameDir,
                 })
                 videoJobs.set(id, {
                   status: 'succeeded',
                   url: art.url,
-                  tail: art.tail,
                   startedAt,
                   elapsed: Date.now() - startedAt,
                   taskId,
@@ -2668,52 +2909,88 @@ function seedreamProxy(): Plugin {
           if (!refSupported) dropRefs.push(...[body.refImage, ...multiRefs].filter(Boolean).map(String))
 
           const t0 = Date.now()
+          const routeAbort = new AbortController()
+          const onClientClose = () => {
+            if (!res.writableEnded) routeAbort.abort()
+          }
+          res.on('close', onClientClose)
+          req.on('aborted', onClientClose)
+          res.socket?.on('close', onClientClose)
 
           // n 张 = n 次独立请求（不是 sequential 组图：组图出的是一组连贯故事板，
           // 不是同一提示词的多个变体，做"候选选优"语义不对）
           const callArk = async (pl: Record<string, unknown>) => {
-            const r = await fetch(imgEndpoint, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${imgKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify(pl),
-            })
-            const text = await r.text()
-            if (!r.ok) {
-              let msg = text.slice(0, 300)
-              try {
-                const j = JSON.parse(text)
-                msg = `${j?.error?.code ?? ''} — ${j?.error?.message ?? msg}`
-              } catch {
-                /* 保持原文 */
+            const lt = linkedTimeout(routeAbort.signal, SEEDREAM_TIMEOUT_MS)
+            try {
+              const r = await fetch(imgEndpoint, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${imgKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(pl),
+                signal: lt.signal,
+              })
+              const text = await r.text()
+              if (!r.ok) {
+                let msg = text.slice(0, 300)
+                try {
+                  const j = JSON.parse(text)
+                  msg = `${j?.error?.code ?? ''} — ${j?.error?.message ?? msg}`
+                } catch {
+                  /* 保持原文 */
+                }
+                const kind = /overdue|arrear|balance|insufficient|欠费/.test(text.toLowerCase())
+                  ? 'billing'
+                  : r.status === 401
+                    ? 'auth'
+                    : 'api'
+                const err = new Error(msg) as Error & { kind?: string; status?: number }
+                err.kind = kind
+                err.status = r.status
+                throw err
               }
-              const kind = /overdue|arrear|balance|insufficient|欠费/.test(text.toLowerCase())
-                ? 'billing'
-                : r.status === 401
-                  ? 'auth'
-                  : 'api'
-              const err = new Error(msg) as Error & { kind?: string; status?: number }
-              err.kind = kind
-              err.status = r.status
-              throw err
+              return JSON.parse(text)
+            } catch (e) {
+              if ((e as Error)?.name === 'AbortError') {
+                const err = new Error(lt.timedOut() ? '候选生成超时' : '请求已取消') as Error & { kind?: string }
+                err.kind = lt.timedOut() ? 'timeout' : 'aborted'
+                throw err
+              }
+              throw e
+            } finally {
+              lt.dispose()
             }
-            return JSON.parse(text)
           }
 
           const settled = await Promise.allSettled(
             Array.from({ length: n }, () => callArk(payload)),
           )
+          if (routeAbort.signal.aborted) {
+            if (!res.writableEnded) {
+              res.statusCode = 499
+              res.end(JSON.stringify({ ok: false, message: '请求已取消', kind: 'aborted' }))
+            }
+            return
+          }
           const fulfilled = settled.filter(
             (s): s is PromiseFulfilledResult<any> => s.status === 'fulfilled',
           )
+          const timedOut = settled.filter(
+            (s) => s.status === 'rejected' && (s.reason as Error & { kind?: string })?.kind === 'timeout',
+          ).length
+          const failed = settled.length - fulfilled.length - timedOut
 
           if (fulfilled.length === 0) {
             const first = settled.find((s) => s.status === 'rejected') as
               | PromiseRejectedResult
               | undefined
             const e = first?.reason as (Error & { kind?: string; status?: number }) | undefined
-            res.statusCode = e?.status || 500
+            res.statusCode = timedOut > 0 ? 504 : e?.status || 500
             res.end(
-              JSON.stringify({ ok: false, message: e?.message ?? '生成失败', kind: e?.kind ?? 'api' }),
+              JSON.stringify({
+                ok: false,
+                message: timedOut > 0 ? '生成超时，可重试' : e?.message || '生成失败，可重试',
+                kind: timedOut > 0 ? 'timeout' : e?.kind ?? 'api',
+                timedOut,
+              }),
             )
             return
           }
@@ -2730,16 +3007,25 @@ function seedreamProxy(): Plugin {
           fs.mkdirSync(outDir, { recursive: true })
           const urls: string[] = []
 
+          let downloadFailed = 0
           for (const item of items) {
             let ext = 'png'
             let bytes: Buffer
             if (item.url) {
-              const ir = await fetch(item.url)
-              if (!ir.ok) throw new Error(`下载生成的图片失败 HTTP ${ir.status}`)
-              const ct = ir.headers.get('content-type') || ''
-              ext =
-                ct.includes('jpeg') || ct.includes('jpg') ? 'jpg' : ct.includes('webp') ? 'webp' : 'png'
-              bytes = Buffer.from(await ir.arrayBuffer())
+              const lt = linkedTimeout(routeAbort.signal, SEEDREAM_DOWNLOAD_TIMEOUT_MS)
+              try {
+                const ir = await fetch(item.url, { signal: lt.signal })
+                if (!ir.ok) throw new Error(`下载生成的图片失败 HTTP ${ir.status}`)
+                const ct = ir.headers.get('content-type') || ''
+                ext =
+                  ct.includes('jpeg') || ct.includes('jpg') ? 'jpg' : ct.includes('webp') ? 'webp' : 'png'
+                bytes = Buffer.from(await ir.arrayBuffer())
+              } catch {
+                downloadFailed++
+                continue
+              } finally {
+                lt.dispose()
+              }
             } else {
               bytes = Buffer.from(item.b64_json, 'base64')
             }
@@ -2760,6 +3046,16 @@ function seedreamProxy(): Plugin {
             }
           }
 
+          if (urls.length === 0) {
+            res.statusCode = 502
+            res.end(JSON.stringify({ ok: false, message: '候选图片下载失败，请重试', kind: 'download' }))
+            return
+          }
+          const warnings = [
+            timedOut ? `${timedOut} 个候选超时` : '',
+            failed ? `${failed} 个候选失败` : '',
+            downloadFailed ? `${downloadFailed} 张候选下载失败` : '',
+          ].filter(Boolean)
           res.end(
             JSON.stringify({
               ok: true,
@@ -2769,10 +3065,12 @@ function seedreamProxy(): Plugin {
               model,
               provider: imgProvider?.label || kind,
               ...(dropRefs.length ? { warning: '该渠道不支持参考图，已按纯文生图处理', droppedRefs: dropRefs.length } : {}),
+              ...(warnings.length ? { warning: warnings.join('，') + '，已使用成功结果', timedOut, failed } : {}),
               elapsed: Date.now() - t0,
             }),
           )
         } catch (e) {
+          if (res.writableEnded || res.destroyed) return
           res.statusCode = 500
           res.end(JSON.stringify({ ok: false, message: (e as Error).message, kind: 'network' }))
         }
@@ -2782,7 +3080,10 @@ function seedreamProxy(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), seedreamProxy()],
+  plugins: [react(), tailwindcss(), seedreamProxy()],
+  resolve: {
+    alias: { '@': path.resolve(process.cwd(), 'src') },
+  },
   server: {
     port: 5273,
     host: '127.0.0.1',

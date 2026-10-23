@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react'
 
 export type TaskKind = 'image' | 'video' | 'voice' | 'text' | 'export'
-export type TaskState = 'running' | 'done' | 'error'
+export type TaskState = 'running' | 'done' | 'error' | 'cancelled'
 
 export type Task = {
   id: string
@@ -15,6 +15,8 @@ export type Task = {
   cost?: number
   /** 失败后可以点重试；没有就给不出按钮 */
   retry?: () => void
+  /** 运行时可以取消；没有就不显示取消按钮 */
+  cancel?: () => void
 }
 
 /**
@@ -34,7 +36,7 @@ function loadTasks(): Task[] {
     if (!Array.isArray(arr)) return []
     return arr.slice(0, 200).map((t: any) =>
       t?.state === 'running'
-        ? { ...t, state: 'error' as TaskState, error: '页面刷新已中断' }
+        ? { ...t, state: 'cancelled' as TaskState, error: '页面刷新已中断', endedAt: Date.now() }
         : t,
     )
   } catch {
@@ -70,7 +72,7 @@ export function useTasks(): Task[] {
 
 let seq = 0
 
-export function startTask(kind: TaskKind, label: string, opts?: { cost?: number; retry?: () => void }): string {
+export function startTask(kind: TaskKind, label: string, opts?: { cost?: number; retry?: () => void; cancel?: () => void }): string {
   const id = `t${++seq}-${Date.now()}`
   const task: Task = {
     id,
@@ -80,6 +82,7 @@ export function startTask(kind: TaskKind, label: string, opts?: { cost?: number;
     startedAt: Date.now(),
     cost: opts?.cost,
     retry: opts?.retry,
+    cancel: opts?.cancel,
   }
   tasks = [task, ...tasks].slice(0, 200)
   emit()
@@ -89,7 +92,17 @@ export function startTask(kind: TaskKind, label: string, opts?: { cost?: number;
 export function endTask(id: string, error?: string) {
   tasks = tasks.map((t) =>
     t.id === id
-      ? { ...t, state: error ? 'error' : 'done', endedAt: Date.now(), error }
+      ? { ...t, state: error ? 'error' : 'done', endedAt: Date.now(), error, cancel: undefined }
+      : t,
+  )
+  emit()
+}
+
+/** 用户取消：独立状态，不影响成功花费统计 */
+export function cancelTask(id: string, reason = '已取消') {
+  tasks = tasks.map((t) =>
+    t.id === id && t.state === 'running'
+      ? { ...t, state: 'cancelled', endedAt: Date.now(), error: reason, cancel: undefined }
       : t,
   )
   emit()

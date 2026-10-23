@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/chat-ui/chat.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@/chat-ui/ui",
+    "utils": "@/chat-ui/lib/utils",
+    "ui": "@/chat-ui/ui",
+    "lib": "@/chat-ui/lib",
+    "hooks": "@/chat-ui/hooks"
+  },
+  "iconLibrary": "lucide"
+}

@@ -12,8 +12,20 @@
  */
 import http from 'node:http'
 import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { chromium } from 'playwright-core'
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url))
+const TMP = fs.mkdtempSync(path.join(ROOT, '.verify-vref-'))
+const entry = path.join(TMP, 'entry.ts')
+fs.writeFileSync(entry, `export * from ${JSON.stringify(path.join(ROOT, 'src/scheduleGeometry.ts'))}\n`)
+const bundle = path.join(TMP, 'bundle.mjs')
+execFileSync(path.join(ROOT, 'node_modules', '.bin', 'esbuild'), [
+  entry, '--bundle', '--platform=node', '--format=esm', '--log-level=error', `--outfile=${bundle}`,
+])
+const geo = await import(bundle)
 
 const APP_URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 let bad = 0
@@ -74,22 +86,76 @@ await api(`/api/project?name=${PROJECT}&create=1`, {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ title: '视频参考 UI 测试' }),
 }).catch(() => {})
+const uiLayout = {
+  id: 'E01-SC01',
+  episode: 1,
+  sceneNo: 1,
+  sceneSlug: '门口',
+  w: 10,
+  h: 8,
+  walls: [],
+  props: [],
+  zones: [],
+  source: 'manual',
+}
+const uiBlocking = {
+  keys: [
+    {
+      t: 0,
+      actors: [{ name: 'A', x: 0.4, y: 0.5, face: 0 }],
+      camera: { x: 0.5, y: 0.92, lookX: 0.4, lookY: 0.5, height: 1.6, fov: 45 },
+    },
+  ],
+  source: 'manual',
+}
+const uiShotScene = { ...uiLayout, id: 'E01-S01' }
+const uiMeta = {
+  version: 1,
+  fingerprint: geo.scheduleFingerprint({ layout: uiShotScene, blocking: uiBlocking, duration: 3, aspect: '16:9', mode: 'clean' }),
+  mode: 'clean',
+  duration: 3,
+  aspect: '16:9',
+  width: 960,
+  height: 540,
+  renderedAt: new Date().toISOString(),
+}
 await api(`/api/project?name=${PROJECT}`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    episodes: [{ no: 1, title: '测试集', scenes: [] }],
+    episodes: [{ no: 1, title: '测试集', scenes: [{ no: 1, slug: '门口', place: '门口', time: '夜' }] }],
+    sceneLayouts: [uiLayout],
     shots: [
+      {
+        id: 'E01-S00',
+        episode: 1,
+        no: 'E01-S00',
+        scene_no: 1,
+        scene_slug: '门口',
+        seconds: 3,
+        size: '中景',
+        move: '固定',
+        cast: [],
+        keyframe_prompt: '上一镜画面',
+        keyframe: '/generated/prev-neighbor.jpg',
+      },
       {
         id: 'E01-S01',
         episode: 1,
         no: 'E01-S01',
+        scene_no: 1,
+        scene_slug: '门口',
         seconds: 3,
         size: '中景',
         move: '推',
+        cast: ['A'],
         keyframe_prompt: '人物站在门口，雨丝斜切画面',
         video_prompt: '镜头缓慢前推',
         keyframe: '/generated/none.jpg',
+        refIds: ['shot-prev'],
+        shot_scene: uiShotScene,
+        shot_blocking: uiBlocking,
+        schedule_meta: uiMeta,
         schedule_video: '/videos/schedule-test.mp4',
         schedule_frames: ['/generated/sched-test-0.jpg', '/generated/sched-test-1.jpg'],
         motion_note: '机位在场地正南侧、距场地中心约 1.0 米、高 1.6 米',
@@ -137,9 +203,11 @@ try {
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => {
     localStorage.setItem('storyboard-model-pick', JSON.stringify({ video: 'ark-video-2-0' }))
-    localStorage.removeItem('storyboard-canvas-v1')
+    localStorage.removeItem(`storyboard-canvas-v1:${encodeURIComponent('aaa-video-ref-ui')}`)
   })
   await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.locator('.topbar-project select').selectOption(PROJECT)
   await page.waitForTimeout(900)
 
   // 用镜头表把项目里的镜头推到画布：这会填 syncedRef，后续改动才写回 project.json
@@ -150,10 +218,10 @@ try {
   await page.locator('header').getByRole('button', { name: '画布', exact: true }).click()
   await page.waitForTimeout(1200)
 
-  const nodeId = await page.evaluate(() => {
-    const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+  const nodeId = await page.evaluate((project) => {
+    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     return (s.nodes || []).find((x) => x.data?.shotId === 'E01-S01')?.id
-  })
+  }, PROJECT)
   check('镜头已生成到画布', Boolean(nodeId), String(nodeId))
   await page.evaluate((nid) => {
     const el = document.querySelector(`[data-id="${nid}"]`)
@@ -179,14 +247,7 @@ try {
     .locator('input[type=checkbox]')
   check('勾视频参考后抽帧禁用', await framesChk.isDisabled())
   check('抽帧显示已忽略', (await page.locator('.vid-box').innerText()).includes('视频参考优先，抽帧已忽略'))
-  const tailChk = page
-    .locator('.vid-box label.chk', { hasText: '以下一镜画面作尾帧约束' })
-    .locator('input[type=checkbox]')
-  check('尾帧约束禁用', await tailChk.isDisabled())
-  check(
-    '显示首尾帧互斥原因',
-    (await page.locator('.vid-box').innerText()).includes('视频参考模式下不再有首帧/尾帧硬锁'),
-  )
+  check('视频参考界面无尾帧入口', !(await page.locator('.vid-box').innerText()).includes('尾帧'))
 
   await page.waitForTimeout(1600)
   const saved = (await api(`/api/project?name=${PROJECT}`)).project
@@ -236,7 +297,7 @@ try {
     )
     check(
       '参考图用 @图像N',
-      Array.isArray(b.refImages) && b.refImages.includes('/generated/none.jpg') && /@图像1/.test(String(b.prompt)),
+      Array.isArray(b.refImages) && b.refImages.includes('/generated/none.jpg') && b.refImages.includes('/generated/prev-neighbor.jpg') && /@图像1/.test(String(b.prompt)) && /@图像2=上一镜/.test(String(b.prompt)),
       JSON.stringify(b.refImages),
     )
     check(
@@ -355,7 +416,6 @@ try {
   const dryFirst = await postJson('/api/seedance', {
     dryRun: true,
     image: 'data:image/png;base64,AA',
-    lastFrame: 'data:image/png;base64,BB',
     prompt: 'x',
     seconds: 3,
     modelKey: 'ark-video',
@@ -363,11 +423,11 @@ try {
   })
   const firstRoles = (dryFirst.request?.content ?? []).map((c) => c.role)
   check(
-    '1.0 首帧 + 尾帧未回归',
+    '1.0 首帧无尾帧未回归',
     dryFirst.ok === true &&
       dryFirst.mode === 'first' &&
       firstRoles.includes('first_frame') &&
-      firstRoles.includes('last_frame') &&
+      !firstRoles.includes('last_frame') &&
       dryFirst.request?.camera_fixed === true,
     JSON.stringify({ mode: dryFirst.mode, firstRoles, camera_fixed: dryFirst.request?.camera_fixed }),
   )

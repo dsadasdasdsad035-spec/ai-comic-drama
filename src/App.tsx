@@ -26,7 +26,10 @@ import Inspector from './Inspector'
 import Timeline from './Timeline'
 import CharacterBoard from './CharacterBoard'
 import AssetBoard from './AssetBoard'
+import ThemeToggle from './ThemeToggle'
+import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
+import SceneCodeWorkbench, { type CodeEditorRendered, type CodeEditorSave } from './SceneCodeWorkbench'
 import ShotTable from './ShotTable'
 import PromptTable from './PromptTable'
 import EpisodeBar from './EpisodeBar'
@@ -37,12 +40,12 @@ import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
 import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
-import { endTask, startTask } from './tasks'
+import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, type CharacterSheet } from './characters'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
-import { cardWidth, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
+import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ScheduleMeta, type SceneCodeMeta, type SceneLayout, type ShotData, type Tool } from './types'
 import {
   callText,
   checkHealth,
@@ -54,6 +57,7 @@ import {
   listProjects,
   listVoices,
   getProject,
+  listMedia,
   mergeProjectShots,
   patchProject,
   startVideo,
@@ -63,6 +67,7 @@ import {
   type Stage,
   type ProjectAsset,
   type DesignSheet,
+  type ProjectData,
   type ProjectEpisode,
   type ProjectShot,
   type ProjectSummary,
@@ -70,7 +75,18 @@ import {
 } from './api'
 import { characterSys, dialogueToText, parseDialogue } from './prompts'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
-import { fallbackLayout, generateLayout, motionNoteOf } from './layoutGen'
+import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
+import { isSceneCodeFresh } from './sceneCodeFreshness'
+import { buildShot3DContextCatalog } from './shot3dContextCatalog'
+import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, resolveNeighborToken, SHOT_NEXT, SHOT_PREV } from './shotReferences'
+import { contextFingerprint, sanitizeShot3DContext } from './shot3dContext'
+import { prepareSceneCodeContext } from './sceneCodePrepare'
+import { runSceneCodeJob } from './sceneCodeJob'
+import { renderSceneCodeVideo, saveSceneCodeVideo, sceneCodeRenderError } from './sceneCodeRender'
+import { codeHashOf, sceneCodeFingerprint } from './sceneCodeFingerprint'
+import { type Ask } from './scheduleAI'
+import { runShot3DJob } from './shot3dJob'
+import { resolveShotScene } from './shotScene'
 import { renderScheduleVideo } from './schedule3d'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
@@ -133,10 +149,19 @@ function readSavedKey(key: string): Saved | null {
     if (p.nodes.length === 0 && p.cleared !== true) return null
     // epNo 单独恢复（见下方 useEffect）
     return {
-      nodes: p.nodes.map((n: ShotNodeType) => ({
-        ...n,
-        data: { ...n.data, marks: migrateMarks(n.data?.marks ?? []) },
-      })),
+      nodes: p.nodes.map((n: ShotNodeType) => {
+        const data = { ...n.data, marks: migrateMarks(n.data?.marks ?? []) }
+        if (data.genState === 'running') {
+          if (data.refImage || (data.candidates?.length ?? 0) > 0) {
+            data.genState = 'error'
+            data.genError = '上次生成已中断，可重试'
+          } else {
+            data.genState = undefined
+            data.genError = undefined
+          }
+        }
+        return { ...n, data }
+      }),
       edges: p.edges ?? [],
       characters: Array.isArray(p.characters) ? p.characters : defaultCharacters,
       cleared: p.cleared === true,
@@ -288,15 +313,21 @@ function Shell() {
   const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
+  const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
   const [assets, setAssets] = useState<ProjectAsset[]>([])
+  /** 项目级场景布局：同集同场镜头共享 */
+  const [sceneLayouts, setSceneLayouts] = useState<SceneLayout[]>([])
+  /** 项目画幅：3D 预演与出片共用 */
+  const [projectAspect, setProjectAspect] = useState('16:9')
   const assetsSnapRef = useRef('')
   /** 服务端报告的缺失媒体引用（角色三视图 / 设定图） */
   const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
   const { fitView, setCenter, getZoom } = useReactFlow()
+  const { colors: themeColors } = useTheme()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
   /** 角色上一次同步到 project.json 的快照 */
@@ -370,11 +401,16 @@ function Shell() {
     let alive = true
     setReadyProject('')
     setSelId(null)
+    setEditorNodeId(null)
+    setSceneLayouts([])
+    setProjectAspect('16:9')
     if (!projectName) {
       setNodes(initialNodes)
       setEdges(initialEdges)
       setCharacters(defaultCharacters)
       setAssets([])
+      setSceneLayouts([])
+      setProjectAspect('16:9')
       setMissingMedia(new Set())
       setEpNo(1)
       syncedRef.current = new Map()
@@ -416,6 +452,8 @@ function Shell() {
         setEdges(stored?.edges?.length ? stored.edges : chainEdges(shotNodes))
         setCharacters(sheets)
         setAssets(projectAssets)
+        setSceneLayouts((p.sceneLayouts ?? []) as SceneLayout[])
+        setProjectAspect(p.aspect || '16:9')
         setEpNo(Math.min(Math.max(1, wantedEp), maxEp))
         syncedRef.current = new Map()
         for (const n of shotNodes) {
@@ -435,6 +473,8 @@ function Shell() {
         setEdges([])
         setCharacters([])
         setAssets([])
+        setSceneLayouts([])
+        setProjectAspect('16:9')
         setMissingMedia(new Set())
         setToast(`加载项目失败：${(e as Error).message}`)
         window.setTimeout(() => setToast(''), 3200)
@@ -1040,7 +1080,7 @@ function Shell() {
           type: 'default',
           animated: !card,
           style: {
-            stroke: card ? '#34d399' : '#8aa0b8',
+            stroke: card ? 'var(--cast-edge)' : 'var(--cast-missing)',
             strokeWidth: 1.4,
             strokeDasharray: '6 4',
             opacity: card ? 1 : 0.65,
@@ -1071,13 +1111,13 @@ function Shell() {
           target: n.id,
           type: 'default',
           style: {
-            stroke: '#fbbf24',
+            stroke: 'var(--ref-edge)',
             strokeWidth: on ? 3 : 1.6,
-            filter: on ? 'drop-shadow(0 0 6px #fbbf24)' : undefined,
+            filter: on ? 'drop-shadow(0 0 6px var(--ref-edge))' : undefined,
           },
           label: '参考',
-          labelStyle: { fill: '#fbbf24', fontSize: 10 },
-          labelBgStyle: { fill: '#070b11' },
+          labelStyle: { fill: 'var(--ref-edge)', fontSize: 10 },
+          labelBgStyle: { fill: 'var(--ref-label-bg)' },
         } as unknown as Edge)
       }
     }
@@ -1155,8 +1195,14 @@ function Shell() {
         headSub: '点选画布中的卡片作为参考图',
         sectionTitle: '参考画布里的卡片',
         emptyText: '画布上还没有可用作参考的图：先加素材卡，或给角色生成图',
-        hint: '多选可叠加；再点一次取消。「首帧」= 直接用这张图出片。',
-        items: refCards.map((c) => ({ ...c, on: mine.includes(c.id) })),
+        hint: '上一镜/下一镜只取当前画面；多选可叠加，再点一次取消。「首帧」= 直接用这张图出片。',
+        items: [
+          ...neighborReferenceItems(node as ShotNodeType, shownNodes as ShotNodeType[]).map((c) => ({
+            ...c,
+            on: mine.includes(c.id),
+          })),
+          ...refCards.map((c) => ({ ...c, on: mine.includes(c.id) })),
+        ],
       }
     }
     const isChar = type === 'char'
@@ -1179,26 +1225,235 @@ function Shell() {
     }
   }, [ctx, canvasNodes, refCards, shownNodes])
 
+  /** 右击快速生成代码视频：代码镜头直接渲染；没有代码时先生成一次代码。 */
+  const genSceneCodeVideo = useCallback(
+    async (nodeId: string, useFrames = false) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId)
+      if (!node) return
+      const data = node.data
+      const ep = Number(data.episode) || epNo
+      const sceneNo = Math.max(1, Math.round(Number(data.sceneNo) || 1))
+      setToast('正在准备代码 3D 渲染…')
+      try {
+        let project: ProjectData | null = null
+        try {
+          project = await getProject(projectName)
+        } catch {
+          project = null
+        }
+        const media = await listMedia(projectName)
+        const catalog = buildShot3DContextCatalog({
+          project,
+          characters,
+          shot: { ...data, episode: ep, sceneNo, sceneSlug: data.sceneSlug || '' },
+          media,
+          nodes: nodesRef.current,
+          sceneNo,
+          sceneSlug: data.sceneSlug || '',
+        })
+        const context = data.shot3DContext ? sanitizeShot3DContext(data.shot3DContext) : catalog.defaults
+        const prepared = await prepareSceneCodeContext({
+          context,
+          catalog,
+          settings: appSettings,
+          stagePick,
+          withBrief: !data.sceneCode,
+          allowVideoVision: !data.sceneCode,
+        })
+        let sceneCode = data.sceneCode
+        if (!sceneCode) {
+          if (!stageModelKey(appSettings, 'sceneCode', stagePick)) {
+            throw new Error('没有可用的 3D 代码文本模型，请到设置页绑定「3D 代码」环节')
+          }
+          setToast('正在生成 3D 代码…')
+          const result = await runSceneCodeJob({
+            shot: { ...data, episode: ep, sceneNo, sceneSlug: data.sceneSlug || '' },
+            project,
+            context,
+            catalog,
+            assets: prepared.assets,
+            mediaBrief: prepared.mediaBrief,
+            videoBrief: prepared.videoBrief,
+            duration: effectiveSeconds(data.seconds),
+            aspect: projectAspect,
+            settings: appSettings,
+            stagePick,
+          })
+          sceneCode = {
+            version: 1,
+            abiVersion: 1,
+            code: result.code,
+            codeHash: result.codeHash,
+            source: 'ai',
+            ...(result.motionNote ? { motionNote: result.motionNote } : {}),
+            updatedAt: new Date().toISOString(),
+          }
+        }
+        const codeHash = sceneCode.codeHash || (await codeHashOf(sceneCode.code))
+        const duration = effectiveSeconds(data.seconds)
+        setToast('正在渲染 3D 代码视频…')
+        const blob = await renderSceneCodeVideo({
+          code: sceneCode.code,
+          assets: prepared.assets.map((a) => a.payload),
+          duration,
+          aspect: projectAspect,
+          mode: 'clean',
+        })
+        const url = await saveSceneCodeVideo(blob)
+        const { width, height } = renderSize(projectAspect)
+        const fingerprint = sceneCodeFingerprint({
+          codeHash,
+          abiVersion: 1,
+          assets: prepared.assets.map((a) => a.ref),
+          duration,
+          aspect: projectAspect,
+          mode: 'clean',
+        })
+        const sceneMeta: SceneCodeMeta = {
+          version: 1,
+          fingerprint,
+          codeHash,
+          abiVersion: 1,
+          assets: prepared.assets.map((a) => a.ref),
+          selectionFingerprint: contextFingerprint(context),
+          duration,
+          aspect: projectAspect,
+          width,
+          height,
+          fps: 30,
+          mode: 'clean',
+          renderedAt: new Date().toISOString(),
+        }
+        const scheduleMeta: ScheduleMeta = {
+          version: 1,
+          fingerprint,
+          mode: 'clean',
+          duration,
+          aspect: projectAspect,
+          width,
+          height,
+          renderedAt: sceneMeta.renderedAt,
+        }
+        const nextData: ShotData = {
+          ...data,
+          sceneCode,
+          sceneCodeMeta: sceneMeta,
+          shot3DContext: context,
+          scheduleVideo: url,
+          scheduleMeta,
+          motionNote: sceneCode.motionNote || data.motionNote || '',
+          ...(useFrames ? { useScheduleFrames: true } : {}),
+        }
+        patch(nodeId, nextData as never)
+        if (projectName && data.shotId) {
+          await mergeProjectShots(projectName, [nodeToShot(nextData, data.shotId)])
+        }
+        if (useFrames) {
+          try {
+            const f = await extractFrames(url, 3)
+            patch(nodeId, { scheduleFrames: f.urls } as never)
+          } catch {
+            /* 抽帧失败不影响视频 */
+          }
+        }
+        setToast(useFrames ? '3D 代码视频已生成，关键帧已挂参考' : '3D 代码视频已生成')
+      } catch (e) {
+        setToast(sceneCodeRenderError(e))
+      }
+      window.setTimeout(() => setToast(''), 3200)
+    },
+    [patch, appSettings, stagePick, projectName, projectAspect, characters, assets, epNo],
+  )
+
   /**
-   * 右击卡片：把调度渲染成 3D 动画视频（给人审运镜），并抽帧 + 生成运镜文案。
+   * 右击卡片：生成/读取场景布局与镜头走位，按镜头有效时长渲染干净 POV 预演。
    * useFrames = true 时顺手把抽出的关键帧挂成出片参考（白模会带风格，默认不挂）。
    */
   const genScheduleVideo = useCallback(
     async (nodeId: string, useFrames = false) => {
       const node = nodesRef.current.find((n) => n.id === nodeId)
       if (!node) return
-      setToast('正在渲染 3D 调度…')
+      const data = node.data
+      const codePath = Boolean(data.sceneCode) || (!data.shotScene && !data.shotBlocking && !data.layout)
+      if (codePath) {
+        await genSceneCodeVideo(nodeId, useFrames)
+        return
+      }
+      const ep = Number(data.episode) || epNo
+      const sceneNo = Math.max(1, Math.round(Number(data.sceneNo) || 1))
+      const shotId = data.shotId || node.id
+      const ask: Ask = (o) =>
+        callText({
+          ...o,
+          modelKey: stageModelKey(appSettings, 'shot', stagePick),
+        })
+      setToast('正在准备本镜 3D 预演…')
       try {
-        let layout = node.data.layout
-        if (!layout?.actors?.length) {
-          layout = await generateLayout(
-            node.data,
-            node.data.cast,
-            stageModelKey(appSettings, 'shot', stagePick),
-          ).catch(() => fallbackLayout(node.data.cast ?? []))
-          patch(nodeId, { layout } as never)
+        let project: ProjectData | null = null
+        try {
+          project = await getProject(projectName)
+        } catch {
+          /* 项目暂时读不到时仍可用画布数据与兜底 */
         }
-        const blob = await renderScheduleVideo(layout, { seconds: 3 })
+        const sceneSlug = data.sceneSlug || ''
+        const resolved = resolveShotScene(data, {
+          shotId,
+          sceneLayouts,
+          episode: ep,
+          sceneNo,
+          sceneSlug,
+        })
+        let scene = resolved.scene
+        let blocking = data.shotBlocking ?? legacyLayoutToBlocking(data.layout)
+        let visualBrief = data.visualBrief
+        let visualBriefMeta = data.visualBriefMeta
+        let seedFrom = resolved.seedFrom
+        const roster = rosterOf(data.cast, data.dialogue)
+        if (!data.shotScene || !data.shotBlocking) {
+          setToast('正在生成参考板、空间与走位…')
+          try {
+            const job = await runShot3DJob({
+              projectName,
+              data,
+              shotId,
+              project,
+              sceneLayouts,
+              characters,
+              assets,
+              nodes: nodesRef.current,
+              settings: appSettings,
+              stagePick,
+              aspect: projectAspect,
+              ask,
+              existingBrief: data.visualBrief,
+              existingBriefMeta: data.visualBriefMeta,
+            })
+            scene = job.scene
+            blocking = job.blocking
+            visualBrief = job.visualBrief
+            visualBriefMeta = job.visualBriefMeta
+            seedFrom = job.seedScene?.id
+            if (job.warnings.length) window.setTimeout(() => setToast(job.warnings[0]), 2600)
+          } catch (e) {
+            blocking = fallbackBlocking(roster, scene)
+            setToast(`本镜 3D 生成失败，使用兜底空间：${(e as Error).message}`)
+          }
+        }
+        if (!blocking) blocking = fallbackBlocking(roster, scene)
+        const duration = effectiveSeconds(data.seconds)
+        const check = validateBlocking(blocking, { layout: scene, roster, aspect: projectAspect, duration })
+        if (check.errors.length) {
+          throw new Error(`走位有 ${check.errors.length} 处冲突：${check.errors[0].message}。请打开编辑器修正后再渲染`)
+        }
+        setToast('正在渲染 3D 调度…')
+        const blob = await renderScheduleVideo({
+          layout: scene,
+          blocking,
+          duration,
+          aspect: projectAspect,
+          mode: 'clean',
+          move: data.move,
+        })
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const fr = new FileReader()
           fr.onload = () => resolve(String(fr.result))
@@ -1206,25 +1461,112 @@ function Shell() {
           fr.readAsDataURL(blob)
         })
         const url = await saveScheduleVideo(dataUrl)
-        patch(nodeId, {
+        const { width, height } = renderSize(projectAspect)
+        const meta = {
+          version: 1 as const,
+          fingerprint: scheduleFingerprint({
+            layout: scene,
+            blocking,
+            duration,
+            aspect: projectAspect,
+            mode: 'clean',
+          }),
+          mode: 'clean' as const,
+          duration,
+          aspect: projectAspect,
+          width,
+          height,
+          renderedAt: new Date().toISOString(),
+        }
+        const note = motionNoteOf(scene, blocking, duration, data.move)
+        const nextData: ShotData = {
+          ...data,
+          sceneNo: scene.sceneNo,
+          sceneSlug: scene.sceneSlug || sceneSlug,
+          shotScene: scene,
+          shotSceneSeed: seedFrom,
+          visualBrief,
+          visualBriefMeta,
+          shotBlocking: blocking,
           scheduleVideo: url,
-          motionNote: motionNoteOf(layout),
+          scheduleMeta: meta,
+          motionNote: note,
           ...(useFrames ? { useScheduleFrames: true } : {}),
-        } as never)
-        // 抽 3 帧：只在用户勾选时才当参考图传（白模会带风格，默认不传）
+        }
+        patch(nodeId, nextData as never)
+        if (projectName && data.shotId) {
+          await mergeProjectShots(projectName, [nodeToShot(nextData, data.shotId)])
+        }
         try {
           const f = await extractFrames(url, 3)
           patch(nodeId, { scheduleFrames: f.urls } as never)
         } catch {
           /* 抽帧失败不影响视频 */
         }
-        setToast(useFrames ? '调度视频已生成，关键帧已挂为参考' : '调度视频已生成（可在 Inspector 里查看）')
+        setToast(useFrames ? '调度视频已生成，关键帧已挂为参考' : '本镜 3D 预演已生成')
       } catch (e) {
         setToast((e as Error).message || '生成调度视频失败')
       }
-      window.setTimeout(() => setToast(''), 3000)
+      window.setTimeout(() => setToast(''), 3200)
     },
-    [patch, appSettings, stagePick],
+    [patch, appSettings, stagePick, sceneLayouts, projectAspect, characters, assets, projectName, epNo, genSceneCodeVideo],
+  )
+
+  const openScheduleEditor = useCallback(
+    (nodeId: string) => {
+      if (!projectName) {
+        setToast('先选择一个项目再编辑 3D 调度')
+        window.setTimeout(() => setToast(''), 2400)
+        return
+      }
+      setEditorNodeId(nodeId)
+    },
+    [projectName],
+  )
+
+  const saveEditor = useCallback(
+    async (input: CodeEditorSave) => {
+      if (!projectName) throw new Error('先选择一个项目')
+      const id = editorNodeId
+      const node = id ? nodesRef.current.find((n) => n.id === id) : null
+      if (!node) throw new Error('镜头节点已经不存在')
+      const nextData = {
+        ...node.data,
+        sceneCode: input.sceneCode,
+        shot3DContext: input.shot3DContext,
+        ...(input.sceneCodeMeta ? { sceneCodeMeta: input.sceneCodeMeta } : {}),
+      } as ShotData
+      patch(node.id, nextData as never)
+      if (node.data.shotId) {
+        await mergeProjectShots(projectName, [nodeToShot(nextData, node.data.shotId)])
+      }
+    },
+    [editorNodeId, patch, projectName],
+  )
+
+  const applyEditorRender = useCallback(
+    async (input: CodeEditorRendered) => {
+      if (!projectName) throw new Error('先选择一个项目')
+      const id = editorNodeId
+      const node = id ? nodesRef.current.find((n) => n.id === id) : null
+      if (!node) throw new Error('镜头节点已经不存在')
+      const nextData = {
+        ...node.data,
+        sceneCode: input.sceneCode,
+        sceneCodeMeta: input.sceneCodeMeta,
+        shot3DContext: input.shot3DContext,
+        scheduleVideo: input.video,
+        scheduleMeta: input.scheduleMeta,
+        motionNote: input.sceneCode.motionNote ?? node.data.motionNote,
+        ...(input.frames ? { scheduleFrames: input.frames } : {}),
+        ...(input.useFrames ? { useScheduleFrames: true } : {}),
+      } as ShotData
+      patch(node.id, nextData as never)
+      if (node.data.shotId) {
+        await mergeProjectShots(projectName, [nodeToShot(nextData, node.data.shotId)])
+      }
+    },
+    [editorNodeId, patch, projectName],
   )
 
   /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
@@ -1242,19 +1584,28 @@ function Shell() {
   /** 直接用这张图当首帧（出片参考），省掉手填 URL */
   const useAsFirstFrame = useCallback(
     (shotNodeId: string, sourceId: string) => {
-      const card = refCards.find((c) => c.id === sourceId)
-      if (!card) return
+      const node = nodesRef.current.find((n) => n.id === shotNodeId)
+      const neighbor = node ? resolveNeighborToken(node, shownNodes as ShotNodeType[], sourceId) : null
+      const card = neighbor
+        ? { title: neighbor.label, img: neighbor.url }
+        : refCards.find((c) => c.id === sourceId)
+      if (!card?.img) return
       patch(shotNodeId, { refImage: card.img, videoUrl: undefined, vidState: 'idle' } as never)
       setToast(`已用「${card.title}」做首帧`)
       window.setTimeout(() => setToast(''), 2000)
     },
-    [patch, refCards],
+    [patch, refCards, shownNodes],
   )
 
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
   const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
   const [selBusy, setSelBusy] = useState('')
+  const [selKind, setSelKind] = useState<'image' | 'video' | 'voice' | null>(null)
+  /** 运行中的出图请求：同一镜只允许一个在途请求 */
+  const activeImgRef = useRef<Map<string, { token: number; controller: AbortController; taskId: string }>>(new Map())
+  const imgTokenRef = useRef(0)
+  const batchAbortRef = useRef<AbortController | null>(null)
 
   /** 对选中的卡片批量执行 */
   const runOnSelected = async (kind: 'image' | 'video' | 'voice') => {
@@ -1262,18 +1613,41 @@ function Shell() {
     const list = nodesRef.current.filter((n) => n.selected)
     if (list.length === 0) return
     const label = { image: '出图', video: '出片', voice: '配音' }[kind]
+    const ac = kind === 'image' ? new AbortController() : null
+    batchAbortRef.current = ac
+    setSelKind(kind)
     setSelBusy(`${label} 0/${list.length}`)
     let i = 0
-    for (const n of list) {
-      if (kind === 'image') await generateOne(n.id)
-      else if (kind === 'video') await generateVideoOne(n.id)
-      else await generateVoiceOne(n.id)
-      i += 1
-      setSelBusy(`${label} ${i}/${list.length}`)
+    let cancelled = false
+    try {
+      for (const n of list) {
+        if (ac?.signal.aborted) {
+          cancelled = true
+          break
+        }
+        if (kind === 'image') await generateOne(n.id, { signal: ac?.signal })
+        else if (kind === 'video') await generateVideoOne(n.id)
+        else await generateVoiceOne(n.id)
+        if (ac?.signal.aborted) {
+          cancelled = true
+          break
+        }
+        i += 1
+        setSelBusy(`${label} ${i}/${list.length}`)
+      }
+    } finally {
+      batchAbortRef.current = null
+      setSelKind(null)
+      setSelBusy('')
     }
-    setSelBusy('')
-    setToast(`已对 ${list.length} 张执行${label}`)
+    setToast(cancelled ? '已取消批量出图' : `已对 ${list.length} 张执行${label}`)
     window.setTimeout(() => setToast(''), 2400)
+  }
+
+  const cancelBatch = () => {
+    if (!batchAbortRef.current) return
+    batchAbortRef.current.abort()
+    setToast('正在取消批量出图…')
   }
 
   const deleteSelected = () => {
@@ -1586,21 +1960,44 @@ function Shell() {
   }, [characters])
 
 
+  const cancelGenerate = useCallback(
+    (id: string) => {
+      const rec = activeImgRef.current.get(id)
+      if (!rec) return
+      activeImgRef.current.delete(id)
+      rec.controller.abort()
+      cancelTask(rec.taskId)
+      patch(id, { genState: 'idle', genError: undefined })
+      setToast('已取消出图')
+      window.setTimeout(() => setToast(''), 2200)
+    },
+    [patch],
+  )
+
   const generateOne = useCallback(
-    async (id: string) => {
+    async (id: string, opts: { signal?: AbortSignal } = {}) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
+      if (activeImgRef.current.has(id)) return
       const prompt = node.data.prompt.trim()
       if (!prompt) {
         patch(id, { genState: 'error', genError: '请先填写画面提示词' })
         return
       }
+      if (opts.signal?.aborted) return
+      const controller = new AbortController()
+      const onExternalAbort = () => controller.abort()
+      opts.signal?.addEventListener('abort', onExternalAbort, { once: true })
+      const token = ++imgTokenRef.current
       patch(id, { genState: 'running', genError: undefined })
       // 单镜也要记账：之前只有批量才记，导致右上角金额偏低
       const tid = startTask('image', `${node.data.no} 出图`, {
         cost: imageCost(price, candCount),
         retry: () => void generateOne(id),
+        cancel: () => cancelGenerate(id),
       })
+      activeImgRef.current.set(id, { token, controller, taskId: tid })
+      const current = () => activeImgRef.current.get(id)?.token === token
       try {
         let ref: string | undefined
         let composed = false
@@ -1612,70 +2009,39 @@ function Shell() {
             ref = node.data.refImage
           }
         }
-        // 角色一致性靠图不靠词：参考图按「连线」取——连到本镜的角色卡/素材卡。
-        // 没有连线时兜底 cast 自动匹配；再兜底手动附加 refExtras。上限 10 张。
-        const extraRefs: string[] = []
-        const refLabels: string[] = []
-        const nodeRefIds = (node.data as unknown as { refIds?: string[] }).refIds ?? []
-        for (const rid of nodeRefIds) {
-          let img: string | undefined
-          let label = ''
-          if (rid.startsWith('char-')) {
-            const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
-            const card = characters.find((c) => c.id === key || c.name === key)
-            img = card?.image
-            label = `角色「${card?.name ?? key}」外观基准`
-            if (img && missingMedia.has(img)) {
-              throw new Error(`角色「${card?.name ?? key}」的三视图文件缺失，请先重新生成`)
-            }
-          } else if (rid.startsWith('asset-')) {
-            const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
-            const d = a?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-            if (d && d.kind !== 'video' && d.url) {
-              img = d.url
-              label = `素材「${d.title ?? ''}」`
-              if (missingMedia.has(img)) {
-                throw new Error(`素材「${d.title ?? ''}」的图片文件缺失，请先重新生成`)
-              }
-            }
-          }
-          if (img && !extraRefs.includes(img) && img !== ref) {
-            extraRefs.push(img)
-            refLabels.push(`图${extraRefs.length + 1}=${label}`)
-          }
+        // 角色/相邻分镜/素材统一由共享解析器排序；当前画面由 ref 单独占图1。
+        const collected = collectShotReferences({
+          node,
+          nodes: nodesRef.current,
+          characters,
+          missingMedia,
+        })
+        if (collected.missing.length) {
+          const first = collected.missing[0]
+          throw new Error(`${first.label}：${first.reason}`)
         }
-        if (nodeRefIds.length === 0) {
-          // 兜底：cast 自动匹配（老数据没有连线也能吃到角色图）
-          for (const name of node.data.cast ?? []) {
-            const key = matchChar(name, characters)?.name ?? name
-            const img = charImages[key]
-            if (img && missingMedia.has(img)) {
-              throw new Error(`角色「${name}」的三视图文件缺失，请先重新生成`)
-            }
-            if (img && !extraRefs.includes(img)) {
-              extraRefs.push(img)
-              refLabels.push(`图${extraRefs.length + 1}=角色「${name}」外观基准`)
-            }
-          }
+        const extraCandidates = collected.refs.filter((r) => r.url !== ref)
+        const extraBudget = Math.max(0, 10 - (ref ? 1 : 0))
+        const limited = limitReferences(extraCandidates, extraBudget)
+        const extraRefs = limited.used.map((r) => r.url)
+        const refLabels = limited.used.map((r, i) => `图${(ref ? 2 : 1) + i}=${r.label}`)
+        if (limited.omitted.length) {
+          setToast(`参考图超过 10 张，已省略：${limited.omitted.map((r) => r.label).join('、')}`)
+          window.setTimeout(() => setToast(''), 3600)
         }
-        for (const r of node.data.refExtras ?? []) {
-          if (r && missingMedia.has(r)) throw new Error(`参考图文件缺失：${r}`)
-          if (r && !extraRefs.includes(r) && r !== ref) {
-            extraRefs.push(r)
-            refLabels.push(`图${extraRefs.length + 1}=场景/道具参考`)
-          }
-        }
+        const refIntro = ref ? '图1=构图与上一镜连贯性；' : ''
         const res = await generateImage({
           prompt: (composed ? prompt + COMPOSE_HINT : prompt) +
             (extraRefs.length
-              ? `\n\n参考图说明：图1=构图与上一镜连贯性；${refLabels.join('，')}。对应主体必须与参考图保持一致。`
+              ? `\n\n参考图说明：${refIntro}${refLabels.join('，')}。对应主体必须与参考图保持一致。`
               : ''),
           ratio,
           refImage: ref,
           refImages: extraRefs,
           n: candCount,
           modelKey: modelPick.image,
-        })
+        }, { signal: controller.signal })
+        if (!current()) return
         const urls = res.urls?.length ? res.urls : [res.url]
         patch(id, {
           candidates: urls,
@@ -1687,109 +2053,51 @@ function Shell() {
           vidState: 'idle',
         })
         endTask(tid)
+        if (res.warning) {
+          setToast(res.warning)
+          window.setTimeout(() => setToast(''), 3600)
+        }
       } catch (e) {
-        patch(id, { genState: 'error', genError: (e as Error).message })
-        endTask(tid, (e as Error).message)
+        if (!current()) return
+        const err = e as Error
+        if (err.name === 'AbortError') {
+          patch(id, { genState: 'idle', genError: undefined })
+          cancelTask(tid)
+          setToast('已取消出图')
+          window.setTimeout(() => setToast(''), 2200)
+        } else {
+          patch(id, { genState: 'error', genError: err.message })
+          endTask(tid, err.message)
+        }
+      } finally {
+        opts.signal?.removeEventListener('abort', onExternalAbort)
+        if (current()) activeImgRef.current.delete(id)
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia, cancelGenerate],
   )
 
   /**
-   * 连线 → 参考图清单（角色/素材，视频卡不参与）。
-   * 出片时：1 张以上走多参考图模式（reference_image），0 张退回首帧图生视频。
+   * 连线 → 参考图清单。共享解析器统一角色/相邻分镜/素材/手工参考，
+   * 相邻参考缺失会明确报错；视频只使用有效图片。
    */
   const collectRefImgs = useCallback(
     (node: ShotNodeType) => {
-      const imgs: string[] = []
-      const labels: string[] = []
-      for (const rid of (node.data as unknown as { refIds?: string[] }).refIds ?? []) {
-        let img: string | undefined
-        let label = ''
-        if (rid.startsWith('char-')) {
-          const key = rid.startsWith('char-miss-') ? rid.slice(10) : rid.slice(5)
-          const card = characters.find((c) => c.id === key || c.name === key)
-          img = card?.image
-          label = `角色「${card?.name ?? key}」外观`
-        } else if (rid.startsWith('asset-')) {
-          const a = nodesRef.current.find((x) => x.id === rid) as unknown as AssetNodeType | undefined
-          const d = a?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-          if (d && d.kind !== 'video' && d.url) {
-            img = d.url
-            const tag = { scene: '场景', prop: '道具', image: '图片' }[d.kind as string] ?? '参考'
-            label = `${tag}「${d.title || '未命名'}」`
-          }
-        }
-        if (img && !imgs.includes(img)) {
-          imgs.push(img)
-          labels.push(label)
-        }
+      const collected = collectShotReferences({
+        node,
+        nodes: nodesRef.current,
+        characters,
+        missingMedia,
+      })
+      const invalidNeighbor = collected.missing.find((m) => m.token === SHOT_PREV || m.token === SHOT_NEXT)
+      if (invalidNeighbor) throw new Error(`${invalidNeighbor.label}：${invalidNeighbor.reason}`)
+      return {
+        imgs: collected.refs.map((r) => r.url),
+        labels: collected.refs.map((r) => r.label),
+        omitted: [] as string[],
       }
-      return { imgs, labels }
     },
-    [characters],
-  )
-
-  /** 尾帧约束开关：出片时用「下一镜的画面」当落点，衔接不跳 */
-  const [tailLock, setTailLock] = useState(true)
-
-  /** 同集内按镜号取下一个镜头（用于首尾帧接龙） */
-  const findNextShot = useCallback((nodeId: string) => {
-    const cur = nodesRef.current.find((n) => n.id === nodeId)
-    if (!cur?.data.shotId) return undefined
-    const ep = Number(cur.data.episode ?? 1)
-    const same = nodesRef.current
-      .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === ep)
-      .sort((a, b) => String(a.data.no).localeCompare(String(b.data.no), 'zh'))
-    const i = same.findIndex((n) => n.id === nodeId)
-    return i >= 0 ? same[i + 1] : undefined
-  }, [])
-
-  /** 上一镜的尾帧（若已出过片） */
-  const findPrevTail = useCallback((nodeId: string) => {
-    const cur = nodesRef.current.find((n) => n.id === nodeId)
-    if (!cur?.data.shotId) return ''
-    const ep = Number(cur.data.episode ?? 1)
-    const same = nodesRef.current
-      .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === ep)
-      .sort((a, b) => String(a.data.no).localeCompare(String(b.data.no), 'zh'))
-    const i = same.findIndex((n) => n.id === nodeId)
-    return i > 0 ? (same[i - 1].data.tailImage ?? '') : ''
-  }, [])
-
-  /** 本镜尾帧 → 下一镜首帧（接龙），首尾相接才不跳 */
-  const tailToNext = useCallback(
-    (nodeId: string) => {
-      const cur = nodesRef.current.find((n) => n.id === nodeId)
-      const tail = cur?.data.tailImage
-      if (!tail) {
-        setToast('这一镜还没有尾帧，先出片')
-        window.setTimeout(() => setToast(''), 2400)
-        return
-      }
-      const next = findNextShot(nodeId)
-      if (!next) {
-        setToast('后面没有镜头了')
-        window.setTimeout(() => setToast(''), 2000)
-        return
-      }
-      patch(next.id, { refImage: tail, videoUrl: undefined, vidState: 'idle' } as never)
-      setToast(`已用 ${cur?.data.no} 的尾帧作为 ${next.data.no} 的首帧`)
-      window.setTimeout(() => setToast(''), 2600)
-    },
-    [findNextShot, patch],
-  )
-
-  /** 上一镜尾帧 → 本镜首帧 */
-  const prevTailToMe = useCallback(
-    (nodeId: string) => {
-      const tail = findPrevTail(nodeId)
-      if (!tail) return
-      patch(nodeId, { refImage: tail, videoUrl: undefined, vidState: 'idle' } as never)
-      setToast('已用上一镜尾帧作为本镜首帧')
-      window.setTimeout(() => setToast(''), 2400)
-    },
-    [findPrevTail, patch],
+    [characters, missingMedia],
   )
 
   /** 图生视频：多张连线图走 reference_image；勾了 3D 视频参考则走 reference_video，否则用首帧图生视频 */
@@ -1799,36 +2107,75 @@ function Shell() {
       if (!node) return
       const { imgs, labels } = collectRefImgs(node)
       const first = node.data.refImage
-      // 视频参考与首尾帧互斥：勾了就用整段调度视频，不再抽帧/带尾帧约束
+      // 视频参考与首帧模式互斥：勾了就用整段调度视频，不再抽帧
       const useVideoRef = Boolean(node.data.useScheduleVideoRef && node.data.scheduleVideo)
-      // 尾帧约束：以下一镜的画面作为本镜落点，保证衔接不跳
-      const nextShot = findNextShot(node.id)
-      const wantLock = Boolean(!useVideoRef && tailLock && nextShot?.data.refImage)
-      // 方舟的 last_frame 与 reference_image 互斥：勾了尾帧就不塞参考图
-      const refList: string[] = []
-      const refNotes: string[] = []
-      if (imgs.length > 0 || node.data.useScheduleFrames || useVideoRef) {
-        if (node.data.refImage) {
-          refList.push(node.data.refImage)
-          refNotes.push('画面构图与上一镜连贯')
-        }
-        for (let i = 0; i < imgs.length && refList.length < 4; i++) {
-          if (refList.includes(imgs[i])) continue
-          refList.push(imgs[i])
-          refNotes.push(labels[i] || '参考素材')
-        }
-        // 3D 调度关键帧：白模风格会污染画面，必须用户显式勾选才传；视频参考优先，抽帧忽略
-        if (node.data.useScheduleFrames && !useVideoRef) {
-          for (const f of node.data.scheduleFrames ?? []) {
-            if (refList.length >= 4) break
-            if (refList.includes(f)) continue
-            refList.push(f)
-            refNotes.push('3D 调度关键帧：只取走位与机位变化，不要照搬几何体画风')
-          }
+      const sceneNo = Math.max(1, Math.round(Number(node.data.sceneNo) || 1))
+      const sceneLayout = resolveShotScene(node.data, {
+        shotId: node.data.shotId || node.id,
+        sceneLayouts,
+        episode: Number(node.data.episode) || 1,
+        sceneNo,
+        sceneSlug: node.data.sceneSlug,
+      }).scene
+      const liveBlocking =
+        node.data.shotBlocking ??
+        legacyLayoutToBlocking(node.data.layout) ??
+        fallbackBlocking(rosterOf(node.data.cast, node.data.dialogue), sceneLayout)
+      const scheduleDuration = effectiveSeconds(node.data.seconds)
+      const scheduleReady = node.data.sceneCode
+        ? isSceneCodeFresh({
+            sceneCode: node.data.sceneCode,
+            meta: node.data.sceneCodeMeta,
+            context: node.data.shot3DContext,
+            seconds: node.data.seconds,
+            aspect: projectAspect,
+            hasVideo: Boolean(node.data.scheduleVideo),
+          })
+        : Boolean(
+            node.data.scheduleVideo &&
+              node.data.scheduleMeta &&
+              isScheduleFresh(node.data.scheduleMeta, {
+                layout: sceneLayout,
+                blocking: liveBlocking,
+                duration: scheduleDuration,
+                aspect: projectAspect,
+                mode: 'clean',
+              }),
+          )
+      if ((useVideoRef || node.data.useScheduleFrames) && !scheduleReady) {
+        const why = !node.data.scheduleVideo
+          ? '还没有 3D 调度视频'
+          : node.data.scheduleMeta?.mode === 'review'
+            ? '当前调度视频只是审阅视角，不能作参考'
+            : '调度视频已过期，请先重新渲染'
+        patch(id, { vidState: 'error', vidError: `${why}，已取消出片` })
+        setToast(`${why}，已取消出片`)
+        window.setTimeout(() => setToast(''), 3200)
+        return
+      }
+      // 当前画面优先；角色/相邻分镜/素材由共享解析器排序；最后才是调度关键帧。
+      const allRefs: { url: string; label: string }[] = []
+      const seenRefs = new Set<string>()
+      const pushRef = (url: string | undefined, label: string) => {
+        if (!url || seenRefs.has(url)) return
+        seenRefs.add(url)
+        allRefs.push({ url, label })
+      }
+      if (node.data.refImage) pushRef(node.data.refImage, '当前画面构图')
+      for (let i = 0; i < imgs.length; i++) pushRef(imgs[i], labels[i] || '参考素材')
+      if (node.data.useScheduleFrames && !useVideoRef) {
+        for (const f of node.data.scheduleFrames ?? []) {
+          pushRef(f, '3D 调度关键帧：只取走位与机位变化，不要照搬几何体画风')
         }
       }
-      const tailConstraint = wantLock ? String(nextShot?.data.refImage || '') : ''
-      const useTailConstraint = Boolean(tailConstraint) && refList.length === 0
+      const limited = allRefs.slice(0, 4)
+      const omitted = allRefs.slice(4)
+      const refList = limited.map((r) => r.url)
+      const refNotes = limited.map((r) => r.label)
+      if (omitted.length) {
+        setToast(`视频参考图最多 4 张，已省略：${omitted.map((r) => r.label).join('、')}`)
+        window.setTimeout(() => setToast(''), 4200)
+      }
       if (refList.length === 0 && !first && !useVideoRef) {
         patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
         return
@@ -1836,6 +2183,7 @@ function Shell() {
       patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
       // 出片要的是「运动」，优先用 video_prompt；没有才退回画面提示词
       const motion = (node.data.videoPrompt || node.data.prompt).trim()
+      const liveMotionNote = motionNoteOf(sceneLayout, liveBlocking, scheduleDuration, node.data.move) || node.data.motionNote
       // fallback 不用「电影感」这类抽象词：给模型可见的物理量
       const fallback = `${node.data.size}，${
         node.data.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${node.data.move}`
@@ -1869,7 +2217,7 @@ function Shell() {
               : { image: first }),
           prompt:
             (motion || fallback) +
-            (node.data.motionNote ? `\n【运镜与走位】${node.data.motionNote}` : '') +
+            (liveMotionNote ? `\n【运镜与走位】${liveMotionNote}` : '') +
             refHint +
             videoHint,
           seconds: Math.round(node.data.seconds),
@@ -1877,7 +2225,6 @@ function Shell() {
           resolution: vidRes,
           ...(useVideoRef ? {} : { cameraFixed: node.data.move === '固定' }),
           modelKey: modelPick.video || appSettings?.defaults?.video || '',
-          ...(useTailConstraint ? { lastFrame: tailConstraint, returnLastFrame: true } : { returnLastFrame: true }),
         })
         if (res.skipped?.length) {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
@@ -1889,22 +2236,16 @@ function Shell() {
         )
         patch(id, {
           videoUrl: done.url,
-          // 尾帧落地到本地，下一镜可直接当首帧接龙
-          ...(done.tail ? { tailImage: done.tail } : {}),
           vidState: 'idle',
           vidAt: undefined,
         })
-        if (done.tail) {
-          setToast('已拿到本镜尾帧，可在 Inspector 一键设为下一镜首帧')
-          window.setTimeout(() => setToast(''), 3200)
-        }
         endTask(tid)
       } catch (e) {
         patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, collectRefImgs, modelPick, appSettings, tailLock, findNextShot],
+    [patch, ratio, vidRes, collectRefImgs, modelPick, appSettings, sceneLayouts, projectAspect],
   )
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
@@ -2137,11 +2478,13 @@ function Shell() {
       patch,
       cycleEdge,
       generate: generateOne,
+      cancelGenerate,
       generateVideo: generateVideoOne,
     }),
-    [tool, guides, color, charImages, patch, cycleEdge, generateOne, generateVideoOne],
+    [tool, guides, color, charImages, patch, cycleEdge, generateOne, cancelGenerate, generateVideoOne],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
+  const editorNode = editorNodeId ? nodes.find((n) => n.id === editorNodeId) ?? null : null
 
   return (
     <CanvasCtx.Provider value={api}>
@@ -2243,6 +2586,7 @@ function Shell() {
           ) : (
             <span className="board-count">{characters.length} 个角色</span>
           )}
+          <ThemeToggle />
           <TaskCenter />
           <button className="btn primary" onClick={exportJson}>导出 JSON</button>
         </header>
@@ -2375,6 +2719,11 @@ function Shell() {
                 <button className="btn-mini" onClick={() => runOnSelected('image')} disabled={!!selBusy}>
                   出图
                 </button>
+                {selBusy && selKind === 'image' && (
+                  <button className="btn-mini" onClick={cancelBatch}>
+                    取消出图
+                  </button>
+                )}
                 <button className="btn-mini" onClick={() => runOnSelected('video')} disabled={!!selBusy}>
                   出片
                 </button>
@@ -2464,7 +2813,7 @@ function Shell() {
               onPaneContextMenu={() => setCtx(null)}
               onNodesDelete={() => setSelId(null)}
               defaultEdgeOptions={{ type: 'shot' }}
-              connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}
+              connectionLineStyle={{ stroke: themeColors.edgeCut, strokeWidth: 2 }}
               proOptions={{ hideAttribution: true }}
               onlyRenderVisibleElements
               minZoom={0.2}
@@ -2475,15 +2824,15 @@ function Shell() {
               multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
               selectionKeyCode="Shift"
             >
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#1e2a38" />
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color={themeColors.canvasDot} />
               <Controls showInteractive={false} />
               <MiniMap
                 pannable
                 zoomable
                 position="top-right"
-                nodeColor="#1f3b52"
-                maskColor="rgba(6,10,16,.72)"
-                style={{ background: '#0b1220' }}
+                nodeColor={themeColors.minimapNode}
+                maskColor={themeColors.minimapMask}
+                style={{ background: themeColors.minimapBg }}
               />
             </ReactFlow>
 
@@ -2507,9 +2856,19 @@ function Shell() {
                   ctxData.mode === 'shot'
                     ? [
                         {
+                          key: 'scheduleEdit',
+                          label: '编辑 3D 调度…',
+                          hint: '代码 · 参考内容 · 渲染',
+                          onClick: () => {
+                            const id = ctx.id
+                            setCtx(null)
+                            openScheduleEditor(id)
+                          },
+                        },
+                        {
                           key: 'schedule3d',
                           label: '生成调度视频（3D）',
-                          hint: '推演运镜 · 抽帧 · 文案',
+                          hint: '代码渲染 · 抽帧 · 文案',
                           onClick: () => {
                             const id = ctx.id
                             setCtx(null)
@@ -2519,7 +2878,7 @@ function Shell() {
                         {
                           key: 'schedref',
                           label: '调度关键帧作参考',
-                          hint: '抽 3 帧当参考图 · 可能带白模风',
+                          hint: '抽 3 帧当参考图 · 可能带代码画风',
                           onClick: () => {
                             const id = ctx.id
                             setCtx(null)
@@ -2561,6 +2920,7 @@ function Shell() {
             onDelete={removeShot}
             onReset={resetAll}
             onGenerate={generateOne}
+            onCancelGenerate={cancelGenerate}
             ratio={ratio}
             setRatio={setRatio}
             refMode={refMode}
@@ -2572,20 +2932,14 @@ function Shell() {
             vidRes={vidRes}
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
+            onOpenSchedule={openScheduleEditor}
+            sceneLayouts={sceneLayouts}
+            projectAspect={projectAspect}
             price={price}
             projectName={projectName}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
-            tail={{
-              lock: tailLock,
-              setLock: setTailLock,
-              nextNo: selected ? findNextShot(selected.id)?.data.no : undefined,
-              nextHasImage: Boolean(selected && findNextShot(selected.id)?.data.refImage),
-              prevTail: (selected ? findPrevTail(selected.id) : '') || undefined,
-              toNext: () => selected && tailToNext(selected.id),
-              fromPrev: () => selected && prevTailToMe(selected.id),
-            }}
             onVoice={generateVoiceOne}
             voices={voices}
             voiceProvider={voiceProvider}
@@ -2605,6 +2959,28 @@ function Shell() {
           />
         )}
 
+        {editorNodeId && editorNode && (
+          <SceneCodeWorkbench
+            projectName={projectName}
+            node={editorNode}
+            nodes={nodes}
+            characters={characters}
+            assets={assets}
+            sceneLayouts={sceneLayouts}
+            projectAspect={projectAspect}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStageModel={pickStageModel}
+            onClose={() => setEditorNodeId(null)}
+            onSave={saveEditor}
+            onRendered={applyEditorRender}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
+            }}
+          />
+        )}
+
         {toast && <div className="toast">{toast}</div>}
       </div>
     </CanvasCtx.Provider>
@@ -2613,9 +2989,11 @@ function Shell() {
 
 export default function App() {
   return (
-    <ReactFlowProvider>
-      <Shell />
-    </ReactFlowProvider>
+    <ThemeProvider>
+      <ReactFlowProvider>
+        <Shell />
+      </ReactFlowProvider>
+    </ThemeProvider>
   )
 }
 

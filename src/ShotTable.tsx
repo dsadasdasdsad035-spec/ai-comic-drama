@@ -183,6 +183,7 @@ export default function ShotTable({
         prompt:
           `画风：${style || '近未来科幻写实'}\n画幅：${aspect}\n\n` +
           `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +
+          `每镜必须带 scene_no（输入场次号）和 scene_slug（场次简称），同一场的镜头用同一个编号。\n` +
           `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。` +
           `只在台词/描述里被提到、实际在画外的角色不要写进去。`,
         modelKey: stageModelKey(settings, 'shot', stagePick),
@@ -191,12 +192,30 @@ export default function ShotTable({
       })
       const got = r.json?.shots
       if (!Array.isArray(got) || got.length === 0) throw new Error('模型没给出镜头列表')
+      const curEp = episodes.find((x: any) => Number(x?.no) === epNo)
+      const known = new Map<number, string>()
+      for (const [si, sc] of (curEp?.scenes ?? []).entries()) {
+        const no = Number((sc as any)?.no) || si + 1
+        known.set(no, String((sc as any)?.slug || ''))
+      }
+      const fallbackSceneNo = known.keys().next().value ?? 1
+      const fallbackSceneSlug = known.get(fallbackSceneNo) ?? ''
+      let sceneFallback = 0
       const next: ProjectShot[] = got.map((s, i) => {
         const no = String(s?.no || `S${pad(i + 1)}`)
+        const rawScene = Number(s?.scene_no ?? s?.sceneNo ?? s?.scene)
+        const sceneOk = Number.isFinite(rawScene) && known.has(rawScene)
+        if (!sceneOk) sceneFallback++
+        const sceneNo = sceneOk ? rawScene : fallbackSceneNo
+        const sceneSlug =
+          (sceneOk ? known.get(sceneNo) : fallbackSceneSlug) ||
+          String(s?.scene_slug ?? s?.sceneSlug ?? '').trim()
         return {
           id: `E${pad(epNo)}-${no}`,
           episode: epNo,
           no,
+          scene_no: sceneNo,
+          ...(sceneSlug ? { scene_slug: sceneSlug } : {}),
           seconds: Number(s?.seconds) || 3,
           size: s?.size || '中景',
           move: s?.move || '固定',
@@ -217,6 +236,7 @@ export default function ShotTable({
         `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${Math.round((Date.now() - t0) / 1000)}s` +
           (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
           (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
+          (sceneFallback > 0 ? ` · ${sceneFallback} 镜场次缺失/无效，已回退第 ${fallbackSceneNo} 场` : '') +
           '，记得先审阅再保存',
       )
     } catch (e: any) {

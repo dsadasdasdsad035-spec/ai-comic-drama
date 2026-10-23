@@ -9,6 +9,7 @@ export default function TaskCenter() {
 
   const running = tasks.filter((t) => t.state === 'running').length
   const failed = tasks.filter((t) => t.state === 'error').length
+  const cancelled = tasks.filter((t) => t.state === 'cancelled').length
   const cost = totalCost(tasks)
 
   useEffect(() => {
@@ -31,7 +32,8 @@ export default function TaskCenter() {
       >
         {running > 0 && <span className="tc-pill run">{running} 运行中</span>}
         {failed > 0 && <span className="tc-pill bad">{failed} 失败</span>}
-        {running === 0 && failed === 0 && <span className="tc-pill">完成</span>}
+        {cancelled > 0 && <span className="tc-pill">{cancelled} 已取消</span>}
+        {running === 0 && failed === 0 && cancelled === 0 && <span className="tc-pill">完成</span>}
         {cost > 0 && <span className="tc-cost">¥{cost.toFixed(2)}</span>}
       </button>
 
@@ -43,6 +45,15 @@ export default function TaskCenter() {
             <button className="btn-mini" onClick={() => setOpen(false)}>
               收起
             </button>
+            {running > 0 && tasks.some((t) => t.state === 'running' && t.cancel) && (
+              <button
+                className="btn-mini"
+                onClick={() => tasks.filter((t) => t.state === 'running' && t.cancel).forEach((t) => t.cancel?.())}
+                title="取消所有可取消的运行中任务"
+              >
+                取消全部
+              </button>
+            )}
             <button className="btn-mini" onClick={clearFinished} title="只保留还在跑的">
               清完成
             </button>
@@ -59,11 +70,17 @@ export default function TaskCenter() {
                   <span className="tc-meta">
                     {t.state === 'running' ? '…' : dur ? `${dur}s` : ''}
                   </span>
+                  {t.state === 'running' && t.cancel && (
+                    <button className="btn-mini" onClick={() => t.cancel?.()}>
+                      取消
+                    </button>
+                  )}
                   {t.state === 'error' && t.retry && (
                     <button className="btn-mini" onClick={() => t.retry?.()}>
                       重试
                     </button>
                   )}
+                  {t.state === 'cancelled' && <span className="tc-meta">已取消</span>}
                   {t.state === 'error' && t.error && (
                     <span className="tc-err" title={t.error}>
                       {t.error.slice(0, 18)}

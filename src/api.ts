@@ -1,9 +1,48 @@
 import { endTask, startTask } from './tasks'
+import type { AgentLimitSettings } from './agent/agentLimits'
+import type {
+  SceneCode,
+  SceneCodeMeta,
+  SceneLayout,
+  ScheduleMeta,
+  Shot3DContext,
+  ShotBlocking,
+  ShotScene,
+  VisualBrief,
+  VisualBriefMeta,
+} from './types'
 export type GenResult = {
   urls: string[]
   url: string
   size: string
   elapsed: number
+  /** 服务端部分候选超时/失败时的提示 */
+  warning?: string
+  timedOut?: number
+}
+
+/** 客户端请求上限；服务端默认 180s，客户端略长，先让服务端返回结构化超时 */
+export const IMAGE_GENERATION_TIMEOUT_MS =
+  Number((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_IMAGE_TIMEOUT_MS) || 200_000
+
+export type ImageLifecycle = {
+  /** 任务/批量取消信号 */
+  signal?: AbortSignal
+  /** 测试或特殊调用可覆盖；默认 IMAGE_GENERATION_TIMEOUT_MS */
+  timeoutMs?: number
+}
+
+function abortError(message = '已取消'): Error {
+  if (typeof DOMException !== 'undefined') return new DOMException(message, 'AbortError')
+  const e = new Error(message)
+  e.name = 'AbortError'
+  return e
+}
+
+function timeoutError(message = '生成超时，可重试'): Error {
+  const e = new Error(message)
+  e.name = 'TimeoutError'
+  return e
 }
 
 export type GenError = { message: string; kind?: string }
@@ -23,38 +62,58 @@ export async function generateImage(opts: {
   cap?: 'image' | 'view'
   /** 传入项目名时结果写项目媒体目录（角色三视图 / 设定图），不传写公共产物池 */
   project?: string
-}): Promise<GenResult> {
-  let res: Response
+}, lifecycle: ImageLifecycle = {}): Promise<GenResult> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timeoutMs = Math.max(1000, Number(lifecycle.timeoutMs) || IMAGE_GENERATION_TIMEOUT_MS)
+  const onAbort = () => controller.abort()
+  if (lifecycle.signal?.aborted) controller.abort()
+  else lifecycle.signal?.addEventListener('abort', onAbort, { once: true })
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
   try {
-    res = await fetch('/api/seedream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts),
-    })
-  } catch {
-    throw new Error('连不上本地代理，dev server 是否还在运行？')
-  }
+    let res: Response
+    try {
+      res = await fetch('/api/seedream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+        signal: controller.signal,
+      })
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') {
+        throw timedOut ? timeoutError() : abortError()
+      }
+      throw new Error('连不上本地代理，dev server 是否还在运行？')
+    }
 
-  let j: any
-  try {
-    j = await res.json()
-  } catch {
-    throw new Error(`代理返回了非 JSON 响应（HTTP ${res.status}）`)
-  }
+    let j: any
+    try {
+      j = await res.json()
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') throw timedOut ? timeoutError() : abortError()
+      throw new Error(`代理返回了非 JSON 响应（HTTP ${res.status}）`)
+    }
 
-  if (!j.ok) {
-    const hint =
-      j.kind === 'billing'
-        ? '（火山方舟账户可能欠费或余额不足）'
-        : j.kind === 'no-key'
-          ? ''
-          : j.kind === 'auth'
-            ? '（密钥无效）'
-            : ''
-    throw new Error(`${j.message}${hint}`)
+    if (!j.ok) {
+      const hint =
+        j.kind === 'billing'
+          ? '（火山方舟账户可能欠费或余额不足）'
+          : j.kind === 'no-key'
+            ? ''
+            : j.kind === 'auth'
+              ? '（密钥无效）'
+              : ''
+      throw new Error(`${j.message}${hint}`)
+    }
+    const urls: string[] = Array.isArray(j.urls) ? j.urls : [j.url]
+    return { ...(j as GenResult), urls }
+  } finally {
+    clearTimeout(timer)
+    lifecycle.signal?.removeEventListener('abort', onAbort)
   }
-  const urls: string[] = Array.isArray(j.urls) ? j.urls : [j.url]
-  return { ...(j as GenResult), urls }
 }
 
 /** 上传图片：dataURL 交给服务端落盘，返回站内文件 URL */
@@ -96,10 +155,6 @@ export type VideoOpts = {
   cameraFixed?: boolean
   /** 设置页模型表里的键；不传走默认 */
   modelKey?: string
-  /** 尾帧约束（首帧模式生效）：让本镜落在指定构图上，衔接下一镜 */
-  lastFrame?: string
-  /** 让模型回传真实尾帧（默认 true），用于下一镜首帧 */
-  returnLastFrame?: boolean
 }
 
 async function readJsonRes(res: Response) {
@@ -134,7 +189,7 @@ export async function waitVideo(
   id: string,
   onTick?: (elapsedSec: number) => void,
   timeoutMs = 12 * 60 * 1000,
-): Promise<{ url: string; tail?: string }> {
+): Promise<{ url: string }> {
   const t0 = Date.now()
   for (;;) {
     await new Promise((r) => setTimeout(r, 3000))
@@ -146,7 +201,7 @@ export async function waitVideo(
       throw new Error((e as Error).message)
     }
     if (!j.ok) throw new Error(j.message || '查询失败')
-    if (j.status === 'succeeded') return { url: j.url as string, tail: j.tail as string | undefined }
+    if (j.status === 'succeeded') return { url: j.url as string }
     if (j.status === 'failed') throw new Error(j.message || '生成失败')
     onTick?.(Math.round((Date.now() - t0) / 1000))
     if (Date.now() - t0 > timeoutMs) throw new Error('等待超时，可稍后重试')
@@ -314,10 +369,25 @@ export type ProjectShot = {
   refExtras?: string[]
   /** 参考连线节点的 id（角色卡/素材卡），生成画面时按它取参考图 */
   refIds?: string[]
-  /** 本镜真实尾帧（本地路径），用于下一镜首帧接龙 */
-  tail_image?: string
-  /** 调度坐标（站位 + 机位）：只作为 3D 调度视频的输入 */
+  /** 旧调度坐标；只用于迁移 */
   layout?: unknown
+  /** 所属场次；同集同场共享 SceneLayout */
+  scene_no?: number
+  scene_slug?: string
+  shot_scene?: ShotScene
+  shot_scene_seed?: string
+  visual_brief?: VisualBrief
+  visual_brief_meta?: VisualBriefMeta
+  shot_blocking?: ShotBlocking
+  /** 代码优先 3D：每镜一段 Three.js 代码 */
+  scene_code?: SceneCode
+  scene_code_meta?: SceneCodeMeta
+  shot_3d_context?: Shot3DContext
+  /** camelCase 兼容：旧项目/本地快照可能直接透传 */
+  sceneCode?: SceneCode
+  sceneCodeMeta?: SceneCodeMeta
+  shot3DContext?: Shot3DContext
+  schedule_meta?: ScheduleMeta
   schedule_video?: string
   schedule_frames?: string[]
   motion_note?: string
@@ -384,6 +454,8 @@ export type ProjectData = {
   assets?: ProjectAsset[]
   /** 场景/道具设定卡：发布前的工作区，不随 assets 整表回写 */
   designs?: DesignSheet[]
+  /** 按集/场次复用的 3D 场景布局 */
+  sceneLayouts?: SceneLayout[]
   shots?: ProjectShot[]
   updated_at?: string
   /** GET /api/project 附带：本次打开迁移了几张旧图、哪些引用文件缺失 */
@@ -421,6 +493,7 @@ export type ProjectPatch = {
   shots?: ProjectShot[]
   characters?: unknown[]
   designs?: DesignSheet[]
+  sceneLayouts?: SceneLayout[]
   episodes?: unknown[]
   source?: string
   logline?: string
@@ -452,6 +525,11 @@ export async function mergeProjectShots(
   return { shots: r.shots, savedAt: r.savedAt }
 }
 
+/** 场景布局是独立顶层数据：整表替换，不跟 episodes 一起被剧本站覆盖 */
+export async function saveSceneLayouts(name: string, sceneLayouts: SceneLayout[]): Promise<void> {
+  await patchProject(name, { sceneLayouts })
+}
+
 export async function saveProject(name: string, project: ProjectData): Promise<void> {
   const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
     method: 'PUT',
@@ -471,17 +549,21 @@ export type TextOpts = {
   json?: boolean
   maxTokens?: number
   temperature?: number
+  /** 编辑器取消生成时中止请求 */
+  signal?: AbortSignal
 }
 
 export async function callText<T = unknown>(
   o: TextOpts,
 ): Promise<{ json?: T; text: string; model: string; modelKey: string; modelLabel: string }> {
   let res: Response
+  const { signal, ...body } = o
   try {
     res = await fetch('/api/text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(o),
+      body: JSON.stringify(body),
+      signal,
     })
   } catch {
     throw new Error('连不上本地代理，dev server 是否还在运行？')
@@ -497,14 +579,91 @@ export async function callText<T = unknown>(
   }
 }
 
+// ---------------------------------------------------------------- 视觉理解
+
+export type VisionOpts = {
+  system?: string
+  prompt: string
+  /** 带标签的参考板 dataURL；只允许 data:image */
+  image: string
+  modelKey?: string
+  json?: boolean
+  maxTokens?: number
+  signal?: AbortSignal
+}
+
+/** 调用视觉模型理解参考板；没有配置视觉模型时由服务端返回明确错误 */
+export async function askVision(
+  o: VisionOpts,
+): Promise<{ json?: unknown; text: string; model: string; modelKey: string; modelLabel: string }> {
+  const { signal, ...body } = o
+  let res: Response
+  try {
+    res = await fetch('/api/vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch {
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+  const j = await readJsonRes(res)
+  if (!j.ok) throw new Error(j.message || '视觉理解失败')
+  return {
+    json: j.json,
+    text: j.text ?? '',
+    model: j.model ?? '',
+    modelKey: j.modelKey ?? '',
+    modelLabel: j.modelLabel ?? '',
+  }
+}
+
+export type VideoVisionOpts = {
+  system?: string
+  prompt: string
+  /** 公网可访问的视频 URL；本地视频应回退关键帧 */
+  video: string
+  modelKey?: string
+  json?: boolean
+  maxTokens?: number
+  signal?: AbortSignal
+}
+
+export async function askVideoVision(
+  o: VideoVisionOpts,
+): Promise<{ json?: unknown; text: string; model: string; modelKey: string; modelLabel: string }> {
+  const { signal, ...body } = o
+  let res: Response
+  try {
+    res = await fetch('/api/video-vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    })
+  } catch {
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+  const j = await readJsonRes(res)
+  if (!j.ok) throw new Error(j.message || '视频理解失败')
+  return {
+    json: j.json,
+    text: j.text ?? '',
+    model: j.model ?? '',
+    modelKey: j.modelKey ?? '',
+    modelLabel: j.modelLabel ?? '',
+  }
+}
+
 // ---------------------------------------------------------------- 设置页
 
 export type RulePack = { enabled: boolean; text: string }
 
-export type Cap = 'text' | 'textPro' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+export type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 /** 生成环节：环节默认值只引用模型表键 */
-export type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt'
-export const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt']
+export type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
+export const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
 export type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {
@@ -538,6 +697,8 @@ export type AppSettings = {
   stageModels?: Partial<Record<Stage, string>>
   /** 计价单价（估算，可校准） */
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
+  /** 3D agent 的运行上限；缺省使用默认值 */
+  agentLimits?: AgentLimitSettings
   apiKey: string
   rules: Record<string, RulePack>
   presetsVersion?: number

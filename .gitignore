@@ -31,3 +31,9 @@ projects/*/assets/
 
 # 临时基准脚本
 bench*.mjs
+
+# 沙箱运行时构建产物（由 scripts/build-sandbox-runtime.mjs 生成）
+src/sandbox/runtime.generated.js
+
+# 验证脚本自起的临时项目目录
+.verify-*/

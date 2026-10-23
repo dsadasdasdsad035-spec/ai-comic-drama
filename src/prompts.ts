@@ -14,12 +14,16 @@ export const STORYBOARD_BASE = `你是分镜师。把一集剧本拆成可直接
 - desc：画面描述，写「谁 在 哪 做 什么，什么光，什么景深」，30-60 字，只写可拍的东西。
 - dialogue：该镜头内的台词/旁白，没有就空数组。
 - 连续性：遵守 180 度轴线；相邻镜头人物站位不要跳跃；道具/服装与上一镜一致。
+- 场次归属：每镜必须带 scene_no 与 scene_slug，照抄输入场次的编号和简称；不同场次不能合并。
+- cast：只写画面内真正出现的角色名，不要写画外音或只被提到的角色。
 
 输出 JSON：
 {
   "shots": [
-    {"no": "S01", "seconds": 3.5, "size": "中景", "move": "固定",
-     "desc": "...", "dialogue": [{"speaker": "角色名", "text": "..."}]}
+    {"no": "S01", "scene_no": 1, "scene_slug": "场景简称",
+     "seconds": 3.5, "size": "中景", "move": "固定",
+     "desc": "...", "dialogue": [{"speaker": "角色名", "text": "..."}],
+     "cast": ["角色名"]}
   ]
 }`
 

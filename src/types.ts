@@ -28,10 +28,29 @@ export type ShotData = {
   refExtras?: string[]
   /** 参考连线：连到本镜的角色卡/素材卡节点 id（生成画面时按它取参考图） */
   refIds?: string[]
-  /** 本镜出片的真实尾帧（本地路径），可一键设为下一镜首帧 */
-  tailImage?: string
-  /** 调度：站位/机位坐标（归一化 0~1，face 为朝向角度）。只作为 3D 调度视频的输入，不上画布 */
+  /** 旧版调度坐标：仅用于迁移；新数据写 shotBlocking */
   layout?: ShotLayout
+  /** 所属场次（1 起）。同集同场共享 SceneLayout */
+  sceneNo?: number
+  sceneSlug?: string
+  /** 本镜独立 3D 空间（每镜一份，不与其他镜头共享） */
+  shotScene?: ShotScene
+  /** 生成时使用的上一镜 shot.id */
+  shotSceneSeed?: string
+  /** 视觉模型输出的感知 brief */
+  visualBrief?: VisualBrief
+  /** brief 的资源指纹/模型/是否真的用了视觉 */
+  visualBriefMeta?: VisualBriefMeta
+  /** 镜头级走位与机位关键帧 */
+  shotBlocking?: ShotBlocking
+  /** 代码优先 3D：每镜一段 Three.js 代码 */
+  sceneCode?: SceneCode
+  /** 代码渲染的输入指纹与输出参数 */
+  sceneCodeMeta?: SceneCodeMeta
+  /** 代码优先 3D 的参考内容选择 */
+  shot3DContext?: Shot3DContext
+  /** 最近一次成功渲染的输入指纹与输出参数 */
+  scheduleMeta?: ScheduleMeta
   /** 3D 调度动画（webm/mp4，本地路径）：给人审运镜与走位 */
   scheduleVideo?: string
   /** 从调度视频抽出的关键帧（可作结构性参考，白模会污染画风，默认不传） */
@@ -131,4 +150,244 @@ export const DEFAULT_LAYOUT: ShotLayout = {
   camera: { x: 0.5, y: 0.92, lookX: 0.5, lookY: 0.5 },
   w: 10,
   h: 8,
+}
+
+// ---------------------------------------------------------------- 场景级 3D 调度
+
+export type SceneWallOpening = {
+  /** 从墙起点沿墙方向的偏移（米） */
+  at: number
+  width: number
+  height: number
+  kind: 'door' | 'window'
+  /** 窗台高度（米）；门默认 0 */
+  sill?: number
+}
+
+export type SceneWall = {
+  id: string
+  /** 场地左上为原点，x 向右、z 向下，单位米 */
+  x1: number
+  z1: number
+  x2: number
+  z2: number
+  height: number
+  thickness: number
+  openings?: SceneWallOpening[]
+}
+
+export type SceneProp = {
+  id: string
+  name: string
+  designId?: string
+  shape: 'box' | 'cylinder'
+  /** 中心点，米 */
+  x: number
+  z: number
+  w: number
+  d: number
+  h: number
+  rotation: number
+}
+
+export type SceneZone = {
+  id: string
+  name: string
+  kind: 'floor' | 'blocked' | 'action'
+  x: number
+  z: number
+  w: number
+  d: number
+  color?: string
+}
+
+export type SceneAxis = {
+  a: { x: number; z: number }
+  b: { x: number; z: number }
+  label?: string
+}
+
+export type VisualBriefSubject = {
+  name?: string
+  screen: 'left' | 'center' | 'right'
+  depth: 'near' | 'mid' | 'far'
+  occludedBy?: string
+  facing?: 'camera' | 'away' | 'left' | 'right'
+}
+
+export type VisualBrief = {
+  version: 1
+  usedVision: boolean
+  subjects: VisualBriefSubject[]
+  visible: {
+    kind: 'wall' | 'door' | 'window' | 'prop' | 'floor'
+    side?: 'left' | 'right' | 'back' | 'front'
+    description: string
+  }[]
+  shotSize?: string
+  cameraHint?: { height?: 'low' | 'eye' | 'high'; angle?: string; notes?: string }
+  composition?: string
+  confidence?: number
+}
+
+export type VisualBriefMeta = {
+  version: 1
+  fingerprint: string
+  usedVision: boolean
+  modelKey?: string
+  createdAt: string
+}
+
+export type ShotScene = SceneLayout & {
+  /** 从哪个镜头继承空间（可空） */
+  seedFrom?: string
+}
+
+export type SceneLayout = {
+  /** E01-SC02；项目内稳定键 */
+  id: string
+  episode: number
+  sceneNo: number
+  sceneSlug?: string
+  /** 关联的 scenes 设定卡 */
+  designId?: string
+  w: number
+  h: number
+  walls: SceneWall[]
+  props: SceneProp[]
+  zones: SceneZone[]
+  axis?: SceneAxis
+  source: 'ai' | 'manual' | 'legacy' | 'fallback'
+  updatedAt?: string
+}
+
+export type BlockingActor = { name: string; x: number; y: number; face: number }
+
+export type BlockingCamera = {
+  x: number
+  y: number
+  lookX: number
+  lookY: number
+  /** 机位高度，米 */
+  height: number
+  /** 垂直视场角，度 */
+  fov: number
+}
+
+export type BlockingKey = {
+  /** 0~1 */
+  t: number
+  actors: BlockingActor[]
+  camera: BlockingCamera
+}
+
+export type ShotBlocking = {
+  keys: BlockingKey[]
+  notes?: string
+  source: 'ai' | 'manual' | 'legacy' | 'fallback'
+  updatedAt?: string
+}
+
+export type ScheduleMeta = {
+  version: 1
+  fingerprint: string
+  mode: 'clean' | 'review'
+  duration: number
+  aspect: string
+  width: number
+  height: number
+  renderedAt: string
+}
+
+// ---------------------------------------------------------------- 代码优先 3D
+
+export type SceneCodeSource = 'ai' | 'manual' | 'legacy-converted' | 'fallback'
+
+/** 每镜一段 Three.js 代码；代码是场景真相，不再维护结构化空间清单。 */
+export type SceneCode = {
+  version: 1
+  abiVersion: 1
+  code: string
+  codeHash: string
+  source: SceneCodeSource
+  title?: string
+  /** 代码生成/用户编写的运镜说明；不是从几何自动推导 */
+  motionNote?: string
+  updatedAt: string
+}
+
+export type SceneCodeAssetRef = {
+  /** 稳定键，例如 character:chenmo / image:ab12cd34 */
+  key: string
+  url: string
+  kind: 'image' | 'video-frame'
+  source: 'character' | 'design' | 'asset' | 'image' | 'video'
+  label: string
+  contentHash: string
+  width?: number
+  height?: number
+  videoDuration?: number
+  frameTime?: number
+}
+
+export type SceneCodeMeta = {
+  version: 1
+  fingerprint: string
+  codeHash: string
+  abiVersion: 1
+  assets: SceneCodeAssetRef[]
+  /** 渲染时的参考内容选择指纹；用于判断选择是否变化 */
+  selectionFingerprint?: string
+  duration: number
+  aspect: string
+  width: number
+  height: number
+  fps: 30
+  mode: 'clean'
+  renderedAt: string
+}
+
+export type Shot3DContextText = {
+  prompt: boolean
+  videoPrompt: boolean
+  /** all 或台词行索引；索引按 dialogue 原文顺序 */
+  dialogue: 'all' | number[]
+  cast: boolean
+  marks: boolean
+  sizeMove: boolean
+}
+
+/** 3D 工作台按镜头保存的参考内容选择。 */
+export type Shot3DContext = {
+  version: 1
+  characterIds: string[]
+  designIds: string[]
+  /** 手工素材卡的 URL（场景/道具/普通素材） */
+  assetUrls: string[]
+  imageUrls: string[]
+  videoUrls: string[]
+  /** 场景元数据键，例如 E01-SC02 */
+  sceneKeys: string[]
+  text: Shot3DContextText
+  /** 选择时的台词指纹；台词变化后逐句选择需要重置 */
+  dialogueHash?: string
+  updatedAt?: string
+}
+
+export const SCENE_LIMITS = { walls: 24, props: 32, zones: 12, keys: 3 } as const
+export const SCENE_CODE_LIMITS = {
+  codeBytes: 200 * 1024,
+  images: 16,
+  videos: 4,
+  videoFrames: 3,
+  imageEdge: 2048,
+  totalAssetBytes: 48 * 1024 * 1024,
+  initMs: 5000,
+  frameMs: 250,
+  trialMs: 15000,
+} as const
+
+/** 出片与调度共用的有效时长：镜头秒数四舍五入后夹到 2~12 秒 */
+export function effectiveSeconds(seconds: number | undefined): number {
+  return Math.min(12, Math.max(2, Math.round(Number(seconds) || 0)))
 }

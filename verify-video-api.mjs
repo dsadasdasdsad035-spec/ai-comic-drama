@@ -136,30 +136,28 @@ const pFirst = buildVideoPayload({
   seconds: 5,
   resolution: '720p',
   firstFrame: img,
-  lastFrame: 'data:image/png;base64,BB',
   cameraFixed: true,
 })
 const firstRoles = pFirst.content.filter((c) => c.type === 'image_url').map((c) => c.role)
-check('首帧 + 尾帧角色', firstRoles.join(',') === 'first_frame,last_frame', firstRoles.join(','))
+check('首帧角色', firstRoles.join(',') === 'first_frame', firstRoles.join(','))
 check(
   '顶层参数',
   pFirst.model === model10 && pFirst.ratio === '9:16' && pFirst.duration === 5 && pFirst.resolution === '720p',
   JSON.stringify(pFirst),
 )
-check('camera_fixed / return_last_frame', pFirst.camera_fixed === true && pFirst.return_last_frame === true)
+check('camera_fixed，且不再请求尾帧', pFirst.camera_fixed === true && !('return_last_frame' in pFirst), JSON.stringify(pFirst))
 
 const refs = ['A', 'B', 'C', 'D', 'E'].map((x) => `data:image/png;base64,${x}`)
 const pRef = buildVideoPayload({
   model: model10,
   prompt: '参考图里的人物',
   seconds: 5,
-  lastFrame: 'data:image/png;base64,LAST',
   referenceImages: refs,
 })
 const refItems = pRef.content.filter((c) => c.type === 'image_url')
 check('参考图最多 4 张', refItems.length === 4, String(refItems.length))
 check('参考图角色正确', refItems.every((c) => c.role === 'reference_image'))
-check('参考图模式忽略尾帧', !refItems.some((c) => c.role === 'last_frame'))
+check('参考图模式没有尾帧角色', !refItems.some((c) => c.role === 'last_frame'))
 
 const eBadDuration = await capture(async () =>
   buildVideoPayload({ model: model15, prompt: 'x', seconds: 3, firstFrame: img }),
@@ -199,7 +197,7 @@ check('提交返回 task id', sub.taskId === 'task-1', sub.taskId)
 check('提交带鉴权头', lastAuth === 'Bearer test-key', lastAuth)
 check(
   '提交请求体正确',
-  lastPost?.model === model10 && lastPost?.duration === 5 && lastPost?.content?.length === 3,
+  lastPost?.model === model10 && lastPost?.duration === 5 && lastPost?.content?.length === 2,
   JSON.stringify(lastPost),
 )
 
@@ -212,28 +210,21 @@ const done = await pollVideoTask({
 })
 check(
   '轮询到成功',
-  done.status === 'succeeded' && done.videoUrl.endsWith('/video.mp4') && done.lastFrameUrl.endsWith('/tail.jpg'),
+  done.status === 'succeeded' && done.videoUrl.endsWith('/video.mp4') && !('lastFrameUrl' in done),
   JSON.stringify(done),
 )
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-video-api-'))
 const art = await downloadVideoArtifacts({
   videoUrl: done.videoUrl,
-  lastFrameUrl: done.lastFrameUrl,
   videoDir: path.join(tmp, 'videos'),
-  frameDir: path.join(tmp, 'generated'),
 })
 check(
   '视频落盘',
   art.url.startsWith('/videos/shot-vid-') && fs.existsSync(path.join(tmp, 'videos', path.basename(art.url))),
   art.url,
 )
-check(
-  '尾帧落盘',
-  art.tail.startsWith('/generated/tail-') &&
-    fs.existsSync(path.join(tmp, 'generated', path.basename(art.tail))),
-  art.tail,
-)
+check('只下载视频', Boolean(art.url) && !('tail' in art), JSON.stringify(art))
 fs.rmSync(tmp, { recursive: true, force: true })
 
 // ---- 4. 失败 / 过期 / 超时 / 瞬时错误 ----
@@ -285,31 +276,10 @@ const doneBadVideo = await pollVideoTask({
 const eBadVideo = await capture(async () =>
   downloadVideoArtifacts({
     videoUrl: doneBadVideo.videoUrl,
-    lastFrameUrl: doneBadVideo.lastFrameUrl,
     videoDir: path.join(os.tmpdir(), 'verify-video-missing', 'videos'),
-    frameDir: path.join(os.tmpdir(), 'verify-video-missing', 'generated'),
   }),
 )
 check('视频下载失败使任务失败', /下载视频失败/.test(eBadVideo?.message || ''), eBadVideo?.message)
-
-getMode = 'bad-tail'
-getCalls = 0
-const doneBadTail = await pollVideoTask({
-  baseUrl: BASE,
-  apiKey: 'k',
-  taskId: 'task-1',
-  intervalMs: 5,
-  timeoutMs: 1000,
-})
-const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-video-tail-'))
-const artTail = await downloadVideoArtifacts({
-  videoUrl: doneBadTail.videoUrl,
-  lastFrameUrl: doneBadTail.lastFrameUrl,
-  videoDir: path.join(tmp2, 'videos'),
-  frameDir: path.join(tmp2, 'generated'),
-})
-check('尾帧失败不影响视频', artTail.tail === '' && artTail.url.startsWith('/videos/'), JSON.stringify(artTail))
-fs.rmSync(tmp2, { recursive: true, force: true })
 
 // ---- 5. 提交错误映射 ----
 for (const [mode, kind, code] of [

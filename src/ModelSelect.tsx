@@ -12,6 +12,13 @@ export function textModelEntries(settings: AppSettings | null): ModelEntry[] {
   return (settings?.models ?? []).filter((m) => isTextCap(m.cap))
 }
 
+/** 环节可选模型：视觉环节只看 cap=vision；其余走文本族 */
+export function stageModelEntries(settings: AppSettings | null, stage: Stage): ModelEntry[] {
+  if (stage === 'vision') return (settings?.models ?? []).filter((m) => m.cap === 'vision')
+  if (stage === 'videoVision') return (settings?.models ?? []).filter((m) => m.cap === 'videoVision')
+  return textModelEntries(settings)
+}
+
 export type StageResolution = {
   entry?: ModelEntry
   source: 'pick' | 'stage' | 'textDefault' | 'first' | 'none'
@@ -29,7 +36,7 @@ export function resolveStageModel(
   stage: Stage,
   pick?: StagePick,
 ): StageResolution {
-  const models = textModelEntries(settings)
+  const models = stageModelEntries(settings, stage)
   const pickKey = String(pick?.[stage] || '').trim()
   if (pickKey) {
     const hit = models.find((m) => m.key === pickKey)
@@ -39,6 +46,9 @@ export function resolveStageModel(
   if (stageKey) {
     const hit = models.find((m) => m.key === stageKey)
     return hit ? { entry: hit, source: 'stage' } : { source: 'none', invalidKey: stageKey }
+  }
+  if (stage === 'vision' || stage === 'videoVision') {
+    return models[0] ? { entry: models[0], source: 'first' } : { source: 'none' }
   }
   const defKey = String(settings?.defaults?.text || '').trim()
   if (defKey) {
@@ -58,7 +68,11 @@ export function stageDefaultLabel(settings: AppSettings | null, stage: Stage, pi
   const r = resolveStageModel(settings, stage, pick)
   if (r.entry) return `${r.entry.label} · ${r.entry.model}`
   if (r.invalidKey) return `配置的模型不可用（${r.invalidKey}）`
-  return '未配置文本模型'
+  return stage === 'vision'
+    ? '未配置视觉模型'
+    : stage === 'videoVision'
+      ? '未配置视频理解模型'
+      : '未配置文本模型'
 }
 
 /** 生成按钮是否可用：没有文本族模型时不能发请求 */
@@ -133,7 +147,7 @@ export function StageModelSelect({
   className?: string
   disabled?: boolean
 }) {
-  const list = textModelEntries(settings)
+  const list = stageModelEntries(settings, stage)
   const value = pick?.[stage] || ''
   const defLabel = stageDefaultLabel(settings, stage, pick)
   return (

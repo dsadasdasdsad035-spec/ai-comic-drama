@@ -74,8 +74,8 @@ function errorFromResponse(text, status) {
 
 /**
  * 组装方舟视频任务请求体。图片入参必须是可访问的 http URL 或 data URL。
- * 参考图与首/尾帧互斥：有参考图时忽略首帧和尾帧。
- * 参考视频（Seedance 2.0/2.5）进入全模态参考模式：与首/尾帧互斥，
+ * 参考图与首帧互斥：有参考图时忽略首帧。
+ * 参考视频（Seedance 2.0/2.5）进入全模态参考模式：与首帧互斥，
  * 图片改为 reference_image，不再发送 camera_fixed。
  */
 export function buildVideoPayload({
@@ -85,9 +85,7 @@ export function buildVideoPayload({
   seconds,
   resolution,
   cameraFixed = false,
-  returnLastFrame = true,
   firstFrame = '',
-  lastFrame = '',
   referenceImages = [],
   referenceVideos = [],
   videoRefTaskType = '',
@@ -126,7 +124,6 @@ export function buildVideoPayload({
     .filter(Boolean)
     .slice(0, 3)
   const first = String(firstFrame || '')
-  const last = String(lastFrame || '')
 
   const content = [{ type: 'text', text }]
   if (vids.length > 0) {
@@ -143,7 +140,6 @@ export function buildVideoPayload({
     }
   } else if (first) {
     content.push({ type: 'image_url', image_url: { url: first }, role: 'first_frame' })
-    if (last) content.push({ type: 'image_url', image_url: { url: last }, role: 'last_frame' })
   } else {
     throw new VideoParamError('缺少首帧图片或参考图')
   }
@@ -156,7 +152,6 @@ export function buildVideoPayload({
     ...(res ? { resolution: res } : {}),
     // 参考视频模式属于全模态参考，camera_fixed 不适用
     ...(vids.length === 0 ? { camera_fixed: Boolean(cameraFixed) } : {}),
-    ...(returnLastFrame ? { return_last_frame: true } : {}),
     // 2.5 显式指定参考生视频，避免被判定成视频编辑/延长；2.0 不传
     ...(vids.length > 0 && videoRefTaskType === 'reference'
       ? { omni_reference_task_type: 'reference' }
@@ -239,7 +234,6 @@ export async function pollVideoTask({
           status,
           taskId,
           videoUrl: String(task.content?.video_url || ''),
-          lastFrameUrl: String(task.content?.last_frame_url || ''),
           raw: task,
         }
       }
@@ -261,12 +255,10 @@ export async function pollVideoTask({
   }
 }
 
-/** 下载视频与尾帧；尾帧失败不影响视频结果，视频失败则整单失败 */
+/** 下载视频；视频下载失败则整单失败。 */
 export async function downloadVideoArtifacts({
   videoUrl,
-  lastFrameUrl,
   videoDir,
-  frameDir,
   fetchImpl = fetch,
 }) {
   if (!videoUrl) throw new VideoError('服务商未返回视频地址')
@@ -278,22 +270,5 @@ export async function downloadVideoArtifacts({
   const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
   fs.writeFileSync(path.join(videoDir, name), bytes)
 
-  const out = { url: `/videos/${name}`, tail: '' }
-  if (lastFrameUrl) {
-    try {
-      const fr = await fetchImpl(lastFrameUrl, { signal: AbortSignal.timeout(30_000) })
-      if (fr.ok) {
-        const fb = Buffer.from(await fr.arrayBuffer())
-        const ct = String(fr.headers?.get?.('content-type') || '')
-        const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg'
-        fs.mkdirSync(frameDir, { recursive: true })
-        const tailName = `tail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
-        fs.writeFileSync(path.join(frameDir, tailName), fb)
-        out.tail = `/generated/${tailName}`
-      }
-    } catch {
-      /* 尾帧拿不到不影响出片 */
-    }
-  }
-  return out
+  return { url: `/videos/${name}` }
 }

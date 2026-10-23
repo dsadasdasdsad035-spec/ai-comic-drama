@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "mode": "real",
+  "prompt": "生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。",
+  "modelKey": "minimax-text",
+  "agent": {
+    "completed": true,
+    "toolCalls": 7,
+    "panelTail": "SC01 · 山顶 ×\n工具轨迹 · 不展示隐藏推理\n\n生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。\n\n已读取镜头上下文\n代码草稿 · 49 行 · e6e54f0df7\n查看代码\n沙箱通过 · 沙箱试运行通过\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n需人工验收\n✗ 山顶背景清晰可见山体 · 未配置视觉模型\n✗ 画面中明确有一男一女两名角色 · 未配置视觉模型\n✗ 两人持剑处于正面交锋姿态 · 未配置视觉模型\n✗ 镜头始终正对两人并完成平滑环绕 · 未配置视觉模型\n✗ 4秒动画中人物和剑的动作连贯 · 未配置视觉模型\n✗ 整体构图适合16:9全景 · 未配置视觉模型\n\n未配置视觉模型，需要人工检查关键帧\n\n已完成山顶决斗场景：一男一女持剑交锋，包含群山、日间天空与山顶环境；镜头在4秒内平滑环绕并持续朝向两人。代码通过沙盒，已抓取0/1/2/3/4秒共5帧。因未配置视觉模型，最终画面效果转人工验收。\n\n已完成山顶决斗场景：一男一女持剑交锋，包含群山、日间天空与山顶环境；镜头在4秒内平滑环绕并持续朝向两人。代码通过沙盒，已抓取0/1/2/3/4秒共5帧。因未配置视觉模型，最终画面效果转人工验收。\n\n取消\n发送"
+  },
+  "code": {
+    "hash": "e6e54f0df7d8b03ff2779663f520678c51e73546a6ed5905823e3ff6f158558d",
+    "lines": 49,
+    "source": "ai"
+  },
+  "frames": [
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real-frame-0.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real-frame-1.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real-frame-2.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real-frame-3.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real-frame-4.jpg"
+  ],
+  "review": {
+    "items": [
+      {
+        "text": "✗ 山顶背景清晰可见山体 · 未配置视觉模型",
+        "ok": false
+      },
+      {
+        "text": "✗ 画面中明确有一男一女两名角色 · 未配置视觉模型",
+        "ok": false
+      },
+      {
+        "text": "✗ 两人持剑处于正面交锋姿态 · 未配置视觉模型",
+        "ok": false
+      },
+      {
+        "text": "✗ 镜头始终正对两人并完成平滑环绕 · 未配置视觉模型",
+        "ok": false
+      },
+      {
+        "text": "✗ 4秒动画中人物和剑的动作连贯 · 未配置视觉模型",
+        "ok": false
+      },
+      {
+        "text": "✗ 整体构图适合16:9全景 · 未配置视觉模型",
+        "ok": false
+      }
+    ],
+    "passed": false,
+    "needsHumanReview": true,
+    "note": "真实视觉模型结果或人工待判"
+  },
+  "video": {
+    "url": "/videos/schedule-1792684289106-e48284.mp4",
+    "file": "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-real.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 540
+        }
+      ],
+      "format": {
+        "duration": "4.000000"
+      }
+    }
+  },
+  "savedAt": "2026-10-22T15:51:29.602Z",
+  "manualReview": {
+    "status": "agent-inspected",
+    "notes": "已目视检查关键帧和 mp4：山体/地形、两名人物、双剑交叉、环绕变化可见；最终仍建议用户按清单确认。"
+  }
+}

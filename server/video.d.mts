@@ -28,9 +28,7 @@ export interface VideoPayloadOptions {
   seconds: number | string
   resolution?: string
   cameraFixed?: boolean
-  returnLastFrame?: boolean
   firstFrame?: string
-  lastFrame?: string
   referenceImages?: string[]
   /** Seedance 2.0/2.5 的参考视频；非空时进入全模态参考模式 */
   referenceVideos?: string[]
@@ -66,14 +64,11 @@ export declare function pollVideoTask(opts: {
   status: string
   taskId: string
   videoUrl: string
-  lastFrameUrl: string
   raw: any
 }>
 
 export declare function downloadVideoArtifacts(opts: {
   videoUrl: string
-  lastFrameUrl?: string
   videoDir: string
-  frameDir: string
   fetchImpl?: typeof fetch
-}): Promise<{ url: string; tail: string }>
+}): Promise<{ url: string }>

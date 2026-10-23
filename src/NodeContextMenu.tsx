@@ -8,6 +8,8 @@ export type CtxItem = {
   img?: string
   /** 已建立参考关系 */
   on?: boolean
+  /** 未出图等不可选状态 */
+  disabled?: boolean
 }
 
 type Props = {
@@ -81,11 +83,12 @@ export default function NodeContextMenu(p: Props) {
         ) : (
           <div className="ctx-list">
             {p.items.map((it) => (
-              <div className={`ctx-row ${it.on ? 'on' : ''}`} key={it.id} data-ref={it.id}>
+              <div className={`ctx-row ${it.on ? 'on' : ''} ${it.disabled ? 'disabled' : ''}`} key={it.id} data-ref={it.id}>
                 <button
                   className="ctx-main"
-                  onClick={() => p.onClickItem(it.id)}
-                  title={it.on ? '点击取消参考' : '点击作为参考'}
+                  onClick={() => !it.disabled && p.onClickItem(it.id)}
+                  disabled={it.disabled}
+                  title={it.disabled ? '未出图，暂不可参考' : it.on ? '点击取消参考' : '点击作为参考'}
                 >
                   <span className="ctx-thumb">{it.img ? <img src={it.img} alt="" /> : <i />}</span>
                   <span className="ctx-text">
@@ -94,7 +97,7 @@ export default function NodeContextMenu(p: Props) {
                   </span>
                   <span className="ctx-tick">{it.on ? '✓' : '+'}</span>
                 </button>
-                {p.onFirstFrame && it.img && (
+                {p.onFirstFrame && it.img && !it.disabled && (
                   <button
                     className="ctx-act"
                     onClick={() => p.onFirstFrame!(it.id)}

@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "mode": "mock",
+  "prompt": "生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。",
+  "modelKey": "duel-code",
+  "agent": {
+    "completed": true,
+    "toolCalls": 6,
+    "panelTail": "SC01 · 山顶 ×\n工具轨迹 · 不展示隐藏推理\n\n生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。\n\n已读取镜头上下文\n代码草稿 · 117 行 · 69c730cf58\n查看代码\n沙箱通过 · 沙箱试运行通过\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n验收通过\n✓ 画面有山体或地形背景\n✓ 画面有两个人物\n✓ 两名人物可区分男女\n✓ 两人各持一把剑\n✓ 两人处于对打/攻防姿态\n✓ 镜头位置随时间环绕变化\n✓ 镜头始终正对两人，两人都在画面内\n\n关键帧符合山、两人、双剑、对打和环绕要求\n\n山、男女双剑对打与环绕镜头已完成\n\n山、男女双剑对打与环绕镜头已完成\n\n取消\n发送"
+  },
+  "code": {
+    "hash": "69c730cf5885ff958a066a95d9d4651119e3e2cee455cf8763ee5c5672c718fe",
+    "lines": 117,
+    "source": "ai"
+  },
+  "frames": [
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-frame-0.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-frame-1.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-frame-2.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-frame-3.jpg",
+    "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel-frame-4.jpg"
+  ],
+  "review": {
+    "items": [
+      {
+        "text": "✓ 画面有山体或地形背景",
+        "ok": true
+      },
+      {
+        "text": "✓ 画面有两个人物",
+        "ok": true
+      },
+      {
+        "text": "✓ 两名人物可区分男女",
+        "ok": true
+      },
+      {
+        "text": "✓ 两人各持一把剑",
+        "ok": true
+      },
+      {
+        "text": "✓ 两人处于对打/攻防姿态",
+        "ok": true
+      },
+      {
+        "text": "✓ 镜头位置随时间环绕变化",
+        "ok": true
+      },
+      {
+        "text": "✓ 镜头始终正对两人，两人都在画面内",
+        "ok": true
+      }
+    ],
+    "passed": true,
+    "needsHumanReview": false,
+    "note": "mock 视觉初筛；最终以关键帧和 mp4 人工检查为准"
+  },
+  "video": {
+    "url": "/videos/schedule-1792684632629-af87c2.mp4",
+    "file": "openspec/changes/agentic-3d-scene-chat/evidence/agent-duel.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 540
+        }
+      ],
+      "format": {
+        "duration": "4.010000"
+      }
+    }
+  },
+  "savedAt": "2026-10-22T15:57:13.044Z",
+  "manualReview": {
+    "status": "agent-inspected",
+    "notes": "已目视检查关键帧和 mp4：山体/地形、两名人物、双剑交叉、环绕变化可见；最终仍建议用户按清单确认。"
+  }
+}

@@ -5,25 +5,42 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "npm run build:sandbox",
+    "build:sandbox": "node scripts/build-sandbox-runtime.mjs",
+    "prebuild": "npm run build:sandbox",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.15.30",
+    "@langchain/core": "^1.2.20",
+    "@langchain/langgraph": "^1.5.2",
+    "@radix-ui/react-separator": "^1.2.0",
+    "@radix-ui/react-slot": "^1.5.0",
+    "@radix-ui/react-tooltip": "^1.4.1",
     "@types/three": "^0.186.0",
     "@xyflow/react": "^12.3.5",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "konva": "^9.3.20",
+    "lucide-react": "^1.61.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-konva": "^18.2.10",
+    "tailwind-merge": "^3.7.0",
     "three": "^0.186.1",
+    "zod": "^4.6.7",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.25.12",
     "playwright-core": "^1.64.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }

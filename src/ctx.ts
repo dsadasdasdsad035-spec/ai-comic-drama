@@ -10,6 +10,7 @@ export type CanvasApi = {
   patch: (id: string, patch: Partial<ShotData>) => void
   cycleEdge: (id: string) => void
   generate: (id: string) => void
+  cancelGenerate: (id: string) => void
   generateVideo: (id: string) => void
 }
 
@@ -21,5 +22,6 @@ export const CanvasCtx = createContext<CanvasApi>({
   patch: () => {},
   cycleEdge: () => {},
   generate: () => {},
+  cancelGenerate: () => {},
   generateVideo: () => {},
 })

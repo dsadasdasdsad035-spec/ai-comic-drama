@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS designs (
   sort       INTEGER DEFAULT 0,
   UNIQUE(project_id, design_id)
 );
+CREATE TABLE IF NOT EXISTS scene_layouts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  layout_id  TEXT NOT NULL,
+  episode    INTEGER,
+  scene_no   INTEGER,
+  layout     TEXT NOT NULL,
+  sort       INTEGER DEFAULT 0,
+  updated_at TEXT,
+  UNIQUE(project_id, layout_id)
+);
 CREATE TABLE IF NOT EXISTS episodes (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -372,6 +383,36 @@ export function readProject(root, name) {
   return assemble(p)
 }
 
+/** 服务端只做结构性 sanitize：畸形布局拒绝入库，几何细节由客户端几何层负责 */
+function sanitizeStoredSceneLayout(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const id = String(raw.id || '').trim()
+  const episode = Number(raw.episode)
+  const sceneNo = Number(raw.sceneNo)
+  const w = Number(raw.w)
+  const h = Number(raw.h)
+  if (!id || !Number.isFinite(episode) || !Number.isFinite(sceneNo) || episode < 1 || sceneNo < 1) return null
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w < 2 || h < 2 || w > 80 || h > 80) return null
+  const cleanList = (v, max) =>
+    (Array.isArray(v) ? v : [])
+      .filter((x) => x && typeof x === 'object' && !Array.isArray(x))
+      .slice(0, max)
+  const source = raw.source === 'ai' || raw.source === 'fallback' || raw.source === 'legacy' ? raw.source : 'manual'
+  return {
+    ...raw,
+    id,
+    episode: Math.round(episode),
+    sceneNo: Math.round(sceneNo),
+    w,
+    h,
+    walls: cleanList(raw.walls, 24),
+    props: cleanList(raw.props, 32),
+    zones: cleanList(raw.zones, 12),
+    ...(raw.axis && typeof raw.axis === 'object' ? { axis: raw.axis } : { axis: undefined }),
+    source,
+  }
+}
+
 function assemble(p) {
   const pid = p.id
   const characters = db
@@ -436,6 +477,17 @@ function assemble(p) {
           ...(sc.tone ? { tone: sc.tone } : {}),
         })),
     }))
+  const sceneLayouts = db
+    .prepare('SELECT * FROM scene_layouts WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((row) => {
+      try {
+        return sanitizeStoredSceneLayout(JSON.parse(row.layout || '{}'))
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
   const shots = db
     .prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
@@ -452,6 +504,7 @@ function assemble(p) {
     characters,
     assets,
     designs,
+    sceneLayouts,
     episodes,
     shots,
   }
@@ -542,6 +595,23 @@ export function writeProject(root, name, data = {}) {
         typeof d?.activeIdx === 'number' ? d.activeIdx : null,
         i,
       )
+    }
+  }
+
+  if (data.sceneLayouts !== undefined) {
+    if (!Array.isArray(data.sceneLayouts)) throw new Error('sceneLayouts 必须是数组')
+    const clean = data.sceneLayouts.map((d, i) => {
+      const one = sanitizeStoredSceneLayout(d)
+      if (!one) throw new Error(`场景布局第 ${i + 1} 项无效（需要 id/episode/sceneNo/w/h）`)
+      if (JSON.stringify(one).length > 1_000_000) throw new Error(`场景布局 ${one.id} 过大`)
+      return one
+    })
+    db.prepare('DELETE FROM scene_layouts WHERE project_id = ?').run(pid)
+    for (const [i, d] of clean.entries()) {
+      db.prepare(
+        `INSERT INTO scene_layouts (project_id,layout_id,episode,scene_no,layout,sort,updated_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      ).run(pid, d.id, d.episode, d.sceneNo, JSON.stringify(d), i, now)
     }
   }
 

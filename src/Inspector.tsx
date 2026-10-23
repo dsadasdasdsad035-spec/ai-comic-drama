@@ -1,12 +1,23 @@
-import type { ShotData } from './types'
-import { CANDIDATE_COUNTS, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
+import type { SceneLayout, ShotData } from './types'
+import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
+import {
+  fallbackBlocking,
+  isScheduleFresh,
+  legacyLayoutToBlocking,
+  rosterOf,
+} from './scheduleGeometry'
+import { resolveShotScene } from './shotScene'
+import { isSceneCodeFresh } from './sceneCodeFreshness'
+import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
-import { listMedia, listVideoFiles, type MediaBundle, type VideoFile } from './api'
+import { listVideoFiles, type VideoFile } from './api'
 import { useEffect, useRef, useState } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import { CapModelSelect } from './ModelSelect'
+import MediaPicker from './MediaPicker'
+import { pickKind, pickTitle, type PickItem } from './mediaPick'
 
 /** 素材卡编辑面板：类型 / 标题 / 图片或视频地址 */
 function AssetPanel({
@@ -21,18 +32,25 @@ function AssetPanel({
   projectName: string
 }) {
   const d = node.data
-  const [media, setMedia] = useState<MediaBundle>({ images: [], videos: [], assets: [] })
-  const [manual, setManual] = useState(false)
-  useEffect(() => {
-    let alive = true
-    listMedia(projectName).then((m) => {
-      if (alive) setMedia(m)
-    })
-    return () => {
-      alive = false
-    }
-  }, [projectName, node.id])
+  const [pickerOpen, setPickerOpen] = useState(false)
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
+  const confirmPick = (item: PickItem) => {
+    set({
+      url: item.url,
+      kind: pickKind(item, d.kind),
+      title: pickTitle(item, d.title),
+    })
+    setPickerOpen(false)
+  }
+  const sourceName = (url?: string) => {
+    if (!url) return ''
+    const part = url.split(/[?#]/)[0].split('/').pop() || url
+    try {
+      return decodeURIComponent(part)
+    } catch {
+      return part
+    }
+  }
   const KINDS: { v: AssetKind; label: string }[] = [
     { v: 'scene', label: '场景图' },
     { v: 'prop', label: '道具图' },
@@ -65,64 +83,29 @@ function AssetPanel({
       </label>
       <div className="field">
         <span>{d.kind === 'video' ? '视频来源' : '图片来源'}</span>
-        <select
-          value={d.url ?? ''}
-          onChange={(e) => {
-            const url = e.target.value
-            const hit = media.assets.find((a) => a.url === url)
-            set({
-              url,
-              ...(hit ? { title: d.title || hit.title || d.title } : {}),
-            })
-            if (hit && (hit.kind === 'scene' || hit.kind === 'prop' || hit.kind === 'image')) {
-              set({ kind: hit.kind as AssetKind })
-            }
-          }}
+        <button
+          type="button"
+          className="asset-source"
+          onClick={() => setPickerOpen(true)}
+          title={d.url || '打开素材选择器'}
         >
-          <option value="">从项目素材里选…</option>
-          {media.assets.length > 0 && (
-            <optgroup label="项目素材（场景 / 道具）">
-              {media.assets.map((a) => (
-                <option key={a.url} value={a.url}>
-                  {a.title || a.url} · {a.kind}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {media.images.length > 0 && (
-            <optgroup label={`生成的图片（${media.images.length}）`}>
-              {media.images.map((m) => (
-                <option key={m.url} value={m.url}>
-                  {m.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {media.videos.length > 0 && (
-            <optgroup label={`生成的视频（${media.videos.length}）`}>
-              {media.videos.map((m) => (
-                <option key={m.url} value={m.url}>
-                  {m.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {d.url && !media.assets.some((a) => a.url === d.url) &&
-            !media.images.some((m) => m.url === d.url) &&
-            !media.videos.some((m) => m.url === d.url) && (
-              <option value={d.url}>当前：{d.url}</option>
+          <span className="asset-source-thumb">
+            {d.url ? (
+              d.kind === 'video' ? (
+                <video src={d.url} muted playsInline preload="metadata" />
+              ) : (
+                <img src={d.url} alt="" />
+              )
+            ) : (
+              <span className="asset-source-empty">＋</span>
             )}
-        </select>
-        <button className="btn-mini" onClick={() => setManual((v) => !v)}>
-          {manual ? '收起手填' : '手动填地址'}
+          </span>
+          <span className="asset-source-copy">
+            <b>{d.url ? d.title || '已选素材' : '选择素材'}</b>
+            <small>{d.url ? sourceName(d.url) : '缩略图预览 · 场景 / 道具 / 图片 / 视频'}</small>
+          </span>
+          <span className="asset-source-action">选择素材</span>
         </button>
-        {manual && (
-          <input
-            value={d.url ?? ''}
-            placeholder="/generated/xxx.jpg 或外链 URL"
-            onChange={(e) => set({ url: e.target.value })}
-          />
-        )}
       </div>
       <div className="field">
         <span>预览</span>
@@ -141,6 +124,15 @@ function AssetPanel({
         生成画面时图会作为参考图传给模型；视频卡用于管理与预览素材（Seedance 1.0 出片只吃单首帧）。
       </p>
       <button className="btn-ghost reset" onClick={() => onDelete(node.id)}>删除素材卡</button>
+      {pickerOpen && (
+        <MediaPicker
+          projectName={projectName}
+          currentUrl={d.url}
+          currentKind={d.kind}
+          onConfirm={confirmPick}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
     </aside>
   )
 }
@@ -151,6 +143,7 @@ type Props = {
   onDelete: (id: string) => void
   onReset: () => void
   onGenerate: (id: string) => void
+  onCancelGenerate: (id: string) => void
   ratio: string
   setRatio: (v: string) => void
   refMode: boolean
@@ -162,6 +155,9 @@ type Props = {
   vidRes: '480p' | '720p'
   setVidRes: (v: '480p' | '720p') => void
   onGenerateVideo: (id: string) => void
+  onOpenSchedule: (id: string) => void
+  sceneLayouts: SceneLayout[]
+  projectAspect: string
   onVoice: (id: string) => void
   voices: VoiceOption[]
   voiceProvider: string
@@ -174,16 +170,6 @@ type Props = {
   price: Pricing
   /** 当前项目名：素材卡挑素材要用 */
   projectName: string
-  /** 尾帧接龙：勾选用下一镜画面作落点；出片后尾帧可设为下一镜首帧 */
-  tail?: {
-    lock: boolean
-    setLock: (v: boolean) => void
-    nextNo?: string
-    nextHasImage: boolean
-    prevTail?: string
-    toNext: () => void
-    fromPrev: () => void
-  }
 }
 
 export default function Inspector({
@@ -192,6 +178,7 @@ export default function Inspector({
   onDelete,
   onReset,
   onGenerate,
+  onCancelGenerate,
   ratio,
   setRatio,
   refMode,
@@ -203,6 +190,9 @@ export default function Inspector({
   vidRes,
   setVidRes,
   onGenerateVideo,
+  onOpenSchedule,
+  sceneLayouts,
+  projectAspect,
   onVoice,
   voices,
   voiceProvider,
@@ -211,7 +201,6 @@ export default function Inspector({
   onPick,
   price,
   projectName,
-  tail,
 }: Props) {
   if (!node) {
     return (
@@ -270,6 +259,55 @@ export default function Inspector({
     videoModelFamily[0]
   const canVideoRef = Boolean(selectedVideoModel?.supportsVideoRef)
   const videoRefOn = Boolean(d.useScheduleVideoRef)
+  const sceneNo = Math.max(1, Math.round(Number(d.sceneNo) || 1))
+  const resolvedScene = resolveShotScene(d, {
+    shotId: d.shotId || node.id,
+    sceneLayouts,
+    episode: Number(d.episode) || 1,
+    sceneNo,
+    sceneSlug: d.sceneSlug,
+  })
+  const sceneLayout = resolvedScene.scene
+  const scheduleBlocking =
+    d.shotBlocking ??
+    legacyLayoutToBlocking(d.layout) ??
+    fallbackBlocking(rosterOf(d.cast, d.dialogue), sceneLayout)
+  const scheduleDuration = effectiveSeconds(d.seconds)
+  const scheduleFresh = d.sceneCode
+    ? isSceneCodeFresh({
+        sceneCode: d.sceneCode,
+        meta: d.sceneCodeMeta,
+        context: d.shot3DContext,
+        seconds: d.seconds,
+        aspect: projectAspect,
+        hasVideo: Boolean(d.scheduleVideo),
+      })
+    : Boolean(
+        d.scheduleVideo &&
+          d.scheduleMeta &&
+          isScheduleFresh(d.scheduleMeta, {
+            layout: sceneLayout,
+            blocking: scheduleBlocking,
+            duration: scheduleDuration,
+            aspect: projectAspect,
+            mode: 'clean',
+          }),
+      )
+  const scheduleStatus = !d.scheduleVideo
+    ? '未渲染'
+    : d.sceneCode
+      ? scheduleFresh
+        ? '生效'
+        : '已过期'
+      : d.scheduleMeta?.mode === 'review'
+        ? '仅审阅'
+        : scheduleFresh
+          ? '生效'
+          : '已过期'
+  const scheduleReady = scheduleFresh
+  const sceneLabel = d.sceneCode
+    ? `代码场景${d.sceneSlug ? ` · ${d.sceneSlug}` : ''}`
+    : d.sceneSlug || sceneLayout.sceneSlug || `场 ${sceneNo}`
 
   return (
     <aside className="inspector">
@@ -516,10 +554,10 @@ export default function Inspector({
 
         <button
           className="btn primary block"
-          disabled={d.genState === 'running'}
-          onClick={() => onGenerate(node.id)}
+          onClick={() => (d.genState === 'running' ? onCancelGenerate(node.id) : onGenerate(node.id))}
+          title={d.genState === 'running' ? '取消本次出图' : undefined}
         >
-          {d.genState === 'running' ? '生成中…' : `生成画面${candCount > 1 ? ` ×${candCount}` : ''}`}
+          {d.genState === 'running' ? '取消生成' : `生成画面${candCount > 1 ? ` ×${candCount}` : ''}`}
         </button>
 
         {d.genState === 'error' && d.genError && <div className="gen-error">{d.genError}</div>}
@@ -551,12 +589,43 @@ export default function Inspector({
           onChange={(key) => onPick('video', key)}
         />
 
+        <div className="sched-head">
+          <div>
+            <b>3D 调度</b>
+            <span className={`sched-badge ${scheduleStatus === '生效' ? 'ok' : scheduleStatus === '仅审阅' ? 'review' : scheduleStatus === '已过期' ? 'stale' : 'none'}`}>
+              {scheduleStatus}
+            </span>
+          </div>
+          <button className="btn-mini" onClick={() => onOpenSchedule(node.id)}>
+            编辑 3D 调度
+          </button>
+        </div>
+        <div className="sched-meta">
+          <span>
+            {sceneLabel}
+            {d.sceneCode
+              ? ` · ${d.sceneCode.source === 'ai' ? 'AI 生成' : d.sceneCode.source === 'manual' ? '手改' : d.sceneCode.source === 'legacy-converted' ? '旧结构化转换' : '空白兜底'}`
+              : d.shotSceneSeed
+                ? ` · 继承 ${d.shotSceneSeed}`
+                : ''}
+            {!d.sceneCode && d.visualBriefMeta
+              ? d.visualBriefMeta.usedVision
+                ? ' · 视觉 brief'
+                : ' · 参考图未参与'
+              : ''}
+          </span>
+          <span>
+            {d.sceneCode ? `${d.sceneCode.codeHash.slice(0, 10)} · ` : ''}
+            {scheduleDuration}s{Math.round(Number(d.seconds) || 0) !== scheduleDuration ? '（已夹取）' : ''} · {projectAspect}
+          </span>
+        </div>
+
         {d.scheduleVideo && (
           <div className="sched-row">
             <video src={d.scheduleVideo} muted loop autoPlay playsInline preload="metadata" />
             <div className="sched-info">
-              <b>3D 调度</b>
-              <span>推演运镜与走位（2.0+ 可直接当参考）</span>
+              <b>{!d.sceneCode && d.scheduleMeta?.mode === 'review' ? '审阅视频' : '干净预演'}</b>
+              <span>{!d.sceneCode && d.scheduleMeta?.mode === 'review' ? '仅审片，不可作参考' : '从代码机位输出，可作参考'}</span>
             </div>
             <a href={d.scheduleVideo} target="_blank" rel="noreferrer">
               查看
@@ -564,14 +633,24 @@ export default function Inspector({
           </div>
         )}
 
+        {d.scheduleVideo && !scheduleReady && (
+          <p className="sched-warn">
+            {!d.sceneCode && d.scheduleMeta?.mode === 'review'
+              ? '这条是审阅视角，只用于看空间；参考视频请重新渲染干净 POV。'
+              : d.sceneCode
+                ? '代码/选择/时长/画幅已变化，先重新渲染再作参考。'
+                : '场景/走位/时长/画幅已变化，先重新渲染再作参考。'}
+          </p>
+        )}
+
         <label
-          className={`chk ${d.scheduleVideo && canVideoRef ? '' : 'dim'}`}
+          className={`chk ${d.scheduleVideo && canVideoRef && scheduleReady ? '' : 'dim'}`}
           title="把整段调度视频作为 reference_video；只约束走位与运镜，画风以参考图/提示词为准"
         >
           <input
             type="checkbox"
             checked={videoRefOn}
-            disabled={!d.scheduleVideo || !canVideoRef}
+            disabled={!d.scheduleVideo || !canVideoRef || !scheduleReady}
             onChange={(e) =>
               set({
                 useScheduleVideoRef: e.target.checked,
@@ -585,77 +664,49 @@ export default function Inspector({
               ? '（先生成 3D 调度）'
               : !canVideoRef
                 ? '（当前模型不支持）'
-                : '（只参考走位/运镜）'}
+                : !scheduleReady
+                  ? `（${scheduleStatus}，先重新渲染）`
+                  : '（只参考走位/运镜）'}
           </span>
         </label>
 
-        {d.motionNote && <p className="motion-hint">运镜：{d.motionNote}</p>}
+        {d.motionNote && (
+          <p className={`motion-hint ${!scheduleReady && d.scheduleVideo ? 'dim' : ''}`}>
+            运镜（{d.sceneCode ? '代码/用户提供' : '旧调度'}）：{d.motionNote}{!scheduleReady && d.scheduleVideo ? '（调度已变化，重渲后更新）' : ''}
+          </p>
+        )}
 
         {d.scheduleVideo && (
           <label
-            className={`chk ${videoRefOn ? 'dim' : ''}`}
+            className={`chk ${videoRefOn || !scheduleReady ? 'dim' : ''}`}
             title="调度视频抽的帧是白模，可能把画面带成 3D 风格，默认不传"
           >
             <input
               type="checkbox"
               checked={!videoRefOn && Boolean(d.useScheduleFrames)}
-              disabled={videoRefOn}
+              disabled={videoRefOn || !scheduleReady}
               onChange={(e) => set({ useScheduleFrames: e.target.checked })}
             />
             带调度关键帧作参考
             <span className="chk-note">
-              {videoRefOn ? '（视频参考优先，抽帧已忽略）' : '（白模可能影响画风）'}
-            </span>
-          </label>
-        )}
-
-        {tail && (
-          <label
-            className={`chk ${tail.nextHasImage && !videoRefOn ? '' : 'dim'}`}
-            title="用下一镜的画面当本镜落点，衔接更顺"
-          >
-            <input
-              type="checkbox"
-              checked={!videoRefOn && tail.lock && tail.nextHasImage}
-              disabled={!tail.nextHasImage || videoRefOn}
-              onChange={(e) => tail.setLock(e.target.checked)}
-            />
-            以下一镜画面作尾帧约束
-            <span className="chk-note">
               {videoRefOn
-                ? '（视频参考模式下不再有首帧/尾帧硬锁）'
-                : tail.nextNo
-                  ? tail.nextHasImage
-                    ? `（${tail.nextNo}）`
-                    : `（${tail.nextNo} 还没有画面）`
-                  : '（没有下一镜）'}
+                ? '（视频参考优先，抽帧已忽略）'
+                : !scheduleReady
+                  ? `（${scheduleStatus}，先重新渲染）`
+                  : '（白模可能影响画风）'}
             </span>
           </label>
         )}
 
-        {d.tailImage && (
-          <div className="tail-row">
-            <img src={d.tailImage} alt="tail" title="本镜真实尾帧" />
-            <div className="tail-info">
-              <b>本镜尾帧</b>
-              <span>可直接接下一镜，避免动作跳变</span>
-            </div>
-            <button className="btn-mini" onClick={() => tail?.toNext()} disabled={!tail?.nextNo}>
-              设为下一镜首帧
-            </button>
-          </div>
-        )}
-        {tail?.prevTail && !d.refImage && (
-          <button className="btn-ghost block" onClick={() => tail.fromPrev()}>
-            用上一镜尾帧作首帧
-          </button>
-        )}
         <p className="vid-note">
           连线了参考图就走<b>多参考图模式</b>（reference_image，最多 4 张，提示词用 [图N] 指代）；
           没连线才回落到首帧图生视频。时长取镜头时长（2~12 秒），按 tokens 计费。
         </p>
         {(d.refIds?.length ?? 0) > 0 && (
           <p className="vid-refs">参考图 {d.refIds!.length} 张（画布连线）· 多图模式</p>
+        )}
+        {hasNeighborReference(d.refIds) && (
+          <p className="vid-refs">已选相邻分镜参考：本次出片使用参考图模式，图片最多 4 张。</p>
         )}
         {videos.length > 0 && (
           <div className="vid-pick">

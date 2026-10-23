@@ -5,6 +5,7 @@ import type Konva from 'konva'
 import { CanvasCtx } from './ctx'
 import { cardWidth, uid, type Mark } from './types'
 import type { ShotNodeType } from './data'
+import { useTheme } from './theme'
 
 type Draft =
   | { kind: 'pen'; points: number[] }
@@ -32,7 +33,8 @@ function useImage(src?: string) {
 }
 
 function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
+  const { tool, guides, color, patch, generate, cancelGenerate, generateVideo, charImages } = useContext(CanvasCtx)
+  const { colors } = useTheme()
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
@@ -226,17 +228,17 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
                 })()}
               />
             ) : (
-              <KRect x={0} y={0} width={W} height={H} fill="#0b1220" />
+              <KRect x={0} y={0} width={W} height={H} fill={colors.konvaBlank} />
             )}
 
             {/* 三分线 + 安全框 */}
             {guides && (
               <Group listening={false} opacity={0.5}>
-                <Line points={[W / 3, 0, W / 3, H]} stroke="#ffffff" strokeWidth={0.7} dash={[4, 4]} />
-                <Line points={[(W * 2) / 3, 0, (W * 2) / 3, H]} stroke="#ffffff" strokeWidth={0.7} dash={[4, 4]} />
-                <Line points={[0, H / 3, W, H / 3]} stroke="#ffffff" strokeWidth={0.7} dash={[4, 4]} />
-                <Line points={[0, (H * 2) / 3, W, (H * 2) / 3]} stroke="#ffffff" strokeWidth={0.7} dash={[4, 4]} />
-                <KRect x={W * 0.05} y={H * 0.05} width={W * 0.9} height={H * 0.9} stroke="#ffffff" strokeWidth={0.8} opacity={0.4} />
+                <Line points={[W / 3, 0, W / 3, H]} stroke={colors.konvaGuide} strokeWidth={0.7} dash={[4, 4]} />
+                <Line points={[(W * 2) / 3, 0, (W * 2) / 3, H]} stroke={colors.konvaGuide} strokeWidth={0.7} dash={[4, 4]} />
+                <Line points={[0, H / 3, W, H / 3]} stroke={colors.konvaGuide} strokeWidth={0.7} dash={[4, 4]} />
+                <Line points={[0, (H * 2) / 3, W, (H * 2) / 3]} stroke={colors.konvaGuide} strokeWidth={0.7} dash={[4, 4]} />
+                <KRect x={W * 0.05} y={H * 0.05} width={W * 0.9} height={H * 0.9} stroke={colors.konvaGuide} strokeWidth={0.8} opacity={0.4} />
               </Group>
             )}
 
@@ -350,6 +352,16 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
           <div className="gen-overlay">
             <span className="spinner" />
             生成中
+            <button
+              className="gen-cancel nodrag"
+              onClick={(e) => {
+                e.stopPropagation()
+                cancelGenerate(id)
+              }}
+              title="取消本次出图"
+            >
+              取消
+            </button>
           </div>
         )}
         {vidRunning && (
