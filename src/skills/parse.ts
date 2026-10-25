@@ -1,7 +1,17 @@
 import type { Stage } from '../api'
 import { SkillParseError, type Skill, type SkillManifest, type SkillParseIssue, type SkillSource } from './types'
 
-const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
+const STAGES: Stage[] = [
+  'script',
+  'character',
+  'asset',
+  'shot',
+  'prompt',
+  'sceneCode',
+  'vision',
+  'videoVision',
+  'creative',
+]
 const RUNTIMES = ['json-tools', 'scene3d'] as const
 const ROLE_HEADING = '## 角色与约束'
 const TASK_HEADING = '## 任务'

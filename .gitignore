@@ -49,3 +49,10 @@ src/sandbox/runtime.generated.js
 
 # Agent 场景草稿的临时目录（会话结束/启动时清理）
 .scene-drafts/
+
+# 创意会话的源视频与证据帧（本地素材，不随仓库分发；会话记录仍在 projects/*.sqlite）
+creatives/
+
+# 发布：本机 Chrome profile（含登录态）与离线发布包
+.publish-profiles/
+public/publish-packages/

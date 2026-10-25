@@ -59,7 +59,12 @@ try {
   const list = await api('/api/skills')
   check('技能列表成功', list.json?.ok === true && Array.isArray(list.json.skills))
   const ids = (list.json?.skills || []).map((s) => s.id).sort()
-  check('包含八个内置技能', ids.join(',') === 'asset,character,prompt,scene-code,scene-code-chat,scene3d,script,shotlist', ids.join(','))
+  check(
+    '包含十个内置技能',
+    ids.join(',') ===
+      'asset,character,creative-plan,prompt,scene-code,scene-code-chat,scene3d,script,shotlist,video-reverse',
+    ids.join(','),
+  )
   const script = (list.json?.skills || []).find((s) => s.id === 'script')
   check('script 返回来源与内置文本', script?.source === 'builtin' && script?.text === builtin && script?.builtinText === builtin)
 

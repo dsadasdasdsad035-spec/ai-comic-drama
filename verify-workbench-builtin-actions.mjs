@@ -419,7 +419,9 @@ try {
   check('素材回执标明全剧', (await cardTexts('assets')).some((t) => t.includes('全剧')))
   const afterAsset = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project
   check('素材立即落库', (afterAsset.designs || []).some((d) => d.name === '雨夜街口'))
-  await page.locator('button.btn-ghost', { hasText: '从本集拆' }).click()
+  // 无设定图时该按钮是强调样式（btn primary），有图才变 btn-ghost；按文案找才稳。
+  // 上沿与板内各有一个同名按钮，取第一个（上沿）。
+  await page.getByRole('button', { name: '从本集拆', exact: true }).first().click()
   await page.waitForTimeout(900)
   check('素材顶部按钮结果一致', (await page.getByText('雨夜街口').count()) > 0)
   check('素材顶部按钮不新增聊天回执', (await cardTexts('assets')).length === 1)

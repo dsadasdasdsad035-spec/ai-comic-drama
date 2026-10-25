@@ -10270,3 +10270,339 @@ body,
   height: 16px;
   accent-color: var(--accent);
 }
+
+/* ---------- 创意工作室（聊天即主界面，不绑定项目） ---------- */
+.creative-studio {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.creative-list {
+  width: 208px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2, var(--bg));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.creative-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+}
+
+.creative-list-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.creative-list-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-1, 4px);
+  color: var(--text-2, var(--text));
+}
+
+.creative-list-item:hover {
+  background: var(--line);
+}
+
+.creative-list-item.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+}
+
+.creative-list-toggle {
+  display: none;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1, 4px);
+  padding: 2px 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-2, var(--text));
+  background: transparent;
+}
+
+.creative-list-scrim {
+  display: none;
+}
+
+.creative-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.creative-header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome-1);
+  padding: 7px 12px;
+}
+
+.creative-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.creative-modes {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.creative-mode {
+  border: 1px solid var(--line);
+  border-radius: var(--r-full, 999px);
+  padding: 2px 9px;
+  font-size: var(--fs-2xs, 10px);
+  color: var(--text-2, var(--text));
+  background: transparent;
+}
+
+.creative-mode:hover {
+  background: var(--line);
+}
+
+.creative-mode.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.creative-cards {
+  flex: 0 0 auto;
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 92%, var(--line));
+}
+
+.creative-cards:empty {
+  display: none;
+}
+
+.creative-composer-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--chrome-2, var(--chrome-1));
+}
+
+.creative-empty {
+  padding: 12px 14px 16px;
+}
+
+.creative-empty h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.creative-empty p {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.creative-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.creative-empty-hint {
+  margin-bottom: 4px !important;
+  font-size: 10px !important;
+}
+
+.creative-empty-tips {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-2, var(--text));
+}
+
+.creative-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 8, 13, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.creative-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2, 8px);
+  background: var(--bg);
+  padding: 14px 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+
+.creative-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.creative-dialog-rows {
+  margin: 0 0 8px;
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.creative-dialog-rows > div {
+  display: flex;
+  gap: 8px;
+}
+
+.creative-dialog-rows dt {
+  min-width: 56px;
+  color: var(--muted);
+}
+
+.creative-dialog-rows dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.creative-dialog-note {
+  margin: 6px 0 8px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.creative-dialog-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2, var(--text));
+}
+
+.creative-dialog-field {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.creative-dialog-field span {
+  color: var(--muted);
+}
+
+.creative-dialog-field input,
+.creative-dialog-field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1, 4px);
+  background: var(--bg-2, var(--bg));
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.creative-dialog-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.creative-dialog-tabs button {
+  border: 1px solid var(--line);
+  border-radius: var(--r-1, 4px);
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--text-2, var(--text));
+  background: transparent;
+}
+
+.creative-dialog-tabs button.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.creative-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (max-width: 980px) {
+  .creative-list {
+    position: fixed;
+    z-index: 45;
+    top: 52px;
+    bottom: 0;
+    left: 0;
+    width: 220px;
+    transform: translateX(-102%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  }
+  .creative-list[data-open='true'] {
+    transform: translateX(0);
+  }
+  .creative-list-scrim {
+    display: block;
+    position: fixed;
+    inset: 52px 0 0 0;
+    z-index: 44;
+    background: rgba(4, 8, 13, 0.4);
+  }
+  .creative-list-toggle {
+    display: inline-flex;
+  }
+}
+
+/* ---------- 顶栏导航角标（发布运行/失败数） ---------- */
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: var(--r-full);
+  background: var(--danger-dim);
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-2xs);
+  vertical-align: 1px;
+}
+
+.viewtabs button.on .nav-badge {
+  background: var(--accent-dim);
+  color: var(--accent);
+}

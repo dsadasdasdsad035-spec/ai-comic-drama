@@ -1,6 +1,7 @@
 import { endTask, startTask } from './tasks'
 import { SseEventParser } from './textStream'
 import type { AgentLimitSettings } from './agent/agentLimits'
+import type { CreativeSettings } from './creative/settings'
 import type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
 export type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
 import type {
@@ -292,6 +293,8 @@ export type ExportResult = {
   captions?: number
   /** 与烧录一致的 SRT sidecar */
   srtUrl?: string
+  /** 导出成功后服务端写入的成片记录；缺项目/集时不返回 */
+  deliverable?: { id: string; version: number }
   /** 服务端对 cue 夹紧/丢弃的说明 */
   captionWarnings?: string[]
   overflows: { shot: number; voice: number; shotLen: number }[]
@@ -309,6 +312,10 @@ export async function assembleAnimatic(
     joins?: ExportJoin[]
     staleTransitions?: number
     captionStyle?: ExportCaptionStyle
+    /** 成片归属；带上才会在服务端落成片记录 */
+    project?: string
+    episode?: number
+    title?: string
   } = {},
 ): Promise<ExportResult> {
   const timeoutMs = opts.timeoutMs ?? 10 * 60 * 1000
@@ -323,6 +330,9 @@ export async function assembleAnimatic(
         resolution,
         ...(opts.joins ? { joins: opts.joins } : {}),
         ...(opts.captionStyle ? { captionStyle: opts.captionStyle } : {}),
+        ...(opts.project ? { project: opts.project } : {}),
+        ...(opts.episode ? { episode: opts.episode } : {}),
+        ...(opts.title ? { title: opts.title } : {}),
       }),
     })
   } catch {
@@ -353,6 +363,9 @@ export async function assembleAnimatic(
         subbed: s.subbed ?? 0,
         ...(typeof s.captions === 'number' ? { captions: s.captions } : {}),
         ...(s.srtUrl ? { srtUrl: String(s.srtUrl) } : {}),
+        ...(s.deliverable && s.deliverable.id
+          ? { deliverable: { id: String(s.deliverable.id), version: Number(s.deliverable.version) || 1 } }
+          : {}),
         ...(Array.isArray(s.captionWarnings) ? { captionWarnings: s.captionWarnings.map(String) } : {}),
         overflows: s.overflows ?? [],
         staleTransitions: opts.staleTransitions ?? 0,
@@ -1015,8 +1028,27 @@ export type RulePack = { enabled: boolean; text: string }
 
 export type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 /** 生成环节：环节默认值只引用模型表键 */
-export type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
-export const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
+export type Stage =
+  | 'script'
+  | 'character'
+  | 'asset'
+  | 'shot'
+  | 'prompt'
+  | 'sceneCode'
+  | 'vision'
+  | 'videoVision'
+  | 'creative'
+export const STAGES: Stage[] = [
+  'script',
+  'character',
+  'asset',
+  'shot',
+  'prompt',
+  'sceneCode',
+  'vision',
+  'videoVision',
+  'creative',
+]
 export type ProviderKind =
   | 'ark'
   | 'ark-plan'
@@ -1102,6 +1134,8 @@ export type AppSettings = {
   lipSync?: LipSyncSettings
   /** 设置库里的自定义音色条目 */
   customVoices?: CustomVoice[]
+  /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
+  creative?: CreativeSettings
   apiKey: string
   rules: Record<string, RulePack>
   /** 旧规则包已迁移为技能覆盖；避免重复迁移 */

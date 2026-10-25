@@ -171,7 +171,8 @@ try {
   await page.getByRole('button', { name: '角色', exact: true }).click()
   await page.waitForTimeout(500)
   textCalls.length = 0
-  await page.getByRole('button', { name: '从全剧拆角色', exact: true }).click()
+  // 上沿改版后按钮文案从「从全剧拆角色」缩短为「从全剧拆」
+  await page.getByRole('button', { name: '从全剧拆', exact: true }).click()
   let fullToast = ''
   for (let i = 0; i < 10; i++) {
     await page.waitForTimeout(300)
@@ -182,7 +183,9 @@ try {
   check('全剧无剧本不调用模型', textCalls.length === 0, String(textCalls.length))
 
   await page.waitForTimeout(4200)
-  await page.locator('button.btn-ghost', { hasText: '从本集拆角色' }).click()
+  // 角色为空时该按钮是强调样式（btn primary），有角色才变 btn-ghost；
+  // 上沿与板内各有一个同名按钮，取第一个（上沿）。
+  await page.getByRole('button', { name: '从本集拆角色', exact: true }).first().click()
   for (let i = 0; i < 20 && textCalls.length === 0; i++) await page.waitForTimeout(300)
   check('本集拆角色调用模型', textCalls.length === 1, String(textCalls.length))
   check(

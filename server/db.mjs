@@ -176,6 +176,131 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   updated_at    TEXT NOT NULL,
   PRIMARY KEY (project, surface, episode, shot_id)
 );
+-- 创意会话：不属于任何项目，独立存储与清理
+CREATE TABLE IF NOT EXISTS creative_sessions (
+  id         TEXT PRIMARY KEY,
+  title      TEXT DEFAULT '',
+  mode       TEXT DEFAULT 'plan',
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS creative_threads (
+  session_id    TEXT PRIMARY KEY,
+  messages      TEXT NOT NULL DEFAULT '[]',
+  active_skills TEXT NOT NULL DEFAULT '[]',
+  updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS creative_sources (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  kind        TEXT DEFAULT 'video',
+  platform    TEXT DEFAULT '',
+  platform_id TEXT DEFAULT '',
+  author      TEXT DEFAULT '',
+  title       TEXT DEFAULT '',
+  url         TEXT DEFAULT '',
+  cover       TEXT DEFAULT '',
+  file        TEXT DEFAULT '',
+  bytes       INTEGER DEFAULT 0,
+  duration    REAL,
+  width       INTEGER,
+  height      INTEGER,
+  fps         REAL,
+  bitrate     INTEGER,
+  vcodec      TEXT DEFAULT '',
+  acodec      TEXT DEFAULT '',
+  has_audio   INTEGER DEFAULT 0,
+  meta        TEXT DEFAULT '{}',
+  created_at  TEXT
+);
+CREATE TABLE IF NOT EXISTS creative_shots (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id  TEXT NOT NULL,
+  idx        INTEGER NOT NULL,
+  start      REAL NOT NULL,
+  end        REAL NOT NULL,
+  frames     TEXT DEFAULT '[]',
+  status     TEXT DEFAULT 'pending',
+  analysis   TEXT DEFAULT '',
+  updated_at TEXT,
+  UNIQUE(source_id, idx)
+);
+CREATE TABLE IF NOT EXISTS creative_artifacts (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL,
+  source_id   TEXT DEFAULT '',
+  kind        TEXT DEFAULT 'reverse',
+  title       TEXT DEFAULT '',
+  payload     TEXT DEFAULT '{}',
+  model_label TEXT DEFAULT '',
+  created_at  TEXT
+);
+-- 成片版本：导出成功即落库，发布台以它为唯一发布对象
+CREATE TABLE IF NOT EXISTS deliverables (
+  id         TEXT PRIMARY KEY,
+  project    TEXT NOT NULL,
+  episode    INTEGER NOT NULL DEFAULT 0,
+  version    INTEGER NOT NULL,
+  title      TEXT DEFAULT '',
+  url        TEXT NOT NULL,
+  srt_url    TEXT DEFAULT '',
+  width      INTEGER,
+  height     INTEGER,
+  duration   REAL,
+  bytes      INTEGER,
+  source     TEXT DEFAULT 'export',
+  config     TEXT DEFAULT '{}',
+  auto_draft_note TEXT DEFAULT '',
+  created_at TEXT,
+  updated_at TEXT,
+  UNIQUE(project, episode, version)
+);
+-- 平台账号：只存 profile 目录与状态，不存 cookie/token
+CREATE TABLE IF NOT EXISTS publish_accounts (
+  id              TEXT PRIMARY KEY,
+  platform        TEXT NOT NULL,
+  label           TEXT DEFAULT '',
+  profile_dir     TEXT NOT NULL,
+  status          TEXT DEFAULT 'unknown',
+  last_checked_at TEXT,
+  auto_draft      INTEGER DEFAULT 0,
+  created_at      TEXT,
+  updated_at      TEXT
+);
+-- 一次平台目标执行；同一幂等键可有多轮 run_no
+CREATE TABLE IF NOT EXISTS publish_jobs (
+  id              TEXT PRIMARY KEY,
+  idempotency_key TEXT NOT NULL,
+  run_no          INTEGER DEFAULT 1,
+  deliverable_id  TEXT NOT NULL,
+  project         TEXT NOT NULL,
+  episode         INTEGER DEFAULT 0,
+  platform        TEXT NOT NULL,
+  account_id      TEXT DEFAULT '',
+  mode            TEXT NOT NULL,
+  state           TEXT NOT NULL,
+  stage           TEXT DEFAULT '',
+  error_code      TEXT DEFAULT '',
+  error_message   TEXT DEFAULT '',
+  work_url        TEXT DEFAULT '',
+  deliverable_url TEXT DEFAULT '',
+  payload         TEXT DEFAULT '{}',
+  created_at      TEXT,
+  started_at      TEXT,
+  ended_at        TEXT
+);
+CREATE TABLE IF NOT EXISTS publish_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id     TEXT NOT NULL,
+  state      TEXT DEFAULT '',
+  stage      TEXT DEFAULT '',
+  message    TEXT DEFAULT '',
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_deliverables_project ON deliverables(project, episode);
+CREATE INDEX IF NOT EXISTS idx_publish_jobs_key ON publish_jobs(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_publish_jobs_project ON publish_jobs(project, episode);
+CREATE INDEX IF NOT EXISTS idx_publish_events_job ON publish_events(job_id);
 `
 
 /** 固定列之外的 shot 字段全部收进 extra，读写时展开合并 */
@@ -199,6 +324,20 @@ function open(root) {
   ensureColumns()
   if (firstTime) migrateFromJson(root)
   return db
+}
+
+/**
+ * 给成片/发布模块用的独立连接：不参与 open() 的单例切换，
+ * 这样验证脚本用临时项目根时不会误用主库。
+ */
+export function openDatabase(root) {
+  fs.mkdirSync(root, { recursive: true })
+  const file = path.join(root, 'storyboard.sqlite')
+  const d = new DatabaseSync(file)
+  d.exec('PRAGMA journal_mode = WAL;')
+  d.exec('PRAGMA busy_timeout = 5000;')
+  d.exec(SCHEMA)
+  return d
 }
 
 /** 老库补列：SCHEMA 只在新建时生效，已有库缺列就走 ALTER */

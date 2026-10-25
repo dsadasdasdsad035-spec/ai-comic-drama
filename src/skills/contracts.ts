@@ -147,12 +147,96 @@ const scene3dCodeV1 = passthrough({
   motionNote: z.string().optional(),
 })
 
+const reverseShot = passthrough({
+  index: z.number().int().min(1).optional(),
+  start: z.number().min(0),
+  end: z.number().min(0),
+  size: z.string().min(1),
+  camera: z.string().optional(),
+  subject: z.string().optional(),
+  action: z.string().optional(),
+  environment: z.string().optional(),
+  lighting: z.string().optional(),
+  color: z.string().optional(),
+  audio: z.string().optional(),
+  keyframe_prompt: z.string().min(1),
+  video_prompt: z.string().min(1),
+  evidence_frames: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1).optional(),
+})
+
+/**
+ * 反推提示词包：逐镜规格 + 两段提示词。
+ * 时间范围必须 start < end；镜头段之间允许留空（模型可能漏镜），但不允许倒置。
+ */
+const reverseV1 = passthrough({
+  source: passthrough({
+    platform: z.string().optional(),
+    url: z.string().optional(),
+    duration: z.number().min(0).optional(),
+    width: z.number().int().min(0).optional(),
+    height: z.number().int().min(0).optional(),
+  }),
+  global_style: z.string().optional(),
+  shots: z.array(reverseShot).min(1),
+  negative_prompt: z.string().optional(),
+  notes: z.string().optional(),
+}).superRefine((v, ctx) => {
+  const seen = new Set<number>()
+  v.shots.forEach((shot, i) => {
+    if (!(shot.end > shot.start)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `镜头 ${i + 1} 的时间范围非法：end 必须大于 start`,
+        path: ['shots', i, 'end'],
+      })
+    }
+    const key = Math.round(shot.start * 1000)
+    if (seen.has(key)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `镜头 ${i + 1} 的起始时间与前面的镜头重复`,
+        path: ['shots', i, 'start'],
+      })
+    }
+    seen.add(key)
+  })
+})
+
+/** 策划模式：只要求一段回复；方向与镜头草案是可选的展开。 */
+const creativePlanV1 = passthrough({
+  reply: z.string().min(1),
+  directions: z
+    .array(
+      passthrough({
+        title: z.string().optional(),
+        pitch: z.string().optional(),
+        hook: z.string().optional(),
+        cost: z.string().optional(),
+      }),
+    )
+    .optional(),
+  shots: z
+    .array(
+      passthrough({
+        no: noLike.optional(),
+        seconds: z.number().optional(),
+        size: z.string().optional(),
+        action: z.string().optional(),
+        line: z.string().optional(),
+      }),
+    )
+    .optional(),
+})
+
 const REGISTRY: Record<string, SkillContract> = {
   'script-v1': { id: 'script-v1', label: '分集剧本', schema: scriptV1 },
   'characters-v1': { id: 'characters-v1', label: '角色锚点', schema: charactersV1 },
   'designs-v1': { id: 'designs-v1', label: '场景/道具设定', schema: designsV1 },
   'shots-v1': { id: 'shots-v1', label: '镜头表', schema: shotsV1 },
   'prompts-v1': { id: 'prompts-v1', label: '首帧/视频提示词', schema: promptsV1 },
+  'reverse-v1': { id: 'reverse-v1', label: '视频反推提示词包', schema: reverseV1 },
+  'creative-plan-v1': { id: 'creative-plan-v1', label: '创意方向与镜头草案', schema: creativePlanV1 },
   'scene3d-code-v1': {
     id: 'scene3d-code-v1',
     label: 'Blender 场景代码',

@@ -32,6 +32,14 @@ import {
   normalizeAgentLimits,
   type AgentLimitSettings,
 } from '../agent/agentLimits'
+import {
+  CREATIVE_ANALYSIS_DEPTHS,
+  CREATIVE_DEFAULTS,
+  normalizeCreativeSettings,
+  type CreativeAnalysisDepth,
+  type CreativeSettings,
+} from '../creative/settings'
+import { listCreativeAdapters, type AdapterInfo } from '../creative/mediaApi'
 import { findToolCapability, normalizeToolProtocol, type ToolProtocol } from '../agent/toolCapabilities'
 import { resolveStageModel, stageModelEntries, textModelEntries } from '../ModelSelect'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from '../pricing'
@@ -39,7 +47,7 @@ import CatalogDialog, { type CatalogEntry } from './CatalogDialog'
 import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
 
 type Props = { toast: (m: string) => void; onSaved?: () => void }
-type Section = 'providers' | 'models' | 'routing' | 'agent' | 'pricing' | 'lipsync' | 'voices' | 'skills' | 'data'
+type Section = 'providers' | 'models' | 'routing' | 'agent' | 'creative' | 'pricing' | 'lipsync' | 'voices' | 'skills' | 'data'
 
 const DEFAULT_LIP_SYNC: LipSyncSettings = {
   provider: 'off',
@@ -195,6 +203,7 @@ const SECTION_META: { id: Section; label: string }[] = [
 
 const ADVANCED_META: { id: Section; label: string }[] = [
   { id: 'agent', label: 'Agent' },
+  { id: 'creative', label: '创意' },
   { id: 'pricing', label: '计价' },
   { id: 'lipsync', label: '口型' },
   { id: 'voices', label: '音色' },
@@ -235,6 +244,7 @@ function cleanHash(input: {
   pricing: Pricing
   agentLimits: Required<AgentLimitSettings>
   agentToolProtocol: ToolProtocol
+  creative?: CreativeSettings
   lipSync: LipSyncSettings
   customVoices: CustomVoice[]
   apiKey: string
@@ -264,6 +274,9 @@ export default function SettingsPage({ toast, onSaved }: Props) {
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
   const [agentToolProtocol, setAgentToolProtocol] = useState<ToolProtocol>('auto')
+  const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
+  const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
+  const [adapterError, setAdapterError] = useState('')
   const [lipSync, setLipSync] = useState<LipSyncSettings>(DEFAULT_LIP_SYNC)
   const [customVoices, setCustomVoices] = useState<CustomVoice[]>([])
   const [voiceModelKey, setVoiceModelKey] = useState('')
@@ -299,6 +312,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
     pricing,
     agentLimits,
     agentToolProtocol,
+    creative,
     lipSync,
     customVoices,
     apiKey,
@@ -337,6 +351,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         setPricing(normalizePricing(s.pricing))
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
         setAgentToolProtocol(normalizeToolProtocol(s.agentToolProtocol))
+        setCreative(normalizeCreativeSettings(s.creative))
         setLipSync(normalizeLipSyncSettings(s.lipSync))
         setCustomVoices(Array.isArray(s.customVoices) ? s.customVoices : [])
         setVoiceModelKey(s.defaults?.audio || '')
@@ -352,6 +367,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
             pricing: normalizePricing(s.pricing),
             agentLimits: normalizeAgentLimits(s.agentLimits),
             agentToolProtocol: normalizeToolProtocol(s.agentToolProtocol),
+            creative: normalizeCreativeSettings(s.creative),
             lipSync: normalizeLipSyncSettings(s.lipSync),
             customVoices: Array.isArray(s.customVoices) ? s.customVoices : [],
             apiKey: s.apiKey || '',
@@ -442,6 +458,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         pricing,
         agentLimits,
         agentToolProtocol,
+        creative,
         lipSync,
         customVoices,
         apiKey,
@@ -455,6 +472,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         pricing: normalizePricing(saved.pricing),
         agentLimits: normalizeAgentLimits(saved.agentLimits),
         agentToolProtocol: normalizeToolProtocol(saved.agentToolProtocol),
+        creative: normalizeCreativeSettings(saved.creative),
         lipSync: normalizeLipSyncSettings(saved.lipSync),
         customVoices: Array.isArray(saved.customVoices) ? saved.customVoices : customVoices,
         apiKey: saved.apiKey || apiKey,
@@ -467,6 +485,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
       setPricing(next.pricing)
       setAgentLimits(next.agentLimits)
       setAgentToolProtocol(next.agentToolProtocol)
+      setCreative(next.creative as CreativeSettings)
       setLipSync(next.lipSync)
       setCustomVoices(next.customVoices)
       setApiKey(next.apiKey)
@@ -1179,6 +1198,269 @@ export default function SettingsPage({ toast, onSaved }: Props) {
     </section>
   )
 
+  const refreshAdapters = async () => {
+    setAdapterError('')
+    try {
+      const r = await listCreativeAdapters()
+      setAdapters(r.adapters)
+    } catch (e) {
+      setAdapterError((e as Error).message || String(e))
+    }
+  }
+
+  const setIngest = (patch: Partial<NonNullable<CreativeSettings['ingest']>>) => {
+    setCreative((prev) => ({
+      ...prev,
+      ingest: {
+        ...(prev.ingest || {}),
+        ...patch,
+        ytdlp: { ...(prev.ingest?.ytdlp || {}), ...(patch.ytdlp || {}) },
+        dtk: { ...(prev.ingest?.dtk || {}), ...(patch.dtk || {}) },
+      },
+    }))
+  }
+
+  const CAP_BINDINGS: Array<{ cap: Cap; label: string; hint: string }> = [
+    { cap: 'vision', label: '视觉理解', hint: '逐镜看证据帧' },
+    { cap: 'videoVision', label: '视频理解', hint: '公网视频直读（可选）' },
+    { cap: 'image', label: '生图', hint: '反推后的首帧' },
+    { cap: 'view', label: '三视图', hint: '角色多视图' },
+    { cap: 'video', label: '生视频', hint: '复刻片段' },
+    { cap: 'videoRef', label: '视频参考', hint: '带参考视频出片' },
+    { cap: 'audio', label: '配音', hint: '台词转语音' },
+  ]
+
+  const modelOptionsFor = (cap: Cap) =>
+    models.filter((m) => (m.caps?.length ? m.caps.includes(cap) : m.cap === cap) && m.runtime !== 'catalog-only')
+
+  const renderCreative = () => (
+    <section className="st-sec" data-settings-creative>
+      <header className="st-sec-head">
+        <h3>创意会话</h3>
+        <span className="st-hint">
+          创意会话不绑定项目：下载与分析的源视频存本地 creatives/ 目录，只有「晋升项目」才写入项目数据。
+          下载服务默认关闭，只保留本地上传与直链。
+        </span>
+      </header>
+
+      <h4 className="st-subhead">下载与摄取</h4>
+      <div className="st-grid">
+        <label className="st-field">
+          <span>yt-dlp 可执行文件</span>
+          <input
+            data-creative-ytdlp-bin
+            value={creative.ingest?.ytdlp?.bin || ''}
+            placeholder="/opt/homebrew/bin/yt-dlp"
+            onChange={(e) => setIngest({ ytdlp: { bin: e.target.value } })}
+          />
+          <em>未安装可执行文件时该适配器显示为不可用，不影响上传与直链</em>
+        </label>
+        <label className="st-field">
+          <span>启用 yt-dlp</span>
+          <select
+            data-creative-ytdlp-enabled
+            value={creative.ingest?.ytdlp?.enabled ? 'on' : 'off'}
+            onChange={(e) => setIngest({ ytdlp: { enabled: e.target.value === 'on' } })}
+          >
+            <option value="off">关闭</option>
+            <option value="on">启用</option>
+          </select>
+          <em>用于抖音 / B 站 / TikTok 链接；失败不会静默改用其他适配器</em>
+        </label>
+        <label className="st-field">
+          <span>DTK 服务地址</span>
+          <input
+            data-creative-dtk-url
+            value={creative.ingest?.dtk?.baseUrl || ''}
+            placeholder="http://127.0.0.1:8000"
+            onChange={(e) => setIngest({ dtk: { baseUrl: e.target.value } })}
+          />
+          <em>可选的独立下载服务；只用到 parse_url 与 download_media</em>
+        </label>
+        <label className="st-field">
+          <span>DTK API Key</span>
+          <input
+            type="password"
+            data-creative-dtk-key
+            value={creative.ingest?.dtk?.apiKey || ''}
+            placeholder={(creative.ingest?.dtk as { hasApiKey?: boolean })?.hasApiKey ? '已保存（留空保持不变）' : '可留空'}
+            onChange={(e) => setIngest({ dtk: { apiKey: e.target.value } })}
+          />
+          <em>只存本地设置库；不写进聊天消息与日志</em>
+        </label>
+        <label className="st-field">
+          <span>启用 DTK</span>
+          <select
+            data-creative-dtk-enabled
+            value={creative.ingest?.dtk?.enabled ? 'on' : 'off'}
+            onChange={(e) => setIngest({ dtk: { enabled: e.target.value === 'on' } })}
+          >
+            <option value="off">关闭</option>
+            <option value="on">启用</option>
+          </select>
+          <em>需要自己部署 DTK（Postgres + Redis + 浏览器容器）</em>
+        </label>
+        <div className="st-field">
+          <span>适配器状态</span>
+          <div className="flex flex-wrap items-center gap-1.5" data-creative-adapters>
+            {(adapters || []).map((a) => (
+              <span
+                key={a.id}
+                className={`st-status-chip ${a.ok ? 'ok' : 'warn'}`}
+                title={a.reason || '可用'}
+              >
+                {a.label}
+                {a.ok ? '' : ' · 不可用'}
+              </span>
+            ))}
+            <button type="button" className="btn" onClick={() => void refreshAdapters()} data-creative-test-adapters>
+              检测可用性
+            </button>
+          </div>
+          <em>{adapterError || '检测只读本地配置，不发起下载'}</em>
+        </div>
+      </div>
+
+      <h4 className="st-subhead">能力绑定</h4>
+      <span className="st-hint">
+        每类能力单独绑模型；留空沿用全局默认。这里的选择不会改动全站默认路由。
+      </span>
+      <div className="st-grid">
+        {CAP_BINDINGS.map(({ cap, label, hint }) => {
+          const list = modelOptionsFor(cap)
+          return (
+            <label className="st-field" key={cap} data-creative-binding={cap}>
+              <span>{label}</span>
+              <select
+                value={creative.models?.[cap] || ''}
+                onChange={(e) =>
+                  setCreative((prev) => {
+                    const next = { ...(prev.models || {}) }
+                    if (e.target.value) next[cap] = e.target.value
+                    else delete next[cap]
+                    return { ...prev, models: next }
+                  })
+                }
+              >
+                <option value="">
+                  跟随全局 · {defaults[cap] || '未配置'}
+                </option>
+                {list.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label} · {m.model}
+                  </option>
+                ))}
+              </select>
+              <em>{hint}</em>
+            </label>
+          )
+        })}
+      </div>
+
+      <h4 className="st-subhead">分析与成本</h4>
+      <div className="st-grid">
+        <label className="st-field">
+          <span>分析深度</span>
+          <select
+            data-creative-depth
+            value={creative.analysis?.depth || CREATIVE_DEFAULTS.analysis.depth}
+            onChange={(e) =>
+              setCreative((prev) => ({
+                ...prev,
+                analysis: { ...(prev.analysis || {}), depth: e.target.value as CreativeAnalysisDepth },
+              }))
+            }
+          >
+            {CREATIVE_ANALYSIS_DEPTHS.map((d) => (
+              <option key={d} value={d}>
+                {d === 'quick' ? '快速（每镜 1 帧）' : d === 'standard' ? '标准' : '深度'}
+              </option>
+            ))}
+          </select>
+          <em>深度越大，视觉调用次数与费用越高</em>
+        </label>
+        <label className="st-field">
+          <span>场景切分阈值</span>
+          <input
+            type="number"
+            min={0.05}
+            max={0.95}
+            step="0.05"
+            value={creative.analysis?.threshold ?? CREATIVE_DEFAULTS.analysis.threshold}
+            onChange={(e) =>
+              setCreative((prev) => ({
+                ...prev,
+                analysis: { ...(prev.analysis || {}), threshold: Number(e.target.value) },
+              }))
+            }
+          />
+          <em>越大越不敏感，切出的镜头越少</em>
+        </label>
+        <label className="st-field">
+          <span>每镜证据帧</span>
+          <input
+            type="number"
+            min={1}
+            max={3}
+            step="1"
+            value={creative.analysis?.framesPerShot ?? CREATIVE_DEFAULTS.analysis.framesPerShot}
+            onChange={(e) =>
+              setCreative((prev) => ({
+                ...prev,
+                analysis: { ...(prev.analysis || {}), framesPerShot: Number(e.target.value) },
+              }))
+            }
+          />
+          <em>帧数直接影响视觉调用次数</em>
+        </label>
+        <label className="st-field">
+          <span>付费调用前确认</span>
+          <select
+            data-creative-confirm
+            value={creative.confirmCost === false ? 'off' : 'on'}
+            onChange={(e) => setCreative((prev) => ({ ...prev, confirmCost: e.target.value === 'on' }))}
+          >
+            <option value="on">每次确认（推荐）</option>
+            <option value="off">不确认（仍受轮次上限约束）</option>
+          </select>
+          <em>真实视频生成始终每次确认，不受此项影响</em>
+        </label>
+        <label className="st-field">
+          <span>单轮付费调用上限</span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={creative.limits?.maxPaidCallsPerTurn ?? CREATIVE_DEFAULTS.limits.maxPaidCallsPerTurn}
+            onChange={(e) =>
+              setCreative((prev) => ({
+                ...prev,
+                limits: { ...(prev.limits || {}), maxPaidCallsPerTurn: Number(e.target.value) },
+              }))
+            }
+          />
+          <em>超过后工具直接拒绝，不发请求</em>
+        </label>
+        <label className="st-field">
+          <span>单会话镜头上限</span>
+          <input
+            type="number"
+            min={1}
+            max={200}
+            value={creative.limits?.maxShots ?? CREATIVE_DEFAULTS.limits.maxShots}
+            onChange={(e) =>
+              setCreative((prev) => ({
+                ...prev,
+                limits: { ...(prev.limits || {}), maxShots: Number(e.target.value) },
+              }))
+            }
+          />
+          <em>切分结果超过上限会拒绝，提示把阈值调高</em>
+        </label>
+      </div>
+    </section>
+  )
+
   const renderPricing = () => (
     <section className="st-sec">
       <header className="st-sec-head">
@@ -1618,6 +1900,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
           {section === 'models' && renderModels()}
           {section === 'routing' && renderRouting()}
           {section === 'agent' && renderAgent()}
+          {section === 'creative' && renderCreative()}
           {section === 'pricing' && renderPricing()}
           {section === 'lipsync' && renderLipSync()}
           {section === 'voices' && renderVoices()}

@@ -11,6 +11,7 @@ import {
   type CustomVoice,
 } from './src/voiceCatalog'
 import { normalizeToolProtocol, toolThinkingMode, supportsNativeTools } from './src/agent/toolCapabilities'
+import { validateContract as validateSkillContract } from './src/skills/contracts'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -18,6 +19,35 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath, safeProjectName, listSkillOverrides, getSkillOverride, setSkillOverride, deleteSkillOverride, getChatThread, saveChatThread, deleteChatThread } from './server/db.mjs'
+import { createDeliverable, deleteDeliverable, getDeliverable, listDeliverables, normalizeDeliverableConfig, patchDeliverableConfig } from './server/deliverables.mjs'
+import { getPlatform, listPlatforms } from './server/publish-platforms.mjs'
+import { listAdapters } from './server/publish-adapters.mjs'
+import {
+  accountProfileDir,
+  deleteAccount,
+  getAccount,
+  getAccountInternal,
+  listAccounts,
+  setAccountStatus,
+  upsertAccount,
+} from './server/publish-accounts.mjs'
+import { checkSession, getSession, startLogin } from './server/publish-browser.mjs'
+import { runPreflight } from './server/publish-preflight.mjs'
+import {
+  createJob,
+  getJob,
+  getJobWithEvents,
+  jobSummary,
+  listJobs,
+  markPublished,
+  RETRYABLE_STATES,
+  transitionJob,
+} from './server/publish-jobs.mjs'
+import { cancel, enqueue } from './server/publish-queue.mjs'
+import { buildPublishPackage } from './server/publish-package.mjs'
+import { autoDraftOnExport } from './server/publish-auto.mjs'
+import { chromeAvailable, profilesRoot, resolveChrome, sanitizeError } from './server/publish-utils.mjs'
+import { recoverInterruptedJobs } from './server/publish-jobs.mjs'
 import { MAX_SKILL_BYTES, listSkillFiles, readSkillFile, safeSkillId, splitSkillText, withBuiltinFrontmatter } from './server/skills.mjs'
 import {
   MAX_REF_BYTES,
@@ -91,6 +121,42 @@ import {
   shutdownRenderJobs,
   submitRenderJob,
 } from './server/blender.mjs'
+import {
+  MAX_CREATIVE_THREAD_BYTES,
+  createSession as createCreativeSession,
+  deleteSession as deleteCreativeSession,
+  getArtifact as getCreativeArtifact,
+  getSession as getCreativeSessionRecord,
+  getSource as getCreativeSource,
+  getThread as getCreativeThread,
+  insertSource as insertCreativeSource,
+  listArtifacts as listCreativeArtifacts,
+  listSessions as listCreativeSessions,
+  listShots as listCreativeShots,
+  listSources as listCreativeSources,
+  patchSource as patchCreativeSource,
+  patchShot as patchCreativeShot,
+  replaceShots as replaceCreativeShots,
+  resolveCreativeFile,
+  saveArtifact as saveCreativeArtifact,
+  saveThread as saveCreativeThread,
+  sessionDir as creativeSessionDir,
+  sessionSummary as creativeSessionSummary,
+  touchSession as touchCreativeSession,
+} from './server/creative.mjs'
+import { promoteReversePack, reversePackToText } from './server/creative-promote.mjs'
+import {
+  extractCover as extractCreativeCover,
+  extractFrame as extractCreativeFrame,
+  ffmpegStatus,
+  probeMedia,
+  splitScenes,
+} from './server/video-analyze.mjs'
+import {
+  ingestSource as ingestCreativeSource,
+  listAdapters as listIngestAdapters,
+} from './server/ingest.mjs'
+import { normalizeCreativeSettings, redactCreativeSettings, type CreativeSettings } from './src/creative/settings'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -266,6 +332,8 @@ type AppSettings = {
   agentToolProtocol?: 'auto' | 'native' | 'json'
   /** 设置库里的自定义音色条目 */
   customVoices?: CustomVoice[]
+  /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
+  creative?: CreativeSettings
   /** 口型 provider；默认关闭 */
   lipSync?: {
     provider: 'off' | 'sync-labs'
@@ -710,6 +778,7 @@ function normalizeSettings(raw: any): AppSettings {
         agentToolProtocol: normalizeToolProtocol(raw.agentToolProtocol),
         lipSync: normalizeLipSyncSettings(raw.lipSync),
         customVoices: normalizeCustomVoices(raw.customVoices),
+        creative: normalizeCreativeSettings(raw.creative),
         apiKey,
         rules,
         skillsMigrated: Boolean(raw.skillsMigrated),
@@ -739,6 +808,7 @@ function normalizeSettings(raw: any): AppSettings {
     agentToolProtocol: 'auto',
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
+    creative: normalizeCreativeSettings(raw?.creative),
     apiKey,
     rules,
     skillsMigrated: Boolean(raw?.skillsMigrated),
@@ -784,6 +854,8 @@ function withKeyStatus(s: AppSettings): AppSettings {
   return {
     ...s,
     providers: s.providers.map((p) => ({ ...p, keyAvailable: Boolean(providerKey(p)) })),
+    // 创意配置里的 DTK Key 同样只回「有没有」
+    creative: redactCreativeSettings(normalizeCreativeSettings(s.creative)) as AppSettings['creative'],
   }
 }
 
@@ -805,6 +877,23 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     agentToolProtocol: normalizeToolProtocol(patch.agentToolProtocol ?? cur.agentToolProtocol),
     lipSync: patch.lipSync !== undefined ? normalizeLipSyncSettings(patch.lipSync) : normalizeLipSyncSettings(cur.lipSync),
     customVoices: patch.customVoices !== undefined ? normalizeCustomVoices(patch.customVoices) : normalizeCustomVoices(cur.customVoices),
+    // 创意配置：请求里带了就以请求为准（可整体覆盖），没带就保留原值。
+    // DTK Key 回读时被脱敏成空串，保存时不能因此把它清掉。
+    creative:
+      patch.creative !== undefined
+        ? normalizeCreativeSettings({
+            ...patch.creative,
+            ingest: {
+              ...(patch.creative as CreativeSettings)?.ingest,
+              dtk: {
+                ...(patch.creative as CreativeSettings)?.ingest?.dtk,
+                apiKey:
+                  String((patch.creative as CreativeSettings)?.ingest?.dtk?.apiKey || '').trim() ||
+                  String(cur.creative?.ingest?.dtk?.apiKey || ''),
+              },
+            },
+          })
+        : normalizeCreativeSettings(cur.creative),
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
     skillsMigrated:
@@ -2301,6 +2390,13 @@ function seedreamProxy(): Plugin {
       } catch {
         /* 清理失败不阻塞启动 */
       }
+      // 上一进程遗留的发布任务一律标 unknown：不自动续跑，交给用户确认
+      try {
+        const recovered = recoverInterruptedJobs(resolveRoot(root))
+        if (recovered > 0) console.log(`[publish] 恢复中断任务 ${recovered} 条 → unknown`)
+      } catch (e) {
+        console.warn('[publish] 中断任务恢复失败:', sanitizeError(e))
+      }
       server.httpServer?.on('close', () => {
         shutdownRenderJobs()
         discardAllDrafts()
@@ -2333,11 +2429,34 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // 创意会话媒体：<projects>/creatives/<会话>/...，与创意记录同生命周期
+        if (url.startsWith('/creative/')) {
+          let file = ''
+          try {
+            file = resolveCreativeFile(root, decodeURIComponent(url))
+          } catch {
+            res.statusCode = 400
+            res.end()
+            return
+          }
+          serveFile(res, req, file, mimeOf(path.extname(file).slice(1) || 'png'))
+          return
+        }
+
         // 直接提供生成产物：vite 的 public 索引在启动时建立，
-        // 运行中新写入的文件在 watcher 更新前会被 SPA fallback 吃掉（返回 index.html）
-        for (const dir of ['generated', 'videos', 'exports', 'voices']) {
+        // 运行中新写入的文件在 watcher 更新前会被 SPA fallback 吃掉（返回 index.html）。
+        // 保留子目录（导出/导入会落在 exports/imports 下），并拒绝路径穿越。
+        for (const dir of ['generated', 'videos', 'exports', 'voices', 'publish-packages']) {
           if (url.startsWith(`/${dir}/`)) {
-            const file = path.join(root, 'public', dir, path.basename(url))
+            const baseDir = path.join(root, 'public', dir)
+            const rel = decodeURIComponent(url.slice(dir.length + 2).split('?')[0])
+            const file = path.join(baseDir, rel)
+            const inside = path.relative(baseDir, file)
+            if (!rel || inside.startsWith('..') || path.isAbsolute(inside)) {
+              res.statusCode = 400
+              res.end()
+              return
+            }
             serveFile(res, req, file, mimeOf(path.extname(file).slice(1) || 'png'))
             return
           }
@@ -2410,6 +2529,444 @@ function seedreamProxy(): Plugin {
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 创意会话：与项目无关的独立存储；线程、源视频与产物都按会话隔离 ----
+        if (url === '/api/creative/sessions' || url.startsWith('/api/creative/sessions/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            const tail = url.slice('/api/creative/sessions'.length).replace(/^\/+/, '')
+            if (req.method === 'GET') {
+              if (!tail) {
+                const q = new URL(req.url || '', 'http://x')
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    sessions: listCreativeSessions(root, Number(q.searchParams.get('limit')) || 100),
+                  }),
+                )
+                return
+              }
+              const [id, sub] = tail.split('/')
+              if (sub === 'thread') {
+                const thread = getCreativeThread(root, id)
+                res.end(JSON.stringify({ ok: true, thread }))
+                return
+              }
+              if (sub === 'artifacts') {
+                res.end(JSON.stringify({ ok: true, artifacts: listCreativeArtifacts(root, id) }))
+                return
+              }
+              if (!sub) {
+                const summary = creativeSessionSummary(root, id)
+                if (!summary) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: `创意会话不存在：${id}` }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, session: summary }))
+                return
+              }
+              res.statusCode = 404
+              res.end(JSON.stringify({ ok: false, message: '未知的创意会话资源' }))
+              return
+            }
+            if (req.method === 'POST' && !tail) {
+              const body = await readJson(req)
+              const session = createCreativeSession(root, {
+                title: body?.title,
+                mode: body?.mode,
+              })
+              res.end(JSON.stringify({ ok: true, session }))
+              return
+            }
+            if (req.method === 'PUT') {
+              const body = await readJson(req)
+              const [id, sub] = tail.split('/')
+              if (sub === 'thread') {
+                const thread = saveCreativeThread(root, id, body?.messages, body?.activeSkills || [])
+                res.end(JSON.stringify({ ok: true, thread }))
+                return
+              }
+              if (sub) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '未知的创意会话资源' }))
+                return
+              }
+              const session = touchCreativeSession(root, id, {
+                ...(body?.title !== undefined ? { title: body.title } : {}),
+                ...(body?.mode !== undefined ? { mode: body.mode } : {}),
+              })
+              if (!session) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `创意会话不存在：${id}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, session }))
+              return
+            }
+            if (req.method === 'DELETE') {
+              if (!tail) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '缺少会话 id' }))
+                return
+              }
+              const removed = deleteCreativeSession(root, tail.split('/')[0])
+              res.end(JSON.stringify({ ok: true, removed }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT / DELETE' }))
+          } catch (e: any) {
+            // 线程超限是用户可恢复的输入问题，不是服务端故障
+            const tooLarge = e?.kind === 'thread-too-large'
+            res.statusCode = tooLarge ? 413 : 400
+            res.end(JSON.stringify({ ok: false, kind: e?.kind || 'creative-error', message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 创意媒体：摄取、探测、切分、抽帧 ----
+        if (url === '/api/creative/ingest' || url === '/api/creative/analyze' || url === '/api/creative/adapters') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            const settings = getAppSettings()
+            const creative = normalizeCreativeSettings(settings.creative)
+
+            if (url === '/api/creative/adapters') {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  adapters: listIngestAdapters(creative),
+                  ffmpeg: ffmpegStatus(),
+                  analysis: creative.analysis,
+                }),
+              )
+              return
+            }
+            if (req.method !== 'POST') {
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+              return
+            }
+
+            const body = await readJson(req)
+
+            if (url === '/api/creative/ingest') {
+              const sessionId = String(body.sessionId || '')
+              if (!creativeSessionSummary(root, sessionId)) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `创意会话不存在：${sessionId || '(空)'}` }))
+                return
+              }
+              const sessionDir = creativeSessionDir(root, sessionId)
+              const sourceId = `src-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`
+              const got = await ingestCreativeSource(
+                { url: body.url, data: body.data, name: body.name, adapter: body.adapter },
+                { sessionId, sourceId, sourcesDir: path.join(sessionDir, 'sources') },
+                creative,
+              )
+              let probe = null
+              let probeError = ''
+              try {
+                probe = await probeMedia(got.file)
+              } catch (e: any) {
+                probeError = e?.message || String(e)
+              }
+              const meta = got.meta || {}
+              const source = insertCreativeSource(root, sessionId, {
+                id: sourceId,
+                kind: 'video',
+                platform: String(meta.platform || ''),
+                platformId: String(meta.platformId || ''),
+                author: String(meta.author || ''),
+                title: String(meta.title || ''),
+                url: String(meta.url || body.url || ''),
+                file: `/creative/${sessionId}/sources/${path.basename(got.file)}`,
+                bytes: got.bytes,
+                ...(probe
+                  ? {
+                      duration: probe.duration,
+                      width: probe.width,
+                      height: probe.height,
+                      fps: probe.fps,
+                      bitrate: probe.bitrate,
+                      vcodec: probe.vcodec,
+                      acodec: probe.acodec,
+                      hasAudio: probe.hasAudio,
+                    }
+                  : {}),
+                meta: { adapter: got.adapter, warnings: got.warnings || [] },
+              })
+              // 封面失败不阻塞摄取：用户仍可切分与抽帧
+              let cover = ''
+              try {
+                const coverName = `${sourceId}-cover-${crypto.randomBytes(2).toString('hex')}.jpg`
+                const got2 = await extractCreativeCover(got.file, path.join(sessionDir, 'frames', coverName))
+                cover = `/creative/${sessionId}/frames/${path.basename(got2.file)}`
+                patchCreativeSource(root, sourceId, { cover })
+              } catch {
+                /* 封面可选 */
+              }
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  adapter: got.adapter,
+                  adapterLabel: got.adapterLabel,
+                  warnings: got.warnings || [],
+                  probeError,
+                  source: getCreativeSource(root, sourceId),
+                }),
+              )
+              return
+            }
+
+            // /api/creative/analyze
+            const sourceId = String(body.sourceId || '')
+            const source = getCreativeSource(root, sourceId)
+            if (!source) {
+              res.statusCode = 404
+              res.end(JSON.stringify({ ok: false, message: `源视频不存在：${sourceId || '(空)'}` }))
+              return
+            }
+            const sessionId = source.sessionId
+            const sessionDir = creativeSessionDir(root, sessionId)
+            const file = resolveCreativeFile(root, source.file)
+            const action = String(body.action || 'probe')
+
+            if (action === 'probe') {
+              const probe = await probeMedia(file)
+              const updated = patchCreativeSource(root, sourceId, {
+                duration: probe.duration,
+                width: probe.width,
+                height: probe.height,
+                fps: probe.fps,
+                bitrate: probe.bitrate,
+                vcodec: probe.vcodec,
+                acodec: probe.acodec,
+                hasAudio: probe.hasAudio,
+              })
+              res.end(JSON.stringify({ ok: true, probe, source: updated }))
+              return
+            }
+
+            if (action === 'split') {
+              const analysis = creative.analysis || {}
+              const threshold = body.threshold == null ? analysis.threshold : Number(body.threshold)
+              const minShotSeconds =
+                body.minShotSeconds == null ? analysis.minShotSeconds : Number(body.minShotSeconds)
+              const split = await splitScenes(file, { threshold, minShotSeconds })
+              const maxShots = creative.limits?.maxShots ?? 40
+              if (split.shots.length > maxShots) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'too-many-shots',
+                    message: `切分出 ${split.shots.length} 个镜头，超过上限 ${maxShots}；把阈值调高或缩短视频`,
+                  }),
+                )
+                return
+              }
+              const existing = listCreativeShots(root, sourceId)
+              // 重新切分：旧结果只标记过期，证据帧与分析结果保留
+              const kept = new Map<number, { frames: string[]; analysis: unknown; status: string }>()
+              existing.forEach((s) => {
+                if (s.frames.length || s.analysis) {
+                  kept.set(s.index, { frames: s.frames, analysis: s.analysis, status: 'stale' })
+                }
+              })
+              const shots = replaceCreativeShots(
+                root,
+                sourceId,
+                split.shots.map((s, i) => ({
+                  start: s.start,
+                  end: s.end,
+                  frames: kept.get(i)?.frames ?? [],
+                  status: kept.get(i)?.status ?? 'pending',
+                  analysis: kept.get(i)?.analysis ?? null,
+                })),
+              )
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  duration: split.duration,
+                  threshold: split.threshold,
+                  shots,
+                  staleCount: [...kept.values()].length,
+                }),
+              )
+              return
+            }
+
+            if (action === 'frames') {
+              const all = listCreativeShots(root, sourceId)
+              if (!all.length) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '还没有切分结果，先执行切分再抽帧' }))
+                return
+              }
+              const wanted = Array.isArray(body.shotIndexes) && body.shotIndexes.length
+                ? all.filter((s) => body.shotIndexes.map(Number).includes(s.index))
+                : all
+              const framesPerShot = Math.round(
+                Math.min(
+                  creative.limits?.maxFramesPerShot ?? 3,
+                  Math.max(1, Number(body.framesPerShot) || creative.analysis?.framesPerShot || 1),
+                ),
+              )
+              const results = []
+              for (const shot of wanted) {
+                const span = Math.max(0.05, shot.end - shot.start)
+                const times =
+                  framesPerShot === 1
+                    ? [shot.start + span / 2]
+                    : Array.from({ length: framesPerShot }, (_, i) =>
+                        shot.start + span * ((i + 0.5) / framesPerShot),
+                      )
+                const frames = []
+                const usedTimes = []
+                const errors = []
+                for (const t of times) {
+                  const name = `${sourceId}-s${String(shot.index).padStart(2, '0')}-${crypto.randomBytes(2).toString('hex')}.jpg`
+                  try {
+                    const grabbed = await extractCreativeFrame(
+                      file,
+                      t,
+                      path.join(sessionDir, 'frames', name),
+                    )
+                    frames.push(`/creative/${sessionId}/frames/${path.basename(grabbed.file)}`)
+                    usedTimes.push(grabbed.at)
+                  } catch (e: any) {
+                    errors.push(e?.message || String(e))
+                  }
+                }
+                // 重抽时覆盖，否则在旧帧后追加；空结果不动旧帧
+                const nextFrames = frames.length
+                  ? Boolean(body.overwrite)
+                    ? frames
+                    : [...shot.frames, ...frames]
+                  : shot.frames
+                const updated = patchCreativeShot(root, sourceId, shot.index, {
+                  frames: nextFrames,
+                  ...(frames.length ? { status: 'framed' } : {}),
+                })
+                results.push({ index: shot.index, frames: nextFrames, times: usedTimes, errors, shot: updated })
+              }
+              res.end(JSON.stringify({ ok: true, framesPerShot, shots: results }))
+              return
+            }
+
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: `未知的分析动作：${action}` }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, kind: e?.kind || 'creative-media-error', message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 创意产物：保存反推结果（服务端二次校验 reverse-v1）----
+        if (url === '/api/creative/artifacts') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const sessionId = String(body.sessionId || '')
+            const checked = validateSkillContract('reverse-v1', body.payload)
+            if (!checked.ok) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: 'contract-invalid',
+                  message: `反推结果不符合 reverse-v1：${checked.errors.join('；')}`,
+                }),
+              )
+              return
+            }
+            const value = checked.value as Record<string, unknown>
+            const title =
+              String(body.title || '').trim() ||
+              `${String((value.source as Record<string, unknown>)?.platform || '视频')}拆解 · ${
+                Array.isArray(value.shots) ? value.shots.length : 0
+              } 镜`
+            const artifact = saveCreativeArtifact(root, sessionId, {
+              kind: String(body.kind || 'reverse'),
+              title,
+              sourceId: String(body.sourceId || ''),
+              payload: value,
+              modelLabel: String(body.modelLabel || ''),
+            })
+            res.end(JSON.stringify({ ok: true, artifact }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, kind: 'artifact-error', message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 创意产物：导出与晋升（晋升只走现有项目写入路径）----
+        if (url === '/api/creative/promote' || url === '/api/creative/export') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            if (req.method !== 'POST') {
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+              return
+            }
+            const body = await readJson(req)
+            const artifactId = String(body.artifactId || '')
+            const artifact = getCreativeArtifact(root, artifactId)
+            if (!artifact) {
+              res.statusCode = 404
+              res.end(JSON.stringify({ ok: false, message: `产物不存在：${artifactId || '(空)'}` }))
+              return
+            }
+            const payload = artifact.payload && typeof artifact.payload === 'object' ? artifact.payload : {}
+            const session = getCreativeSessionRecord(root, artifact.sessionId)
+            const sourceUrl = String(body.sourceUrl || '')
+
+            if (url === '/api/creative/export') {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  format: 'json',
+                  title: artifact.title || session?.title || '',
+                  payload,
+                  text: reversePackToText(payload as Record<string, unknown>, artifact.title || session?.title || ''),
+                }),
+              )
+              return
+            }
+
+            const result = promoteReversePack(root, payload as Record<string, unknown>, {
+              sessionId: artifact.sessionId,
+              sourceId: artifact.sourceId,
+              sourceUrl,
+              title: String(body.title || artifact.title || session?.title || ''),
+              style: String(body.style || ''),
+              aspect: String(body.aspect || ''),
+              target: body.target === 'existing' ? 'existing' : 'new',
+              projectName: String(body.projectName || ''),
+              episode: Number(body.episode) || 1,
+            })
+            res.end(JSON.stringify({ ok: true, ...result }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, kind: e?.kind || 'promote-error', message: e?.message || String(e) }))
           }
           return
         }
@@ -3972,6 +4529,441 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 发布：平台能力 / 健康 / 账号 / 预检 / 任务 / 发布包 ----
+        if (url === '/api/publish' || url.startsWith('/api/publish/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const pubRoot = resolveRoot(root)
+          const q = new URL(req.url || '', 'http://x')
+          const tail = url.slice('/api/publish'.length).replace(/^\/+/, '')
+          try {
+            if (req.method === 'GET' && tail === 'platforms') {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  platforms: listPlatforms(),
+                  adapters: listAdapters(),
+                  browserAvailable: chromeAvailable(),
+                }),
+              )
+              return
+            }
+
+            if (req.method === 'GET' && tail === 'health') {
+              const chromePath = resolveChrome()
+              const ff = await ensureFf().catch(() => null)
+              const adapterReady = listAdapters()
+                .filter((a) => a.verified && !a.manualOnly)
+                .map((a) => a.platform)
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  browserAvailable: Boolean(chromePath),
+                  chromePath,
+                  ffmpegAvailable: Boolean(ff && fs.existsSync(ff.bin)),
+                  ffmpegPath: ff?.bin || '',
+                  adapterReady,
+                  adapterUnverified: listAdapters().filter((a) => !a.verified).map((a) => a.platform),
+                  profilesRoot: profilesRoot(pubRoot),
+                }),
+              )
+              return
+            }
+
+            if (tail === 'accounts') {
+              if (req.method === 'GET') {
+                res.end(JSON.stringify({ ok: true, accounts: listAccounts(pubRoot) }))
+                return
+              }
+              if (req.method === 'POST') {
+                const body = await readJson(req)
+                const account = upsertAccount(pubRoot, body)
+                res.end(JSON.stringify({ ok: true, account }))
+                return
+              }
+            }
+
+            if (req.method === 'POST' && tail === 'accounts/connect') {
+              if (!chromeAvailable()) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '本机没有可用的 Chrome，无法自动发布；请改用导出发布包' }))
+                return
+              }
+              const body = await readJson(req)
+              const platform = getPlatform(body.platform)
+              // 先建/复用账号并准备 profile，登录成功后再把状态置为 connected
+              const account = upsertAccount(pubRoot, {
+                id: body.accountId,
+                platform: platform.id,
+                label: body.label || '',
+                status: 'unknown',
+              })
+              const job = startLogin({
+                platform: platform.id,
+                accountId: account!.id,
+                profileDir: accountProfileDir(pubRoot, account!.id),
+                url: body.url || platform.backendUrl,
+                timeoutMs: Number(body.timeoutMs) || undefined,
+              })
+              res.end(JSON.stringify({ ok: true, login: job, account }))
+              return
+            }
+
+            if (req.method === 'GET' && tail.startsWith('accounts/connect/')) {
+              const id = tail.slice('accounts/connect/'.length)
+              const job = getSession(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '登录会话不存在或已过期' }))
+                return
+              }
+              if (job.status === 'done' && job.accountId) {
+                setAccountStatus(pubRoot, job.accountId, 'connected', job.message)
+              } else if (job.status === 'cancelled' && job.accountId) {
+                setAccountStatus(pubRoot, job.accountId, 'unknown', '登录已取消')
+              }
+              res.end(JSON.stringify({ ok: true, login: job, account: job.accountId ? getAccount(pubRoot, job.accountId) : null }))
+              return
+            }
+
+            if (req.method === 'POST' && /^accounts\/[^/]+\/check$/.test(tail)) {
+              const id = tail.split('/')[1]
+              const account = getAccountInternal(pubRoot, id)
+              if (!account) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '账号不存在' }))
+                return
+              }
+              if (!chromeAvailable()) {
+                res.end(JSON.stringify({ ok: true, status: 'unknown', message: '本机没有可用的 Chrome' }))
+                return
+              }
+              const platform = getPlatform(account.platform)
+              const result = await checkSession({
+                profileDir: account.profileDir,
+                url: platform.backendUrl,
+              })
+              const updated = setAccountStatus(pubRoot, id, result.status as any, result.message)
+              res.end(JSON.stringify({ ok: true, status: result.status, message: result.message, account: updated.account }))
+              return
+            }
+
+            if (req.method === 'DELETE' && /^accounts\/[^/]+$/.test(tail)) {
+              const id = tail.split('/')[1]
+              const ok = deleteAccount(pubRoot, id)
+              res.end(JSON.stringify({ ok, accounts: listAccounts(pubRoot) }))
+              return
+            }
+
+            if (req.method === 'POST' && tail === 'preflight') {
+              const body = await readJson(req)
+              const deliverable = body.deliverableId
+                ? getDeliverable(pubRoot, String(body.deliverableId))
+                : null
+              const accounts = new Map(listAccounts(pubRoot).map((a) => [a.id, a]))
+              // 只取服务端自己的能力表，忽略请求里的 limits
+              const config = normalizeDeliverableConfig(body.config || deliverable?.config || {})
+              const result = runPreflight({
+                appRoot: root,
+                projectsRoot: pubRoot,
+                deliverable,
+                targets: Array.isArray(body.targets) ? body.targets : [],
+                config,
+                accounts,
+              })
+              res.end(JSON.stringify({ ...result, ok: true }))
+              return
+            }
+
+            if (req.method === 'POST' && tail === 'jobs') {
+              const body = await readJson(req)
+              const deliverable = getDeliverable(pubRoot, String(body.deliverableId || ''))
+              if (!deliverable) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '成片不存在' }))
+                return
+              }
+              const config = normalizeDeliverableConfig(body.config || deliverable.config)
+              const targets = Array.isArray(body.targets) ? body.targets : []
+              const accounts = new Map(listAccounts(pubRoot).map((a) => [a.id, a]))
+              const pre = runPreflight({
+                appRoot: root,
+                projectsRoot: pubRoot,
+                deliverable,
+                targets,
+                config,
+                accounts,
+              })
+              // 发布包不走任务，它由 /packages 直接生成
+              const jobTargets = targets.filter((t: any) => (t.mode || 'draft') !== 'package')
+              if (!pre.ok) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '预检未通过', preflight: pre }))
+                return
+              }
+              const created = []
+              for (const t of jobTargets) {
+                const r = createJob(pubRoot, {
+                  deliverableId: deliverable.id,
+                  project: deliverable.project,
+                  episode: deliverable.episode,
+                  platform: t.platform,
+                  accountId: t.accountId || '',
+                  mode: t.mode || 'draft',
+                  deliverableUrl: deliverable.url,
+                  payload: { auto: Boolean(body.auto), aiGenerated: config.master.aiGenerated },
+                  republish: Boolean(body.republish),
+                })
+                created.push({ ...r.job, reused: r.reused })
+                if (!r.reused && r.job) {
+                  if (body.auto) {
+                    // 导出后自动触发只允许草稿
+                    if ((t.mode || 'draft') !== 'draft') {
+                      transitionJob(pubRoot, r.job.id, 'failed', {
+                        stage: 'auto',
+                        errorCode: 'auto_requires_draft',
+                        errorMessage: '自动流程只能保存草稿',
+                      })
+                      continue
+                    }
+                  }
+                  enqueue(r.job.id, { root: pubRoot, appRoot: root, projectsRoot: pubRoot })
+                }
+              }
+              res.end(JSON.stringify({ ok: true, jobs: created }))
+              return
+            }
+
+            if (req.method === 'GET' && tail === 'jobs') {
+              const project = q.searchParams.get('project') || ''
+              const episode = Number(q.searchParams.get('episode')) || 0
+              const jobs = listJobs(pubRoot, {
+                project,
+                episode,
+                deliverableId: q.searchParams.get('deliverableId') || '',
+                active: q.searchParams.get('active') === '1',
+              })
+              res.end(JSON.stringify({ ok: true, jobs, summary: jobSummary(pubRoot, { project, episode }) }))
+              return
+            }
+
+            if (tail.startsWith('jobs/')) {
+              const rest = tail.slice('jobs/'.length)
+              const [id, sub] = rest.split('/')
+              if (req.method === 'GET' && !sub) {
+                const job = getJobWithEvents(pubRoot, id)
+                if (!job) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '任务不存在' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, job }))
+                return
+              }
+              if (req.method === 'POST' && sub === 'cancel') {
+                const r = cancel(id, pubRoot)
+                res.end(JSON.stringify({ ok: true, ...r, job: getJob(pubRoot, id) }))
+                return
+              }
+              if (req.method === 'POST' && sub === 'retry') {
+                const cur = getJob(pubRoot, id)
+                if (!cur) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '任务不存在' }))
+                  return
+                }
+                if (!RETRYABLE_STATES.includes(cur.state)) {
+                  res.statusCode = 400
+                  res.end(JSON.stringify({ ok: false, message: '当前状态不需要重试' }))
+                  return
+                }
+                const r = createJob(pubRoot, {
+                  deliverableId: cur.deliverableId,
+                  project: cur.project,
+                  episode: cur.episode,
+                  platform: cur.platform,
+                  accountId: cur.accountId,
+                  mode: cur.mode,
+                  deliverableUrl: cur.deliverableUrl,
+                  payload: cur.payload,
+                  republish: true,
+                })
+                if (r.job) enqueue(r.job.id, { root: pubRoot, appRoot: root, projectsRoot: pubRoot })
+                res.end(JSON.stringify({ ok: true, job: r.job }))
+                return
+              }
+              if (req.method === 'POST' && sub === 'mark-published') {
+                const body = await readJson(req).catch(() => ({}))
+                const job = markPublished(pubRoot, id, String(body.workUrl || ''))
+                res.end(JSON.stringify({ ok: true, job }))
+                return
+              }
+              if (req.method === 'POST' && sub === 'continue') {
+                // 人工完成验证后继续：重新入队
+                const cur = getJob(pubRoot, id)
+                if (!cur || cur.state !== 'awaiting_user') {
+                  res.statusCode = 400
+                  res.end(JSON.stringify({ ok: false, message: '只有等待人工验证的任务可以继续' }))
+                  return
+                }
+                transitionJob(pubRoot, id, 'queued', { stage: 'queued', message: '用户已完成验证，重新排队' })
+                enqueue(id, { root: pubRoot, appRoot: root, projectsRoot: pubRoot })
+                res.end(JSON.stringify({ ok: true, job: getJob(pubRoot, id) }))
+                return
+              }
+            }
+
+            if (req.method === 'POST' && tail === 'packages') {
+              const body = await readJson(req)
+              const deliverable = getDeliverable(pubRoot, String(body.deliverableId || ''))
+              if (!deliverable) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '成片不存在' }))
+                return
+              }
+              const result = await buildPublishPackage(root, {
+                deliverable,
+                config: normalizeDeliverableConfig(body.config || deliverable.config),
+                platforms: Array.isArray(body.platforms) ? body.platforms : [],
+                projectsRoot: pubRoot,
+              })
+              res.end(JSON.stringify({ ok: true, package: result }))
+              return
+            }
+
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知发布接口' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: sanitizeError(e) }))
+          }
+          return
+        }
+
+        // ---- 成片版本：发布台的唯一发布对象 ----
+        if (url === '/api/deliverables' || url.startsWith('/api/deliverables/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const tail = url.slice('/api/deliverables'.length).replace(/^\/+/, '')
+          const q = new URL(req.url || '', 'http://x')
+          const pubRoot = resolveRoot(root)
+          try {
+            if (req.method === 'GET' && !tail) {
+              const project = q.searchParams.get('project') || ''
+              if (!project) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '缺少 project' }))
+                return
+              }
+              const episode = Number(q.searchParams.get('episode')) || 0
+              const deliverables = listDeliverables(pubRoot, { project, episode })
+              res.end(JSON.stringify({ ok: true, deliverables }))
+              return
+            }
+
+            if (req.method === 'POST' && tail === 'import') {
+              const rawName = String(req.headers['x-file-name'] || 'import.mp4')
+              const baseName = decodeURIComponent(rawName).replace(/^.*[\\/]/, '')
+              const ext = path.extname(baseName).toLowerCase()
+              if (ext !== '.mp4') {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '只支持导入 MP4' }))
+                return
+              }
+              const project = String(q.searchParams.get('project') || '')
+              if (!project) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '缺少 project' }))
+                return
+              }
+              const episode = Math.max(0, Math.floor(Number(q.searchParams.get('episode')) || 0))
+              const importDir = path.join(root, 'public', 'exports', 'imports')
+              fs.mkdirSync(importDir, { recursive: true })
+              const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+              const outFile = path.join(importDir, stamp)
+              const maxBytes = 2 * 1024 * 1024 * 1024
+
+              const written = await new Promise<number>((resolve, reject) => {
+                let bytes = 0
+                const ws = fs.createWriteStream(outFile)
+                req.on('data', (chunk: Buffer) => {
+                  bytes += chunk.length
+                  if (bytes > maxBytes) {
+                    req.destroy()
+                    ws.destroy()
+                    reject(new Error('文件超过 2GB 上限'))
+                    return
+                  }
+                  ws.write(chunk)
+                })
+                req.on('end', () => ws.end(() => resolve(bytes)))
+                req.on('error', reject)
+                ws.on('error', reject)
+              }).catch((e) => {
+                try { fs.rmSync(outFile, { force: true }) } catch { /* ignore */ }
+                throw e
+              })
+
+              const probe = await probeMedia(outFile).catch(() => null)
+              const probeDur = Number(probe?.duration)
+              if (!probe || !(probeDur > 0)) {
+                try { fs.rmSync(outFile, { force: true }) } catch { /* ignore */ }
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '无法读取视频，文件可能已损坏' }))
+                return
+              }
+              const rec = createDeliverable(pubRoot, {
+                project,
+                episode,
+                title: baseName.replace(/\.mp4$/i, '').slice(0, 200),
+                url: `/exports/imports/${stamp}`,
+                width: probe.width,
+                height: probe.height,
+                duration: probeDur,
+                bytes: written,
+                source: 'import',
+              })
+              res.end(JSON.stringify({ ok: true, deliverable: rec }))
+              return
+            }
+
+            if (tail) {
+              const [id, sub] = tail.split('/')
+              if (req.method === 'PATCH' && sub === 'config') {
+                const body = await readJson(req)
+                const rec = patchDeliverableConfig(pubRoot, id, body.config ?? body)
+                if (!rec) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '成片不存在' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, deliverable: rec }))
+                return
+              }
+              if (req.method === 'DELETE' && !sub) {
+                const ok = deleteDeliverable(pubRoot, id)
+                res.end(JSON.stringify({ ok }))
+                return
+              }
+              if (req.method === 'GET' && !sub) {
+                const rec = getDeliverable(pubRoot, id)
+                if (!rec) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '成片不存在' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, deliverable: rec }))
+                return
+              }
+            }
+
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '不支持的方法或路径' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         // ---- animatic 合成：静帧 + 视频混编（同样走任务 + 轮询） ----
         if (url === '/api/assemble') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -4021,6 +5013,15 @@ function seedreamProxy(): Plugin {
             const captionStyle: CaptionStyleInput =
               body.captionStyle && typeof body.captionStyle === 'object' ? body.captionStyle : {}
             const captionMode: 'auto' | 'png' = body.captionMode === 'png' ? 'png' : 'auto'
+            // 成片归属：缺项目或集时照常导出，只是不落成片记录（旧客户端兼容）
+            let deliverableProject = ''
+            try {
+              if (body.project) deliverableProject = safeProjectName(String(body.project).trim())
+            } catch {
+              deliverableProject = ''
+            }
+            const deliverableEpisode = Math.max(0, Math.floor(Number(body.episode) || 0))
+            const deliverableTitle = String(body.title || '').slice(0, 200)
 
             const id = `e-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
             exportJobs.set(id, { status: 'running', startedAt: Date.now() })
@@ -4028,6 +5029,7 @@ function seedreamProxy(): Plugin {
 
             ;(async () => {
               const t0 = Date.now()
+              const exportRoot = resolveRoot(root)
               try {
                 const outRoot = path.join(root, 'public', 'exports')
                 fs.mkdirSync(outRoot, { recursive: true })
@@ -4042,6 +5044,36 @@ function seedreamProxy(): Plugin {
                   captionStyle,
                   captionMode,
                 )
+                const [expW, expH] = EXPORT_SIZE[resolution]
+                let deliverable: { id: string; version: number } | null = null
+                if (deliverableProject && deliverableEpisode > 0) {
+                  try {
+                    const rec = createDeliverable(exportRoot, {
+                      project: deliverableProject,
+                      episode: deliverableEpisode,
+                      title: deliverableTitle,
+                      url: `/exports/${name}`,
+                      srtUrl: info.srtFile ? `/exports/${path.basename(info.srtFile)}` : '',
+                      width: expW,
+                      height: expH,
+                      duration: info.seconds,
+                      bytes: fs.existsSync(outFile) ? fs.statSync(outFile).size : null,
+                      source: 'export',
+                    })
+                    if (rec) {
+                      deliverable = { id: rec.id, version: rec.version }
+                      // 只有账号显式开启自动草稿才会排队；失败只写原因，不影响导出
+                      try {
+                        autoDraftOnExport({ dbRoot: exportRoot, appRoot: root, deliverable: rec })
+                      } catch (err) {
+                        console.warn('[publish] 自动草稿失败:', sanitizeError(err))
+                      }
+                    }
+                  } catch (e) {
+                    // 成片记录失败不影响导出结果本身
+                    console.warn('[publish] 成片入库失败:', (e as Error).message)
+                  }
+                }
                 exportJobs.set(id, {
                   status: 'succeeded',
                   url: `/exports/${name}`,
@@ -4052,6 +5084,7 @@ function seedreamProxy(): Plugin {
                   subbed: info.subbed,
                   captions: info.captions,
                   ...(info.srtFile ? { srtUrl: `/exports/${path.basename(info.srtFile)}` } : {}),
+                  ...(deliverable ? { deliverable } : {}),
                   captionWarnings: info.captionWarnings,
                   overflows: info.overflows,
                   startedAt: t0,

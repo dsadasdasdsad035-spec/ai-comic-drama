@@ -20,6 +20,28 @@
 | 口型 | ✅（prompt + 本地抽帧；provider 需 Key） | ⚠️ provider 需要外网与 `SYNC_LABS_API_KEY`；本地抽帧需要 ffmpeg |
 | Seedance 原生音频 | ✅（APIMart Seedance 2.5，单 `audio_url`，4 秒+） | ⚠️ 需要 APIMart 视频额度与可访问音频；参考音频受内容审核 |
 | 合成 / 字幕 | ✅（ffmpeg + libass + CJK 字体） | ⚠️ 只探测 macOS 路径；无 libass 时自动走客户端 PNG 定时叠加 |
+| 发布台（成片版本 / 文案 / 封面 / 预检 / 发布包） | ✅ | ✅（纯 HTTP + 本地文件） |
+| 平台自动发布（抖音 / B 站 / 头条草稿） | ✅（本机 Chrome + profile） | ❌ 需要桌面环境与常驻进程，远程部署只能导出发布包 |
+
+---
+
+## 一之二、发布台部署约束
+
+浏览器自动化不是服务端能力，它依赖**本机桌面 + 可见 Chrome + 应用进程常驻**：
+
+- `playwright-core` 目前是 `devDependencies`。如果抽独立生产服务，必须移到 `dependencies`，并在目标机器安装 Chrome；否则 `/api/publish/health` 会返回 `browserAvailable: false`。
+- 登录态存在 `.publish-profiles/<账号>/`，权限 0700，已进 `.gitignore`。换机器或清目录等于丢登录态，需要重新扫码。
+- 发布包输出到 `public/publish-packages/`，同样不进仓库；备份/迁移时要么一起拷，要么接受重新生成。
+- 平台后台改版会让选择器失效。适配器此时返回 `selectors_changed` 并停在当前阶段，不会盲点；该平台应先在能力表标 `manualOnly`。
+- 自动草稿只在账号显式开启时触发，且**永远不会点最终发布**；这条是代码里的队列约束，不是界面提示。
+
+部署后自查：
+
+```bash
+curl -s http://127.0.0.1:5299/api/publish/health | jq '{browserAvailable,ffmpegAvailable,adapterReady,adapterUnverified}'
+```
+
+`browserAvailable: false` 时，发布台会自动把可用路径收敛到「导出发布包」。
 
 ---
 

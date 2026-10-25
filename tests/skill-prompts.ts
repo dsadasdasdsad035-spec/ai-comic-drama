@@ -108,23 +108,28 @@ check('asset 任务模板逐字等于旧 inline prompt', () => {
   )
 })
 
-check('shotlist 任务模板逐字等于旧 inline prompt', () => {
+check('shotlist 任务模板保持稳定', () => {
   const expected =
     `画风：S\n画幅：16:9\n\nBRIEF\n\n` +
     `目标总时长 60 秒。相邻镜头景别要有变化。\n` +
     `每镜必须带 scene_no（输入场次号）和 scene_slug（场次简称），同一场的镜头用同一个编号。\n` +
     `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。\n` +
-    `只在台词/描述里被提到、实际在画外的角色不要写进去。`
+    `只在台词/描述里被提到、实际在画外的角色不要写进去。\n` +
+    `再补 performance：有台词的角色必须有条目；写看得见的表情/动作/视线，不写心理活动。不要给没有入画的角色编表演。`
   assert.equal(rendered(shotlist, { style: 'S', aspect: '16:9', brief: 'BRIEF', target: 60 }), expected)
 })
 
-check('prompt 任务模板逐字等于旧 inline prompt', () => {
+check('prompt 任务模板保持稳定', () => {
   const expected =
-    `画风锁：S\n\n角色外观锚点：\nBIBLE\n\n分镜：\n[{"no":"S01"}]\n\n` +
+    `画风锁：S\n\n角色外观锚点：\nBIBLE\n\n` +
+    `分镜（每镜包含 cast、performance、dialogue 与逐行 delivery）：\n[{"no":"S01"}]\n\n` +
     `输出要求：\n` +
     `1. 每一镜都要给 keyframe_prompt 与 video_prompt，no 必须与输入一致\n` +
     `2. keyframe_prompt 里凡出现角色，一律用 {{角色名}} 占位代替整段 look_en（例如 {{陈默}}），由我在保存前原样替换回原文 —— 不要自己展开那整段描述\n` +
-    `3. 只输出 JSON`
+    `3. 只使用本镜 cast 里的角色；不要给没有入画的角色加动作或情绪\n` +
+    `4. 有 performance 时逐角色写可见表演，多人镜头分别写，不合并成一句“所有人”\n` +
+    `5. 没有 performance 时按 desc 与台词写，不自行发明情绪\n` +
+    `6. 只输出 JSON`
   assert.equal(rendered(prompt, { style: 'S', bible: 'BIBLE', briefJson: '[{"no":"S01"}]' }), expected)
 })
 

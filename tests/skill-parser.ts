@@ -69,6 +69,19 @@ check('未知 stage 报错', () => {
   assert.throws(() => parseSkillText('demo', skillText({ stage: 'nope' })), /未知环节/)
 })
 
+check('creative 环节可解析', () => {
+  const s = parseSkillText(
+    'demo',
+    skillText({
+      stage: 'creative',
+      tools: '[read_video_shots]',
+      output: 'reverse-v1',
+      contracts: '[reverse-v1]',
+    }),
+  )
+  assert.equal(s.manifest.stage, 'creative')
+})
+
 check('未知 runtime 报错', () => {
   assert.throws(() => parseSkillText('demo', skillText({ runtime: 'nope' })), /未知运行时/)
 })

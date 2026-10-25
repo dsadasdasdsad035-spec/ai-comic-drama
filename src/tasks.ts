@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-export type TaskKind = 'image' | 'video' | 'voice' | 'text' | 'export'
+export type TaskKind = 'image' | 'video' | 'voice' | 'text' | 'export' | 'publish'
 export type TaskState = 'running' | 'done' | 'error' | 'cancelled'
 
 export type Task = {
@@ -124,4 +124,5 @@ export const KIND_LABEL: Record<TaskKind, string> = {
   voice: '配音',
   text: '文本',
   export: '导出',
+  publish: '发布',
 }

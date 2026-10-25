@@ -24,6 +24,19 @@ export const KNOWN_TOOL_IDS = new Set([
   'capture_frames',
   'review_frames',
   'finish',
+  // 创意会话：会话读、媒体摄取/分析、产物与生成
+  'read_creative_session',
+  'read_creative_source',
+  'read_video_shots',
+  'read_frame_detail',
+  'ingest_source',
+  'probe_source',
+  'split_scenes',
+  'extract_frames',
+  'submit_reverse_pack',
+  'generate_image',
+  'generate_video',
+  'generate_voice',
 ])
 
 /** 只读工具：只读技能只能拿到这些。 */

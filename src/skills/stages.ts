@@ -18,6 +18,8 @@ export const STAGE_RUNTIME: Record<Stage, StageRuntimeConfig> = {
   sceneCode: { maxTokens: 12000, temperature: 0.3, output: 'scene3d-code-v1' },
   vision: { maxTokens: 4096, temperature: 0.2, output: null },
   videoVision: { maxTokens: 4096, temperature: 0.2, output: null },
+  /** 创意会话：反推走 reverse-v1；策划模式由技能 frontmatter 覆盖输出 */
+  creative: { maxTokens: 8192, temperature: 0.4, output: 'reverse-v1' },
 }
 
 export function stageRuntime(stage: Stage): StageRuntimeConfig {

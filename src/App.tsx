@@ -43,6 +43,8 @@ import BoardMenu from './BoardMenu'
 import TransitionPanel from './TransitionPanel'
 import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
+import PublishBoard from './PublishBoard'
+import CreativeStudio from './creative/CreativeStudio'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, identityFingerprint, markExpressionSheetStale, markExpressionsStale, markVoiceSampleStale, type CharacterSheet } from './characters'
@@ -351,7 +353,13 @@ function Shell() {
     repairTransitionEdges(saved?.nodes ?? initialNodes, saved?.edges ?? initialEdges),
   )
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<'board' | 'chars' | 'assets' | 'table' | 'prompts' | 'script' | 'settings'>('board')
+  const [view, setView] = useState<
+    'board' | 'chars' | 'assets' | 'table' | 'prompts' | 'script' | 'publish' | 'settings' | 'creative'
+  >('board')
+  /** 从预览导出成功后带进发布台的成片 id；发布台消费后清空 */
+  const [publishTarget, setPublishTarget] = useState<string | null>(null)
+  /** 顶栏「发布」角标：运行中 + 失败 */
+  const [publishBadge, setPublishBadge] = useState({ count: 0, failed: 0 })
   const [projectName, setProjectName] = useState('')
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
@@ -476,6 +484,35 @@ function Shell() {
     },
     [view, scriptDirty, promptEditorDirty],
   )
+
+  /** 顶栏发布角标：跟着项目/集轮询运行与失败任务数 */
+  useEffect(() => {
+    if (!projectName) {
+      setPublishBadge({ count: 0, failed: 0 })
+      return
+    }
+    let alive = true
+    const tick = async () => {
+      try {
+        const r = await fetch(
+          `/api/publish/jobs?project=${encodeURIComponent(projectName)}&episode=${epNo}`,
+        )
+        const j = await r.json().catch(() => ({}))
+        if (!alive || !j?.ok) return
+        const s = j.summary || {}
+        const failed = Number(s.failed || 0) + Number(s.unknown || 0)
+        setPublishBadge({ count: Number(s.running || 0) + failed, failed })
+      } catch {
+        /* 轮询失败静默 */
+      }
+    }
+    void tick()
+    const t = window.setInterval(tick, 15_000)
+    return () => {
+      alive = false
+      window.clearInterval(t)
+    }
+  }, [projectName, epNo])
 
   /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
   useEffect(() => {
@@ -2805,16 +2842,28 @@ function Shell() {
             <span className="brand-sub">React Flow × Konva</span>
           </div>
 
-          <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
-
-          <EpPicker
-            projectName={projectName}
-            epNo={epNo}
-            setEpNo={setEpNo}
-            version={epVersion}
-          />
+          {/* 创意会话不绑定项目：这两个选择器只在项目视图出现 */}
+          {view !== 'creative' ? (
+            <>
+              <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
+              <EpPicker
+                projectName={projectName}
+                epNo={epNo}
+                setEpNo={setEpNo}
+                version={epVersion}
+              />
+            </>
+          ) : null}
 
           <div className="viewtabs" role="navigation" aria-label="工作台视图">
+            <button
+              className={view === 'creative' ? 'on' : ''}
+              aria-current={view === 'creative' ? 'page' : undefined}
+              onClick={() => changeView('creative')}
+              title="创意工作室：不绑定项目，聊天即主界面"
+            >
+              创意
+            </button>
             <button
               className={view === 'script' ? 'on' : ''}
               aria-current={view === 'script' ? 'page' : undefined}
@@ -2858,6 +2907,15 @@ function Shell() {
               画布
             </button>
             <button
+              className={view === 'publish' ? 'on' : ''}
+              aria-current={view === 'publish' ? 'page' : undefined}
+              onClick={() => changeView('publish')}
+              title="成片分发：抖音 / B站 / 头条"
+            >
+              发布
+              {publishBadge.count > 0 ? <span className="nav-badge">{publishBadge.count}</span> : null}
+            </button>
+            <button
               className={view === 'settings' ? 'on' : ''}
               aria-current={view === 'settings' ? 'page' : undefined}
               onClick={() => changeView('settings')}
@@ -2881,7 +2939,20 @@ function Shell() {
           </button>
         </header>
 
-        {view === 'table' ? (
+        {view === 'creative' ? (
+          <CreativeStudio
+            settings={appSettings}
+            stagePick={stagePick}
+            onToast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
+            }}
+            onProjectDataChanged={() => {
+              void reloadProjects()
+              setEpVersion((v) => v + 1)
+            }}
+          />
+        ) : view === 'table' ? (
           <ShotTable
             projectName={projectName}
             setProjectName={changeProject}
@@ -2931,6 +3002,17 @@ function Shell() {
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
+            }}
+          />
+        ) : view === 'publish' ? (
+          <PublishBoard
+            projectName={projectName}
+            epNo={epNo}
+            initialDeliverableId={publishTarget}
+            onConsumeInitial={() => setPublishTarget(null)}
+            onToast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3200)
             }}
           />
         ) : view === 'settings' ? (
@@ -3325,6 +3407,12 @@ function Shell() {
             assReady={assReady}
             epNo={epNo}
             onEpChange={setEpNo}
+            projectName={projectName}
+            onPublish={(deliverableId) => {
+              setPublishTarget(deliverableId)
+              setPreview(false)
+              changeView('publish')
+            }}
           />
         )}
 

@@ -178,6 +178,8 @@ export default function Preview({
   assReady,
   epNo,
   onEpChange,
+  projectName,
+  onPublish,
 }: {
   nodes: ShotNodeType[]
   edges?: ShotEdgeType[]
@@ -189,6 +191,10 @@ export default function Preview({
   /** 当前集：连播与导出都只处理这一集 */
   epNo: number
   onEpChange: (n: number) => void
+  /** 导出时带项目名，服务端据此落成片记录 */
+  projectName?: string
+  /** 导出成功后跳到发布台，并带上成片 id */
+  onPublish?: (deliverableId: string) => void
 }) {
   const epOf = useCallback((n: ShotNodeType) => Number(n.data.episode) || 1, [])
   const epList = useMemo(() => {
@@ -229,6 +235,8 @@ export default function Preview({
   const [expStartedAt, setExpStartedAt] = useState(0)
   const [expElapsed, setExpElapsed] = useState(0)
   const [expUrl, setExpUrl] = useState('')
+  /** 本次导出生成的成片 id；没有项目归属时为空 */
+  const [expDeliverableId, setExpDeliverableId] = useState('')
   const [expSrtUrl, setExpSrtUrl] = useState('')
   const [expMsg, setExpMsg] = useState('')
   const [expWarn, setExpWarn] = useState('')
@@ -578,9 +586,11 @@ export default function Preview({
         joins,
         staleTransitions: staleCount,
         captionStyle: CAPTION_STYLE,
+        ...(projectName ? { project: projectName, episode: epNo } : {}),
       })
       setExpUrl(result.url)
       setExpSrtUrl(result.srtUrl || '')
+      setExpDeliverableId(result.deliverable?.id || '')
       setExpMsg(
         `${result.shots} 镜` +
           (result.transitions ? ` · ${result.transitions} 转场` : '') +
@@ -853,6 +863,7 @@ export default function Preview({
               setExpRes(e.target.value as '480p' | '720p' | '1080p')
               setExpUrl('')
               setExpSrtUrl('')
+              setExpDeliverableId('')
               setExpMsg('')
               setExpWarn('')
             }}
@@ -889,6 +900,11 @@ export default function Preview({
               下载 SRT
             </a>
           )}
+          {expDeliverableId && onPublish ? (
+            <button type="button" className="btn" onClick={() => onPublish(expDeliverableId)}>
+              发布到平台 →
+            </button>
+          ) : null}
         </div>
 
         {expWarn && <div className="pv-msg warn">{expWarn}</div>}
