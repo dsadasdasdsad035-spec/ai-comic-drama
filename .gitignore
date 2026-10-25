@@ -56,3 +56,7 @@ creatives/
 # 发布：本机 Chrome profile（含登录态）与离线发布包
 .publish-profiles/
 public/publish-packages/
+
+# 部署：本机数据目录、DTK 源码与运行期密钥
+data/
+.dtk/

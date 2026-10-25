@@ -1,0 +1,41 @@
+# 构建上下文排除：镜像里不该出现本机数据、产物与密钥
+node_modules
+dist
+.git
+.gitignore
+.idea
+.DS_Store
+
+# 业务数据与产物（挂卷，不进镜像）
+projects/
+creatives/
+public/generated/
+public/videos/
+public/voices/
+public/exports/
+
+# 本地密钥与配置
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+keys.json
+
+# 本机工具与临时目录
+.zcode
+.video_agent
+.blender-jobs
+.scene-drafts
+.verify-*
+bench*.mjs
+*.log
+
+# 验证脚本与证据（不是运行时依赖）
+verify-*.mjs
+audit-ui.mjs
+qc.mjs
+shot-inspector.mjs
+openspec/changes/**/evidence/
+fixtures/
+tests/

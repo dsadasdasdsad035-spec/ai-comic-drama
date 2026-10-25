@@ -350,18 +350,64 @@ const dtkAdapter = {
       data?.video?.url,
       data?.video_url,
     ].filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))
-    const videoUrl = candidates[0] || ''
+    let videoUrl = candidates[0] || ''
     if (!videoUrl) throw new Error('DTK 未返回可下载的视频地址（可能是图集或解析不到视频流）')
 
     // CDN 直链不走 SSRF 白名单校验的业务语义：它是 DTK 解析出的外部地址，
     // 但仍是外部 URL，所以仍要挡内网，避免被诱导访问本机服务。
-    const u = await assertPublicUrl(videoUrl)
-    const vr = await fetch(u, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
-    if (!vr.ok) throw new Error(`从 CDN 下载视频失败 HTTP ${vr.status}（直链可能已过期，重试一次）`)
-    const bytes = Buffer.from(await vr.arrayBuffer())
-    if (bytes.length > MAX_SOURCE_BYTES) {
-      throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
+    //
+    // 抖音 CDN 会校验 Referer/UA：直接 fetch 常返回 403，而浏览器里能播。
+    // 这里按平台带最小必要头，并对多个候选直链依次重试——
+    // 签名 URL 有时效，primary 过期时备用地址往往还有效。
+    const platform = String(data?.platform || '').toLowerCase()
+    const referer = platform.includes('douyin') || platform.includes('tiktok')
+      ? 'https://www.douyin.com/'
+      : platform.includes('bilibili')
+        ? 'https://www.bilibili.com/'
+        : ''
+    const ua =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+    const cdnHeaders = {
+      'User-Agent': ua,
+      Accept: '*/*',
+      ...(referer ? { Referer: referer } : {}),
     }
+
+    const tried = []
+    let bytes = null
+    let usedUrl = ''
+    for (const candidate of [videoUrl, ...candidates.slice(1)].slice(0, 4)) {
+      try {
+        const u = await assertPublicUrl(candidate)
+        const vr = await fetch(u, { headers: cdnHeaders, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
+        if (!vr.ok) {
+          tried.push(`${vr.status}`)
+          continue
+        }
+        const buf = Buffer.from(await vr.arrayBuffer())
+        if (!buf.length) {
+          tried.push('empty')
+          continue
+        }
+        if (buf.length > MAX_SOURCE_BYTES) {
+          throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
+        }
+        bytes = buf
+        usedUrl = candidate
+        break
+      } catch (e) {
+        if (/超过 .* 上限/.test(String(e?.message))) throw e
+        tried.push(String(e?.message || e).slice(0, 40))
+      }
+    }
+    if (!bytes) {
+      throw new Error(
+        `从 CDN 下载视频失败（已尝试 ${tried.length} 个地址：${tried.join(' / ')}）。` +
+          '直链可能已过期，重新解析一次通常能拿到新的；若持续 403，说明该平台的 CDN 需要额外鉴权。',
+      )
+    }
+    videoUrl = usedUrl
     if (!bytes.length) throw new Error('DTK 返回的视频地址内容为空')
     const file = writeFileChunk(
       ctx.sourcesDir,
@@ -424,19 +470,26 @@ export function pickAdapter(input, config = {}) {
 
   // 平台链接：优先交给已启用的解析器；一个都没有就明确说清楚，
   // 不要退回直链——分享页返回的是 HTML，用户只会看到「链接返回的不是视频」而不知道原因。
+  //
+  // 顺序按「平台适配性」排，不是按实现顺序：抖音对 yt-dlp 需要新鲜 cookies，
+  // 实测即使带了 cookies 也常 403，而 DTK 配了 browser-rpc 就能稳定拿到。
+  // 所以抖音优先 DTK；B 站反过来，yt-dlp 不需要任何凭据。
+  const url_isDouyin = /(douyin\.com|iesdouyin\.com|tiktok\.com|vm\.tiktok\.com)/i.test(url)
   const isPlatform = /(douyin\.com|iesdouyin\.com|bilibili\.com|b23\.tv|tiktok\.com|vm\.tiktok\.com)/i.test(url)
   if (isPlatform) {
-    for (const id of ['ytdlp', 'dtk']) {
+    const order = url_isDouyin ? ['dtk', 'ytdlp'] : ['ytdlp', 'dtk']
+    for (const id of order) {
       const a = BY_ID.get(id)
       if (a.available(cfgFor(id, config)).ok) return a
     }
     const ytdlp = config.ingest?.ytdlp || {}
     const dtk = config.ingest?.dtk || {}
     const hints = []
-    if (!ytdlp.enabled) hints.push('启用 yt-dlp 并填写可执行文件路径')
+    if (!dtk.enabled) hints.push('部署 DTK 并填写服务地址与 API Key（抖音推荐）')
+    else hints.push('DTK 已启用但地址或 Key 不完整')
+    if (!ytdlp.enabled) hints.push('或启用 yt-dlp 并填写可执行文件路径（B 站够用）')
     else if (!ytdlp.bin) hints.push('yt-dlp 已启用但没填可执行文件路径')
     else hints.push(`yt-dlp 路径不可用（${ytdlp.bin}）`)
-    if (!dtk.enabled) hints.push('或部署 DTK 并填写服务地址')
     throw new Error(
       `这个平台链接需要解析器，当前没有可用的：${hints.join('；')}。` +
         '也可以把视频下载到本地后直接用「上传视频」。',

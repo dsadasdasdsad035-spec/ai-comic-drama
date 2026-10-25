@@ -33,7 +33,7 @@
   - **抖音 / TikTok 需要 cookies**：把「读取浏览器 cookies」设为 Chrome（或 Safari/Edge/Firefox），并确保该浏览器里登录过平台。yt-dlp 只在本机读取 cookie 库，不上传不落盘。抖音的 web detail 接口目前对未带新鲜 cookies 的请求返回 403，带 cookies 也可能被风控拦截——这种情况下用「上传视频」更稳。
   - **B 站**已验证可用（含封面探测）。
 - **DTK（Douyin_TikTok_Download_API）**：自建服务，抖音/TikTok 的实际可行路径。
-  - 部署：`git clone` → 写 `.env`（`DTK_SECRET_KEY`、Postgres/Redis 密码）→ `docker compose -p dtk -f docker/compose.yml up -d`。**抖音必须加 `--profile browser`**，否则身份池为空，解析会返回 `IDENTITY_POOL_EXHAUSTED`。
+  - 部署：直接跑 `./scripts/dtk-up.sh`（拉源码、生成密钥、起容器、初始化管理员、铸造 API Key 全自动）。手工等价命令见 [`docs/deploy.md`](deploy.md)。**抖音必须加 `--profile browser`**，否则身份池为空，解析会返回 `IDENTITY_POOL_EXHAUSTED`。
   - 首次启动后从 `docker logs dtk-api-1` 取 setup token，在 `/setup?token=...` 建管理员，再到控制台创建 API Key（需要 `douyin:read` 等 scope）。
   - 本仓库只调两个稳定端点：`POST /api/v1/parse?wait=30` 与 `GET /api/v1/tasks/{id}`，从 `data.media.video.url` 取 CDN 直链，再由本机下载。**不走 `downloads` 端点**——那个只把文件存在 DTK 自己磁盘上，不从 API 回传。
   - 实测：抖音链接下载 147MB / 36 分钟 / 1440×1080 / 有音轨，作者与标题均正确。
@@ -122,3 +122,14 @@ node verify-creative-settings.mjs           # 设置页与可选适配器
 node verify-creative-e2e.mjs                # 上传→反推→导出→晋升 全流程
 node verify-skills-unit.mjs                 # 含 creative-contract / creative-tools 单测
 ```
+
+## 容器部署
+
+应用与 DTK 都能容器化，一条命令起全栈：
+
+```bash
+cp deploy/.env.example .env
+./scripts/deploy-up.sh
+```
+
+详见 [`docs/deploy.md`](deploy.md)。容器里已验证：上传 → probe → 封面 → 切分 → 抽帧 → DTK 抖音抓取全链路。

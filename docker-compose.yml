@@ -1,0 +1,67 @@
+# 分镜画布 · 应用编排
+#
+# 只起应用本体；抖音/TikTok 的下载能力由 DTK 提供，它是独立仓库、独立 compose
+# 项目（见 deploy/README.md 与 scripts/dtk-up.sh）。这样做的原因：
+# DTK 的 compose 刻意把 port 只绑到 127.0.0.1，并依赖它自己的 .env 与迁移流程，
+# 塞进本文件会破坏它原有的安全假设。
+#
+# 用法：
+#   cp deploy/.env.example .env
+#   docker compose up -d --build
+#
+# 或直接用一键脚本：./scripts/deploy-up.sh
+
+name: storyboard
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: storyboard-canvas:local
+    restart: unless-stopped
+    ports:
+      - "${APP_BIND_ADDR:-127.0.0.1}:${APP_PORT:-5273}:5273"
+    environment:
+      # 项目库与创意源视频都在这里（creatives 是 projects 的子目录）
+      SB_PROJECTS_DIR: /data/projects
+      # 渠道 Key：留空则该渠道不可用，不会串到别的渠道
+      ARK_API_KEY: ${ARK_API_KEY:-}
+      ARK_AGENT_PLAN_API_KEY: ${ARK_AGENT_PLAN_API_KEY:-}
+      APIB_API_KEY: ${APIB_API_KEY:-}
+      APIMART_API_KEY: ${APIMART_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      VOLC_TTS_API_KEY: ${VOLC_TTS_API_KEY:-}
+      SYNC_LABS_API_KEY: ${SYNC_LABS_API_KEY:-}
+      # 创意摄取：DTK 优先（抖音），yt-dlp 兜底（B 站/直链）
+      DTK_BASE_URL: ${DTK_BASE_URL:-}
+      DTK_API_KEY: ${DTK_API_KEY:-}
+      YTDLP_BIN: /usr/local/bin/yt-dlp
+      YTDLP_COOKIES_FROM_BROWSER: ${YTDLP_COOKIES_FROM_BROWSER:-}
+      # 可选：Blender 只在本机装了才可用；容器里默认关闭 3D 渲染
+      BLENDER_BIN: ${BLENDER_BIN:-}
+      # 出图/出片超时（秒级任务用不到，但慢渠道可调）
+      SEEDREAM_TIMEOUT_MS: ${SEEDREAM_TIMEOUT_MS:-180000}
+    volumes:
+      # 业务数据：SQLite + 项目媒体 + 创意源视频与证据帧
+      - ./data/projects:/data/projects
+      # 可重生成的产物；单独挂出来便于清理
+      - ./data/media/generated:/app/public/generated
+      - ./data/media/videos:/app/public/videos
+      - ./data/media/voices:/app/public/voices
+      - ./data/media/exports:/app/public/exports
+    # 让容器能用 host.docker.internal 访问宿主机上跑的 DTK
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5273/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

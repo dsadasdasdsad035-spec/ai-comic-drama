@@ -156,7 +156,12 @@ import {
   ingestSource as ingestCreativeSource,
   listAdapters as listIngestAdapters,
 } from './server/ingest.mjs'
-import { normalizeCreativeSettings, redactCreativeSettings, type CreativeSettings } from './src/creative/settings'
+import {
+  applyCreativeEnvDefaults,
+  normalizeCreativeSettings,
+  redactCreativeSettings,
+  type CreativeSettings,
+} from './src/creative/settings'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -1400,14 +1405,16 @@ async function listVoices(modelKey?: string, refresh = false): Promise<VoiceCach
 
 // ---------- animatic 合成（ffmpeg） ----------
 
-const FFMPEG = '/opt/homebrew/bin/ffmpeg'
-const FFPROBE = '/opt/homebrew/bin/ffprobe'
-/** 带 libass 的完整版优先（keg-only，不会顶掉系统 ffmpeg） */
+const FFMPEG = process.env.FFMPEG_PATH || '/opt/homebrew/bin/ffmpeg'
+const FFPROBE = process.env.FFPROBE_PATH || '/opt/homebrew/bin/ffprobe'
+/** 带 libass 的完整版优先（keg-only，不会顶掉系统 ffmpeg）；部署环境用环境变量覆盖 */
 const FFMPEG_CANDIDATES = [
+  process.env.FFMPEG_PATH,
   '/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg',
   '/opt/homebrew/bin/ffmpeg',
   '/usr/local/bin/ffmpeg',
-]
+  '/usr/bin/ffmpeg',
+].filter((x): x is string => Boolean(x))
 
 /** 运行时探测结果：哪条二进制、支不支持 subtitles 滤镜、有没有可用 CJK 字体 */
 let FF: { bin: string; probe: string; ass: boolean; font?: string } | null = null
@@ -2637,7 +2644,8 @@ function seedreamProxy(): Plugin {
           try {
             dbPath(rootDir)
             const settings = getAppSettings()
-            const creative = normalizeCreativeSettings(settings.creative)
+            // 环境变量兜底：容器部署时地址与凭据从环境注入
+            const creative = applyCreativeEnvDefaults(normalizeCreativeSettings(settings.creative), process.env).settings
 
             if (url === '/api/creative/adapters') {
               res.end(

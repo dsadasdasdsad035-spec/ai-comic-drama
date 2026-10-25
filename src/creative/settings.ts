@@ -132,6 +132,48 @@ export function creativeSettings(input: { creative?: unknown } | null | undefine
 }
 
 /**
+ * 环境变量兜底：容器部署时 DTK / yt-dlp 的地址与凭据从环境注入，
+ * 不必手工在设置页填一遍。设置库里的值优先，环境只补空位。
+ */
+export function applyCreativeEnvDefaults(
+  s: CreativeSettings,
+  env: Record<string, string | undefined> = {},
+): { settings: CreativeSettings; fromEnv: { dtk: boolean; ytdlp: boolean } } {
+  const base = normalizeCreativeSettings(s)
+  const ytdlp = base.ingest?.ytdlp || {}
+  const dtk = base.ingest?.dtk || {}
+
+  const envDtkUrl = str(env.DTK_BASE_URL)
+  const envDtkKey = str(env.DTK_API_KEY)
+  const envYtdlpBin = str(env.YTDLP_BIN)
+  const envYtdlpCookies = str(env.YTDLP_COOKIES_FROM_BROWSER)
+
+  const dtkFromEnv = !dtk.baseUrl && (Boolean(envDtkUrl) || Boolean(envDtkKey))
+  const ytdlpFromEnv = !ytdlp.bin && Boolean(envYtdlpBin)
+
+  return {
+    settings: normalizeCreativeSettings({
+      ...base,
+      ingest: {
+        ytdlp: {
+          ...ytdlp,
+          enabled: ytdlp.enabled || ytdlpFromEnv,
+          bin: ytdlp.bin || envYtdlpBin,
+          cookiesFromBrowser: ytdlp.cookiesFromBrowser || envYtdlpCookies,
+        },
+        dtk: {
+          ...dtk,
+          enabled: dtk.enabled || dtkFromEnv,
+          baseUrl: dtk.baseUrl || envDtkUrl,
+          apiKey: dtk.apiKey || envDtkKey,
+        },
+      },
+    }),
+    fromEnv: { dtk: dtkFromEnv, ytdlp: ytdlpFromEnv },
+  }
+}
+
+/**
  * 给前端展示的配置：DTK Key 只回报「有没有」，不回传原文。
  * 与渠道 Key 的处理保持一致，避免把密钥写进页面或日志。
  */
