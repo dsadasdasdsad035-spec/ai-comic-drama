@@ -237,6 +237,17 @@ try {
   const headerText = await page.locator('[data-creative-header]').innerText()
   check('恢复预置会话', headerText.includes('反推验收'), headerText.slice(0, 80))
   check('源视频卡已渲染', (await page.locator('[data-creative-card="source"]').count()) === 1)
+  // 产物在对话右侧的独立栏，不在消息上方横带
+  const railPlacement = await page.evaluate(() => {
+    const rail = document.querySelector('[data-creative-artifacts]')
+    const conv = document.querySelector('.creative-conversation')
+    const card = document.querySelector('[data-creative-artifacts] [data-creative-card="source"]')
+    if (!rail || !conv || !card) return null
+    const rr = rail.getBoundingClientRect()
+    const cr = conv.getBoundingClientRect()
+    return { railLeftOfConv: rr.left >= cr.right - 1, railW: Math.round(rr.width), inRail: true }
+  })
+  check('产物显示在对话右侧而非上方横带', Boolean(railPlacement?.inRail && railPlacement.railLeftOfConv), JSON.stringify(railPlacement))
 
   // 跑一轮反推（mock 模型驱动工具）
   const input = page.getByLabel('创意聊天输入')

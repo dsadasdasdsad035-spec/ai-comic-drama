@@ -24,7 +24,8 @@ import { CreativeHeader } from './CreativeHeader'
 import { CapabilityTray } from './CapabilityTray'
 import { CreativeComposerBar } from './CreativeComposerBar'
 import { CreativeEmpty } from './CreativeEmpty'
-import { CreativeCards, type CostPrompt } from './CreativeMessageParts'
+import type { CostPrompt } from './CreativeMessageParts'
+import { CreativeArtifacts } from './CreativeArtifacts'
 import { CostConfirmDialog } from './CostConfirmDialog'
 import { PromoteDialog } from './PromoteDialog'
 import { bindCreativeTools, createCreativeToolSet, creativeModelFor, type CostRequest, type CreativeSnapshot } from './tools'
@@ -692,7 +693,15 @@ export default function CreativeStudio({ settings, stagePick, onToast, onProject
             modelKey={modelKey}
             modelLabel={
               modelKey
-                ? settings?.models?.find((m) => m.key === modelKey)?.model || modelKey
+                ? (() => {
+                    const m = settings?.models?.find((x) => x.key === modelKey)
+                    return m ? `${m.label} · ${m.model}` : modelKey
+                  })()
+                : '未绑定文本模型'
+            }
+            modelShort={
+              modelKey
+                ? settings?.models?.find((x) => x.key === modelKey)?.model || modelKey
                 : '未绑定文本模型'
             }
             skillId={hostSkill?.id || MODE_SKILL[mode]}
@@ -743,60 +752,65 @@ export default function CreativeStudio({ settings, stagePick, onToast, onProject
                 </div>
               ) : null}
               <ChatThreadShell runtime={runtime} running={running} toolUis={<CreativeToolUis />}>
-                <CreativeCards
-                  session={session}
-                  generated={generatedCards}
-                  busy={Boolean(busyAction) || running}
-                  busyAction={busyAction}
-                  onSplit={(id) => void runSplit(id)}
-                  onFrames={(id) => void runFrames(id)}
-                  onCopy={(t) => void copyPack(t)}
-                  onExport={(a) => void exportPack(a)}
-                  onPromote={(a) => setPromoteArtifact(a)}
-                />
-                <ChatThreadBody
-                  UserMessage={UserMessage}
-                  AssistantMessage={AssistantMessage}
-                  empty={
-                    <CreativeEmpty
-                      mode={mode}
-                      loading={loading}
-                      hasSource={Boolean(session?.sources.length)}
-                      onUpload={(data, name) => void ingest({ data, name })}
-                      onUrl={(url) => void ingest({ url })}
+                <div className="creative-body">
+                  <div className="creative-conversation">
+                    <ChatThreadBody
+                      UserMessage={UserMessage}
+                      AssistantMessage={AssistantMessage}
+                      empty={
+                        <CreativeEmpty
+                          mode={mode}
+                          loading={loading}
+                          hasSource={Boolean(session?.sources.length)}
+                          onUpload={(data, name) => void ingest({ data, name })}
+                        />
+                      }
+                      emptyAlign="bottom"
+                      placeholder={
+                        mode === 'plan'
+                          ? '说说你想拍什么，例如：15 秒咖啡广告，前三秒要抓人…'
+                          : '粘一个抖音/B 站/TikTok 链接，或上传视频后说「反推提示词」…'
+                      }
+                      inputLabel="创意聊天输入"
+                      suggestions={
+                        mode === 'plan'
+                          ? ['给我三个 15 秒短剧方向', '把这个想法拆成 8 个镜头', '前三秒怎么更抓人']
+                          : ['反推提示词', '逐镜分析', '只重写第 2、5 镜']
+                      }
+                      disabled={!canSend}
+                      hint={
+                        canSend
+                          ? 'Enter 发送 · Shift+Enter 换行 · 付费调用会先确认'
+                          : skillError || '正在准备会话…'
+                      }
+                      cancelLabel="停止"
                     />
-                  }
-                  emptyAlign="bottom"
-                  placeholder={
-                    mode === 'plan'
-                      ? '说说你想拍什么，例如：15 秒咖啡广告，前三秒要抓人…'
-                      : '粘一个抖音/B 站/TikTok 链接，或上传视频后说「反推提示词」…'
-                  }
-                  inputLabel="创意聊天输入"
-                  suggestions={
-                    mode === 'plan'
-                      ? ['给我三个 15 秒短剧方向', '把这个想法拆成 8 个镜头', '前三秒怎么更抓人']
-                      : ['反推提示词', '逐镜分析', '只重写第 2、5 镜']
-                  }
-                  disabled={!canSend}
-                  hint={
-                    canSend
-                      ? 'Enter 发送 · Shift+Enter 换行 · 付费调用会先确认'
-                      : skillError || '正在准备会话…'
-                  }
-                  cancelLabel="停止"
-                />
+                    {mode !== 'plan' ? (
+                      <CreativeComposerBar
+                        session={session}
+                        busy={busyAction}
+                        disabled={running || !session}
+                        onUrl={(url) => void ingest({ url })}
+                        onUpload={(data, name) => void ingest({ data, name })}
+                        onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
+                        onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}
+                      />
+                    ) : null}
+                  </div>
+                  <CreativeArtifacts
+                    session={session}
+                    generated={generatedCards}
+                    busy={Boolean(busyAction) || running}
+                    busyAction={busyAction}
+                    onSplit={(id) => void runSplit(id)}
+                    onFrames={(id) => void runFrames(id)}
+                    onCopy={(t) => void copyPack(t)}
+                    onExport={(a) => exportPack(a)}
+                    onPromote={(a) => setPromoteArtifact(a)}
+                  />
+                </div>
               </ChatThreadShell>
-              <CreativeComposerBar
-                mode={mode}
-                session={session}
-                busy={busyAction}
-                disabled={running || !session}
-                onUrl={(url) => void ingest({ url })}
-                onUpload={(data, name) => void ingest({ data, name })}
-                onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
-                onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}
-              />
+
             </>
           )}
         </div>

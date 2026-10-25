@@ -1,37 +1,33 @@
 import { useRef } from 'react'
 import type { CreativeMode } from './sessionStore'
 
-const MODE_COPY: Record<CreativeMode, { title: string; body: string; tips: string[] }> = {
+const MODE_COPY: Record<CreativeMode, { title: string; body: string }> = {
   plan: {
     title: '先说想法，不用先建项目',
     body: '创意会话独立于项目：聊到能拍了再晋升。这里只写对话与产物，不会改动任何项目数据。',
-    tips: ['15 秒咖啡广告，前三秒要抓人', '把「雨夜追捕」拆成 8 个镜头', '给我三个不同结局'],
   },
   reverse: {
     title: '粘链接或上传视频，逆推出提示词',
     body: '会依次做：摄取 → 探测 → 切分镜头 → 抽证据帧 → 逐镜反推。分析会产生视觉模型费用，开始前会确认。',
-    tips: ['抖音短视频 → 逐镜提示词', '只重写第 2、5 镜', '把风格统一成冷青霓虹'],
   },
   remake: {
     title: '用提示词包生成复刻片段',
     body: '先有提示词包再复刻。真实视频生成每次都要确认费用，不会自动扣费。',
-    tips: ['用第 1 镜生成 4 秒片段', '换一个模型重试第 3 镜', '对比原片与复刻的差异'],
   },
 }
 
-/** 空态：说明边界 + 起点，上传与链接入口也在这里 */
+/** 空态：说明边界 + 起点，上传与链接入口也在这里。
+ *  示例只在输入框上方出现（可点击、只填入不发送），这里不再重复一组静态列表。 */
 export function CreativeEmpty({
   mode,
   loading,
   hasSource,
   onUpload,
-  onUrl,
 }: {
   mode: CreativeMode
   loading: boolean
   hasSource: boolean
   onUpload: (data: string, name: string) => void
-  onUrl: (url: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const copy = MODE_COPY[mode]
@@ -74,14 +70,7 @@ export function CreativeEmpty({
         </div>
       ) : null}
       {!loading ? (
-        <>
-          <p className="creative-empty-hint">点下面的示例只填入输入框，不会直接发送。</p>
-          <ul className="creative-empty-tips">
-            {copy.tips.map((tip) => (
-              <li key={tip}>{tip}</li>
-            ))}
-          </ul>
-        </>
+        <p className="creative-empty-hint">点下面的示例只填入输入框，不会直接发送。</p>
       ) : null}
     </div>
   )

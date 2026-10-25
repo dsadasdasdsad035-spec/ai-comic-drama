@@ -2842,18 +2842,22 @@ function Shell() {
             <span className="brand-sub">React Flow × Konva</span>
           </div>
 
-          {/* 创意会话不绑定项目：这两个选择器只在项目视图出现 */}
-          {view !== 'creative' ? (
-            <>
-              <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
-              <EpPicker
-                projectName={projectName}
-                epNo={epNo}
-                setEpNo={setEpNo}
-                version={epVersion}
-              />
-            </>
-          ) : null}
+          {/* 创意会话不绑定项目：选择器在该视图隐藏，但保留占位几何，
+              否则导航会在进出创意时整体左移。slot-hidden 用 visibility + inert 语义
+              让它不可见、不可聚焦、不被朗读，同时宽度照旧。 */}
+          <div
+            className={`topbar-project-slot ${view === 'creative' ? 'slot-hidden' : ''}`}
+            aria-hidden={view === 'creative'}
+            {...(view === 'creative' ? { inert: '' as unknown as boolean } : {})}
+          >
+            <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
+            <EpPicker
+              projectName={projectName}
+              epNo={epNo}
+              setEpNo={setEpNo}
+              version={epVersion}
+            />
+          </div>
 
           <div className="viewtabs" role="navigation" aria-label="工作台视图">
             <button

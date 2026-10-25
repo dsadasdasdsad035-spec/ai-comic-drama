@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { CreativeMode, CreativeSessionSummary } from './sessionStore'
+import type { CreativeSessionSummary } from './sessionStore'
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
@@ -14,7 +14,6 @@ function readAsDataUrl(file: File): Promise<string> {
 
 /** 输入区下方的媒体条：粘链接、上传视频、一键切分/抽帧 */
 export function CreativeComposerBar({
-  mode,
   session,
   busy,
   disabled,
@@ -23,7 +22,6 @@ export function CreativeComposerBar({
   onSplit,
   onFrames,
 }: {
-  mode: CreativeMode
   session: CreativeSessionSummary | null
   busy: string
   disabled: boolean
@@ -126,9 +124,6 @@ export function CreativeComposerBar({
         >
           {busy === 'frames' ? '抽帧中…' : '抽帧'}
         </button>
-        <span className="rounded bg-muted px-1 text-[9px] text-muted-foreground" title="当前模式">
-          {mode === 'plan' ? '策划' : mode === 'reverse' ? '反推' : '复刻'}
-        </span>
       </div>
     </div>
   )

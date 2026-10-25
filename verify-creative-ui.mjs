@@ -125,8 +125,30 @@ try {
   await page.getByRole('button', { name: '创意', exact: true }).click()
   await page.locator('[data-creative-studio]').waitFor({ timeout: 15000 })
   check('创意视图已打开', true)
-  check('创意视图隐藏项目选择器', (await page.locator('.topbar-project').count()) === 0)
-  check('创意视图隐藏集选择器', (await page.locator('.topbar .ep-picker, .topbar [aria-label*="集"]').count()) === 0)
+  // 选择器保留占位几何以稳住导航位置，但必须不可见、不可点、不进可访问树
+  const slotState = await page.evaluate(() => {
+    const slot = document.querySelector('.topbar-project-slot')
+    if (!slot) return { present: false }
+    const cs = getComputedStyle(slot)
+    return {
+      present: true,
+      visibility: cs.visibility,
+      pointerEvents: cs.pointerEvents,
+      ariaHidden: slot.getAttribute('aria-hidden'),
+      hasInert: slot.hasAttribute('inert'),
+      width: Math.round(slot.getBoundingClientRect().width),
+    }
+  })
+  check(
+    '创意视图隐藏项目与集选择器',
+    slotState.present &&
+      slotState.visibility === 'hidden' &&
+      slotState.pointerEvents === 'none' &&
+      slotState.ariaHidden === 'true' &&
+      slotState.hasInert,
+    JSON.stringify(slotState),
+  )
+  const navXCreative = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
   check('创意导航标记为当前', (await page.getByRole('button', { name: '创意', exact: true }).getAttribute('aria-current')) === 'page')
 
   // 3) 会话列表与自动创建
@@ -205,6 +227,58 @@ try {
   const hasPromote = await page.locator('[data-promote-dialog]').count()
   check('默认不弹成本确认', hasCost === 0)
   check('默认不弹晋升确认', hasPromote === 0)
+
+  // 11) 导航位置稳定：进出创意不位移
+  const navNow = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  await page.getByRole('button', { name: '镜头表', exact: true }).click()
+  await page.waitForTimeout(900)
+  const navProject = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  await page.getByRole('button', { name: '创意', exact: true }).click()
+  await page.waitForTimeout(900)
+  const navBack = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  check(
+    '进出创意导航不位移',
+    Math.abs(navProject - navBack) <= 2,
+    `${navProject} / ${navBack}`,
+  )
+
+  // 12) 空态文字对比度达标（日间）
+  await page.locator('[data-creative-action="new-session"]').click()
+  await page.waitForTimeout(1200)
+  const contrastInfo = await page.evaluate(() => {
+    const parse = (s) => (s.match(/[\d.]+/g) || []).slice(0, 3).map(Number)
+    const lin = (c) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    const lum = ([r, g, b]) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+    const ratio = (a, b) => {
+      const la = lum(a), lb = lum(b)
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+    }
+    const bgOf = (el) => {
+      let cur = el
+      let bg = 'rgba(0, 0, 0, 0)'
+      while (cur && (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent')) {
+        bg = getComputedStyle(cur).backgroundColor
+        cur = cur.parentElement
+      }
+      return bg
+    }
+    const root = document.querySelector('[data-creative-empty]')
+    if (!root) return null
+    const out = []
+    for (const el of root.querySelectorAll('h3, p')) {
+      if (!el.textContent.trim()) continue
+      out.push({
+        tag: el.tagName,
+        ratio: +ratio(parse(getComputedStyle(el).color), parse(bgOf(el))).toFixed(2),
+      })
+    }
+    return { items: out, min: Math.min(...out.map((o) => o.ratio)) }
+  })
+  check(
+    '空态文字对比度 ≥ 4.5:1',
+    Boolean(contrastInfo) && contrastInfo.min >= 4.5,
+    JSON.stringify(contrastInfo),
+  )
 
   check('页面无脚本错误', errors.length === 0, errors.slice(0, 200).join(' | '))
 } finally {

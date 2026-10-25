@@ -15,6 +15,7 @@ export function CreativeHeader({
   sessionTitle,
   modelKey,
   modelLabel,
+  modelShort,
   skillId,
   skillError,
   running,
@@ -28,7 +29,10 @@ export function CreativeHeader({
   onModeChange: (mode: CreativeMode) => void
   sessionTitle: string
   modelKey: string
+  /** 完整模型标签，放 title 供悬停查看 */
   modelLabel: string
+  /** 头部只显示短名（模型 id），完整标签在 title 里 */
+  modelShort: string
   skillId: string
   skillError: string
   running: boolean
@@ -61,27 +65,34 @@ export function CreativeHeader({
               )}
               title={running ? '运行中' : skillError ? '技能不可用' : '就绪'}
             />
-            {running ? <span className="text-[10px] text-primary">正在处理…</span> : null}
+            {running ? <span className="shrink-0 text-[10px] text-primary">正在处理…</span> : null}
           </div>
-          <div data-creative-context className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[10px] text-muted-foreground">
-            <span className={cn(!modelKey && 'text-destructive')} title="文本模型决定对话主循环">
-              模型 {modelLabel}
+          <div data-creative-context className="creative-header-meta">
+            <span
+              className={cn('creative-meta-item', !modelKey && 'text-destructive')}
+              title={`文本模型决定对话主循环：${modelLabel}`}
+            >
+              模型 {modelShort}
             </span>
-            <span aria-hidden="true">·</span>
-            <span title="宿主技能随模式切换">技能 {skillId}</span>
-            <span aria-hidden="true">·</span>
-            <span>
+            <span aria-hidden="true" className="creative-meta-sep">·</span>
+            <span className="creative-meta-item" title="宿主技能随模式切换">
+              技能 {skillId}
+            </span>
+            <span aria-hidden="true" className="creative-meta-sep">·</span>
+            <span className="creative-meta-item">
               源 {sources} · 产物 {artifacts}
             </span>
             {skillError ? (
               <>
-                <span aria-hidden="true">·</span>
-                <span className="text-destructive">{skillError}</span>
+                <span aria-hidden="true" className="creative-meta-sep">·</span>
+                <span className="creative-meta-item text-destructive" title={skillError}>
+                  {skillError}
+                </span>
               </>
             ) : null}
             <button
               type="button"
-              className="ml-1 rounded border border-border px-1 text-[9px] hover:bg-muted"
+              className="creative-meta-item creative-meta-btn"
               onClick={onRefresh}
               title="重新读取会话的源与产物"
             >

@@ -1553,6 +1553,19 @@ body.si-resizing {
   font-family: var(--font-mono);
 }
 
+/* 项目 + 集的占位槽：创意视图隐藏内容但保留几何，导航因此不位移 */
+.topbar-project-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.topbar-project-slot.slot-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .topbar-project {
   display: flex;
   align-items: center;
@@ -10310,7 +10323,7 @@ body,
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 6px;
+  padding: 4px 4px 4px 6px;
   border-radius: var(--r-1, 4px);
   color: var(--text-2, var(--text));
 }
@@ -10322,6 +10335,124 @@ body,
 .creative-list-item.on {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text);
+}
+
+/* 两行：标题 + 模式·相对时间。操作收进行尾 ⋯，默认不可见但保留占位。 */
+.creative-list-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.creative-list-title {
+  width: 100%;
+  min-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+}
+
+.creative-list-sub {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.creative-list-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text);
+  padding: 1px 4px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+}
+
+.creative-list-more {
+  position: relative;
+  flex: 0 0 auto;
+  width: 20px;
+}
+
+.creative-list-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.creative-list-item:hover .creative-list-more-btn,
+.creative-list-item:focus-within .creative-list-more-btn,
+.creative-list-more-btn[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.creative-list-more-btn:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
+.creative-list-more-btn:focus-visible {
+  opacity: 1;
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.creative-list-menu {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  top: 22px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+}
+
+.creative-list-menu button {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.creative-list-menu button:hover {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+.creative-list-menu button.danger {
+  color: var(--danger);
 }
 
 .creative-list-toggle {
@@ -10359,6 +10490,55 @@ body,
   gap: 10px;
 }
 
+/* 次要信息只占一行：溢出省略，不换行挤压对话区 */
+.creative-header-meta {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.creative-meta-item {
+  flex: 0 0 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 只有可能很长的那几项允许被压缩 */
+.creative-header-meta > .creative-meta-item:first-child,
+.creative-header-meta > .creative-meta-item:nth-child(3) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.creative-meta-sep {
+  flex: 0 0 auto;
+  color: var(--line-2);
+}
+
+.creative-meta-btn {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.creative-meta-btn:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
 .creative-modes {
   display: flex;
   gap: 2px;
@@ -10383,13 +10563,112 @@ body,
   color: var(--accent);
 }
 
-.creative-cards {
+/* 三列骨架：会话列表 | 对话 | 产物栏。
+   ChatRoot 是纵向 flex，creative-body 必须是它唯一的横向子容器。 */
+.creative-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.creative-conversation {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 阅读宽度：只在创意视图里收窄，不动公共聊天组件（其余七个工作台保持原宽） */
+.creative-conversation [data-chat-message],
+.creative-conversation [data-chat-composer] > * {
+  max-width: 640px;
+  margin-inline: auto;
+}
+
+.creative-conversation [data-chat-viewport] {
+  padding-inline: max(10px, calc((100% - 640px) / 2));
+}
+
+.creative-conversation [data-chat-empty],
+.creative-conversation .creative-empty {
+  max-width: 640px;
+  margin-inline: auto;
+}
+
+.creative-artifacts {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 320px;
+  width: 320px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.creative-artifacts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   flex: 0 0 auto;
-  max-height: 42%;
-  overflow-y: auto;
-  padding: 0 10px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 92%, var(--line));
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.creative-artifacts-toggle,
+.creative-artifacts-reopen {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.creative-artifacts-toggle:hover,
+.creative-artifacts-reopen:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.creative-artifacts-reopen {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+}
+
+.creative-artifacts-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 10px;
+}
+
+/* 320px 栏里卡片头放不下一行：标题与元信息换行，元信息允许中断 */
+.creative-artifacts [data-creative-card] > div:first-child {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.creative-artifacts [data-creative-card] {
+  overflow-wrap: anywhere;
+}
+
+.creative-cards {
+  padding: 0;
+  background: transparent;
 }
 
 .creative-cards:empty {
@@ -10406,6 +10685,9 @@ body,
   background: var(--chrome-2, var(--chrome-1));
 }
 
+/* 创意视图有规则渲染在 .chat-ui 子树内。那个作用域把 --muted 重定义成了表面色
+   （var(--bg-2)），所以这里的文字色只能用 --text / --text-2 / --muted-foreground，
+   否则会解析成背景色。 */
 .creative-empty {
   padding: 12px 14px 16px;
 }
@@ -10414,13 +10696,14 @@ body,
   margin: 0 0 4px;
   font-size: 13px;
   font-weight: 600;
+  color: var(--text);
 }
 
 .creative-empty p {
   margin: 0 0 8px;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--muted);
+  color: var(--text-2, var(--text));
 }
 
 .creative-empty-actions {
@@ -10433,14 +10716,7 @@ body,
 .creative-empty-hint {
   margin-bottom: 4px !important;
   font-size: 10px !important;
-}
-
-.creative-empty-tips {
-  margin: 0;
-  padding-left: 16px;
-  font-size: 11px;
-  line-height: 1.7;
-  color: var(--text-2, var(--text));
+  color: var(--text-2, var(--text)) !important;
 }
 
 .creative-dialog-scrim {
@@ -10557,6 +10833,20 @@ body,
   margin-top: 10px;
 }
 
+@media (max-width: 1280px) {
+  /* 内容列不够宽时产物栏改覆盖抽屉，对话列始终保留可读宽度 */
+  .creative-artifacts {
+    position: absolute;
+    z-index: 8;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    flex: 0 0 340px;
+    box-shadow: var(--shadow-pop);
+  }
+}
+
 @media (max-width: 980px) {
   .creative-list {
     position: fixed;
@@ -10581,6 +10871,10 @@ body,
   }
   .creative-list-toggle {
     display: inline-flex;
+  }
+  .creative-artifacts {
+    width: min(340px, 88vw);
+    flex-basis: auto;
   }
 }
 
