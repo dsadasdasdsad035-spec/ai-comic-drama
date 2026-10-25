@@ -32,7 +32,11 @@
 - **yt-dlp**：设置页「创意 → 下载与摄取」填可执行文件路径并启用（`brew install yt-dlp`，路径通常是 `/opt/homebrew/bin/yt-dlp`）。未安装时该适配器显示不可用并给出原因；启用时若路径为空会被拦下，不允许保存出「开着但不可用」的状态。
   - **抖音 / TikTok 需要 cookies**：把「读取浏览器 cookies」设为 Chrome（或 Safari/Edge/Firefox），并确保该浏览器里登录过平台。yt-dlp 只在本机读取 cookie 库，不上传不落盘。抖音的 web detail 接口目前对未带新鲜 cookies 的请求返回 403，带 cookies 也可能被风控拦截——这种情况下用「上传视频」更稳。
   - **B 站**已验证可用（含封面探测）。
-- **DTK（Douyin_TikTok_Download_API）**：填服务地址与 Key。只用到 `parse_url` 与 `download_media` 两个端点；服务需自行部署（Postgres + Redis + 浏览器容器）。
+- **DTK（Douyin_TikTok_Download_API）**：自建服务，抖音/TikTok 的实际可行路径。
+  - 部署：`git clone` → 写 `.env`（`DTK_SECRET_KEY`、Postgres/Redis 密码）→ `docker compose -p dtk -f docker/compose.yml up -d`。**抖音必须加 `--profile browser`**，否则身份池为空，解析会返回 `IDENTITY_POOL_EXHAUSTED`。
+  - 首次启动后从 `docker logs dtk-api-1` 取 setup token，在 `/setup?token=...` 建管理员，再到控制台创建 API Key（需要 `douyin:read` 等 scope）。
+  - 本仓库只调两个稳定端点：`POST /api/v1/parse?wait=30` 与 `GET /api/v1/tasks/{id}`，从 `data.media.video.url` 取 CDN 直链，再由本机下载。**不走 `downloads` 端点**——那个只把文件存在 DTK 自己磁盘上，不从 API 回传。
+  - 实测：抖音链接下载 147MB / 36 分钟 / 1440×1080 / 有音轨，作者与标题均正确。
 
 已启用的适配器失败时**不会**静默回退到直链：避免你以为用的是 A，实际跑的是 B。
 
@@ -95,7 +99,9 @@
 | 摄取报「不允许访问本机/内网地址」 | 直链或解析器返回了私网地址，被 SSRF 防护拦下；改用公网链接或本地上传 |
 | 平台链接提示「这个平台链接需要解析器」 | 没有可用解析器。装 yt-dlp 并填路径，或部署 DTK；也可直接上传视频 |
 | 平台链接提示「需要浏览器 cookies」 | 抖音/TikTok 反爬。设置页把「读取浏览器 cookies」设为 chrome，并确保浏览器登录过该平台 |
-| 抖音仍 403（已带 cookies） | yt-dlp 当前版本对抖音 web 接口的已知限制；改用「上传视频」或部署 DTK |
+| 抖音仍 403（已带 cookies） | yt-dlp 当前版本对抖音 web 接口的已知限制；改用 DTK（已验证可用）或「上传视频」 |
+| DTK 返回 `IDENTITY_POOL_EXHAUSTED` | 没启动 browser 容器。用 `--profile browser` 重启，然后再调一次「铸造身份」 |
+| DTK 返回 `INVALID_PARAM: wait max 30` | `?wait=` 上限是 30 秒，别传更大值 |
 | 反推报「没有可用的视觉模型」 | 设置页「创意 → 能力绑定」或「默认路由」里绑定 vision 模型 |
 | 切分结果为 1 镜 | 画面变化不明显；调低阈值（更敏感）后重新切分 |
 | 抽帧报某镜失败 | 该时点落在末帧之后；重跑会跳过已有帧，或在界面上对该镜单独重抽 |

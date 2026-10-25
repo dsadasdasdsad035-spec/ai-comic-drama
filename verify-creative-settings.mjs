@@ -30,31 +30,56 @@ try {
   /* 空闲 */
 }
 
-// 桩 DTK 服务：只实现 parse_url 与 download_media，用来验证请求形状与鉴权头
+// 桩 DTK 服务：按真实契约实现 POST /api/v1/parse 与 GET /api/v1/tasks/{id}，
+// 用来验证请求形状、鉴权头与 media.video.url 的取值路径。
 const dtkSeen = []
 const dtkServer = http.createServer((req, res) => {
   let body = ''
   req.on('data', (c) => (body += c))
   req.on('end', () => {
+    const pathname = String(req.url || '').split('?')[0]
     dtkSeen.push({ url: req.url, auth: req.headers.authorization || '', body })
-    if (req.url === '/api/v1/parse_url') {
+    const mediaUrl = `http://127.0.0.1:${dtkServer.address().port}/media.mp4`
+    if (pathname === '/api/v1/parse' && req.method === 'POST') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ data: { platform: 'douyin', aweme_id: '123', desc: '桩视频', video_url: `http://127.0.0.1:${dtkServer.address().port}/media.mp4` } }))
+      res.end(
+        JSON.stringify({
+          success: true,
+          data: {
+            platform: 'douyin',
+            content_id: '123',
+            desc: '桩视频',
+            author: { nickname: '桩作者' },
+            media: { video: { url: mediaUrl } },
+          },
+          error: null,
+        }),
+      )
       return
     }
-    if (req.url === '/api/v1/download_media') {
+    // 任务轮询：桩里直接给 done，验证适配器的轮询分支
+    if (pathname.startsWith('/api/v1/tasks/') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ data: { url: `http://127.0.0.1:${dtkServer.address().port}/media.mp4` } }))
+      res.end(
+        JSON.stringify({
+          success: true,
+          data: {
+            state: 'done',
+            data: { platform: 'douyin', content_id: '123', media: { video: { url: mediaUrl } } },
+          },
+          error: null,
+        }),
+      )
       return
     }
-    if (req.url === '/media.mp4') {
+    if (pathname === '/media.mp4') {
       const buf = fs.readFileSync(SAMPLE)
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': buf.length })
       res.end(buf)
       return
     }
-    res.writeHead(404)
-    res.end()
+    res.writeHead(404, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ success: false, data: null, error: { code: 'NOT_FOUND', message: 'no route' } }))
   })
 })
 await new Promise((r) => dtkServer.listen(0, '127.0.0.1', r))
@@ -195,7 +220,9 @@ try {
   })
   check('DTK 请求已发出', dtkSeen.length >= 1, String(dtkSeen.length))
   check('DTK 带 Authorization', dtkSeen[0]?.auth === 'Bearer dtk-secret', dtkSeen[0]?.auth)
-  check('先调 parse_url', dtkSeen[0]?.url === '/api/v1/parse_url', dtkSeen[0]?.url)
+  check('先调 parse 端点', String(dtkSeen[0]?.url || '').startsWith('/api/v1/parse'), dtkSeen[0]?.url)
+  check('parse 请求体带 url', /"url"/.test(String(dtkSeen[0]?.body || '')), String(dtkSeen[0]?.body).slice(0, 80))
+  // 桩返回的 CDN 地址是 127.0.0.1，被 SSRF 防护拦下——验证「不信任解析结果里的地址」
   check(
     '内网下载地址被拒绝（SSRF 防护）',
     ingest.ok === false && /内网|本机/.test(String(ingest.message)),

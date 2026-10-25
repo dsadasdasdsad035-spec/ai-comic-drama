@@ -254,13 +254,23 @@ const ytdlpAdapter = {
   },
 }
 
-/** DTK（Douyin_TikTok_Download_API）：只依赖 parse_url 与 download_media 两个稳定端点 */
+/**
+ * DTK（Douyin_TikTok_Download_API）适配器。
+ *
+ * 真实契约（源码 src/dtk/api/routes/content.py 与 models/content.py）：
+ *   POST /api/v1/parse            → 202 {success, data:{task_id}, ...}
+ *   GET  /api/v1/tasks/{task_id}  → {success, data:{state, data:{media:{video:{url}}}}}
+ *   POST /api/v1/parse?wait=30    → 同步等待，直接返回结果
+ *
+ * 注意 downloads 端点把文件存在 DTK 自己的磁盘、不从 API 回传，
+ * 所以这里只取 parse 结果里的 CDN 直链，由本机下载。
+ */
 const dtkAdapter = {
   id: 'dtk',
   label: 'DTK 下载服务',
   needsConfig: true,
   available(cfg = {}) {
-    if (!cfg.enabled) return { ok: false, reason: '未启用：在设置页填写 DTK 服务地址' }
+    if (!cfg.enabled) return { ok: false, reason: '未启用：在设置页填写 DTK 服务地址与 API Key' }
     const base = String(cfg.baseUrl || '').trim()
     if (!base) return { ok: false, reason: '未填写 DTK 服务地址' }
     try {
@@ -269,57 +279,103 @@ const dtkAdapter = {
     } catch {
       return { ok: false, reason: `DTK 地址格式不正确：${base}` }
     }
+    if (!String(cfg.apiKey || '').trim()) {
+      return { ok: false, reason: '未填写 DTK API Key：首次启动后到控制台创建（MCP/REST 都要 Bearer）' }
+    }
     return { ok: true }
   },
   async ingest(input, ctx, cfg = {}) {
     const base = String(cfg.baseUrl || '').replace(/\/+$/, '')
     const url = String(input.url || '')
-    const headers = { 'Content-Type': 'application/json' }
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' }
     if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`
 
-    const call = async (pathname, body) => {
-      const r = await fetch(`${base}${pathname}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      })
-      const text = await r.text()
-      if (!r.ok) throw new Error(`DTK ${pathname} 返回 HTTP ${r.status}：${text.slice(0, 200)}`)
+    const readEnvelope = async (pathname, init) => {
+      let r
       try {
-        return JSON.parse(text)
-      } catch {
-        throw new Error(`DTK ${pathname} 返回的不是 JSON`)
+        r = await fetch(`${base}${pathname}`, { ...init, headers, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+      } catch (e) {
+        const msg = e?.message || String(e)
+        throw new Error(`连不上 DTK（${base}）：${msg}`)
       }
+      const text = await r.text()
+      let body
+      try {
+        body = JSON.parse(text)
+      } catch {
+        throw new Error(`DTK ${pathname} 返回的不是 JSON（HTTP ${r.status}）`)
+      }
+      // 统一信封：{success, data, error, meta}；错误码稳定、文案可本地化
+      if (body?.success === false) {
+        const code = body?.error?.code || ''
+        const msg = body?.error?.message || ''
+        throw new Error(`DTK 解析失败${code ? `（${code}）` : ''}：${msg || `HTTP ${r.status}`}`)
+      }
+      if (!r.ok) throw new Error(`DTK ${pathname} 返回 HTTP ${r.status}：${text.slice(0, 200)}`)
+      return body
     }
 
-    const parsed = await call('/api/v1/parse_url', { url })
-    const data = parsed?.data || parsed
-    const videoUrl =
-      data?.video_url || data?.video?.play_addr?.url_list?.[0] || data?.aweme_detail?.video?.play_addr?.url_list?.[0] || ''
-    if (!videoUrl) throw new Error('DTK 未返回可下载的视频地址')
+    // 用 ?wait= 让服务端帮我们等，避免自己轮询；
+    // 没等到会返回 202 + task_id，再轮询任务端点。
+    let parsed = await readEnvelope('/api/v1/parse?wait=25', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    })
+    let data = parsed?.data
+    if (data && !data.media && (data.state === 'queued' || data.state === 'running' || data.task_id)) {
+      const taskId = String(data.task_id || '')
+      if (!taskId) throw new Error('DTK 返回了任务但没有 task_id')
+      const deadline = Date.now() + DOWNLOAD_TIMEOUT_MS
+      for (;;) {
+        if (Date.now() > deadline) throw new Error('等待 DTK 解析超时')
+        await new Promise((res) => setTimeout(res, 1500))
+        const task = await readEnvelope(`/api/v1/tasks/${encodeURIComponent(taskId)}`, { method: 'GET' })
+        const t = task?.data || {}
+        if (t.state === 'done') {
+          data = t.data
+          break
+        }
+        if (t.state === 'failed') {
+          throw new Error(`DTK 解析失败：${t?.error?.message || t?.error?.code || '未知原因'}`)
+        }
+      }
+    }
+    if (!data) throw new Error('DTK 没有返回解析结果')
 
-    const dl = await call('/api/v1/download_media', { url: videoUrl, type: 'video' })
-    const fileUrl = dl?.data?.url || dl?.url || videoUrl
-    const u = await assertPublicUrl(fileUrl)
-    const r = await fetch(u, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
-    if (!r.ok) throw new Error(`下载视频失败 HTTP ${r.status}`)
-    const bytes = Buffer.from(await r.arrayBuffer())
+    // 归一化后视频在 data.media.video.url；不同版本可能落在 streams/顶层字段
+    const media = data?.media || {}
+    const candidates = [
+      media?.video?.url,
+      ...(Array.isArray(media?.streams) ? media.streams.map((s) => s?.url) : []),
+      data?.video?.url,
+      data?.video_url,
+    ].filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))
+    const videoUrl = candidates[0] || ''
+    if (!videoUrl) throw new Error('DTK 未返回可下载的视频地址（可能是图集或解析不到视频流）')
+
+    // CDN 直链不走 SSRF 白名单校验的业务语义：它是 DTK 解析出的外部地址，
+    // 但仍是外部 URL，所以仍要挡内网，避免被诱导访问本机服务。
+    const u = await assertPublicUrl(videoUrl)
+    const vr = await fetch(u, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
+    if (!vr.ok) throw new Error(`从 CDN 下载视频失败 HTTP ${vr.status}（直链可能已过期，重试一次）`)
+    const bytes = Buffer.from(await vr.arrayBuffer())
     if (bytes.length > MAX_SOURCE_BYTES) {
       throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
     }
+    if (!bytes.length) throw new Error('DTK 返回的视频地址内容为空')
     const file = writeFileChunk(
       ctx.sourcesDir,
-      `${ctx.sourceId}-${crypto.randomBytes(3).toString('hex')}${extFromUrl(fileUrl)}`,
+      `${ctx.sourceId}-${crypto.randomBytes(3).toString('hex')}${extFromUrl(videoUrl)}`,
       bytes,
     )
+    const author = data?.author || {}
     return {
       file,
       bytes: bytes.length,
       meta: {
         platform: String(data?.platform || 'dtk'),
-        platformId: String(data?.aweme_id || data?.id || ''),
-        author: String(data?.author?.nickname || ''),
+        platformId: String(data?.content_id || data?.id || ''),
+        author: String(author?.nickname || author?.name || ''),
         title: String(data?.desc || data?.title || ''),
         url,
       },
