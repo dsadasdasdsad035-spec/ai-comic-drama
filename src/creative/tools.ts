@@ -338,15 +338,14 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
   const ingest = new DynamicStructuredTool({
     name: 'ingest_source',
     description:
-      '摄取一个源视频：本地上传已由用户完成时省略；传 url 时按已启用的适配器下载。返回源视频 id 与技术信息。',
+      '摄取一个源视频：传 url 时由服务端按已启用的适配器选择下载方式。' +
+      '不要自己指定适配器；失败时按返回的「可用方式」提示用户。',
     schema: z.object({
-      url: z.string().optional().describe('公网视频链接或平台链接'),
-      adapter: z.enum(['upload', 'direct', 'ytdlp', 'dtk']).optional().describe('强制指定适配器'),
+      url: z.string().min(1).describe('公网视频链接或平台分享链接'),
     }),
-    func: async ({ url, adapter }) => {
-      if (!url) return { ok: false, error: '请提供视频链接；本地文件请让用户从界面上传' }
+    func: async ({ url }) => {
       try {
-        const r = await ingestCreative({ sessionId: deps.sessionId, url, adapter })
+        const r = await ingestCreative({ sessionId: deps.sessionId, url })
         deps.onSourceChanged?.()
         return {
           ok: true,

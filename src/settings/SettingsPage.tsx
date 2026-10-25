@@ -1260,12 +1260,45 @@ export default function SettingsPage({ toast, onSaved }: Props) {
           <select
             data-creative-ytdlp-enabled
             value={creative.ingest?.ytdlp?.enabled ? 'on' : 'off'}
-            onChange={(e) => setIngest({ ytdlp: { enabled: e.target.value === 'on' } })}
+            onChange={(e) => {
+              const on = e.target.value === 'on'
+              // 禁止「启用但没路径」：那种状态只会在摄取时才报错
+              if (on && !String(creative.ingest?.ytdlp?.bin || '').trim()) {
+                toast('先填写 yt-dlp 可执行文件路径，再启用')
+                return
+              }
+              setIngest({ ytdlp: { enabled: on } })
+            }}
           >
             <option value="off">关闭</option>
             <option value="on">启用</option>
           </select>
           <em>用于抖音 / B 站 / TikTok 链接；失败不会静默改用其他适配器</em>
+        </label>
+        <label className="st-field">
+          <span>读取浏览器 cookies</span>
+          <select
+            data-creative-ytdlp-cookies
+            value={creative.ingest?.ytdlp?.cookiesFromBrowser || ''}
+            onChange={(e) => setIngest({ ytdlp: { cookiesFromBrowser: e.target.value } })}
+          >
+            <option value="">不读取</option>
+            <option value="chrome">Chrome</option>
+            <option value="safari">Safari</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+          </select>
+          <em>抖音/TikTok 需要新鲜 cookies；只在本机读取，不上传不落盘。需先在浏览器登录过该平台</em>
+        </label>
+        <label className="st-field">
+          <span>cookies 文件（可选）</span>
+          <input
+            data-creative-ytdlp-cookies-file
+            value={creative.ingest?.ytdlp?.cookiesFile || ''}
+            placeholder="导出的 Netscape cookies.txt 路径"
+            onChange={(e) => setIngest({ ytdlp: { cookiesFile: e.target.value } })}
+          />
+          <em>填了浏览器来源时以浏览器为准</em>
         </label>
         <label className="st-field">
           <span>DTK 服务地址</span>

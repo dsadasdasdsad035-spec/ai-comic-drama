@@ -181,6 +181,13 @@ try {
     url: 'https://v.douyin.com/xxxx/',
   })
   check('平台链接未配置解析器时给出可读失败', platform.json?.ok !== true, platform.json?.message)
+  // 不再退回直链：错误必须点名「需要解析器」并给出可照做的下一步
+  check(
+    '平台链接错误说明需要解析器',
+    /需要解析器/.test(String(platform.json?.message)) &&
+      /上传视频/.test(String(platform.json?.message)),
+    String(platform.json?.message).slice(0, 160),
+  )
 
   // 6) probe / split / frames
   const probed = await post('/api/creative/analyze', { sourceId: src1.id, action: 'probe' })

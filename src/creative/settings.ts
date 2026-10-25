@@ -2,7 +2,7 @@ import type { Cap } from '../api'
 
 /** 摄取适配器配置：yt-dlp 与 DTK 都必须显式启用 */
 export type CreativeIngestSettings = {
-  ytdlp?: { enabled?: boolean; bin?: string }
+  ytdlp?: { enabled?: boolean; bin?: string; cookiesFromBrowser?: string; cookiesFile?: string }
   dtk?: { enabled?: boolean; baseUrl?: string; apiKey?: string }
 }
 
@@ -37,7 +37,7 @@ export type CreativeSettings = {
 /** 设置页回读用的展示态：DTK Key 只给「有没有」 */
 export type CreativeSettingsView = Omit<CreativeSettings, 'ingest'> & {
   ingest?: {
-    ytdlp?: { enabled?: boolean; bin?: string }
+    ytdlp?: { enabled?: boolean; bin?: string; cookiesFromBrowser?: string; cookiesFile?: string }
     dtk?: { enabled?: boolean; baseUrl?: string; apiKey?: string; hasApiKey?: boolean }
   }
 }
@@ -95,7 +95,12 @@ export function normalizeCreativeSettings(raw: unknown): CreativeSettings {
 
   return {
     ingest: {
-      ytdlp: { enabled: bool(ytdlpRaw.enabled, false), bin: str(ytdlpRaw.bin) },
+      ytdlp: {
+        enabled: bool(ytdlpRaw.enabled, false),
+        bin: str(ytdlpRaw.bin),
+        cookiesFromBrowser: str(ytdlpRaw.cookiesFromBrowser),
+        cookiesFile: str(ytdlpRaw.cookiesFile),
+      },
       dtk: {
         enabled: bool(dtkRaw.enabled, false),
         baseUrl: str(dtkRaw.baseUrl),

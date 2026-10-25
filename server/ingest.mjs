@@ -184,8 +184,17 @@ const directAdapter = {
 function execFileAsync(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { timeout: opts.timeoutMs || DOWNLOAD_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) reject(new Error(`${path.basename(cmd)} 失败：${String(stderr || err.message).trim().slice(0, 300)}`))
-      else resolve({ stdout: String(stdout || ''), stderr: String(stderr || '') })
+      if (err) {
+        const detail = String(stderr || err.message).trim()
+        // 抖音/TikTok 的 403 是 cookies 问题，直接给出能照做的下一步
+        const needsCookies = /cookies|403|Forbidden/i.test(detail) && /Douyin|TikTok|抖音/i.test(detail)
+        const hint = needsCookies
+          ? '（该平台需要浏览器 cookies：在设置页把「读取浏览器 cookies」设为 chrome 后重试，并确保浏览器里登录过该平台）'
+          : ''
+        reject(new Error(`${path.basename(cmd)} 失败${hint}：${detail.slice(0, 300)}`))
+        return
+      }
+      resolve({ stdout: String(stdout || ''), stderr: String(stderr || '') })
     })
   })
 }
@@ -213,7 +222,7 @@ const ytdlpAdapter = {
     await assertPublicUrl(url)
     const dir = ctx.sourcesDir
     fs.mkdirSync(dir, { recursive: true })
-    await execFileAsync(String(cfg.bin), [
+    const args = [
       '--no-playlist',
       '--no-warnings',
       '--restrict-filenames',
@@ -222,8 +231,14 @@ const ytdlpAdapter = {
       '--merge-output-format', 'mp4',
       '-o', path.join(dir, `${ctx.sourceId}-%(id)s.%(ext)s`),
       '--print', 'after_move:filepath',
-      url,
-    ])
+    ]
+    // 抖音/TikTok 需要新鲜 cookies；只读浏览器 cookie，不上传、不落盘
+    const browser = String(cfg.cookiesFromBrowser || '').trim()
+    if (browser) args.push('--cookies-from-browser', browser)
+    const cookieFile = String(cfg.cookiesFile || '').trim()
+    if (!browser && cookieFile) args.push('--cookies', cookieFile)
+    args.push(url)
+    await execFileAsync(String(cfg.bin), args)
     const files = fs
       .readdirSync(dir)
       .filter((f) => f.startsWith(`${ctx.sourceId}-`) && isVideoFile(f))
@@ -351,13 +366,25 @@ export function pickAdapter(input, config = {}) {
   const url = String(input.url || '').trim()
   if (!url) throw new Error('缺少链接或文件内容')
 
-  // 平台链接优先交给解析器；都没启用时退回直链（用户可能贴的就是直链）
+  // 平台链接：优先交给已启用的解析器；一个都没有就明确说清楚，
+  // 不要退回直链——分享页返回的是 HTML，用户只会看到「链接返回的不是视频」而不知道原因。
   const isPlatform = /(douyin\.com|iesdouyin\.com|bilibili\.com|b23\.tv|tiktok\.com|vm\.tiktok\.com)/i.test(url)
   if (isPlatform) {
     for (const id of ['ytdlp', 'dtk']) {
       const a = BY_ID.get(id)
       if (a.available(cfgFor(id, config)).ok) return a
     }
+    const ytdlp = config.ingest?.ytdlp || {}
+    const dtk = config.ingest?.dtk || {}
+    const hints = []
+    if (!ytdlp.enabled) hints.push('启用 yt-dlp 并填写可执行文件路径')
+    else if (!ytdlp.bin) hints.push('yt-dlp 已启用但没填可执行文件路径')
+    else hints.push(`yt-dlp 路径不可用（${ytdlp.bin}）`)
+    if (!dtk.enabled) hints.push('或部署 DTK 并填写服务地址')
+    throw new Error(
+      `这个平台链接需要解析器，当前没有可用的：${hints.join('；')}。` +
+        '也可以把视频下载到本地后直接用「上传视频」。',
+    )
   }
   return BY_ID.get('direct')
 }
