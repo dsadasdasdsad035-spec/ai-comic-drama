@@ -1,61 +1,75 @@
-import { SceneSandbox, type SandboxAssetPayload } from '../sceneSandbox'
+import type { PreparedSceneAsset } from '../sceneCodeAssets'
+import { renderAndWait } from '../sceneBlender'
+import { renderDims, trialSceneCode } from '../sceneCodeRender'
 import type { AgentFrame, AgentTrial } from './sceneAgentTypes'
 
-export class AgentSandboxSession {
-  private host: HTMLElement
-  private sandbox: SceneSandbox
-  private started = false
+/**
+ * Agent 的渲染会话：试运行 = 低清首尾两帧；抓帧 = 一次小尺寸多帧渲染。
+ * 没有常驻进程：每个动作都是一次服务端作业，取消靠 AbortSignal。
+ */
+export class AgentBlenderSession {
+  private code: string
+  private assets: PreparedSceneAsset[]
+  private duration: number
+  private aspect: string
+  private passed = false
 
   constructor(opts: {
     code: string
-    assets: SandboxAssetPayload[]
-    width: number
-    height: number
-    aspect: string
+    assets: PreparedSceneAsset[]
     duration: number
+    aspect: string
   }) {
-    this.host = document.createElement('div')
-    this.host.style.cssText = `position:fixed;left:-10000px;top:0;width:${opts.width}px;height:${opts.height}px;pointer-events:none;opacity:0;z-index:-1`
-    document.body.appendChild(this.host)
-    this.sandbox = new SceneSandbox(this.host, {
-      code: opts.code,
-      assets: opts.assets,
-      width: opts.width,
-      height: opts.height,
-      aspect: opts.aspect,
-      duration: opts.duration,
-      mode: 'clean',
-    })
+    this.code = opts.code
+    this.assets = opts.assets
+    this.duration = opts.duration
+    this.aspect = opts.aspect
   }
 
   async start(): Promise<AgentTrial> {
     try {
-      const ready = await this.sandbox.start()
-      this.started = true
+      const job = await trialSceneCode({
+        code: this.code,
+        assets: this.assets,
+        duration: this.duration,
+        aspect: this.aspect,
+      })
+      this.passed = true
       return {
         ok: true,
-        ...(ready.firstFrame ? { firstFrame: ready.firstFrame } : {}),
+        ...(job.frameUrls[0] ? { firstFrame: job.frameUrls[0] } : {}),
       }
     } catch (e) {
       return { ok: false, error: (e as Error).message || String(e) }
     }
   }
 
-  async capture(times: number[]): Promise<AgentFrame[]> {
-    if (!this.started) throw new Error('沙箱还没有准备好')
-    const frames: AgentFrame[] = []
-    for (const t of times) {
-      this.sandbox.pause()
-      this.sandbox.seek(Number(t) || 0)
-      await new Promise((r) => setTimeout(r, 80))
-      const url = await this.sandbox.capture()
-      if (url) frames.push({ t: Number(t) || 0, url })
-    }
-    return frames
+  async capture(times: number[], signal?: AbortSignal): Promise<AgentFrame[]> {
+    if (!this.passed) throw new Error('渲染试运行还没有通过，请先运行 run_render')
+    const { width, height } = renderDims(this.aspect, 'trial')
+    const wanted = times.slice(0, 9).map((t) => Math.max(0, Math.min(this.duration, Number(t) || 0)))
+    const job = await renderAndWait(
+      {
+        code: this.code,
+        assets: this.assets,
+        width,
+        height,
+        fps: 30,
+        duration: this.duration,
+        tier: 'trial',
+        mode: 'clean',
+        times: wanted,
+        keyTimes: wanted,
+      },
+      { ...(signal ? { signal } : {}), timeoutMs: 120_000 },
+    )
+    return wanted
+      .map((t, i) => ({ t, url: job.frameUrls[i] }))
+      .filter((frame): frame is AgentFrame => Boolean(frame.url))
   }
 
   dispose() {
-    this.sandbox.dispose()
-    this.host.remove()
+    // 作业由服务端在完成/取消后自行清理，这里没有常驻资源。
+    this.passed = false
   }
 }

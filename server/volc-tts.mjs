@@ -26,20 +26,77 @@ function ttsEndpoint(baseUrl) {
   return `${base}/tts/unidirectional`
 }
 
-function pickSpeaker(speaker) {
+function pickSpeaker(speaker, allowCustom = false) {
   const id = String(speaker || '').trim()
+  if (allowCustom && id) return id
   return VOLC_TTS_VOICES.some((v) => v.id === id) ? id : DEFAULT_VOLC_TTS_VOICE
 }
 
-export function buildTtsBody({ text, speaker }) {
+const EMOTIONS = new Set([
+  'neutral',
+  'happy',
+  'sad',
+  'angry',
+  'fearful',
+  'disgusted',
+  'surprised',
+  'calm',
+])
+
+const PACE_RATE = { slow: -20, normal: 0, fast: 20 }
+const VOLUME_LOUDNESS = { whisper: -20, soft: -10, normal: 0, loud: 10, shout: 20 }
+
+/** 把归一化表演参数映射到火山 Seed TTS 2.0 的 req_params，并报告实际应用项。 */
+export function mapVoicePerformance(performance = {}) {
+  const p = performance || {}
+  const applied = []
+  const unsupported = []
+  const extra = {}
+  if (p.emotion && p.emotion !== 'neutral') {
+    if (EMOTIONS.has(p.emotion)) {
+      extra.emotion = p.emotion
+      applied.push('emotion')
+      if (typeof p.intensity === 'number' && Number.isFinite(p.intensity)) {
+        extra.emotion_scale = Math.max(1, Math.min(5, Math.round(p.intensity)))
+        applied.push('intensity')
+      }
+    } else {
+      unsupported.push('emotion')
+    }
+  } else if (typeof p.intensity === 'number' && Number.isFinite(p.intensity)) {
+    unsupported.push('intensity')
+  }
+  if (p.pace && p.pace !== 'normal') {
+    if (p.pace in PACE_RATE) {
+      extra.speech_rate = PACE_RATE[p.pace]
+      applied.push('pace')
+    } else {
+      unsupported.push('pace')
+    }
+  }
+  if (p.volume && p.volume !== 'normal') {
+    if (p.volume in VOLUME_LOUDNESS) {
+      extra.loudness_rate = VOLUME_LOUDNESS[p.volume]
+      applied.push('volume')
+    } else {
+      unsupported.push('volume')
+    }
+  }
+  if (p.emphasis) unsupported.push('emphasis')
+  return { extra, applied, unsupported }
+}
+
+export function buildTtsBody({ text, speaker, performance, allowCustomSpeaker = false }) {
   const value = String(text || '').trim()
   if (!value) throw new VolcTtsError('台词为空', { kind: 'config' })
+  const mapped = mapVoicePerformance(performance)
   return {
     user: { uid: 'storyboard-canvas' },
     req_params: {
       text: value,
-      speaker: pickSpeaker(speaker),
+      speaker: pickSpeaker(speaker, allowCustomSpeaker),
       audio_params: { format: 'mp3', sample_rate: 24000 },
+      ...mapped.extra,
     },
   }
 }
@@ -97,10 +154,13 @@ export async function synthesizeVolcTts({
   apiKey,
   text,
   speaker,
+  performance,
+  allowCustomSpeaker = false,
   fetchImpl = fetch,
   connectId = crypto.randomUUID(),
 }) {
-  const body = buildTtsBody({ text, speaker })
+  const body = buildTtsBody({ text, speaker, performance, allowCustomSpeaker })
+  const mapped = mapVoicePerformance(performance)
   const r = await fetchImpl(ttsEndpoint(baseUrl), {
     method: 'POST',
     headers: {
@@ -143,5 +203,7 @@ export async function synthesizeVolcTts({
     audio: Buffer.concat(chunks),
     engine: `volc-tts:${body.req_params.speaker}`,
     speaker: body.req_params.speaker,
+    applied: mapped.applied,
+    unsupported: mapped.unsupported,
   }
 }

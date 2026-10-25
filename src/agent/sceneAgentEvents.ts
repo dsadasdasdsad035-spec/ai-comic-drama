@@ -9,7 +9,8 @@ export type RawLangGraphEvent = {
   error?: unknown
 }
 
-const MAX_TEXT = 2000
+/** 错误信息仍限制长度，避免整段堆栈进聊天。 */
+const MAX_ERROR_TEXT = 2000
 const MAX_RESULT = 2_000_000
 
 function safe(value: unknown, max = 6000): unknown {
@@ -70,18 +71,23 @@ function aiMessageText(value: unknown): string {
   return ''
 }
 
-export function extractModelText(value: unknown, max = MAX_TEXT): string {
+/**
+ * 步骤文本不再截断：复盘/排查需要看到模型完整输出。
+ * 注意这里只作用于 agent 节点的 AIMessage 文本；工具参数仍走 sanitizeToolInput（代码正文不落事件）。
+ */
+export function extractModelText(value: unknown, max = Number.POSITIVE_INFINITY): string {
   if (!value || typeof value !== 'object') return ''
   const o = value as Record<string, unknown>
+  const clip = (text: string) => (Number.isFinite(max) ? text.slice(0, max) : text)
   // agent 节点输出是 { messages: [AIMessage] }；只找 AI message，绝不回退到 ToolMessage。
   if (Array.isArray(o.messages)) {
     for (let i = o.messages.length - 1; i >= 0; i--) {
       const text = aiMessageText(o.messages[i])
-      if (text.trim()) return text.replace(/\s+$/g, '').trim().slice(0, max)
+      if (text.trim()) return clip(text.replace(/\s+$/g, '').trim())
     }
     return ''
   }
-  return aiMessageText(value).replace(/\s+$/g, '').trim().slice(0, max)
+  return clip(aiMessageText(value).replace(/\s+$/g, '').trim())
 }
 
 function lineCount(code: string): number {
@@ -96,6 +102,11 @@ export function sanitizeToolInput(raw: unknown, max = 6000): Record<string, unkn
     if (key === 'code' && typeof value === 'string') {
       out.codeLines = lineCount(value)
       out.codeChars = value.length
+      continue
+    }
+    if ((key === 'chunk' || key === 'text') && typeof value === 'string' && value.length > 200) {
+      out[`${key}Lines`] = lineCount(value)
+      out[`${key}Chars`] = value.length
       continue
     }
     if (typeof value === 'string' && /^data:(?:image|video|audio)\//i.test(value)) {
@@ -125,11 +136,11 @@ function toolOutput(value: unknown): unknown {
 
 function errorMessage(raw: RawLangGraphEvent): string {
   const err = raw.error
-  if (typeof err === 'string') return err.slice(0, MAX_TEXT)
+  if (typeof err === 'string') return err.slice(0, MAX_ERROR_TEXT)
   if (err && typeof err === 'object' && 'message' in err) {
-    return String((err as { message?: unknown }).message || 'agent 执行失败').slice(0, MAX_TEXT)
+    return String((err as { message?: unknown }).message || 'agent 执行失败').slice(0, MAX_ERROR_TEXT)
   }
-  return String(raw.data?.error || 'agent 执行失败').slice(0, MAX_TEXT)
+  return String(raw.data?.error || 'agent 执行失败').slice(0, MAX_ERROR_TEXT)
 }
 
 function toolResultForEvent(result: unknown): unknown {
@@ -157,9 +168,11 @@ export function createAgentEventBridge() {
   const startedTools = new Set<string>()
   const endedTools = new Set<string>()
   const seenErrors = new Set<string>()
+  /** 模型 runId -> 流式文本 messageId；首片才发 start，避免非流式调用产生空文本 */
+  const modelStreams = new Map<string, string>()
   let nextTurn = 0
 
-  const map = (raw: RawLangGraphEvent): AgentEvent | null => {
+  const map = (raw: RawLangGraphEvent): AgentEvent | AgentEvent[] | null => {
     const data = raw.data || {}
     const runId = String(raw.run_id || '')
     const name = String(raw.name || '')
@@ -183,8 +196,30 @@ export function createAgentEventBridge() {
       return { type: 'agent_step', turn, phase: 'end', ...(text ? { text } : {}) }
     }
 
-    if (raw.event === 'on_chat_model_start' || raw.event === 'on_chat_model_end' || raw.event === 'on_chat_model_stream') {
-      // 模型轮次已由 agent 节点链事件覆盖；避免重复步骤。
+    if (raw.event === 'on_chat_model_stream') {
+      // 只取面向用户的内容；reasoning/thinking 字段明确忽略。
+      const text = contentText((data.chunk as { content?: unknown } | undefined)?.content)
+      if (!text) return null
+      let messageId = runId ? modelStreams.get(runId) : undefined
+      const events: AgentEvent[] = []
+      if (!messageId) {
+        messageId = `msg-${nextTurn || 1}`
+        if (runId) modelStreams.set(runId, messageId)
+        events.push({ type: 'text_message_start', messageId, role: 'assistant' })
+      }
+      events.push({ type: 'text_message_content', messageId, delta: text })
+      return events
+    }
+
+    if (raw.event === 'on_chat_model_end') {
+      const messageId = runId ? modelStreams.get(runId) : undefined
+      if (!messageId) return null
+      modelStreams.delete(runId)
+      return { type: 'text_message_end', messageId }
+    }
+
+    if (raw.event === 'on_chat_model_start') {
+      // 文本生命周期从第一个分片开始；非流式调用不会产生空文本部件。
       return null
     }
 
@@ -242,7 +277,9 @@ export type AgentEventBridge = ReturnType<typeof createAgentEventBridge>
 
 /** 无状态兼容入口；需要跨事件去重时使用 createAgentEventBridge。 */
 export function mapLangGraphEvent(raw: RawLangGraphEvent): AgentEvent | null {
-  return createAgentEventBridge().map(raw)
+  const mapped = createAgentEventBridge().map(raw)
+  if (!mapped) return null
+  return Array.isArray(mapped) ? mapped[0] ?? null : mapped
 }
 
 export function appendAgentEvent(events: AgentEvent[], event: AgentEvent | null, max = 200): AgentEvent[] {

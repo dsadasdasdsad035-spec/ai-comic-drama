@@ -1,6 +1,12 @@
 import { endTask, startTask } from './tasks'
+import { SseEventParser } from './textStream'
 import type { AgentLimitSettings } from './agent/agentLimits'
+import type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
+export type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
 import type {
+  DialogueDelivery,
+  LipSyncState,
+  PerformanceEntry,
   SceneCode,
   SceneCodeMeta,
   SceneLayout,
@@ -8,8 +14,12 @@ import type {
   Shot3DContext,
   ShotBlocking,
   ShotScene,
+  TransitionOut,
   VisualBrief,
   VisualBriefMeta,
+  VideoMeta,
+  VideoPromptOverride,
+  VoiceMeta,
 } from './types'
 export type GenResult = {
   urls: string[]
@@ -144,10 +154,25 @@ export async function checkHealth(): Promise<{ hasKey: boolean; model: string } 
 
 export type VideoOpts = {
   image?: string
+  /** 尾帧（APIMart Kling v3 等支持首尾帧的模型使用） */
+  lastFrame?: string
   /** 多参考图模式（方舟 reference_image，1~4 张）；有值时忽略 image */
   refImages?: string[]
   /** 3D 调度视频参考（方舟 reference_video，1~3 段）；有值时进入全模态参考模式 */
   refVideos?: string[]
+  /** 原生音频：Seedance 2.5 开启 generate_audio */
+  generateAudio?: boolean
+  /** 单个音色参考；APIMart 使用 audio_url 字符串（URL 或 data:audio/...;base64） */
+  audioRef?: string
+  /**
+   * 转场模式：由服务端按模型能力决定首帧/尾帧/参考图。
+   * 方舟用关键帧作首帧；APIMart 首尾帧模型用边界帧并（在不冲突时）把关键帧当参考。
+   */
+  transition?: {
+    boundaryOut?: string
+    boundaryIn?: string
+    keyframe?: string
+  }
   prompt: string
   seconds: number
   ratio: string
@@ -211,27 +236,67 @@ export async function waitVideo(
 // ---------- animatic 合成 ----------
 
 export type ExportSegment = {
+  kind?: 'shot' | 'transition'
   seconds: number
   video?: string
   image?: string
+  /** 转场片段按目标时长裁剪（仅首帧模型；首尾帧模型不裁） */
+  trim?: number
+  /** 音轨来源：tts = 单独配音；native = 视频自带音轨；none = 静音 */
+  audioMode?: 'tts' | 'native' | 'none'
   voice?: string
   /** 配音相对镜头起点偏移（秒，可负） */
   voiceOffset?: number
-  /** 字幕相对镜头起点偏移（秒） */
+  /** 字幕相对镜头起点偏移（秒）；仅旧调用兼容，新客户端用 captions */
   subOffset?: number
-  /** 台词（服务端有 libass 时据此生成 SRT） */
+  /** 台词（旧调用兼容；新客户端用 captions，服务端不再据此推导字幕） */
   dialogue?: string
-  /** 无 libass 时的兜底：整帧透明 PNG（dataURL） */
+  /** 无 libass 时的兜底：整帧透明 PNG（dataURL）；仅旧调用兼容 */
+  sub?: string
+  /** 相对镜头起点的字幕 cue；有 captions 时服务端不再解析 dialogue */
+  captions?: ExportCaption[]
+}
+
+export type ExportCaption = {
+  startOffsetMs: number
+  endOffsetMs: number
+  text: string
+  /** 无 libass 时该 cue 的整帧透明 PNG */
   sub?: string
 }
+
+/** 导出和预览共享的字幕样式参数 */
+export type ExportCaptionStyle = {
+  fontRatio: number
+  bottomRatio: number
+  maxWidthRatio: number
+  lineHeight: number
+  maxLines: number
+  background: string
+  textColor: string
+}
+
+/** 接缝：cut 直接拼；effect 用 xfade 重叠 T 秒。joins[0] 会被忽略。 */
+export type ExportJoin =
+  | { mode: 'cut' }
+  | { mode: 'effect'; seconds: number; xfade?: string }
 
 export type ExportResult = {
   url: string
   shots: number
+  transitions?: number
   seconds: number
   voiced: number
   subbed: number
+  /** 实际写入的字幕 cue 数 */
+  captions?: number
+  /** 与烧录一致的 SRT sidecar */
+  srtUrl?: string
+  /** 服务端对 cue 夹紧/丢弃的说明 */
+  captionWarnings?: string[]
   overflows: { shot: number; voice: number; shotLen: number }[]
+  /** 客户端统计：本次导出包含多少条失效的生成转场 */
+  staleTransitions?: number
   elapsed: number
 }
 
@@ -239,15 +304,26 @@ export type ExportResult = {
 export async function assembleAnimatic(
   segments: ExportSegment[],
   resolution: '480p' | '720p' | '1080p',
-  timeoutMs = 10 * 60 * 1000,
+  opts: {
+    timeoutMs?: number
+    joins?: ExportJoin[]
+    staleTransitions?: number
+    captionStyle?: ExportCaptionStyle
+  } = {},
 ): Promise<ExportResult> {
+  const timeoutMs = opts.timeoutMs ?? 10 * 60 * 1000
   const tid = startTask('export', `合成 ${resolution}`)
   let res: Response
   try {
     res = await fetch('/api/assemble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ segments, resolution }),
+      body: JSON.stringify({
+        segments,
+        resolution,
+        ...(opts.joins ? { joins: opts.joins } : {}),
+        ...(opts.captionStyle ? { captionStyle: opts.captionStyle } : {}),
+      }),
     })
   } catch {
     endTask(tid, '连不上本地代理')
@@ -271,10 +347,15 @@ export async function assembleAnimatic(
       return {
         url: s.url,
         shots: s.shots,
+        transitions: s.transitions ?? 0,
         seconds: s.seconds,
         voiced: s.voiced ?? 0,
         subbed: s.subbed ?? 0,
+        ...(typeof s.captions === 'number' ? { captions: s.captions } : {}),
+        ...(s.srtUrl ? { srtUrl: String(s.srtUrl) } : {}),
+        ...(Array.isArray(s.captionWarnings) ? { captionWarnings: s.captionWarnings.map(String) } : {}),
         overflows: s.overflows ?? [],
+        staleTransitions: opts.staleTransitions ?? 0,
         elapsed: s.elapsed,
       }
     }
@@ -289,16 +370,29 @@ export async function assembleAnimatic(
 
 // ---------- 台词配音 ----------
 
-export type VoiceResult = { url: string; engine: string; seconds: number; elapsed: number }
+export type VoiceResult = {
+  url: string
+  engine: string
+  seconds: number
+  elapsed: number
+  /** 实际应用的表演参数名 */
+  applied?: string[]
+  /** 当前引擎不支持、已忽略的参数名 */
+  unsupported?: string[]
+}
 
-export type VoiceLine = { text: string; voice?: string; rate?: number }
+export type VoiceLine = { text: string; voice?: string; rate?: number } & DialogueDelivery
 
 export async function generateVoice(o: {
   /** 单句模式：传 text；多说话人模式：传 lines（每行可各自指定音色） */
   text?: string
   voice?: string
   rate?: number
+  performance?: DialogueDelivery
   lines?: VoiceLine[]
+  /** 传入项目名时把音频复制到项目媒体目录（角色音色样本） */
+  project?: string
+  purpose?: 'character-sample'
   /** 设置页模型表里的音频模型键；不传走默认 */
   modelKey?: string
 }): Promise<VoiceResult> {
@@ -317,17 +411,98 @@ export async function generateVoice(o: {
   return j as VoiceResult
 }
 
-export type VoiceOption = { id: string; label: string }
-export type VoiceList = { provider: string; voices: VoiceOption[] }
+export type LipSyncResult = {
+  outputVideo: string
+  provider: string
+  jobId?: string
+}
+
+/** 手动提交单镜头口型；真实外部调用，调用方必须先确认。 */
+export async function runLipSync(o: {
+  project: string
+  video: string
+  audio: string
+  model?: string
+}): Promise<LipSyncResult> {
+  const r = await fetch('/api/lipsync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(o),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '口型生成失败')
+  return j as LipSyncResult
+}
+
+export type LipSyncQaResult = {
+  duration: number
+  silenceIntervals: { start: number; end: number }[]
+  frames: {
+    at: number
+    kind: 'silence' | 'speech'
+    expect: 'closed' | 'open'
+    path: string
+    mouth?: 'open' | 'closed' | 'unknown'
+    advisory?: boolean
+  }[]
+  framesDir?: string
+}
+
+/** 本地抽帧验收；不上传视频，不调用外部 provider。 */
+export async function runLipSyncQa(o: {
+  video: string
+  audio?: string
+  noise?: string
+  minSilence?: number
+}): Promise<LipSyncQaResult> {
+  const r = await fetch('/api/lipsync/qa', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(o),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '口型验收失败')
+  return j as LipSyncQaResult
+}
+
+export type VoiceOption = {
+  id: string
+  label: string
+  voiceId?: string
+  provider?: string
+  providerKind?: string
+  modelKey?: string
+  source?: VoiceSource
+  note?: string
+}
+
+export type VoiceList = {
+  provider: string
+  providerKind?: string
+  modelKey?: string
+  voices: VoiceOption[]
+  capabilities?: VoiceCapabilities
+  error?: string
+}
 
 /** 列出当前 TTS provider 下真正可用的音色 */
-export async function listVoices(modelKey?: string): Promise<VoiceList> {
+export async function listVoices(modelKey?: string, refresh = false): Promise<VoiceList> {
   try {
-    const q = modelKey ? `?modelKey=${encodeURIComponent(modelKey)}` : ''
+    const params = new URLSearchParams()
+    if (modelKey) params.set('modelKey', modelKey)
+    if (refresh) params.set('refresh', '1')
+    const q = params.toString() ? `?${params.toString()}` : ''
     const r = await fetch(`/api/voices${q}`)
     const j = await readJsonRes(r)
     if (!j.ok) return { provider: 'none', voices: [] }
-    return { provider: j.provider ?? 'unknown', voices: j.voices ?? [] }
+    return {
+      provider: j.provider ?? 'unknown',
+      providerKind: j.providerKind,
+      modelKey: j.modelKey,
+      voices: j.voices ?? [],
+      capabilities: j.capabilities,
+      error: j.error,
+    }
   } catch {
     return { provider: 'none', voices: [] }
   }
@@ -357,8 +532,26 @@ export type ProjectShot = {
   dialogue?: string | { speaker: string; text: string }[]
   keyframe_prompt?: string
   video_prompt?: string
+  /** 手改的出片提示词快照；null = 明确恢复自动拼装 */
+  video_prompt_override?: VideoPromptOverride | null
+  /** 最近一次成功出片的提示词来源 */
+  video_meta?: VideoMeta
   /** 该镜在画面内的角色名（拆镜产出，比从台词/描述猜准） */
   cast?: string[]
+  /** 按角色分条的表演；旧项目为空 */
+  performance?: PerformanceEntry[]
+  /** 与 dialogue 行下标平行的台词表演 */
+  dialogue_delivery?: DialogueDelivery[]
+  /** 镜头音轨：off = 静音视频 + TTS，native = 视频自带音轨 */
+  audio_mode?: 'off' | 'native'
+  /** native 的唯一说话角色音色参考 */
+  audio_ref?: { character: string; url: string; label?: string } | null
+  /** native 请求指纹 */
+  audio_meta?: { fingerprint: string; modelKey?: string; createdAt: string }
+  /** 口型模式与结果；旧项目按 off 解释 */
+  lip_sync?: LipSyncState
+  /** 最近一次配音实际应用/未应用的表演参数 */
+  voice_meta?: VoiceMeta
   /** 首帧图（本地相对路径，如 /generated/xxx.jpg） */
   keyframe?: string
   /** 成片视频（本地相对路径，如 /videos/xxx.mp4） */
@@ -369,6 +562,8 @@ export type ProjectShot = {
   refExtras?: string[]
   /** 参考连线节点的 id（角色卡/素材卡），生成画面时按它取参考图 */
   refIds?: string[]
+  /** 到下一镜的转场配置（按目标 shotId 关联）；null = 明确清除 */
+  transition_out?: TransitionOut | null
   /** 旧调度坐标；只用于迁移 */
   layout?: unknown
   /** 所属场次；同集同场共享 SceneLayout */
@@ -379,7 +574,7 @@ export type ProjectShot = {
   visual_brief?: VisualBrief
   visual_brief_meta?: VisualBriefMeta
   shot_blocking?: ShotBlocking
-  /** 代码优先 3D：每镜一段 Three.js 代码 */
+  /** 代码优先 3D：每镜一段 Blender Python 代码 */
   scene_code?: SceneCode
   scene_code_meta?: SceneCodeMeta
   shot_3d_context?: Shot3DContext
@@ -391,9 +586,12 @@ export type ProjectShot = {
   schedule_video?: string
   schedule_frames?: string[]
   motion_note?: string
+  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
   use_schedule_frames?: boolean
-  /** 出片时把调度视频本身当 reference_video（需 Seedance 2.0+） */
+  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
   use_schedule_video_ref?: boolean
+  /** 视频出片是否带说话角色表情单格；缺失按 false，避免旧项目自动占槽 */
+  use_expression_ref?: boolean
 }
 
 export type ProjectEpisode = {
@@ -422,6 +620,8 @@ export type ProjectAsset = {
   tags?: string[]
   /** 来自场景/道具设定卡的稳定标识；手工素材卡为空 */
   designId?: string
+  /** expression-sheet 素材归属的角色名；普通素材为空 */
+  characterName?: string
 }
 
 export type DesignKind = 'scene' | 'prop'
@@ -540,9 +740,37 @@ export async function saveProject(name: string, project: ProjectData): Promise<v
   if (!j.ok) throw new Error(j.message || '保存失败')
 }
 
+export type ProviderToolCall = {
+  id: string
+  name: string
+  /** provider 原始 JSON 字符串；由调用方解析 */
+  arguments: string
+}
+
+export type ProviderChatMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  tool_calls?: unknown[]
+  tool_call_id?: string
+  name?: string
+}
+
+export type ProviderToolCallDelta = {
+  index: number
+  id: string
+  name: string
+  delta: string
+}
+
 export type TextOpts = {
   system?: string
-  prompt: string
+  /** 旧调用方式：system + prompt；与 messages 二选一 */
+  prompt?: string
+  /** 原生工具调用：完整对话消息（含 assistant.tool_calls / tool 角色） */
+  messages?: ProviderChatMessage[]
+  /** OpenAI function 工具定义 */
+  tools?: unknown[]
+  toolChoice?: string | Record<string, unknown>
   /** 设置页模型表里的键（优先级高于 model 档位） */
   modelKey?: string
   model?: 'lite' | 'pro'
@@ -553,9 +781,20 @@ export type TextOpts = {
   signal?: AbortSignal
 }
 
-export async function callText<T = unknown>(
-  o: TextOpts,
-): Promise<{ json?: T; text: string; model: string; modelKey: string; modelLabel: string }> {
+export type TextResult<T = unknown> = {
+  json?: T
+  text: string
+  model: string
+  modelKey: string
+  modelLabel: string
+  /** provider 的结束原因；length 表示输出被长度上限截断 */
+  finishReason?: string
+  /** 原生工具调用（非流式/流式最终聚合） */
+  toolCalls?: ProviderToolCall[]
+  usage?: Record<string, unknown>
+}
+
+export async function callText<T = unknown>(o: TextOpts): Promise<TextResult<T>> {
   let res: Response
   const { signal, ...body } = o
   try {
@@ -565,17 +804,131 @@ export async function callText<T = unknown>(
       body: JSON.stringify(body),
       signal,
     })
-  } catch {
+  } catch (e) {
+    // 取消必须原样抛 AbortError，不能伪装成网络错误（内置动作靠它判断“已取消”）
+    if ((e as Error)?.name === 'AbortError') throw e
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
   if (!j.ok) throw new Error(j.message || '文本生成失败')
   return {
-    json: j.json as T,
+    ...(j.json !== undefined ? { json: j.json as T } : {}),
     text: j.text ?? '',
     model: j.model ?? '',
     modelKey: j.modelKey ?? '',
     modelLabel: j.modelLabel ?? '',
+    ...(j.finishReason ? { finishReason: String(j.finishReason) } : {}),
+    ...(Array.isArray(j.toolCalls) ? { toolCalls: j.toolCalls as ProviderToolCall[] } : {}),
+    ...(j.usage && typeof j.usage === 'object' ? { usage: j.usage as Record<string, unknown> } : {}),
+  }
+}
+
+/**
+ * 流式文本生成：代理按 SSE 发 meta/progress/done/error。
+ * 渠道不支持流式时，代理会回退成整段 JSON，这里同样能解析。
+ */
+export async function callTextStream<T = unknown>(
+  o: TextOpts & {
+    onProgress?: (chars: number) => void
+    onToolCallDelta?: (delta: ProviderToolCallDelta) => void
+  },
+): Promise<TextResult<T>> {
+  const { signal, onProgress, onToolCallDelta, ...body } = o
+  let res: Response
+  try {
+    res = await fetch('/api/text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
+    })
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') throw e
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+
+  const contentType = res.headers.get('content-type') || ''
+  if (!res.ok || !res.body || !contentType.includes('text/event-stream')) {
+    // 回退：整段 JSON（mock、渠道忽略 stream、或代理报错）
+    const j = await readJsonRes(res)
+    if (!j.ok) throw new Error(j.message || '文本生成失败')
+    return {
+      ...(j.json !== undefined ? { json: j.json as T } : {}),
+      text: j.text ?? '',
+      model: j.model ?? '',
+      modelKey: j.modelKey ?? '',
+      modelLabel: j.modelLabel ?? '',
+      ...(j.finishReason ? { finishReason: String(j.finishReason) } : {}),
+      ...(Array.isArray(j.toolCalls) ? { toolCalls: j.toolCalls as ProviderToolCall[] } : {}),
+      ...(j.usage && typeof j.usage === 'object' ? { usage: j.usage as Record<string, unknown> } : {}),
+    }
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  const parser = new SseEventParser()
+  let meta = { model: '', modelKey: '', modelLabel: '' }
+  let final:
+    | {
+        text: string
+        json?: T
+        finishReason?: string
+        toolCalls?: ProviderToolCall[]
+        usage?: Record<string, unknown>
+      }
+    | null = null
+
+  while (!final) {
+    const { done, value } = await reader.read()
+    if (done) break
+    for (const event of parser.push(decoder.decode(value, { stream: true }))) {
+      const type = String(event.type || '')
+      if (type === 'meta') {
+        meta = {
+          model: String(event.model || ''),
+          modelKey: String(event.modelKey || ''),
+          modelLabel: String(event.modelLabel || ''),
+        }
+      } else if (type === 'progress') {
+        onProgress?.(Number(event.chars) || 0)
+      } else if (type === 'tool_call_delta') {
+        const id = String(event.id || '')
+        if (id) {
+          onToolCallDelta?.({
+            index: Number(event.index) || 0,
+            id,
+            name: String(event.name || ''),
+            delta: String(event.delta || ''),
+          })
+        }
+      } else if (type === 'error') {
+        throw new Error(String(event.message || '流式生成失败'))
+      } else if (type === 'done') {
+        meta = {
+          model: String(event.model || meta.model),
+          modelKey: String(event.modelKey || meta.modelKey),
+          modelLabel: String(event.modelLabel || meta.modelLabel),
+        }
+        final = {
+          text: String(event.text || ''),
+          ...(event.json !== undefined ? { json: event.json as T } : {}),
+          ...(event.finishReason ? { finishReason: String(event.finishReason) } : {}),
+          ...(Array.isArray(event.toolCalls) ? { toolCalls: event.toolCalls as ProviderToolCall[] } : {}),
+          ...(event.usage && typeof event.usage === 'object'
+            ? { usage: event.usage as Record<string, unknown> }
+            : {}),
+        }
+      }
+    }
+  }
+  if (!final) throw new Error('流式响应提前结束')
+  return {
+    ...(final.json !== undefined ? { json: final.json } : {}),
+    text: final.text,
+    ...(final.finishReason ? { finishReason: final.finishReason } : {}),
+    ...(final.toolCalls ? { toolCalls: final.toolCalls } : {}),
+    ...(final.usage ? { usage: final.usage } : {}),
+    ...meta,
   }
 }
 
@@ -664,7 +1017,14 @@ export type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'vie
 /** 生成环节：环节默认值只引用模型表键 */
 export type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
 export const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
-export type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
+export type ProviderKind =
+  | 'ark'
+  | 'ark-plan'
+  | 'apimart'
+  | 'openai'
+  | 'minimax'
+  | 'elevenlabs'
+  | 'volc-tts'
 export type ProviderCap = 'text' | 'image' | 'video' | 'audio'
 export type Provider = {
   id: string
@@ -675,11 +1035,29 @@ export type Provider = {
   note?: string
   /** 这个渠道能承接哪几类活 */
   caps?: ProviderCap[]
+  /** 服务端只读：当前是否解析到 Key（不回传 Key 本身，保存时忽略） */
+  keyAvailable?: boolean
+}
+export type ModelFeatureSet = {
+  /** 支持图像输入 */
+  vision?: boolean
+  /** 支持视频输入 */
+  videoInput?: boolean
+  /** 参考图能力；none = 明确不支持 */
+  imageRef?: 'none' | 'single' | 'multi'
+  /** 支持参考视频 */
+  videoRef?: boolean
+  firstFrame?: boolean
+  lastFrame?: boolean
+  audioOut?: boolean
+  tools?: boolean
 }
 export type ModelEntry = {
   key: string
   label: string
   cap: Cap
+  /** 一个模型可服务多个能力；缺省时按 cap 的旧语义路由 */
+  caps?: Cap[]
   provider: string
   model: string
   note?: string
@@ -689,6 +1067,20 @@ export type ModelEntry = {
   videoRefTaskType?: 'reference'
   /** DeepSeek Flash 混合推理：auto = 普通文本思考、JSON/工具协议关思考 */
   thinking?: 'auto' | 'enabled' | 'disabled'
+  /** 目录/预设来源 */
+  source?: 'preset' | 'catalog' | 'manual'
+  /** 目录已登记但运行时尚未接入时不可选 */
+  runtime?: 'ready' | 'catalog-only'
+  /** 能力细节，供 UI 与服务端判定 */
+  features?: ModelFeatureSet
+}
+
+export type LipSyncSettings = {
+  provider: 'off' | 'sync-labs'
+  baseUrl?: string
+  apiKey?: string
+  /** 估算用：每秒输出价格；0 = 不计入 */
+  pricePerSecond?: number
 }
 
 export type AppSettings = {
@@ -701,8 +1093,19 @@ export type AppSettings = {
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
+  /**
+   * 3D agent 的工具协议：auto 按模型能力表选择，native 强制原生 tool calls，json 强制 JSON action。
+   * 缺省 auto；不支持 tools 的模型在 auto 下继续走 JSON。
+   */
+  agentToolProtocol?: 'auto' | 'native' | 'json'
+  /** 口型 provider；默认关闭，Key 只存设置库 */
+  lipSync?: LipSyncSettings
+  /** 设置库里的自定义音色条目 */
+  customVoices?: CustomVoice[]
   apiKey: string
   rules: Record<string, RulePack>
+  /** 旧规则包已迁移为技能覆盖；避免重复迁移 */
+  skillsMigrated?: boolean
   presetsVersion?: number
 }
 
@@ -728,7 +1131,7 @@ export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSett
 
 export type ProviderTestResult = {
   ok: boolean
-  kind?: 'ok' | 'no-key' | 'auth' | 'api' | 'net'
+  kind?: 'ok' | 'no-key' | 'auth' | 'billing' | 'api' | 'net' | 'config' | 'plan'
   status?: number
   latency?: number
   endpoint?: string

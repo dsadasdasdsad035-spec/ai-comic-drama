@@ -43,11 +43,11 @@ export function ToolCard({
       <CardHeader className="justify-between gap-2 py-1.5">
         <div className="flex min-w-0 items-center gap-1.5">
           <Badge variant={statusVariant[status]}>{statusLabel[status]}</Badge>
-          <span className="truncate text-[11px] font-medium text-card-foreground">{title}</span>
+          <span className="truncate text-[12px] font-medium text-card-foreground">{title}</span>
         </div>
         {aside}
       </CardHeader>
-      {children && <CardContent className="pt-0 text-[10px] leading-relaxed">{children}</CardContent>}
+      {children && <CardContent className="pt-0 text-[11px] leading-relaxed">{children}</CardContent>}
     </Card>
   )
 }

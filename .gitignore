@@ -24,10 +24,16 @@ projects/*.sqlite-shm
 .DS_Store
 __pycache__/
 *.log
+.idea/
+
+# 本机工具配置（openspec CLI 生成、ZCode 本地指针、视频插件绝对路径）
+.zcode/
+.video_agent/
 
 # 项目数据（工作台读写的真相源，按项目入库、产物不入库）
 projects/*/project.json.bak
 projects/*/assets/
+projects/*/*-backup-*.json
 
 # 临时基准脚本
 bench*.mjs
@@ -37,3 +43,9 @@ src/sandbox/runtime.generated.js
 
 # 验证脚本自起的临时项目目录
 .verify-*/
+
+# Blender 渲染作业的临时目录（成功/失败/取消后自动清理）
+.blender-jobs/
+
+# Agent 场景草稿的临时目录（会话结束/启动时清理）
+.scene-drafts/

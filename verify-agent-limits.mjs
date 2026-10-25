@@ -63,9 +63,12 @@ await page.route('**/api/settings', async (route) => {
   return route.continue()
 })
 
-await page.goto(URL, { waitUntil: 'networkidle' })
+await page.goto(URL, { waitUntil: 'domcontentloaded' })
+await page.waitForTimeout(1200)
 await page.getByRole('button', { name: '设置', exact: true }).click()
 await page.waitForTimeout(500)
+await page.locator('.st-nav button', { hasText: 'Agent' }).click()
+await page.waitForTimeout(200)
 const timeInput = page.locator('label.st-field', { hasText: '总运行时长' }).locator('input')
 check('旧设置显示默认总时长', await timeInput.inputValue() === '300', await timeInput.inputValue())
 

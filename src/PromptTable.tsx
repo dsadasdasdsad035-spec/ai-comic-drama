@@ -1,18 +1,90 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   callText,
   getProject,
+  mergeProjectShots,
   patchProject,
   type AppSettings,
+  type ProjectAsset,
   type ProjectShot,
-  type RulePack,
   type Stage,
 } from './api'
 import { characterBible, toSheet, type ProjectChar } from './charMap'
 import type { CharacterSheet } from './characters'
+import type { ShotNodeType } from './data'
 import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
-import { chunk, expandAnchors, hasUnresolvedAnchor, promptSys } from './prompts'
+import {
+  chunk,
+  dialogueToText,
+  dialogueWithDelivery,
+  expandAnchors,
+  hasUnresolvedAnchor,
+  parseDialogue,
+} from './prompts'
+import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
+import { mergePromptDraft } from './agent/promptDraft'
+import { shotToData } from './shotSync'
+import { shot3DRenderPatch, shot3DSavePatch } from './shot3dPatch'
+import WorkbenchBar from './WorkbenchBar'
+import { resolveShotSchedule } from './scheduleStatus'
+import type { SceneLayout, ShotData } from './types'
+import type { CodeEditorRendered, CodeEditorSave } from './SceneCodeWorkbench'
+import {
+  builtinFailure,
+  type BuiltinResult,
+  WORKBENCH_BUILTINS,
+  type WorkbenchChatAdapter,
+} from './agent/workbenchChat'
+import { AgentButton } from './agent/AgentButton'
+import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
+import { useWorkbenchChatOpen } from './agent/chatPanel'
 import { endTask, startTask } from './tasks'
+
+const LazySkillChat = lazy(() => import('./agent/SkillChat'))
+const LazySceneCodeWorkbench = lazy(() => import('./SceneCodeWorkbench'))
+
+function promptBrief(s: ProjectShot) {
+  const dialogue = Array.isArray(s.dialogue)
+    ? s.dialogue
+    : typeof s.dialogue === 'string'
+      ? parseDialogue(s.dialogue)
+      : []
+  return {
+    no: s.no,
+    seconds: s.seconds,
+    size: s.size,
+    move: s.move,
+    desc: s.desc,
+    cast: s.cast ?? [],
+    performance: s.performance ?? [],
+    dialogue: dialogueWithDelivery(dialogue, s.dialogue_delivery),
+  }
+}
+
+/** 项目镜头没有画布节点时的最小 ShotData。 */
+function baseShotData(s: ProjectShot): ShotData {
+  return {
+    no: s.no ?? '',
+    seconds: Number(s.seconds) || 3,
+    size: s.size ?? '中景',
+    move: s.move ?? '固定',
+    dialogue:
+      typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
+    prompt: s.keyframe_prompt || s.desc || '',
+    marks: [],
+  }
+}
+
+/** 用项目镜头合成 3D 工作台需要的节点；已有画布节点时保留其 refIds/media。 */
+function projectShotNode(s: ProjectShot, existing?: ShotNodeType): ShotNodeType {
+  const base = existing?.data ?? baseShotData(s)
+  return {
+    id: existing?.id ?? s.id,
+    type: 'shot',
+    position: existing?.position ?? { x: 0, y: 0 },
+    data: shotToData(s, base),
+  }
+}
 
 type Props = {
   projectName: string
@@ -24,6 +96,14 @@ type Props = {
   settings: AppSettings | null
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
+  /** 画布节点：3D 工作台解析连线素材、保留已有媒体 */
+  canvasNodes: ShotNodeType[]
+  /** 项目素材与场次布局：3D 工作台和状态判断使用 */
+  assets: ProjectAsset[]
+  sceneLayouts: SceneLayout[]
+  projectAspect: string
+  /** 3D 编辑器脏状态交给 App 做离开保护 */
+  onEditorDirtyChange?: (dirty: boolean) => void
 }
 
 type Audit = {
@@ -108,6 +188,11 @@ export default function PromptTable({
   settings,
   stagePick,
   onPickStage,
+  canvasNodes,
+  assets,
+  sceneLayouts,
+  projectAspect,
+  onEditorDirtyChange,
 }: Props) {
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [chars, setChars] = useState<CharacterSheet[]>([])
@@ -116,8 +201,91 @@ export default function PromptTable({
   const [genning, setGenning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [editorShotId, setEditorShotId] = useState<string | null>(null)
   const [batchSize, setBatchSize] = useState(5)
   const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null)
+  const [chatRunning, setChatRunning] = useState(false)
+  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('prompts')
+  const chatVisible = chatOpen && Boolean(projectName)
+
+  const liveRef = useRef({ shots, chars, style })
+  liveRef.current = { shots, chars, style }
+  const saveRef = useRef<() => Promise<void>>(async () => {})
+  const builtinStateRef = useRef({ genning, settings, projectName })
+  builtinStateRef.current = { genning, settings, projectName }
+  const runPromptsRef = useRef<(signal?: AbortSignal) => Promise<BuiltinResult>>(async () =>
+    builtinFailure('generate_prompts', '生成提示词尚未就绪', {
+      label: '生成提示词',
+      scope: 'episode',
+      saveMode: 'explicit',
+    }),
+  )
+
+  const chatAdapter = useMemo<WorkbenchChatAdapter>(
+    () => ({
+      surface: 'prompts',
+      skillId: 'prompt',
+      stage: 'prompt',
+      artifact: 'prompts',
+      writeTool: 'submit_prompts',
+      writeContract: 'prompts-v1',
+      threadKey: { project: projectName, surface: 'prompts', episode: epNo },
+      scope: () => '本集',
+      inputs: () => {
+        const l = liveRef.current
+        const brief = l.shots.filter((s) => (Number(s.episode) || 1) === epNo).map(promptBrief)
+        return {
+          style: l.style || '近未来科幻写实',
+          bible: characterBible(l.chars) || '（项目里还没有角色锚点）',
+          briefJson: JSON.stringify(brief),
+        }
+      },
+      ownDraft: () => liveRef.current.shots,
+      projectSnapshot: () => getProject(projectName),
+      applyDraft: (payload) => {
+        const data = (payload || {}) as { shots?: { no: string | number; keyframe_prompt?: string; video_prompt?: string }[] }
+        const got = Array.isArray(data.shots) ? data.shots : []
+        const merged = mergePromptDraft(
+          liveRef.current.shots,
+          got,
+          epNo,
+          liveRef.current.chars,
+        )
+        liveRef.current.shots = merged.shots
+        setShots(merged.shots)
+        setDirty(true)
+        const warn =
+          (merged.missing ? ` · 未匹配 ${merged.missing}` : '') +
+          (merged.unresolved ? ` · 残留占位符 ${merged.unresolved}` : '')
+        return {
+          ok: true,
+          summary: `已写入提示词草稿：${merged.patched} 镜，尚未保存${warn}`,
+          counts: { total: merged.patched, missing: merged.missing, unresolved: merged.unresolved },
+        }
+      },
+      saveDraft: () => saveRef.current(),
+      builtins: [
+        {
+          ...WORKBENCH_BUILTINS.generate_prompts,
+          disabled: () => {
+            const st = builtinStateRef.current
+            if (!st.projectName) return { disabled: true, reason: '先选择项目' }
+            if (st.genning) return { disabled: true, reason: '正在生成提示词' }
+            const count = liveRef.current.shots.filter(
+              (s) => (Number(s.episode) || 1) === epNo,
+            ).length
+            if (count === 0) return { disabled: true, reason: '这一集还没有镜头，先去拆镜' }
+            if (!hasTextModels(st.settings)) {
+              return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            }
+            return { disabled: false }
+          },
+          run: (signal) => runPromptsRef.current(signal),
+        },
+      ],
+    }),
+    [projectName, epNo],
+  )
 
   const load = useCallback(async () => {
     if (!projectName) return
@@ -155,120 +323,288 @@ export default function PromptTable({
     return { empty, miss, may, unk, ok: visible.length - empty - miss }
   }, [audits, visible.length])
 
+  const scheduleByShot = useMemo(() => {
+    const out = new Map<string, ReturnType<typeof resolveShotSchedule>>()
+    for (const s of visible) {
+      out.set(
+        s.id,
+        resolveShotSchedule({
+          data: shotToData(s, baseShotData(s)),
+          shotId: s.id,
+          sceneLayouts,
+          projectAspect,
+        }),
+      )
+    }
+    return out
+  }, [visible, sceneLayouts, projectAspect])
+
+  const editorShot = editorShotId ? shots.find((s) => s.id === editorShotId) ?? null : null
+  const editorNodes = useMemo(() => {
+    // 画布节点提供 refIds/media；项目镜头提供最新 3D 字段。两者按 shotId 合并。
+    const canvasShotByProjectId = new Map<string, ShotNodeType>()
+    for (const n of canvasNodes) {
+      if (n.data.shotId) canvasShotByProjectId.set(n.data.shotId, n)
+    }
+    const out = canvasNodes.filter(
+      (n) => (n as unknown as { type?: string }).type !== 'shot',
+    )
+    for (const s of visible) out.push(projectShotNode(s, canvasShotByProjectId.get(s.id)))
+    return out
+  }, [canvasNodes, visible])
+  const editorNode = editorShot
+    ? editorNodes.find((n) => n.data.shotId === editorShot.id) ?? null
+    : null
+
+  const handleEditorDirty = useCallback(
+    (dirtyNow: boolean) => {
+      onEditorDirtyChange?.(dirtyNow)
+    },
+    [onEditorDirtyChange],
+  )
+
+  const open3D = (shotId: string) => {
+    setEditorShotId(shotId)
+    handleEditorDirty(false)
+  }
+  const close3D = () => {
+    setEditorShotId(null)
+    handleEditorDirty(false)
+  }
+
+  /**
+   * 3D 保存只写 3D 字段。
+   * 先读当前项目再把补丁合进完整镜头列表：mergeShots 会把未出现在入参里的
+   * 镜头标成 orphan，只传一条会把其他镜头全标灰；也避免把提示词草稿一起写回。
+   */
+  const persist3D = useCallback(
+    async (shotId: string, patch: Partial<ProjectShot>) => {
+      if (!projectName) throw new Error('先选择项目')
+      const current = await getProject(projectName)
+      const full = (current.shots ?? []).map((s) =>
+        s.id === shotId ? ({ ...s, ...patch } as ProjectShot) : s,
+      )
+      if (!full.some((s) => s.id === shotId)) full.push({ id: shotId, ...patch } as ProjectShot)
+      await mergeProjectShots(projectName, full)
+      setShots((prev) => prev.map((s) => (s.id === shotId ? { ...s, ...patch } : s)))
+    },
+    [projectName],
+  )
+
+  const saveEditor3D = async (input: CodeEditorSave) => {
+    if (!editorShot) return
+    await persist3D(editorShot.id, shot3DSavePatch(input))
+  }
+
+  const renderEditor3D = async (input: CodeEditorRendered) => {
+    if (!editorShot) return
+    await persist3D(
+      editorShot.id,
+      shot3DRenderPatch({ ...input, existingMotionNote: editorShot.motion_note }),
+    )
+  }
+
   /** 同上：按 id 定位，行下标只对「当前集」子集有效 */
   const edit = (id: string, field: 'keyframe_prompt' | 'video_prompt', value: string) => {
     setShots((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)))
     setDirty(true)
   }
 
-  /** 跑一批。抽成独立函数是为了让任务台账的「重试」能精确重跑这一批 */
+  const retryGroupRef = useRef<(g: ProjectShot[], idx: number, t0: number) => void>(() => {})
+
+  /**
+   * 跑一批。只返回补丁，不直接写镜头；
+   * 批量生成在全部成功后统一合并，取消时才能整次丢弃。
+   */
   const runGroup = useCallback(
-    async (g: ProjectShot[], idx: number, t0: number, rules?: Record<string, RulePack>) => {
+    async (g: ProjectShot[], idx: number, t0: number, signal?: AbortSignal) => {
       const tid = startTask('text', `E${epNo} 提示词 批${idx + 1}`, {
-        retry: () => void runGroup(g, idx, t0, rules),
+        retry: () => retryGroupRef.current(g, idx, t0),
       })
       const bible = characterBible(chars) || '（项目里还没有角色锚点）'
-      const brief = g.map((x) => ({
-        no: x.no,
-        seconds: x.seconds,
-        size: x.size,
-        move: x.move,
-        desc: x.desc,
-        dialogue: x.dialogue,
-      }))
+      const brief = g.map(promptBrief)
       try {
+        const resolvedStyle = style || '近未来科幻写实'
+        const skill = await buildBoardSkillPrompt('prompt', {
+          style: resolvedStyle,
+          bible,
+          briefJson: JSON.stringify(brief),
+        })
         const r = await callText<{ shots: { no: string; keyframe_prompt: string; video_prompt: string }[] }>({
-          system: promptSys(rules),
+          system: skill.system,
           modelKey: stageModelKey(settings, 'prompt', stagePick),
           json: true,
           maxTokens: 4096,
-          prompt:
-            `画风锁：${style || '近未来科幻写实'}\n\n` +
-            `角色外观锚点：\n${bible}\n\n` +
-            `分镜：\n${JSON.stringify(brief)}\n\n` +
-            `输出要求：\n` +
-            `1. 每一镜都要给 keyframe_prompt 与 video_prompt，no 必须与输入一致\n` +
-            `2. keyframe_prompt 里凡出现角色，一律用 {{角色名}} 占位代替整段 look_en（例如 {{陈默}}），` +
-            `由我在保存前原样替换回原文 —— 不要自己展开那整段描述\n` +
-            `3. 只输出 JSON`,
+          prompt: skill.task,
+          signal,
         })
+        assertSkillOutput('prompts-v1', r.json)
         const got = r.json?.shots
         if (!Array.isArray(got) || got.length === 0) throw new Error('空返回')
+        if (signal?.aborted) {
+          endTask(tid, '已取消')
+          return {
+            ok: false,
+            cancelled: true,
+            patch: new Map<string, { kf: string; vp: string }>(),
+            filled: 0,
+            unresolved: 0,
+            total: g.length,
+            modelLabel: '',
+            error: '已取消',
+          }
+        }
 
+        const byNo = new Map(g.map((s) => [String(s.no || ''), s.id]))
         const patch = new Map<string, { kf: string; vp: string }>()
         let bad = 0
         for (const x of got) {
+          const id = byNo.get(String(x.no))
+          if (!id) continue
           const kf = expandAnchors(String(x.keyframe_prompt || '').trim(), chars)
           if (hasUnresolvedAnchor(kf)) bad++
-          patch.set(String(x.no), { kf, vp: String(x.video_prompt || '').trim() })
+          patch.set(id, { kf, vp: String(x.video_prompt || '').trim() })
         }
-        setShots((prev) =>
-          prev.map((x) => {
-            const hit = patch.get(String(x.no))
-            return hit ? { ...x, keyframe_prompt: hit.kf, video_prompt: hit.vp } : x
-          }),
-        )
-        setDirty(true)
         endTask(tid)
         return {
           ok: true,
-          filled: g.filter((x) => patch.has(String(x.no))).length,
+          patch,
+          filled: g.filter((x) => patch.has(x.id)).length,
           unresolved: bad,
-          groups: 1,
           total: g.length,
-          t0,
           modelLabel: r.modelLabel,
         }
-      } catch (e: any) {
-        endTask(tid, String(e?.message || '生成失败'))
-        return { ok: false, filled: 0, unresolved: 0, groups: 1, total: g.length, t0, modelLabel: '' }
+      } catch (e) {
+        const err = e as Error
+        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
+        const message = cancelled ? '已取消' : err.message || '生成失败'
+        endTask(tid, message)
+        return {
+          ok: false,
+          cancelled,
+          patch: new Map<string, { kf: string; vp: string }>(),
+          filled: 0,
+          unresolved: 0,
+          total: g.length,
+          modelLabel: '',
+          error: message,
+        }
       }
     },
     [chars, epNo, settings, stagePick, style],
   )
 
-  const generate = async () => {
-    if (visible.length === 0) {
-      toast(`E${String(epNo).padStart(2, '0')} 还没有镜头，先去「镜头表」拆镜`)
-      return
-    }
-    if (!hasTextModels(settings)) {
-      toast('设置页还没有可用的文本模型，先加一条再生成提示词')
-      return
-    }
-    // 分片并行：输出量受镜头数线性影响，切批并发是唯一能真正缩短墙钟时间的手段
-    const groups = chunk(visible, Math.max(2, batchSize))
-    setGenning(true)
-    setProgress({ done: 0, total: groups.length, failed: 0 })
-    const t0 = Date.now()
-
-    // 规则包由 App 统一加载；设置页保存后会 reload，不在生成时另读一份
-    const rules: Record<string, RulePack> | undefined = settings?.rules
-    let done = 0
-    const results = await Promise.all(
-      groups.map(async (g, idx) => {
-        const r = await runGroup(g, idx, t0, rules)
-        done++
-        setProgress({ done, total: groups.length, failed: 0 })
-        return r
+  const applyPromptPatch = useCallback((patch: Map<string, { kf: string; vp: string }>) => {
+    if (patch.size === 0) return
+    setShots((prev) =>
+      prev.map((x) => {
+        const hit = patch.get(x.id)
+        return hit ? { ...x, keyframe_prompt: hit.kf, video_prompt: hit.vp } : x
       }),
     )
+    setDirty(true)
+  }, [])
 
-    const okCount = results.filter((r) => r.ok).length
-    const filled = results.reduce((a, r) => a + r.filled, 0)
-    const unresolved = results.reduce((a, r) => a + r.unresolved, 0)
-    const failed = groups.length - okCount
-    const modelLabel = results.find((r) => r.ok)?.modelLabel || ''
-    setProgress({ done: groups.length, total: groups.length, failed })
-    setGenning(false)
-    window.setTimeout(() => setProgress(null), 2600)
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
-    toast(
-      `E${String(epNo).padStart(2, '0')} ${filled}/${visible.length} 镜 · ${elapsed}s（${okCount}/${groups.length} 批）` +
-        (modelLabel ? ` · 模型：${modelLabel}` : '') +
-        (failed > 0 ? ` · ${failed} 批失败，可在任务台账里重试` : '') +
-        (unresolved > 0 ? ` · ${unresolved} 条占位符未替换，检查角色名` : ''),
-    )
+  /** 单批重试：跑完这一批并立即应用这一批的补丁 */
+  const retryGroup = async (g: ProjectShot[], idx: number, t0: number) => {
+    const r = await runGroup(g, idx, t0)
+    if (!r.ok) {
+      toast(r.error || '生成失败')
+      return
+    }
+    applyPromptPatch(r.patch)
+    toast(`第 ${idx + 1} 批已补 ${r.filled} 镜`)
+  }
+  retryGroupRef.current = retryGroup
+
+  const runGeneratePrompts = useCallback(
+    async (signal?: AbortSignal): Promise<BuiltinResult> => {
+      const label = '生成提示词'
+      const action = 'generate_prompts'
+      const fail = (message: string, cancelled = false) =>
+        builtinFailure(action, message, {
+          label,
+          scope: 'episode',
+          saveMode: 'explicit',
+          ...(cancelled ? { cancelled: true } : {}),
+        })
+      const l = liveRef.current
+      const visibleNow = l.shots.filter((s) => (Number(s.episode) || 1) === epNo)
+      if (!projectName) return fail('先选择项目')
+      if (visibleNow.length === 0) {
+        return fail(`E${String(epNo).padStart(2, '0')} 还没有镜头，先去「镜头表」拆镜`)
+      }
+      if (!hasTextModels(settings)) return fail('设置页还没有可用的文本模型，先加一条再生成提示词')
+      if (signal?.aborted) return fail('已取消', true)
+      // 分片并行：输出量受镜头数线性影响，切批并发是唯一能真正缩短墙钟时间的手段
+      const groups = chunk(visibleNow, Math.max(2, batchSize))
+      setGenning(true)
+      setProgress({ done: 0, total: groups.length, failed: 0 })
+      const t0 = Date.now()
+      try {
+        let done = 0
+        const results = await Promise.all(
+          groups.map(async (g, idx) => {
+            const r = await runGroup(g, idx, t0, signal)
+            done++
+            setProgress({ done, total: groups.length, failed: 0 })
+            return r
+          }),
+        )
+        if (signal?.aborted || results.some((r) => r.cancelled)) {
+          return fail('已取消', true)
+        }
+        const okResults = results.filter((r) => r.ok)
+        const filled = okResults.reduce((a, r) => a + r.filled, 0)
+        const unresolved = okResults.reduce((a, r) => a + r.unresolved, 0)
+        const failed = groups.length - okResults.length
+        setProgress({ done: groups.length, total: groups.length, failed })
+        if (okResults.length === 0) {
+          return fail(results.find((r) => r.error)?.error || '生成失败')
+        }
+        const mergedPatch = new Map<string, { kf: string; vp: string }>()
+        for (const r of okResults) for (const [id, p] of r.patch) mergedPatch.set(id, p)
+        applyPromptPatch(mergedPatch)
+        const modelLabel = okResults.find((r) => r.modelLabel)?.modelLabel || ''
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(0)
+        return {
+          ok: true,
+          action,
+          label,
+          scope: 'episode',
+          summary:
+            `E${String(epNo).padStart(2, '0')} ${filled}/${visibleNow.length} 镜 · ${elapsed}s（${okResults.length}/${groups.length} 批）` +
+            (modelLabel ? ` · 模型：${modelLabel}` : '') +
+            (failed > 0 ? ` · ${failed} 批失败，可在任务台账里重试` : '') +
+            (unresolved > 0 ? ` · ${unresolved} 条占位符未替换，检查角色名` : '') +
+            '，草稿未保存',
+          counts: {
+            filled,
+            unresolved,
+            failed,
+            groups: groups.length,
+            total: visibleNow.length,
+          },
+          ...(modelLabel ? { modelLabel } : {}),
+          elapsedMs: Date.now() - t0,
+          saveMode: 'explicit',
+        }
+      } finally {
+        setGenning(false)
+        window.setTimeout(() => setProgress(null), 2600)
+      }
+    },
+    [applyPromptPatch, batchSize, epNo, projectName, runGroup, settings],
+  )
+  runPromptsRef.current = runGeneratePrompts
+
+  const generate = async () => {
+    const r = await runGeneratePrompts()
+    if (!r.ok) {
+      if (!r.cancelled) toast(r.error || '生成失败')
+      return
+    }
+    toast(r.summary)
   }
 
   /** 只补硬问题（有台词的角色）。疑似项留给人工判断，避免把画外角色硬塞进特写 */
@@ -304,45 +640,66 @@ export default function PromptTable({
       setSaving(false)
     }
   }
+  saveRef.current = save
 
   return (
-    <main className="wb">
-      <div className="wb-bar">
-        <div className="wb-field">
-          <span className="label">项目</span>
-          <span className="wb-name">{projectName || '未选项目'}</span>
-        </div>
-        <div className="wb-field">
-          <span className="label">角色锚点</span>
-          <span className="wb-name">{chars.filter((c) => c.lookEn).length} 个可用</span>
-        </div>
-        <StageModelSelect
-          stage="prompt"
-          settings={settings}
-          pick={stagePick}
-          onChange={onPickStage}
-        />
-        <div className="wb-field">
-          <span className="label">每批</span>
-          <select value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))}>
-            {[3, 5, 8, 15].map((n) => (
-              <option key={n} value={n}>
-                {n} 镜
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="spacer" />
-        <span className="wb-sum">
-          有提示词 {stat.ok} · 缺锚点 <b className={stat.miss ? 'over' : ''}>{stat.miss}</b> · 空白{' '}
-          <b className={stat.empty ? 'over' : ''}>{stat.empty}</b>
-          {stat.may > 0 && <span className="wb-maybe">{stat.may} 镜疑似</span>}
-          {stat.unk > 0 && <span className="wb-warn">{stat.unk} 镜有未知角色</span>}
-        </span>
-        <button className="btn" onClick={load} disabled={loading}>
-          {loading ? '加载中…' : '重新加载'}
-        </button>
-      </div>
+    <div className="wb-with-chat">
+      <main className="wb">
+      <WorkbenchBar
+        scope={
+          <>
+            <span className="wb-bar-title">提示词</span>
+            <span className="ep-chip">E{String(epNo).padStart(2, '0')}</span>
+          </>
+        }
+        scopeDetail={
+          <>
+            {visible.length} 镜 · 有提示词 {stat.ok} · 缺锚点{' '}
+            <b className={stat.miss ? 'over' : ''}>{stat.miss}</b> · 空白{' '}
+            <b className={stat.empty ? 'over' : ''}>{stat.empty}</b>
+            {stat.unk > 0 ? ` · ${stat.unk} 镜有未知角色` : ''}
+          </>
+        }
+        settings={
+          <>
+            <StageModelSelect
+              stage="prompt"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+            />
+            <div className="wb-field">
+              <span className="label">每批</span>
+              <select value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))}>
+                {[3, 5, 8, 15].map((n) => (
+                  <option key={n} value={n}>
+                    {n} 镜
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span className="wb-bar-optional wb-sum">
+              角色锚点 {chars.filter((c) => c.lookEn).length} 个可用
+            </span>
+          </>
+        }
+        actions={
+          <>
+            <AgentButton
+              open={chatVisible}
+              onToggle={() => setChatOpen((v) => !v)}
+              disabled={!projectName}
+              running={chatRunning}
+              dirty={dirty}
+              controlsId="workbench-chat-prompts"
+            />
+            <button className="btn" onClick={load} disabled={loading}>
+              {loading ? '加载中…' : '重新加载'}
+            </button>
+          </>
+        }
+      />
 
       {visible.length === 0 ? (
         <div className="wb-empty">
@@ -357,12 +714,22 @@ export default function PromptTable({
                 <th style={{ width: 104 }}>出场</th>
                 <th>首帧提示词（Seedream）</th>
                 <th style={{ width: 200 }}>视频指令（Seedance）</th>
+                <th style={{ width: 92 }}>3D</th>
                 <th style={{ width: 96 }}>锚点校验</th>
               </tr>
             </thead>
             <tbody>
               {visible.map((s, i) => {
                 const a = audits[i]
+                const schedule = scheduleByShot.get(s.id)
+                const schedTag =
+                  schedule?.status === '生效'
+                    ? 'ok'
+                    : schedule?.status === '已过期'
+                      ? 'bad'
+                      : schedule?.status === '仅审阅'
+                        ? 'orphan'
+                        : 'off'
                 return (
                   <tr key={s.id}>
                     <td className="mono">
@@ -389,6 +756,24 @@ export default function PromptTable({
                         value={s.video_prompt ?? ''}
                         onChange={(e) => edit(s.id, 'video_prompt', e.target.value)}
                       />
+                    </td>
+                    <td className="state pt-3d">
+                      <em className={`tag ${schedTag}`} title={schedule?.reason}>
+                        {schedule?.status ?? '未渲染'}
+                      </em>
+                      <button className="btn-mini" onClick={() => open3D(s.id)}>
+                        打开
+                      </button>
+                      {s.schedule_video && (
+                        <a
+                          className="btn-mini"
+                          href={s.schedule_video}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          查看
+                        </a>
+                      )}
                     </td>
                     <td className="state">
                       {a.empty ? (
@@ -454,5 +839,52 @@ export default function PromptTable({
         </button>
       </div>
     </main>
+
+      {editorShot && editorNode && (
+        <Suspense
+          fallback={<div className="sb-chat-placeholder">正在加载 3D 工作台…</div>}
+        >
+          <LazySceneCodeWorkbench
+            projectName={projectName}
+            node={editorNode}
+            nodes={editorNodes}
+            characters={chars}
+            assets={assets}
+            sceneLayouts={sceneLayouts}
+            projectAspect={projectAspect}
+            settings={settings}
+            stagePick={stagePick}
+            onPickStageModel={onPickStage}
+            onClose={close3D}
+            onSave={saveEditor3D}
+            onRendered={renderEditor3D}
+            onDirtyChange={handleEditorDirty}
+            toast={toast}
+          />
+        </Suspense>
+      )}
+
+      <WorkbenchChatAside
+        surface="prompts"
+        open={chatVisible}
+        onClose={() => setChatOpen(false)}
+      >
+        {projectName ? (
+          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
+            <LazySkillChat
+              adapter={chatAdapter}
+              settings={settings}
+              stagePick={stagePick}
+              onToast={toast}
+              onRunningChange={setChatRunning}
+              onClose={() => setChatOpen(false)}
+              dirty={dirty}
+            />
+          </Suspense>
+        ) : (
+          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
+        )}
+      </WorkbenchChatAside>
+    </div>
   )
 }

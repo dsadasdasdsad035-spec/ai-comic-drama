@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   callText,
   generateImage,
@@ -18,9 +18,21 @@ import {
   pickExtractedDesigns,
 } from './designExtract'
 import { CapModelSelect, hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
-import { assetSys } from './prompts'
+import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
+import {
+  builtinFailure,
+  type BuiltinResult,
+  WORKBENCH_BUILTINS,
+  type WorkbenchChatAdapter,
+} from './agent/workbenchChat'
+import { AgentButton } from './agent/AgentButton'
+import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
+import { useWorkbenchChatOpen } from './agent/chatPanel'
+import WorkbenchBar from './WorkbenchBar'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
+
+const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
 type Props = {
   projectName: string
@@ -73,6 +85,104 @@ export default function AssetBoard({
   const designsRef = useRef(designs)
   const savedSigRef = useRef('')
   const epochRef = useRef(0)
+  const [chatRunning, setChatRunning] = useState(false)
+  /** 空板起始提示：本次会话关掉就不再出现 */
+  const [tipOpen, setTipOpen] = useState(true)
+  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('assets')
+  const chatVisible = chatOpen && Boolean(projectName)
+  const builtinStateRef = useRef({ extracting, settings, projectName, ready, project })
+  builtinStateRef.current = { extracting, settings, projectName, ready, project }
+  const runExtractRef = useRef<
+    (scope: 'episode' | 'script', signal?: AbortSignal) => Promise<BuiltinResult>
+  >(async (scope) =>
+    builtinFailure(
+      scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script',
+      '拆场景/道具尚未就绪',
+      {
+        label: scope === 'episode' ? '从本集拆' : '从全剧拆',
+        scope,
+        saveMode: 'immediate',
+      },
+    ),
+  )
+
+  const chatAdapter = useMemo<WorkbenchChatAdapter>(
+    () => ({
+      surface: 'assets',
+      skillId: 'asset',
+      stage: 'asset',
+      artifact: 'designs',
+      writeTool: 'submit_designs',
+      writeContract: 'designs-v1',
+      threadKey: { project: projectName, surface: 'assets' },
+      scope: () => '本集',
+      inputs: () => {
+        const p = project
+        const { sceneText, shotText } = buildDesignContext({
+          scope: 'episode',
+          epNo,
+          source: p?.source,
+          episodes: p?.episodes,
+          shots: p?.shots,
+        })
+        return {
+          scopeLabel: `第 ${epNo} 集的剧本场次与分镜`,
+          sceneText,
+          shotBlock: shotText ? `\n\n【镜头摘要】\n${shotText}` : '',
+        }
+      },
+      ownDraft: () => designsRef.current,
+      projectSnapshot: () => getProject(projectName),
+      applyDraft: (payload) => {
+        const incoming = pickExtractedDesigns(payload)
+        if (incoming.length === 0) return { ok: false, summary: '', error: '没有可写入的场景或道具' }
+        const { next, added, updated } = mergeDesigns(designsRef.current, incoming)
+        designsRef.current = next
+        savedSigRef.current = JSON.stringify(next)
+        setDesigns(next)
+        // 沿用现有语义：素材提取结果立即落库，避免切项目时停在防抖窗口
+        patchProject(projectName, { designs: next }).catch(() => {})
+        return {
+          ok: true,
+          summary: `已写入并保存素材：新增 ${added.length} / 合并 ${updated.length}`,
+          counts: { total: next.length, added: added.length, updated: updated.length },
+        }
+      },
+      builtins: [
+        {
+          ...WORKBENCH_BUILTINS.extract_designs_episode,
+          disabled: () => {
+            const st = builtinStateRef.current
+            if (!st.projectName || st.ready !== st.projectName || !st.project) {
+              return { disabled: true, reason: '先选择项目' }
+            }
+            if (st.extracting) return { disabled: true, reason: '正在拆场景/道具' }
+            if (!hasTextModels(st.settings)) {
+              return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            }
+            return { disabled: false }
+          },
+          run: (signal) => runExtractRef.current('episode', signal),
+        },
+        {
+          ...WORKBENCH_BUILTINS.extract_designs_script,
+          disabled: () => {
+            const st = builtinStateRef.current
+            if (!st.projectName || st.ready !== st.projectName || !st.project) {
+              return { disabled: true, reason: '先选择项目' }
+            }
+            if (st.extracting) return { disabled: true, reason: '正在拆场景/道具' }
+            if (!hasTextModels(st.settings)) {
+              return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            }
+            return { disabled: false }
+          },
+          run: (signal) => runExtractRef.current('script', signal),
+        },
+      ],
+    }),
+    [projectName, epNo, project],
+  )
 
   useEffect(() => {
     designsRef.current = designs
@@ -142,17 +252,20 @@ export default function AssetBoard({
     [],
   )
 
-  const extract = useCallback(
-    async (scope: 'episode' | 'script') => {
-      if (extracting) return
-      if (!projectName || ready !== projectName || !project) {
-        toast('先选择项目，再拆场景/道具')
-        return
-      }
-      if (!hasTextModels(settings)) {
-        toast('设置页还没有可用的文本模型')
-        return
-      }
+  const runExtract = useCallback(
+    async (scope: 'episode' | 'script', signal?: AbortSignal): Promise<BuiltinResult> => {
+      const label = scope === 'episode' ? '从本集拆' : '从全剧拆'
+      const action = scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script'
+      const fail = (message: string, cancelled = false) =>
+        builtinFailure(action, message, {
+          label,
+          scope,
+          saveMode: 'immediate',
+          ...(cancelled ? { cancelled: true } : {}),
+        })
+      if (extracting) return fail('正在拆场景/道具，请稍候')
+      if (!projectName || ready !== projectName || !project) return fail('先选择项目，再拆场景/道具')
+      if (!hasTextModels(settings)) return fail('设置页还没有可用的文本模型')
       const { sceneText, shotText } = buildDesignContext({
         scope,
         epNo,
@@ -161,49 +274,77 @@ export default function AssetBoard({
         shots: project.shots,
       })
       if (!sceneText.trim() && !shotText.trim()) {
-        toast(
+        return fail(
           scope === 'episode'
             ? `第 ${epNo} 集还没有可拆的场次/镜头`
             : '当前项目没有剧本素材（source / 分集 / 镜头都为空）',
         )
-        return
       }
+      if (signal?.aborted) return fail('已取消', true)
       setExtracting(scope)
       const t0 = Date.now()
       try {
+        const scopeLabel =
+          scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原著梗概、分集场次与分镜'
+        const shotBlock = shotText ? `\n\n【镜头摘要】\n${shotText}` : ''
+        const skill = await buildBoardSkillPrompt('asset', { scopeLabel, sceneText, shotBlock })
         const r = await callText<{ scenes?: unknown[]; props?: unknown[] }>({
-          system: assetSys(settings?.rules),
+          system: skill.system,
           modelKey: stageModelKey(settings, 'asset', stagePick),
           json: true,
           maxTokens: 6000,
-          prompt:
-            `以下是${scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原著梗概、分集场次与分镜'}。\n\n` +
-            sceneText +
-            (shotText ? `\n\n【镜头摘要】\n${shotText}` : '') +
-            '\n\n要求：按场景 scenes、道具 props 两类输出；同一地点/同一道具合并成一条，' +
-            'refs 列出所有出现过的镜号；只拆可复用的空间和剧情关键道具。',
+          prompt: skill.task,
+          signal,
         })
+        assertSkillOutput('designs-v1', r.json)
         const incoming = pickExtractedDesigns(r.json)
         if (incoming.length === 0) throw new Error('模型没给出场景或道具，换个范围再试')
+        if (signal?.aborted) return fail('已取消', true)
         const { next, added, updated } = mergeDesigns(designsRef.current, incoming)
         setDesigns(next)
-        // 提取结果立即落库，避免用户马上切项目时停在防抖窗口里
-        savedSigRef.current = JSON.stringify(next)
-        patchProject(projectName, { designs: next }).catch(() => {})
+        let saved = true
+        try {
+          await patchProject(projectName, { designs: next })
+          savedSigRef.current = JSON.stringify(next)
+        } catch {
+          saved = false
+        }
         const secs = Math.round((Date.now() - t0) / 1000)
-        toast(
-          `拆出 ${incoming.length} 个素材 · ${secs}s｜新增 ${added.length}` +
+        return {
+          ok: true,
+          action,
+          label,
+          scope,
+          summary:
+            `拆出 ${incoming.length} 个素材 · ${secs}s｜新增 ${added.length}` +
             (updated.length ? ` · 合并 ${updated.length}` : '') +
-            (r.modelLabel ? ` · 模型：${r.modelLabel}` : ''),
-        )
+            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
+            (saved ? ' · 已保存到项目' : ' · 已写入本地草稿，但落库失败'),
+          counts: { total: next.length, added: added.length, updated: updated.length },
+          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
+          elapsedMs: Date.now() - t0,
+          saveMode: 'immediate',
+        }
       } catch (e) {
-        toast((e as Error).message || '拆场景/道具失败')
+        const err = e as Error
+        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
+        return fail(cancelled ? '已取消' : err.message || '拆场景/道具失败', cancelled)
       } finally {
         setExtracting('')
       }
     },
-    [epNo, extracting, project, projectName, ready, settings, stagePick, toast],
+    [epNo, extracting, project, projectName, ready, settings, stagePick],
   )
+  runExtractRef.current = runExtract
+
+  const extract = async (scope: 'episode' | 'script') => {
+    const r = await runExtract(scope)
+    if (!r.ok) {
+      if (!r.cancelled) toast(r.error || '拆场景/道具失败')
+      return
+    }
+    toast(r.summary)
+  }
 
   const generate = async (d: DesignSheet) => {
     if (!d.promptEn.trim()) {
@@ -297,59 +438,74 @@ export default function AssetBoard({
   const canPush = Boolean(projectName && ready === projectName && withImage > 0)
 
   return (
-    <div className="board">
-      <div className="board-head">
-        <div>
-          <h2>素材设定板</h2>
-          <p>
-            先拆场景和关键道具，生成可复用的空镜/多角度参考图，再按单卡或全部加入画布。
-            场景图不带主要角色，道具图不带手和人物，避免参考图污染镜头。
-          </p>
-        </div>
-        <div className="board-acts">
-          <div className="board-hint">{projectName ? `当前项目 ${projectName}` : '先选择项目'}</div>
-          <button
-            className="btn-ghost"
-            disabled={!projectName || ready !== projectName || !!extracting}
-            onClick={() => extract('episode')}
-            title="用当前集的剧本场次和全部分镜拆场景/道具"
-          >
-            {extracting === 'episode' ? '拆解中…' : '从本集拆'}
-          </button>
-          <button
-            className="btn-ghost"
-            disabled={!projectName || ready !== projectName || !!extracting}
-            onClick={() => extract('script')}
-            title="用当前项目的原著、分集场次和全部分镜拆场景/道具"
-          >
-            {extracting === 'script' ? '拆解中…' : '从全剧拆'}
-          </button>
-          <button className="btn" disabled={!canPush} onClick={pushAll} title="把所有有图的场景/道具加入画布">
-            全部加入画布
-          </button>
-        </div>
-      </div>
-
-      <div className="board-models">
-        <StageModelSelect
-          stage="asset"
-          label="拆素材模型"
-          settings={settings}
-          pick={stagePick}
-          onChange={onPickStage}
-        />
-        <CapModelSelect
-          cap="image"
-          label="设定图模型"
-          settings={settings}
-          value={imageModelKey}
-          onChange={onPickImageModel}
-          className="wb-field"
-        />
-        <span className="board-hint">
-          场景 16:9 · 道具 1:1 · 默认 2 张候选
-        </span>
-      </div>
+    <div className="board-with-chat">
+      <div className="board">
+      <WorkbenchBar
+        scope={<span className="wb-bar-title">素材</span>}
+        scopeDetail={
+          <span className="board-hint">
+            {projectName
+              ? `E${String(epNo).padStart(2, '0')} · 场景 ${sceneCount} · 道具 ${propCount}`
+              : '先选择项目'}
+          </span>
+        }
+        settings={
+          <>
+            <StageModelSelect
+              stage="asset"
+              label="拆素材模型"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+            />
+            <CapModelSelect
+              cap="image"
+              label="设定图模型"
+              settings={settings}
+              value={imageModelKey}
+              onChange={onPickImageModel}
+              className="wb-field"
+            />
+            <span className="board-hint wb-bar-optional">默认 2 张候选</span>
+          </>
+        }
+        actions={
+          <>
+            <AgentButton
+              open={chatVisible}
+              onToggle={() => setChatOpen((v) => !v)}
+              disabled={!projectName}
+              running={chatRunning}
+              controlsId="workbench-chat-assets"
+            />
+            <button
+              className="btn-ghost"
+              disabled={!projectName || ready !== projectName || !!extracting}
+              onClick={() => void extract('script')}
+              title="用当前项目的原著、分集场次和全部分镜拆场景/道具"
+            >
+              {extracting === 'script' ? '拆解中…' : '从全剧拆'}
+            </button>
+            <button
+              className={withImage === 0 ? 'btn primary' : 'btn-ghost'}
+              disabled={!projectName || ready !== projectName || !!extracting}
+              onClick={() => void extract('episode')}
+              title="用当前集的剧本场次和全部分镜拆场景/道具"
+            >
+              {extracting === 'episode' ? '拆解中…' : '从本集拆'}
+            </button>
+            <button
+              className={canPush ? 'btn primary' : 'btn'}
+              disabled={!canPush}
+              onClick={pushAll}
+              title="把所有有图的场景/道具加入画布"
+            >
+              全部加入画布
+            </button>
+          </>
+        }
+      />
 
       <div className="asset-tabs">
         <button className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>
@@ -368,7 +524,18 @@ export default function AssetBoard({
           <div className="char-empty-board">先在顶栏选择项目，再拆场景/道具。</div>
         ) : shown.length === 0 ? (
           <div className="char-empty-board">
-            还没有{KIND_LABEL[tab]}设定，点右上角「从本集拆」或「从全剧拆」开始。
+            {tipOpen ? (
+              <>
+                <span>
+                  还没有{KIND_LABEL[tab]}设定。场景图只放空镜、道具图不带手和人物，避免参考图污染镜头。
+                </span>
+                <button className="btn-mini ghost" onClick={() => setTipOpen(false)}>
+                  知道了
+                </button>
+              </>
+            ) : (
+              `还没有${KIND_LABEL[tab]}设定，点右上角「从本集拆」或「从全剧拆」开始。`
+            )}
           </div>
         ) : (
           shown.map((d) => (
@@ -391,6 +558,27 @@ export default function AssetBoard({
           ))
         )}
       </div>
+      </div>
+      <WorkbenchChatAside
+        surface="assets"
+        open={chatVisible}
+        onClose={() => setChatOpen(false)}
+      >
+        {projectName ? (
+          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
+            <LazySkillChat
+              adapter={chatAdapter}
+              settings={settings}
+              stagePick={stagePick}
+              onToast={toast}
+              onRunningChange={setChatRunning}
+              onClose={() => setChatOpen(false)}
+            />
+          </Suspense>
+        ) : (
+          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
+        )}
+      </WorkbenchChatAside>
     </div>
   )
 }

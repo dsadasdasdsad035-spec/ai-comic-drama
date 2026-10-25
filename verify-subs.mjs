@@ -1,112 +1,185 @@
+/**
+ * 字幕轨验收：cue 构建/校验/SRT + 真实 ffmpeg 字幕导出/sidecar。
+ * 连播 UI 和 PNG payload 由 verify-preview-captions.mjs 覆盖。
+ * 跑法：node verify-subs.mjs
+ */
 import { chromium } from 'playwright-core'
 
-const URL = 'http://127.0.0.1:5273/'
-const OUT = '/tmp/sb-shots'
-const IMG = '/generated/shot-1792463350590-e1bff0.jpg'
-const IMG2 = '/generated/shot-1792463351262-d5fb9c.jpg'
+const BASE = 'http://localhost:5273'
+let bad = 0
+const check = (name, cond, extra = '') => {
+  console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' | ' + extra : ''}`)
+  if (!cond) bad++
+}
 
-const browser = await chromium.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  headless: true,
+const b = await chromium.launch({ headless: true, channel: 'chrome' })
+const p = await b.newPage({ viewport: { width: 1280, height: 800 } })
+const errors = []
+p.on('pageerror', (e) => errors.push(e.message))
+await p.goto(BASE, { waitUntil: 'networkidle' })
+await p.waitForTimeout(600)
+
+const unit = await p.evaluate(async () => {
+  const m = await import('/src/captions.ts')
+  const voice = m.buildShotCaptions({
+    shotId: 's1',
+    dialogue: '陈默：第一句。第二句！第三句？',
+    shotSeconds: 6,
+    voiceSeconds: 4.8,
+    voiceOffset: 0,
+    subOffset: 0,
+    audioMode: 'off',
+  })
+  const shifted = m.buildShotCaptions({
+    shotId: 's2',
+    dialogue: '陈默：第一句。第二句。',
+    shotSeconds: 6,
+    voiceSeconds: 4.8,
+    subOffset: 2,
+    audioMode: 'off',
+  })
+  const native = m.buildShotCaptions({
+    shotId: 's3',
+    dialogue: '林岚：原生音频。',
+    shotSeconds: 4,
+    audioMode: 'native',
+  })
+  const overlap = [
+    { id: 'a', shotId: 's', text: 'A', startOffsetMs: 0, endOffsetMs: 2000, timing: 'voice', estimated: false },
+    { id: 'b', shotId: 's', text: 'B', startOffsetMs: 1500, endOffsetMs: 3000, timing: 'voice', estimated: false },
+  ]
+  const fast = [
+    { id: 'c', shotId: 's', text: '一'.repeat(20), startOffsetMs: 0, endOffsetMs: 1000, timing: 'shot', estimated: true },
+  ]
+  const srt = m.serializeSrt([
+    { startMs: 0, endMs: 1100, text: '第一句。' },
+    { startMs: 1200, endMs: 1900, text: '第二句。\n第二行' },
+  ])
+  return {
+    voice,
+    shifted,
+    native,
+    overlapIssues: m.validateCaptions(overlap, 4),
+    fastIssues: m.validateCaptions(fast, 4),
+    srt,
+    style: m.CAPTION_STYLE,
+  }
 })
-const page = await browser.newPage({ viewport: { width: 1560, height: 940 } })
-const logs = []
-page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`))
-page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`))
 
-await page.goto(URL, { waitUntil: 'networkidle' })
-await page.waitForTimeout(900)
-
-await page.evaluate(
-  ([img, img2]) => {
-    const p = JSON.parse(localStorage.getItem('storyboard-canvas-v1'))
-    // S03 制造超长：台词长、镜头短
-    const lines = [
-      '回收人第七次敲响这扇门。',
-      '哥，塔里的灯还亮着吗？',
-      '这不是你的东西，我说过很多次了，义体登记在塔里，不在地下。',
-      '',
-      '我知道。所以我才来。',
-    ]
-    p.nodes.forEach((n, i) => {
-      n.data.refImage = i % 2 === 0 ? img : img2
-      n.data.dialogue = lines[i] ?? ''
-      n.data.voiceUrl = undefined
-      n.data.voiceState = 'idle'
-      n.data.voiceSeconds = undefined
-      n.data.videoUrl = undefined
-      n.data.marks = []
-    })
-    p.nodes[2].data.seconds = 1.5 // 台词明显超长
-    localStorage.setItem('storyboard-canvas-v1', JSON.stringify(p))
-  },
-  [IMG, IMG2],
+check('按句生成 cue', unit.voice.length === 3, JSON.stringify(unit.voice.map((c) => c.text)))
+check('cue 使用 TTS 区间', unit.voice[0]?.startOffsetMs === 0 && unit.voice[2]?.endOffsetMs === 4800, JSON.stringify(unit.voice))
+check('cue 不重叠', unit.voice.every((c, i) => i === 0 || c.startOffsetMs >= unit.voice[i - 1].endOffsetMs), JSON.stringify(unit.voice))
+check('subOffset 夹到镜头内', unit.shifted.some((c) => c.clamped), JSON.stringify(unit.shifted))
+check('native 标记估算', unit.native[0]?.timing === 'native-estimate' && unit.native[0]?.estimated === true, JSON.stringify(unit.native))
+check('重叠校验报错', unit.overlapIssues.some((i) => i.level === 'error' && i.code === 'overlap'), JSON.stringify(unit.overlapIssues))
+check('阅读速度校验报错', unit.fastIssues.some((i) => i.level === 'error' && i.code === 'reading-speed'), JSON.stringify(unit.fastIssues))
+check(
+  'SRT 时间与换行',
+  unit.srt.includes('00:00:00,000 --> 00:00:01,100') &&
+    unit.srt.includes('00:00:01,200 --> 00:00:01,900') &&
+    unit.srt.includes('第二行'),
+  unit.srt,
 )
-await page.reload({ waitUntil: 'networkidle' })
-await page.waitForTimeout(1400)
+check('共享样式存在', unit.style.fontRatio === 0.044 && unit.style.maxLines === 2, JSON.stringify(unit.style))
 
-// 批量配音（先把音轨做出来）
-await page.getByRole('button', { name: '批量配音' }).click()
-for (let i = 0; i < 40; i++) {
-  await page.waitForTimeout(700)
-  const n = await page.locator('.shot-voice').count()
-  if (n >= 4) break
+const post = async (segments, extra = {}) => {
+  const r = await fetch(`${BASE}/api/assemble`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      segments,
+      resolution: '480p',
+      joins: segments.map(() => ({ mode: 'cut' })),
+      captionStyle: unit.style,
+      ...extra,
+    }),
+  })
+  return r.json()
 }
-console.log('带配音镜头:', await page.locator('.shot-voice').count())
-console.log('超长告警角标:', await page.locator('.shot-voice.over').count())
-
-// S03 检查 Inspector 告警
-await page.locator('.react-flow__node').nth(2).click()
-await page.waitForTimeout(600)
-const warn = await page.locator('.gen-warn').first().innerText().catch(() => '(无)')
-console.log('Inspector 告警:', warn.replace(/\s+/g, ' '))
-await page.screenshot({ path: `${OUT}/60-voice-overflow.png` })
-
-// 导出（字幕开）
-await page.getByRole('button', { name: '▶ 连播' }).click()
-await page.waitForTimeout(700)
-console.log('字幕开关默认:', await page.locator('.pv-subs input').isChecked())
-await page.getByRole('button', { name: '导出成片' }).click()
-
-let msg = ''
-let warnBox = ''
-for (let i = 0; i < 50; i++) {
-  await page.waitForTimeout(1500)
-  const m = page.locator('.pv-msg').last()
-  if ((await m.count()) > 0) {
-    msg = (await m.innerText()).trim()
-    const w = page.locator('.pv-msg.warn')
-    if ((await w.count()) > 0) warnBox = (await w.innerText()).trim()
-    if (/镜|失败|超时/.test(msg)) break
+const waitJob = async (id) => {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000))
+    const s = await (await fetch(`${BASE}/api/assemble?id=${encodeURIComponent(id)}`)).json()
+    if (s.status === 'succeeded' || s.status === 'failed') return s
   }
-}
-console.log('导出结果:', msg)
-console.log('超长告警:', warnBox || '(无)')
-await page.screenshot({ path: `${OUT}/61-subs-export.png` })
-
-const href = await page.evaluate(() => {
-  const a = document.querySelector('.pv-foot a[download]')
-  return a ? a.getAttribute('href') : null
-})
-console.log('成片:', href)
-
-// 关字幕再导一次，确认开关生效
-if (href) {
-  await page.locator('.pv-subs input').uncheck()
-  await page.waitForTimeout(300)
-  await page.getByRole('button', { name: '导出成片' }).click()
-  let msg2 = ''
-  for (let i = 0; i < 50; i++) {
-    await page.waitForTimeout(1500)
-    const m = page.locator('.pv-msg').last()
-    if ((await m.count()) > 0) {
-      msg2 = (await m.innerText()).trim()
-      if (/镜|失败|超时/.test(msg2)) break
-    }
-  }
-  console.log('关字幕后:', msg2)
+  return { status: 'timeout' }
 }
 
-console.log('--- errors ---')
-console.log(logs.filter((l) => /pageerror|\[error\]/i.test(l)).slice(0, 6).join('\n') || '(none)')
-await browser.close()
+const job = await post([
+  {
+    kind: 'shot',
+    seconds: 2,
+    image: '/generated/blender-bmvl0f76b100fab-0.jpg',
+    audioMode: 'none',
+    captions: [
+      { startOffsetMs: 0, endOffsetMs: 1000, text: '第一句。' },
+      { startOffsetMs: 1100, endOffsetMs: 1900, text: '第二句。' },
+    ],
+  },
+  {
+    kind: 'shot',
+    seconds: 2,
+    image: '/generated/sched-1792822461394-0-bbf5.jpg',
+    audioMode: 'none',
+    captions: [{ startOffsetMs: 0, endOffsetMs: 1500, text: '第三句。' }],
+  },
+])
+check('提交真实字幕导出', job.ok === true, JSON.stringify(job))
+const result = await waitJob(job.id)
+check('真实导出成功', result.status === 'succeeded', JSON.stringify(result))
+check('回报 cue 数', result.captions === 3, String(result.captions))
+check('回报字幕镜头数', result.subbed === 2, String(result.subbed))
+check('返回 SRT sidecar', Boolean(result.srtUrl), String(result.srtUrl))
+if (result.srtUrl) {
+  const srt = await (await fetch(BASE + result.srtUrl)).text()
+  check(
+    'sidecar 与 cue 一致',
+    srt.includes('第一句。') &&
+      srt.includes('第二句。') &&
+      srt.includes('第三句。') &&
+      srt.includes('00:00:02,000 --> 00:00:03,500'),
+    srt,
+  )
+}
+
+const cuePng = await p.evaluate(async (style) => {
+  const m = await import('/src/subtitles.ts')
+  return m.renderSubtitlePng({ width: 854, height: 480, text: 'PNG 字幕。', style })
+}, unit.style)
+check('前端生成 cue PNG', String(cuePng || '').startsWith('data:image/png'))
+const pngJob = await post(
+  [
+    {
+      kind: 'shot',
+      seconds: 2,
+      image: '/generated/blender-bmvl0f76b100fab-0.jpg',
+      audioMode: 'none',
+      captions: [{ startOffsetMs: 200, endOffsetMs: 1200, text: 'PNG 字幕。', sub: cuePng }],
+    },
+  ],
+  { captionMode: 'png' },
+)
+const pngResult = await waitJob(pngJob.id)
+check('无 libass 兜底导出成功', pngResult.status === 'succeeded', JSON.stringify(pngResult))
+check('PNG 路径仍有 SRT sidecar', Boolean(pngResult.srtUrl), String(pngResult.srtUrl))
+
+const badJob = await post([
+  {
+    kind: 'shot',
+    seconds: 2,
+    image: '/generated/blender-bmvl0f76b100fab-0.jpg',
+    audioMode: 'none',
+    captions: [{ startOffsetMs: 0, endOffsetMs: 5000, text: '越界字幕。' }],
+  },
+])
+const badResult = await waitJob(badJob.id)
+check(
+  '越界 cue 被服务端夹紧并回报',
+  badResult.status === 'succeeded' && (badResult.captionWarnings || []).some((w) => w.includes('超出真实时长')),
+  JSON.stringify({ status: badResult.status, warnings: badResult.captionWarnings }),
+)
+
+check('无 pageerror', errors.length === 0, errors[0] || '')
+await b.close()
+console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
+process.exit(bad ? 1 : 0)

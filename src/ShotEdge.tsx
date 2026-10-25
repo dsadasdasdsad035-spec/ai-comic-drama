@@ -54,7 +54,15 @@ function ShotEdge(props: EdgeProps<ShotEdgeType>) {
           filter: selected ? `drop-shadow(0 0 6px ${color})` : undefined,
         }}
       />
-      <EdgeChip id={id} x={labelX} y={labelY} color={color} label={s.label} />
+      <EdgeChip
+        id={id}
+        x={labelX}
+        y={labelY}
+        color={color}
+        relation={relation}
+        label={relation === 'transition' && data?.transition ? data.transition.summary : s.label}
+        state={relation === 'transition' ? data?.transition?.state ?? 'ready' : 'ready'}
+      />
     </>
   )
 }
@@ -68,33 +76,62 @@ function EdgeChip({
   x,
   y,
   color,
+  relation,
   label,
+  state,
 }: {
   id: string
   x: number
   y: number
   color: string
+  relation: Relation
   label: string
+  state: 'ready' | 'pending' | 'stale' | 'inactive'
 }) {
-  const { cycleEdge } = useContext(CanvasCtx)
+  const { cycleEdge, openTransition } = useContext(CanvasCtx)
   const zoom = useStore((st) => st.transform[2])
+  const hint =
+    state === 'inactive'
+      ? '未参与成片：两镜在播放序列里不相邻'
+      : state === 'stale'
+        ? '生成转场依赖的边界已变化，需要重生成'
+        : state === 'pending'
+          ? '生成转场还没出片，暂按效果兜底'
+          : relation === 'transition'
+            ? '点击切换关系；⋯ 打开转场设置'
+            : '点击切换镜头关系'
   return (
     <EdgeLabelRenderer>
-      <button
-        className="edge-chip nodrag nopan"
-        style={{
-          transform: `translate(-50%,-50%) translate(${x}px,${y}px) scale(${1 / zoom})`,
-          borderColor: color,
-          color,
-        }}
-        onClick={(e) => {
-          e.stopPropagation()
-          cycleEdge(id)
-        }}
-        title="点击切换镜头关系"
+      <span
+        className="edge-chip-wrap nodrag nopan"
+        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px) scale(${1 / zoom})` }}
       >
-        {label}
-      </button>
+        <button
+          className={`edge-chip ${state === 'ready' ? '' : state}`}
+          style={{ borderColor: color, color }}
+          onClick={(e) => {
+            e.stopPropagation()
+            cycleEdge(id)
+          }}
+          title={hint}
+        >
+          {label}
+          {relation === 'transition' && state !== 'ready' && <i className={`edge-dot ${state}`} />}
+        </button>
+        {relation === 'transition' && (
+          <button
+            className="edge-chip-more"
+            style={{ borderColor: color, color }}
+            onClick={(e) => {
+              e.stopPropagation()
+              openTransition(id)
+            }}
+            title="打开转场设置"
+          >
+            ⋯
+          </button>
+        )}
+      </span>
     </EdgeLabelRenderer>
   )
 }

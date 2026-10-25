@@ -1,5 +1,5 @@
 /**
- * LangGraph agent 图回归：mock 模型/沙箱/视觉，不调用真实模型或 iframe。
+ * LangGraph agent 图回归：mock 模型/渲染/视觉，不调用真实模型或 iframe。
  * 跑法：node verify-agent-graph.mjs
  */
 import fs from 'node:fs'
@@ -22,54 +22,39 @@ const check = (name, cond, extra = '') => {
   if (!cond) bad++
 }
 
-const CODE = `let S;
-function init(ctx) {
-  S = ctx;
-  const mountain = new THREE.Mesh(
-    new THREE.ConeGeometry(4, 5, 8),
-    new THREE.MeshStandardMaterial({ color: 0x4b5d52 })
-  );
-  mountain.position.set(-6, 2.5, -6);
-  S.scene.add(mountain);
-  const ground = new THREE.Mesh(
-    new THREE.CylinderGeometry(7, 7, 0.4, 24),
-    new THREE.MeshStandardMaterial({ color: 0x42564a })
-  );
-  ground.position.y = -0.2;
-  S.scene.add(ground);
-  const man = new THREE.Group();
-  const woman = new THREE.Group();
-  const bodyM = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x3b6ea5 }));
-  const bodyW = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.95, 4, 8), new THREE.MeshStandardMaterial({ color: 0xb85c7a }));
-  man.add(bodyM);
-  woman.add(bodyW);
-  man.position.set(-0.7, 0.8, 0);
-  woman.position.set(0.7, 0.8, 0);
-  S.scene.add(man, woman);
-  const swordM = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.1, 0.08), new THREE.MeshBasicMaterial({ color: 0xdddddd }));
-  const swordW = swordM.clone();
-  swordM.position.set(-0.35, 1.2, 0);
-  swordW.position.set(0.35, 1.2, 0);
-  man.add(swordM);
-  woman.add(swordW);
-  S.scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 2));
-  S.camera.position.set(7, 3.2, 7);
-  S.camera.lookAt(0, 0.8, 0);
-}
-function renderAt(t) {
-  if (!S) return;
-  const d = S.duration || 4;
-  const p = Math.min(1, Math.max(0, t / d));
-  const a = -0.7 + p * 2.1;
-  S.camera.position.set(Math.cos(a) * 8, 3.2, Math.sin(a) * 8);
-  S.camera.lookAt(0, 0.8, 0);
-}
-function dispose() {}`
+const CODE = `import bpy
+import math
+from mathutils import Vector
+
+_state = {}
+
+def build(ctx):
+    _state['ctx'] = ctx
+    bpy.ops.mesh.primitive_cone_add(vertices=8, radius1=5, depth=6, location=(-6, -6, 3))
+    bpy.ops.mesh.primitive_cylinder_add(radius=7, depth=0.4, vertices=24, location=(0, 0, -0.2))
+    for x in (-0.7, 0.7):
+        bpy.ops.mesh.primitive_cylinder_add(radius=0.22, depth=1.0, vertices=12, location=(x, 0, 0.8))
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(-0.7, 0, 1.2))
+    ctx.camera.location = (7, -7, 3.2)
+    d = Vector((0, 0, 0.8)) - ctx.camera.location
+    ctx.camera.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
+
+def pose(t, mode):
+    ctx = _state.get('ctx')
+    if not ctx:
+        return
+    a = -0.7 + min(1.0, max(0.0, t / 4.0)) * 2.1
+    ctx.camera.location = (math.cos(a) * 8, math.sin(a) * 8, 3.2)
+    d = Vector((0, 0, 0.8)) - ctx.camera.location
+    ctx.camera.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
+
+def dispose():
+    pass`
 
 const calls = [
   { name: 'get_shot_context', args: {} },
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
   { name: 'review_frames', args: { requirements: ['山体', '两人', '双剑', '对环'] } },
   { name: 'finish', args: { summary: '山、男女双剑对打与环绕镜头已完成' } },
@@ -112,7 +97,7 @@ const result = await lib.runSceneAgent({
   },
 })
 check('图跑通 finish', result.summary.includes('完成') && !result.error, JSON.stringify({ error: result.error, summary: result.summary }))
-check('代码进入草稿', result.code?.includes('ConeGeometry') && draft === result.code)
+check('代码进入草稿', result.code?.includes('primitive_cone_add') && draft === result.code)
 check('5 帧结果', result.frames?.length === 5, String(result.frames?.length))
 check('验收清单通过', result.review?.passed === true && result.review.items.length === 4)
 check('工具事件顺序', events.filter((x) => x === 'tool_start').length === 6 && events.includes('code') && events.includes('frames') && events.includes('review') && events.includes('done'), JSON.stringify(events))
@@ -120,10 +105,10 @@ check('模型调用 6 次', asks.length === 6, String(asks.length))
 check('工具轨迹不含源码', result.events.find((e) => e.type === 'code')?.codeHash?.length === 64, JSON.stringify(result.events.find((e) => e.type === 'code')))
 
 
-// 已有代码基线：模型可以 run_sandbox 先行，无需 set_scene_code
+// 已有代码基线：模型可以 run_render 先行，无需 set_scene_code
 let baselineDraft = ''
 const baselineCalls = [
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
   { name: 'review_frames', args: { requirements: ['山体', '两人'] } },
   { name: 'finish', args: { summary: '当前代码运行完成' } },
@@ -145,7 +130,7 @@ const baseline = await lib.runSceneAgent({
     onDraftCode: () => { baselineDraft = 'should-not-be-written' },
   },
 })
-check('已有代码可直接 run_sandbox', !baseline.error && baseline.trial?.ok === true && baseline.attempts === 1, JSON.stringify({ error: baseline.error, trial: baseline.trial }))
+check('已有代码可直接 run_render', !baseline.error && baseline.trial?.ok === true && baseline.attempts === 1, JSON.stringify({ error: baseline.error, trial: baseline.trial }))
 check('baseline 不重复写草稿', baselineDraft === '', baselineDraft)
 check('baseline 后续运行复用', await (async () => {
   let i = 0
@@ -167,11 +152,11 @@ check('baseline 后续运行复用', await (async () => {
   return !again.error && again.trial?.ok === true
 })())
 
-// 空镜头 / 无效初始代码：run_sandbox 仍拒绝，随后可提交代码恢复
+// 空镜头 / 无效初始代码：run_render 仍拒绝，随后可提交代码恢复
 const emptySeq = [
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2] } },
   { name: 'review_frames', args: { requirements: ['山体'] } },
   { name: 'finish', args: { summary: '恢复完成' } },
@@ -191,7 +176,7 @@ const emptyRun = await lib.runSceneAgent({
     reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
   },
 })
-const emptyErrors = emptyRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_sandbox' && e.isError)
+const emptyErrors = emptyRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_render' && e.isError)
 check('空镜头仍拒绝运行', emptyErrors.length >= 1 && String(emptyErrors[0].result?.error || '').includes('还没有提交代码'), JSON.stringify(emptyErrors.slice(0, 1)))
 check('空镜头提交代码后可恢复', !emptyRun.error && emptyRun.trial?.ok === true, JSON.stringify({ error: emptyRun.error, trial: emptyRun.trial }))
 
@@ -211,14 +196,94 @@ const invalidRun = await lib.runSceneAgent({
     reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
   },
 })
-const invalidErrors = invalidRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_sandbox' && e.isError)
+const invalidErrors = invalidRun.events.filter((e) => e.type === 'tool_end' && e.toolName === 'run_render' && e.isError)
 check('无效初始代码不 seed', invalidErrors.length >= 1 && !invalidRun.error, JSON.stringify({ error: invalidRun.error, first: invalidErrors[0] }))
+
+// 原生工具调用：同一套工具序列，provider 直接返回 toolCalls
+const nativeSettings = {
+  providers: [{ id: 'minimax', label: 'MiniMax', kind: 'minimax', baseUrl: '', apiKey: '', caps: ['text'] }],
+  models: [{ key: 'native-model', label: 'M3', cap: 'text', provider: 'minimax', model: 'MiniMax-M3' }],
+  defaults: { text: 'native-model' },
+  stageModels: { sceneCode: 'native-model' },
+  agentToolProtocol: 'auto',
+  apiKey: '',
+  rules: {},
+}
+let nativeIndex = 0
+const nativeAsks = []
+const nativeEvents = []
+let nativeDraft = ''
+const nativeRun = await lib.runSceneAgent({
+  prompt: '生成山、双人对打、环绕镜头',
+  settings: nativeSettings,
+  ask: async (o) => {
+    nativeAsks.push(o)
+    const c = calls[nativeIndex++]
+    const id = `call_${nativeIndex}`
+    if (c) o.onToolCallDelta?.({ index: 0, id, name: c.name, delta: JSON.stringify(c.args) })
+    return c
+      ? {
+          text: '',
+          finishReason: 'tool_calls',
+          toolCalls: [{ id, name: c.name, arguments: JSON.stringify(c.args) }],
+        }
+      : { text: '完成', finishReason: 'stop' }
+  },
+  requirements: ['山体', '两名人物', '两把剑', '镜头环绕'],
+  deps: {
+    getShotContext: () => 'S01',
+    runTrial: async () => ({ ok: true, firstFrame: 'data:image/jpeg;base64,AA' }),
+    captureFrames: async (_c, times) => times.map((t) => ({ t, url: `data:image/jpeg;base64,${t}` })),
+    reviewFrames: async (_f, reqs) => ({
+      passed: true,
+      usedVision: true,
+      items: reqs.map((label) => ({ key: label, label, ok: true })),
+    }),
+    onDraftCode: (code) => { nativeDraft = code },
+    onEvent: (e) => nativeEvents.push(e),
+  },
+})
+check('原生协议命中', nativeRun.toolProtocol === 'native' && !nativeRun.error, JSON.stringify({ protocol: nativeRun.toolProtocol, error: nativeRun.error }))
+check('原生请求带 messages/tools', Array.isArray(nativeAsks[0]?.messages) && nativeAsks[0].messages.some((m) => m.role === 'system') && nativeAsks[0].tools?.length === 12 && nativeAsks[0].toolChoice === 'auto', JSON.stringify({ tools: nativeAsks[0]?.tools?.length, msgs: nativeAsks[0]?.messages?.map((m) => m.role) }))
+check('原生工具参数进度事件', nativeEvents.some((e) => e.type === 'tool_call_args' && e.toolName === 'get_shot_context'), JSON.stringify(nativeEvents.filter((e) => e.type === 'tool_call_args').slice(0, 2)))
+check('原生跑通 finish', nativeRun.finished === true && nativeRun.trial?.ok === true && nativeDraft === nativeRun.code, JSON.stringify({ finished: nativeRun.finished, error: nativeRun.error }))
+check('协议写入轨迹', nativeEvents.some((e) => e.type === 'custom' && e.name === 'tool_protocol' && e.value?.protocol === 'native'))
+check(
+  '原生模式不加 JSON 协议',
+  nativeAsks[0]?.system === undefined &&
+    !String(nativeAsks[0]?.messages?.[0]?.content || '').includes('只输出 JSON'),
+  JSON.stringify({ hasSystem: Boolean(nativeAsks[0]?.system) }),
+)
+check(
+  'JSON 模式仍带协议',
+  String(asks[0]?.system || '').includes('只输出 JSON'),
+  JSON.stringify({ hasSystem: Boolean(asks[0]?.system) }),
+)
+
+// 显式 native + 未声明支持的模型：可读错误，不静默回退
+let nativeUnsupported = ''
+try {
+  await lib.runSceneAgent({
+    prompt: 'x',
+    settings: { ...settings, agentToolProtocol: 'native' },
+    ask: async () => ({ text: 'x' }),
+    deps: {
+      getShotContext: () => 'S01',
+      runTrial: async () => ({ ok: true }),
+      captureFrames: async () => [],
+      reviewFrames: async () => ({ passed: true, items: [] }),
+    },
+  })
+} catch (e) {
+  nativeUnsupported = e.message
+}
+check('显式 native 不支持时报错', nativeUnsupported.includes('未声明支持原生工具调用'), nativeUnsupported)
 
 // 事件桥：只映射可观察动作
 
-const ev = lib.mapLangGraphEvent({ event: 'on_tool_start', name: 'run_sandbox', run_id: 'r1', data: { input: { x: 1 } } })
-check('tool_start 映射', ev?.type === 'tool_start' && ev.toolCallId === 'r1' && ev.toolName === 'run_sandbox')
-const evEnd = lib.mapLangGraphEvent({ event: 'on_tool_end', name: 'run_sandbox', run_id: 'r1', data: { output: { ok: true } } })
+const ev = lib.mapLangGraphEvent({ event: 'on_tool_start', name: 'run_render', run_id: 'r1', data: { input: { x: 1 } } })
+check('tool_start 映射', ev?.type === 'tool_start' && ev.toolCallId === 'r1' && ev.toolName === 'run_render')
+const evEnd = lib.mapLangGraphEvent({ event: 'on_tool_end', name: 'run_render', run_id: 'r1', data: { output: { ok: true } } })
 check('tool_end 映射', evEnd?.type === 'tool_end' && evEnd.toolCallId === 'r1')
 check('未知事件忽略', lib.mapLangGraphEvent({ event: 'on_chain_start' }) === null)
 check('事件体积受限', String(JSON.stringify(lib.mapLangGraphEvent({ event: 'on_tool_end', name: 'x', run_id: 'r', data: { output: 'x'.repeat(30000) } }))).length < 20000)
@@ -258,9 +323,9 @@ let repairRuns = 0
 const repairSeq = [
   { name: 'get_shot_context', args: {} },
   { name: 'set_scene_code', args: { code: CODE.replace('0x3b6ea5', '0x111111') } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 2, 4] } },
   { name: 'review_frames', args: { requirements: ['山体', '两人', '双剑', '环绕'] } },
   { name: 'finish', args: { summary: '修复完成' } },
@@ -280,7 +345,7 @@ const repaired = await lib.runSceneAgent({
     reviewFrames: async (_f, reqs) => ({ passed: true, usedVision: true, items: reqs.map((label) => ({ key: label, label, ok: true })) }),
   },
 })
-check('沙箱失败后修复成功', !repaired.error && repaired.attempts === 2 && repaired.trial?.ok, JSON.stringify({ error: repaired.error, attempts: repaired.attempts }))
+check('渲染失败后修复成功', !repaired.error && repaired.attempts === 2 && repaired.trial?.ok, JSON.stringify({ error: repaired.error, attempts: repaired.attempts }))
 
 // 不再按图步骤上限终止：持续工具调用只由总时长/取消约束
 const noStepCap = await lib.runSceneAgent({
@@ -332,7 +397,7 @@ check('无视觉模型转人工', noVision.needsHumanReview === true && noVision
 let reviewRuns = 0
 const reviewSeq = [
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2] } },
   { name: 'review_frames', args: { requirements: ['山体'] } },
   { name: 'review_frames', args: { requirements: ['山体'] } },
@@ -357,11 +422,29 @@ const reviewLimited = await lib.runSceneAgent({
 })
 check('视觉验收上限停止', Boolean(reviewLimited.error) && reviewLimited.reviewAttempts === 2 && reviewRuns === 2, JSON.stringify({ error: reviewLimited.error, attempts: reviewLimited.reviewAttempts, reviewRuns }))
 
-// 工具白名单：只有当前镜头的 6 个工具，没有 shell/网络/保存
+// 工具白名单：当前镜头的 12 个工具，没有 shell/网络/保存
 const session = lib.createSceneAgentSession()
 const toolSet = lib.createSceneAgentTools({ getShotContext: () => '', runTrial: async () => ({ ok: false }), captureFrames: async () => [], reviewFrames: async () => ({ passed: false, usedVision: false, needsHumanReview: true, items: [] }) }, session)
 const names = toolSet.tools.map((t) => t.name).sort()
-check('工具白名单固定', JSON.stringify(names) === JSON.stringify(['capture_frames', 'finish', 'get_shot_context', 'review_frames', 'run_sandbox', 'set_scene_code']), JSON.stringify(names))
+check(
+  '工具白名单固定',
+  JSON.stringify(names) ===
+    JSON.stringify([
+      'append_scene_draft',
+      'begin_scene_draft',
+      'capture_frames',
+      'commit_scene_draft',
+      'discard_scene_draft',
+      'finish',
+      'get_shot_context',
+      'patch_scene_draft',
+      'read_scene_draft',
+      'review_frames',
+      'run_render',
+      'set_scene_code',
+    ]),
+  JSON.stringify(names),
+)
 
 // 取消：外部 signal 已中止
 const ac = new AbortController()
@@ -385,7 +468,7 @@ let failRuns = 0
 const limitSeq = []
 for (let i = 0; i < 3; i++) {
   limitSeq.push({ name: 'set_scene_code', args: { code: CODE.replace('0x3b6ea5', `0x${i + 1}11111`) } })
-  limitSeq.push({ name: 'run_sandbox', args: {} })
+  limitSeq.push({ name: 'run_render', args: {} })
 }
 let limitIndex = 0
 const limited = await lib.runSceneAgent({

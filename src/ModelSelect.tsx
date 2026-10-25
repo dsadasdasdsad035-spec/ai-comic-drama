@@ -1,4 +1,5 @@
 import type { AppSettings, Cap, ModelEntry, Stage } from './api'
+import { isRunnableModel, modelHasCap } from './modelCaps'
 
 /** 环节手选：只存模型表键；空串/缺省 = 用环节默认 */
 export type StagePick = Partial<Record<Stage, string>>
@@ -9,13 +10,19 @@ export const STAGE_PICK_KEY = 'storyboard-stage-model-pick'
 export const isTextCap = (cap: Cap) => cap === 'text' || cap === 'textPro'
 
 export function textModelEntries(settings: AppSettings | null): ModelEntry[] {
-  return (settings?.models ?? []).filter((m) => isTextCap(m.cap))
+  return (settings?.models ?? []).filter(
+    (m) => (modelHasCap(m, 'text') || modelHasCap(m, 'textPro')) && isRunnableModel(m),
+  )
 }
 
-/** 环节可选模型：视觉环节只看 cap=vision；其余走文本族 */
+/** 环节可选模型：视觉环节只看 vision；其余走文本族 */
 export function stageModelEntries(settings: AppSettings | null, stage: Stage): ModelEntry[] {
-  if (stage === 'vision') return (settings?.models ?? []).filter((m) => m.cap === 'vision')
-  if (stage === 'videoVision') return (settings?.models ?? []).filter((m) => m.cap === 'videoVision')
+  if (stage === 'vision') {
+    return (settings?.models ?? []).filter((m) => modelHasCap(m, 'vision') && isRunnableModel(m))
+  }
+  if (stage === 'videoVision') {
+    return (settings?.models ?? []).filter((m) => modelHasCap(m, 'videoVision') && isRunnableModel(m))
+  }
   return textModelEntries(settings)
 }
 
@@ -103,7 +110,9 @@ export function CapModelSelect({
   className?: string
 }) {
   const family = caps ?? [cap]
-  const list = (settings?.models ?? []).filter((m) => family.includes(m.cap))
+  const list = (settings?.models ?? []).filter(
+    (m) => family.some((c) => modelHasCap(m, c)) && isRunnableModel(m),
+  )
   const defKey = settings?.defaults?.[cap] || ''
   const def = list.find((m) => m.key === defKey) || list[0]
   return (
@@ -113,7 +122,7 @@ export function CapModelSelect({
       title="这个环节用哪个模型；不选就用设置页的默认"
     >
       <span className="label">{label}</span>
-      <select value={value || ''} onChange={(e) => onChange(e.target.value)}>
+      <select value={value || ''} onChange={(e) => onChange(e.target.value)} aria-label={label}>
         <option value="">{def ? `默认 · ${def.label}` : '默认（未配置）'}</option>
         {list.map((m) => (
           <option key={m.key} value={m.key}>
@@ -129,6 +138,7 @@ export function CapModelSelect({
 /**
  * 按生成环节选文本模型。首项显示当前默认解析结果，
  * 手选后由调用方写进 StagePick（本机持久化）。
+ * compact：上沿上下文带里只显示模型名，完整信息放在 title，避免下拉撑宽整条带。
  */
 export function StageModelSelect({
   stage,
@@ -138,6 +148,7 @@ export function StageModelSelect({
   onChange,
   className = 'wb-field',
   disabled,
+  compact,
 }: {
   stage: Stage
   label?: string
@@ -146,26 +157,29 @@ export function StageModelSelect({
   onChange: (stage: Stage, key: string) => void
   className?: string
   disabled?: boolean
+  compact?: boolean
 }) {
   const list = stageModelEntries(settings, stage)
   const value = pick?.[stage] || ''
   const defLabel = stageDefaultLabel(settings, stage, pick)
+  const defEntry = resolveStageModel(settings, stage, pick).entry
   return (
     <label
       className={className}
       data-stage-model-select={stage}
-      title="这个环节用哪个模型；默认来自设置页的「生成环节默认模型」，手选只保存在本机"
+      title={`${label}：${defLabel}\n默认来自设置页的「生成环节默认模型」，手选只保存在本机`}
     >
       <span className="label">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(stage, e.target.value)}
         disabled={disabled || list.length === 0}
+        aria-label={label}
       >
-        <option value="">默认 · {defLabel}</option>
+        <option value="">默认 · {compact ? defEntry?.model || defLabel : defLabel}</option>
         {list.map((m) => (
           <option key={m.key} value={m.key}>
-            {m.label} · {m.model}
+            {compact ? m.model : `${m.label} · ${m.model}`}
           </option>
         ))}
       </select>

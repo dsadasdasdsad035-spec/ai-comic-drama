@@ -1,15 +1,27 @@
 import { defineConfig, type Plugin } from 'vite'
+import type { DialogueDelivery } from './src/types'
 import tailwindcss from '@tailwindcss/vite'
 import { normalizeAgentLimits, type AgentLimitSettings } from './src/agent/agentLimits'
+import {
+  entryOf,
+  mergeCustomVoices,
+  miniMaxVoicesFromResponse,
+  normalizeCustomVoices,
+  voiceCapabilitiesForKind,
+  type CustomVoice,
+} from './src/voiceCatalog'
+import { normalizeToolProtocol, toolThinkingMode, supportsNativeTools } from './src/agent/toolCapabilities'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath, safeProjectName } from './server/db.mjs'
+import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath, safeProjectName, listSkillOverrides, getSkillOverride, setSkillOverride, deleteSkillOverride, getChatThread, saveChatThread, deleteChatThread } from './server/db.mjs'
+import { MAX_SKILL_BYTES, listSkillFiles, readSkillFile, safeSkillId, splitSkillText, withBuiltinFrontmatter } from './server/skills.mjs'
 import {
   MAX_REF_BYTES,
+  copyIntoProjectMedia,
   listProjectImages,
   migrateProjectMedia,
   resolveProjectMediaPath,
@@ -23,12 +35,62 @@ import {
   pollVideoTask,
   submitVideoTask,
 } from './server/video.mjs'
+import {
+  ApimartError,
+  APIMART_DEFAULT_VOICE,
+  APIMART_VOICES,
+  buildImagePayload as buildApimartImagePayload,
+  buildVideoPayload as buildApimartVideoPayload,
+  downloadResult as downloadApimartResult,
+  errorFromResponse,
+  fetchCatalog as fetchApimartCatalog,
+  imageUrlsFromTask,
+  isSupportedVideoModel,
+  parseChatBody,
+  pollTask as pollApimartTask,
+  submitImage as submitApimartImage,
+  submitVideo as submitApimartVideo,
+  synthesizeSpeech as synthesizeApimartSpeech,
+  uploadImage as uploadApimartImage,
+  videoFamilyFor,
+  videoUrlFromTask,
+} from './server/apimart.mjs'
 import { FileError, ensureUploadedVideo } from './server/files.mjs'
+import { runSyncLabs } from './server/lipsync.mjs'
+import { analyzeLipSync } from './server/lipsyncQa.mjs'
+import { ChatStreamParser } from './server/text-stream.mjs'
+import { isRunnableModel, modelHasCap } from './src/modelCaps'
+import {
+  normalizeChatMessages,
+  normalizeToolCalls,
+  normalizeToolSchemas,
+  toolRequestError,
+} from './server/text-tools.mjs'
+import {
+  appendDraft,
+  beginDraft,
+  commitDraft,
+  discardAllDrafts,
+  discardDraft,
+  draftText,
+  patchDraft,
+  readDraft,
+  sweepStaleDrafts,
+} from './server/scene-draft.mjs'
 import {
   DEFAULT_VOLC_TTS_VOICE,
   VOLC_TTS_VOICES,
   synthesizeVolcTts,
 } from './server/volc-tts.mjs'
+import {
+  blenderHealth,
+  cancelRenderJob,
+  cleanupStaleJobs,
+  getRenderJob,
+  listRenderJobs,
+  shutdownRenderJobs,
+  submitRenderJob,
+} from './server/blender.mjs'
 
 const ARK_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 const ARK_CHAT = 'https://ark.cn-beijing.volces.com/api/v3/chat/completions'
@@ -124,13 +186,14 @@ type RulePack = { enabled: boolean; text: string }
 
 /** 能力：文本两档 / 图像 / 三视图 / 视频两档 / 音频 */
 type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+const CAP_VALUES: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 'view', 'video', 'videoRef', 'audio']
 
 /** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
 type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
 const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
 
 /** 渠道协议：决定请求怎么发 */
-type ProviderKind = 'ark' | 'ark-plan' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
+type ProviderKind = 'ark' | 'ark-plan' | 'apimart' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 
 type Provider = {
   id: string
@@ -142,14 +205,29 @@ type Provider = {
   note?: string
   /** 这个渠道能做哪几类活：文本 / 图片 / 视频 / 音频 */
   caps?: ProviderCap[]
+  /** 只读：该渠道当前是否解析到 Key；不落库 */
+  keyAvailable?: boolean
 }
 type ProviderCap = 'text' | 'image' | 'video' | 'audio'
+
+type ModelFeatureSet = {
+  vision?: boolean
+  videoInput?: boolean
+  imageRef?: 'none' | 'single' | 'multi'
+  videoRef?: boolean
+  firstFrame?: boolean
+  lastFrame?: boolean
+  audioOut?: boolean
+  tools?: boolean
+}
 
 type ModelEntry = {
   /** 唯一键，生成时按它选模型 */
   key: string
   label: string
   cap: Cap
+  /** 一个模型可服务多个能力；缺省时按 cap 的旧语义路由 */
+  caps?: Cap[]
   /** Provider.id */
   provider: string
   /** 真实模型 ID */
@@ -164,6 +242,12 @@ type ModelEntry = {
    * auto（默认）= 普通文本开思考、JSON/工具协议关思考；enabled/disabled = 强制。
    */
   thinking?: 'auto' | 'enabled' | 'disabled'
+  /** 目录/预设来源 */
+  source?: 'preset' | 'catalog' | 'manual'
+  /** 目录已登记但运行时尚未接入时不可选 */
+  runtime?: 'ready' | 'catalog-only'
+  /** 能力细节，供 UI 与服务端判定 */
+  features?: ModelFeatureSet
 }
 
 /** 计价（设置页可改；默认值为估算，对不上账单时按实际单价校准） */
@@ -178,9 +262,22 @@ type AppSettings = {
   pricing?: Pricing
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
+  /** 3D agent 的工具协议；缺省 auto */
+  agentToolProtocol?: 'auto' | 'native' | 'json'
+  /** 设置库里的自定义音色条目 */
+  customVoices?: CustomVoice[]
+  /** 口型 provider；默认关闭 */
+  lipSync?: {
+    provider: 'off' | 'sync-labs'
+    baseUrl?: string
+    apiKey?: string
+    pricePerSecond?: number
+  }
   /** 旧的单 Key 字段，保留给 ARK 兜底与老数据 */
   apiKey: string
   rules: Record<string, RulePack>
+  /** 旧规则包已迁移为技能覆盖；避免重复迁移 */
+  skillsMigrated?: boolean
   /** 预设迁移版本：只在升级时合并一次新渠道/模型 */
   presetsVersion?: number
 }
@@ -213,6 +310,14 @@ const DEFAULT_PROVIDERS: Provider[] = [
     baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
     note: 'Agent Plan 专属 Key（可留空沿用 .env 的 ARK_AGENT_PLAN_API_KEY）；文本/图片可用，视频不在本套餐，按 AFP 计费',
     caps: ['text', 'image'],
+  },
+  {
+    id: 'apimart',
+    label: 'APIMart（APIB）',
+    kind: 'apimart',
+    baseUrl: 'https://api.apimart.ai/v1',
+    note: '文本 / 图像 / 视频 / 配音；Key 可留空沿用 .env 的 APIB_API_KEY / APIMART_API_KEY；余额不足时网关返回 402',
+    caps: ['text', 'image', 'video', 'audio'],
   },
   {
     id: 'deepseek',
@@ -336,6 +441,84 @@ const DEFAULT_MODELS: ModelEntry[] = [
     model: 'gpt-image-1',
     note: '需在渠道里配好 baseUrl + Key',
   },
+  {
+    key: 'apimart-text-gpt-5-1',
+    label: 'GPT-5.1（APIMart）',
+    cap: 'text',
+    caps: ['text', 'textPro', 'vision'],
+    provider: 'apimart',
+    model: 'gpt-5.1',
+    source: 'preset',
+    features: { vision: true },
+  },
+  {
+    key: 'apimart-text-claude-sonnet-4-6',
+    label: 'Claude Sonnet 4.6（APIMart）',
+    cap: 'text',
+    caps: ['text', 'textPro'],
+    provider: 'apimart',
+    model: 'claude-sonnet-4-6',
+    source: 'preset',
+  },
+  {
+    key: 'apimart-text-gemini-3-5-flash',
+    label: 'Gemini 3.5 Flash（APIMart）',
+    cap: 'text',
+    caps: ['text', 'textPro'],
+    provider: 'apimart',
+    model: 'gemini-3.5-flash',
+    source: 'preset',
+  },
+  {
+    key: 'apimart-text-deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash（APIMart）',
+    cap: 'text',
+    caps: ['text', 'textPro'],
+    provider: 'apimart',
+    model: 'deepseek-v4-flash',
+    source: 'preset',
+  },
+  {
+    key: 'apimart-image-seedream-5-0-pro',
+    label: 'Seedream 5.0 Pro（APIMart）',
+    cap: 'image',
+    caps: ['image', 'view'],
+    provider: 'apimart',
+    model: 'seedream-5-0-pro',
+    source: 'preset',
+    features: { imageRef: 'multi' },
+  },
+  {
+    key: 'apimart-video-seedance-2-5',
+    label: 'Seedance 2.5（APIMart）',
+    cap: 'video',
+    caps: ['video'],
+    provider: 'apimart',
+    model: 'seedance-2.5',
+    supportsVideoRef: true,
+    source: 'preset',
+    features: { firstFrame: true, lastFrame: true, videoRef: true, audioOut: true },
+  },
+  {
+    key: 'apimart-video-kling-v3',
+    label: 'Kling v3（APIMart）',
+    cap: 'video',
+    caps: ['video'],
+    provider: 'apimart',
+    model: 'kling-v3',
+    source: 'preset',
+    features: { firstFrame: true, lastFrame: true },
+  },
+  {
+    key: 'apimart-tts-gpt-4o-mini-tts',
+    label: 'GPT-4o mini TTS（APIMart）',
+    cap: 'audio',
+    caps: ['audio'],
+    provider: 'apimart',
+    model: 'gpt-4o-mini-tts',
+    source: 'preset',
+    features: { audioOut: true },
+  },
   { key: 'ark-video', label: 'Seedance 1.0 pro', cap: 'video', provider: 'ark', model: VIDEO_MODEL },
   { key: 'ark-video-ref', label: 'Seedance Lite I2V（多参考）', cap: 'videoRef', provider: 'ark', model: VIDEO_REF_MODEL },
   {
@@ -374,6 +557,7 @@ const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
 function capsOfKind(kind: ProviderKind): ProviderCap[] {
   if (kind === 'ark') return ['text', 'image', 'video']
   if (kind === 'ark-plan') return ['text', 'image']
+  if (kind === 'apimart') return ['text', 'image', 'video', 'audio']
   if (kind === 'openai') return ['text', 'image']
   if (kind === 'minimax') return ['text', 'audio']
   if (kind === 'volc-tts') return ['audio']
@@ -381,7 +565,7 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
 }
 
 /** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
-const CURRENT_PRESETS_VERSION = 5
+const CURRENT_PRESETS_VERSION = 9
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
@@ -392,6 +576,18 @@ const V3_PRESET_MODEL_KEYS = new Set(['ark-video-2-0', 'ark-video-2-5'])
 const V4_PRESET_MODEL_KEYS = new Set(['ark-plan-text-deepseek-flash'])
 /** v5：DeepSeek Flash 视觉模型；没有其它视觉模型时成为默认视觉候选 */
 const V5_PRESET_MODEL_KEYS = new Set(['ark-plan-vision-deepseek-flash'])
+
+/** v6-v8：APIMart 渠道与已接入运行时的预置模型；不改变任何默认模型 */
+function mergeApimartPresets(providers: Provider[], models: ModelEntry[]) {
+  const providerIds = new Set(providers.map((p) => p.id))
+  const modelKeys = new Set(models.map((m) => m.key))
+  const addProviders = DEFAULT_PROVIDERS.filter((p) => p.id === 'apimart' && !providerIds.has(p.id))
+  const addModels = DEFAULT_MODELS.filter((m) => m.provider === 'apimart' && !modelKeys.has(m.key))
+  return {
+    providers: [...providers, ...addProviders],
+    models: [...models, ...addModels],
+  }
+}
 
 function mergePresets(cur: AppSettings, version: number): AppSettings {
   if (version >= CURRENT_PRESETS_VERSION) return { ...cur, presetsVersion: version }
@@ -430,7 +626,37 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
       ...DEFAULT_MODELS.filter((m) => V5_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
     ]
   }
+  if (version < 9) {
+    const merged = mergeApimartPresets(providers, models)
+    providers = merged.providers
+    models = merged.models
+  }
   return { ...cur, providers, models, presetsVersion: CURRENT_PRESETS_VERSION }
+}
+
+/** 目录/手工条目可能带未知能力值；只保留已知能力并去重 */
+function normalizeModelCaps(raw: unknown): Cap[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const list = raw.filter((c): c is Cap => CAP_VALUES.includes(c as Cap))
+  return list.length ? [...new Set(list)] : undefined
+}
+
+function normalizeFeatures(raw: any): ModelFeatureSet | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const out: ModelFeatureSet = {}
+  for (const key of ['vision', 'videoInput', 'videoRef', 'firstFrame', 'lastFrame', 'audioOut', 'tools'] as const) {
+    if (typeof raw[key] === 'boolean') out[key] = raw[key]
+  }
+  if (raw.imageRef === 'none' || raw.imageRef === 'single' || raw.imageRef === 'multi') {
+    out.imageRef = raw.imageRef
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+function normalizeProviderCaps(raw: unknown, kind: ProviderKind, def?: Provider): ProviderCap[] {
+  const allowed: ProviderCap[] = ['text', 'image', 'video', 'audio']
+  const list = Array.isArray(raw) ? raw.filter((c): c is ProviderCap => allowed.includes(c as ProviderCap)) : []
+  return list.length ? [...new Set(list)] : (def?.caps ?? capsOfKind(kind))
 }
 
 /** 老结构（models.lite/pro/image/video/videoRef）→ 新结构，只做读时转换 */
@@ -441,18 +667,32 @@ function normalizeSettings(raw: any): AppSettings {
     const providers = (raw.providers as Provider[]).map((p) => {
       // 老数据可能缺 caps / baseUrl：按同 id 的预置渠道兜底，再退到协议推断
       const def = DEFAULT_PROVIDERS.find((d) => d.id === p.id)
+      const { keyAvailable: _keyAvailable, ...rest } = p
+      const rawBase = String(p.baseUrl || def?.baseUrl || '')
+      // APIMart 旧默认网关（api.apib.ai）迁移到 api.apimart.ai；用户自定义的其他地址不动
+      const baseUrl =
+        p.id === 'apimart' && /^https:\/\/api\.apib\.ai(?:\/v1)?\/?$/i.test(rawBase)
+          ? 'https://api.apimart.ai/v1'
+          : rawBase
       return {
-        ...p,
-        baseUrl: String(p.baseUrl || def?.baseUrl || ''),
-        caps:
-          Array.isArray(p.caps) && p.caps.length
-            ? p.caps
-            : (def?.caps ?? capsOfKind(p.kind)),
+        ...rest,
+        baseUrl,
+        caps: normalizeProviderCaps(p.caps, p.kind, def),
       }
     })
     const version = Number(raw.presetsVersion) || 1
     const models = (raw.models as ModelEntry[]).map((m) => {
       const next: ModelEntry = { ...m, supportsVideoRef: Boolean(m.supportsVideoRef) }
+      const caps = normalizeModelCaps(m.caps)
+      if (caps) next.caps = caps
+      else delete next.caps
+      const features = normalizeFeatures(m.features)
+      if (features) next.features = features
+      else delete next.features
+      if (m.source === 'preset' || m.source === 'catalog' || m.source === 'manual') next.source = m.source
+      else delete next.source
+      if (m.runtime === 'ready' || m.runtime === 'catalog-only') next.runtime = m.runtime
+      else delete next.runtime
       if (m.videoRefTaskType === 'reference') next.videoRefTaskType = 'reference'
       else delete next.videoRefTaskType
       if (m.thinking === 'auto' || m.thinking === 'enabled' || m.thinking === 'disabled') next.thinking = m.thinking
@@ -467,8 +707,12 @@ function normalizeSettings(raw: any): AppSettings {
         stageModels: normalizeStageModels(raw.stageModels),
         pricing: raw.pricing || {},
         agentLimits: normalizeAgentLimits(raw.agentLimits),
+        agentToolProtocol: normalizeToolProtocol(raw.agentToolProtocol),
+        lipSync: normalizeLipSyncSettings(raw.lipSync),
+        customVoices: normalizeCustomVoices(raw.customVoices),
         apiKey,
         rules,
+        skillsMigrated: Boolean(raw.skillsMigrated),
         presetsVersion: version,
       },
       version,
@@ -492,8 +736,12 @@ function normalizeSettings(raw: any): AppSettings {
     stageModels: {},
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
+    agentToolProtocol: 'auto',
+    lipSync: normalizeLipSyncSettings(raw?.lipSync),
+    customVoices: normalizeCustomVoices(raw?.customVoices),
     apiKey,
     rules,
+    skillsMigrated: Boolean(raw?.skillsMigrated),
     presetsVersion: CURRENT_PRESETS_VERSION,
   }
 }
@@ -524,12 +772,27 @@ function getAppSettings(): AppSettings {
   }
 }
 
+/** keyAvailable 是响应期派生字段，不能写回设置库 */
+function stripKeyState(p: Provider): Provider {
+  const next = { ...p }
+  delete next.keyAvailable
+  return next
+}
+
+/** 设置页状态条只需要“有没有 Key”，不回传 Key 本身 */
+function withKeyStatus(s: AppSettings): AppSettings {
+  return {
+    ...s,
+    providers: s.providers.map((p) => ({ ...p, keyAvailable: Boolean(providerKey(p)) })),
+  }
+}
+
 function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   dbPath(resolveRoot(appRoot || process.cwd()))
   settingsReady = true
   const cur = getAppSettings()
   const next: AppSettings = {
-    providers: Array.isArray(patch.providers) ? patch.providers : cur.providers,
+    providers: Array.isArray(patch.providers) ? patch.providers.map(stripKeyState) : cur.providers,
     models: Array.isArray(patch.models) ? patch.models : cur.models,
     defaults: { ...cur.defaults, ...(patch.defaults || {}) },
     // 设置页提交完整映射：整体替换才能清空某个环节；patch 省略时保留原值
@@ -539,11 +802,17 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
         : normalizeStageModels(cur.stageModels),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
+    agentToolProtocol: normalizeToolProtocol(patch.agentToolProtocol ?? cur.agentToolProtocol),
+    lipSync: patch.lipSync !== undefined ? normalizeLipSyncSettings(patch.lipSync) : normalizeLipSyncSettings(cur.lipSync),
+    customVoices: patch.customVoices !== undefined ? normalizeCustomVoices(patch.customVoices) : normalizeCustomVoices(cur.customVoices),
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
+    skillsMigrated:
+      typeof patch.skillsMigrated === 'boolean' ? patch.skillsMigrated : cur.skillsMigrated,
     presetsVersion: CURRENT_PRESETS_VERSION,
   }
   setSetting('app', next)
+  voiceCache.clear()
   return next
 }
 
@@ -551,10 +820,11 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
 function pickModel(cap: Cap, keyOverride?: string): { entry?: ModelEntry; provider?: Provider } {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
+  const usable = (m: ModelEntry) => modelHasCap(m, cap) && isRunnableModel(m)
   const entry =
-    (key && s.models.find((m) => m.key === key && m.cap === cap)) ||
-    s.models.find((m) => m.key === s.defaults[cap] && m.cap === cap) ||
-    s.models.find((m) => m.cap === cap)
+    (key && s.models.find((m) => m.key === key && usable(m))) ||
+    s.models.find((m) => m.key === s.defaults[cap] && usable(m)) ||
+    s.models.find(usable)
   const provider = entry ? s.providers.find((p) => p.id === entry.provider) : undefined
   return { entry, provider }
 }
@@ -575,7 +845,11 @@ function pickVideoModel(
 ): VideoPick {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
-  const family = s.models.filter((m) => m.cap === 'video' || m.cap === 'videoRef')
+  const family = s.models.filter(
+    (m) =>
+      (modelHasCap(m, 'video') || modelHasCap(m, 'videoRef')) &&
+      isRunnableModel(m),
+  )
   const withProvider = (entry: ModelEntry): VideoPick => ({
     entry,
     provider: s.providers.find((p) => p.id === entry.provider),
@@ -583,18 +857,18 @@ function pickVideoModel(
   if (key) {
     const entry = family.find((m) => m.key === key)
     if (!entry) return { error: 'model-key-not-found' }
-    if (opts.needVideoRef && !entry.supportsVideoRef) {
+    if (opts.needVideoRef && !modelHasCap(entry, 'videoRef')) {
       return { ...withProvider(entry), error: 'video-ref-unsupported' }
     }
     return withProvider(entry)
   }
   const cap: Cap = opts.refMode ? 'videoRef' : 'video'
   const entry =
-    family.find((m) => m.key === s.defaults[cap] && m.cap === cap) ||
-    family.find((m) => m.cap === cap) ||
-    (opts.refMode ? family.find((m) => m.cap === 'video') : undefined)
+    family.find((m) => m.key === s.defaults[cap] && modelHasCap(m, cap)) ||
+    family.find((m) => modelHasCap(m, cap)) ||
+    (opts.refMode ? family.find((m) => modelHasCap(m, 'video')) : undefined)
   if (!entry) return { error: 'model-key-not-found' }
-  if (opts.needVideoRef && !entry.supportsVideoRef) {
+  if (opts.needVideoRef && !modelHasCap(entry, 'videoRef')) {
     return { ...withProvider(entry), error: 'video-ref-unsupported' }
   }
   return withProvider(entry)
@@ -602,6 +876,7 @@ function pickVideoModel(
 
 /** 文本族：text / textPro 只是档位，手选时两族都算合法 */
 const isTextCap = (cap: Cap) => cap === 'text' || cap === 'textPro'
+const hasTextCap = (m: ModelEntry) => modelHasCap(m, 'text') || modelHasCap(m, 'textPro')
 
 type TextPick = {
   entry?: ModelEntry
@@ -617,16 +892,17 @@ type TextPick = {
 function pickTextModel(keyOverride?: string, tier: 'lite' | 'pro' = 'lite'): TextPick {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
+  const usable = (m: ModelEntry) => hasTextCap(m) && isRunnableModel(m)
   if (key) {
-    const entry = s.models.find((m) => m.key === key && isTextCap(m.cap))
+    const entry = s.models.find((m) => m.key === key && usable(m))
     if (!entry) return { error: 'model-key-not-found' }
     return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
   }
   const cap: Cap = tier === 'pro' ? 'textPro' : 'text'
   const entry =
-    s.models.find((m) => m.key === s.defaults[cap] && isTextCap(m.cap)) ||
-    s.models.find((m) => m.cap === cap) ||
-    s.models.find((m) => isTextCap(m.cap))
+    s.models.find((m) => m.key === s.defaults[cap] && usable(m)) ||
+    s.models.find((m) => modelHasCap(m, cap) && usable(m)) ||
+    s.models.find(usable)
   if (!entry) return { error: 'no-text-model' }
   return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
 }
@@ -641,12 +917,14 @@ type VisionPick = {
 function pickVisionModel(keyOverride?: string): VisionPick {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
+  const usable = (m: ModelEntry) => modelHasCap(m, 'vision') && isRunnableModel(m)
   if (key) {
-    const entry = s.models.find((m) => m.key === key && m.cap === 'vision')
+    const entry = s.models.find((m) => m.key === key && usable(m))
     if (!entry) return { error: 'model-key-not-found' }
     return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
   }
-  const entry = s.models.find((m) => m.key === s.defaults.vision && m.cap === 'vision') || s.models.find((m) => m.cap === 'vision')
+  const entry =
+    s.models.find((m) => m.key === s.defaults.vision && usable(m)) || s.models.find(usable)
   if (!entry) return { error: 'no-vision-model' }
   return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
 }
@@ -655,14 +933,14 @@ function pickVisionModel(keyOverride?: string): VisionPick {
 function pickVideoVisionModel(keyOverride?: string): VisionPick {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
+  const usable = (m: ModelEntry) => modelHasCap(m, 'videoVision') && isRunnableModel(m)
   if (key) {
-    const entry = s.models.find((m) => m.key === key && m.cap === 'videoVision')
+    const entry = s.models.find((m) => m.key === key && usable(m))
     if (!entry) return { error: 'model-key-not-found' }
     return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
   }
   const entry =
-    s.models.find((m) => m.key === s.defaults.videoVision && m.cap === 'videoVision') ||
-    s.models.find((m) => m.cap === 'videoVision')
+    s.models.find((m) => m.key === s.defaults.videoVision && usable(m)) || s.models.find(usable)
   if (!entry) return { error: 'no-video-vision-model' }
   return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
 }
@@ -679,6 +957,9 @@ function providerKey(p?: Provider): string {
       readEnvKey('VOLC_API_KEY') ||
       ''
     )
+  }
+  if (p.kind === 'apimart') {
+    return readEnvKey('APIB_API_KEY') || readEnvKey('APIMART_API_KEY') || ''
   }
   if (p.kind === 'volc-tts') {
     return (
@@ -860,7 +1141,15 @@ function mimeOf(ext: string): string {
 }
 
 /** 缓存的可用音色列表：按渠道 id 分开，切换配音模型时不会串音色 */
-type VoiceCacheEntry = { provider: string; voices: { id: string; label: string }[]; at: number }
+type VoiceCacheEntry = {
+  provider: string
+  providerKind?: string
+  modelKey?: string
+  voices: any[]
+  capabilities?: any
+  error?: string
+  at: number
+}
 const voiceCache = new Map<string, VoiceCacheEntry>()
 
 /** MiniMax 没有稳定的音色列表接口，先用常用音色 */
@@ -910,52 +1199,112 @@ async function probeSayVoices(): Promise<{ id: string; label: string }[]> {
   return results.filter((v): v is { id: string; label: string } => Boolean(v))
 }
 
-async function listVoices(modelKey?: string): Promise<{
-  provider: string
-  voices: { id: string; label: string }[]
-}> {
-  const { provider } = pickModel('audio', modelKey)
-  const kind = provider?.kind
-  const cacheKey = provider?.id || 'none'
-  const cached = voiceCache.get(cacheKey)
-  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached
-
-  let result: VoiceCacheEntry
-  if (kind === 'volc-tts') {
-    result = {
-      provider: 'volc-tts',
-      voices: VOLC_TTS_VOICES.map((v) => ({ ...v })),
-      at: Date.now(),
-    }
-  } else if (kind === 'minimax') {
-    result = { provider: 'minimax', voices: MINIMAX_VOICES.slice(), at: Date.now() }
-  } else {
-    // ElevenLabs 用自己的 Key；没有 Key 或不是 ElevenLabs 时回落 macOS say
-    const key =
-      kind === 'elevenlabs' ? providerKey(provider) || readEnvKey('ELEVENLABS_API_KEY') : ''
-    let voices: { id: string; label: string }[] | null = null
-    if (key) {
-      try {
-        const r = await fetch(ELEVEN_VOICES, { headers: { 'xi-api-key': key } })
-        if (r.ok) {
-          const j: any = await r.json()
-          const list = (j?.voices ?? []).map((v: any) => ({
-            id: String(v.voice_id),
-            label: `${v.name}${v.labels?.accent ? ` · ${v.labels.accent}` : ''}${
-              v.labels?.gender ? ` · ${v.labels.gender}` : ''
-            }`,
-          }))
-          if (list.length > 0) voices = list
-        }
-      } catch {
-        /* 落回本地 */
-      }
-    }
-    result = voices
-      ? { provider: 'elevenlabs', voices, at: Date.now() }
-      : { provider: 'macos-say', voices: await probeSayVoices(), at: Date.now() }
+async function listVoices(modelKey?: string, refresh = false): Promise<VoiceCacheEntry> {
+  const { provider, entry } = pickModel('audio', modelKey)
+  const kind = provider?.kind || 'macos-say'
+  const providerId = provider?.id || kind
+  const resolvedModelKey = modelKey || entry?.key || ''
+  const key = providerKey(provider)
+  const keyFingerprint = key ? crypto.createHash('sha1').update(key).digest('hex').slice(0, 10) : 'nokey'
+  const cacheKey = `${providerId}|${resolvedModelKey}|${keyFingerprint}`
+  if (!refresh) {
+    const cached = voiceCache.get(cacheKey)
+    if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached
   }
 
+  const capabilities = voiceCapabilitiesForKind(kind)
+  let voices: any[] = []
+  let error = ''
+
+  if (kind === 'apimart') {
+    voices = APIMART_VOICES.map((v) => entryOf({
+      id: v.id, label: v.label, provider: providerId, providerKind: kind, modelKey: resolvedModelKey, source: 'preset',
+    }))
+    if (!key) error = 'APIMart 渠道没有配置 Key'
+  } else if (kind === 'volc-tts') {
+    voices = VOLC_TTS_VOICES.map((v) => entryOf({
+      id: v.id, label: v.label, provider: providerId, providerKind: kind, modelKey: resolvedModelKey, source: 'preset',
+    }))
+    if (!key) error = '火山 TTS 渠道没有配置 Key'
+  } else if (kind === 'minimax') {
+    if (key) {
+      try {
+        const base = String(provider?.baseUrl || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')
+        const r = await fetch(`${base}/get_voice`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ voice_type: 'all' }),
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (!r.ok) {
+          error = r.status === 401 || r.status === 403 ? 'MiniMax 鉴权失败' : `MiniMax 音色列表 ${r.status}`
+        } else {
+          const j: any = await r.json()
+          voices = miniMaxVoicesFromResponse(j, { provider: providerId, providerKind: kind, modelKey: resolvedModelKey })
+          if (voices.length === 0) error = 'MiniMax 账号没有返回音色'
+        }
+      } catch (e) {
+        error = `MiniMax 音色列表失败：${(e as Error).message}`
+      }
+    } else {
+      error = 'MiniMax 渠道没有配置 Key'
+    }
+    if (voices.length === 0) {
+      voices = MINIMAX_VOICES.map((v) => entryOf({
+        id: v.id, label: v.label, provider: providerId, providerKind: kind, modelKey: resolvedModelKey, source: 'preset',
+      }))
+    }
+  } else if (kind === 'elevenlabs') {
+    if (key) {
+      try {
+        const r = await fetch(ELEVEN_VOICES, { headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(20_000) })
+        if (!r.ok) {
+          error = r.status === 401 || r.status === 403 ? 'ElevenLabs 鉴权失败' : `ElevenLabs 音色列表 ${r.status}`
+        } else {
+          const j: any = await r.json()
+          voices = (j?.voices ?? []).map((v: any) => entryOf({
+            id: String(v.voice_id),
+            label: `${v.name || v.voice_id}${v.labels?.accent ? ` · ${v.labels.accent}` : ''}${v.labels?.gender ? ` · ${v.labels.gender}` : ''}`,
+            provider: providerId,
+            providerKind: kind,
+            modelKey: resolvedModelKey,
+            source: 'account',
+          }))
+          if (voices.length === 0) error = 'ElevenLabs 账号没有返回音色'
+        }
+      } catch (e) {
+        error = `ElevenLabs 音色列表失败：${(e as Error).message}`
+      }
+    } else {
+      error = 'ElevenLabs 渠道没有配置 Key'
+    }
+  } else {
+    voices = (await probeSayVoices()).map((v) => entryOf({
+      id: v.id, label: v.label, provider: providerId, providerKind: 'macos-say', modelKey: resolvedModelKey, source: 'system',
+    }))
+  }
+
+  try {
+    const settings = getAppSettings()
+    voices = mergeCustomVoices(voices, settings.customVoices, {
+      provider: providerId,
+      providerKind: kind,
+      modelKey: resolvedModelKey,
+      capabilities,
+    })
+  } catch {
+    /* 设置读取失败不阻塞预置音色 */
+  }
+
+  const result: VoiceCacheEntry = {
+    provider: kind,
+    providerKind: kind,
+    modelKey: resolvedModelKey,
+    voices,
+    capabilities,
+    ...(error ? { error } : {}),
+    at: Date.now(),
+  }
   voiceCache.set(cacheKey, result)
   return result
 }
@@ -971,8 +1320,8 @@ const FFMPEG_CANDIDATES = [
   '/usr/local/bin/ffmpeg',
 ]
 
-/** 运行时探测结果：哪条二进制、支不支持 subtitles 滤镜 */
-let FF: { bin: string; probe: string; ass: boolean } | null = null
+/** 运行时探测结果：哪条二进制、支不支持 subtitles 滤镜、有没有可用 CJK 字体 */
+let FF: { bin: string; probe: string; ass: boolean; font?: string } | null = null
 
 function siblingProbe(bin: string) {
   const p = bin.replace(/ffmpeg$/, 'ffprobe')
@@ -989,16 +1338,42 @@ async function hasSubtitlesFilter(bin: string): Promise<boolean> {
   })
 }
 
+/** ASS/SRT 需要真实存在的 CJK 字体，否则宁可用 PNG 兜底，不输出方框 */
+async function findCjkFont(): Promise<string> {
+  if (process.platform === 'darwin') {
+    if (fs.existsSync('/System/Library/Fonts/PingFang.ttc')) return 'PingFang SC'
+    if (fs.existsSync('/System/Library/Fonts/STHeiti Light.ttc')) return 'Heiti SC'
+    if (fs.existsSync('/Library/Fonts/NotoSansCJK-Regular.ttc')) return 'Noto Sans CJK SC'
+    return ''
+  }
+  if (process.platform === 'win32') {
+    if (fs.existsSync('C:/Windows/Fonts/msyh.ttc')) return 'Microsoft YaHei'
+    return ''
+  }
+  return new Promise((resolve) => {
+    execFile('fc-list', [':lang=zh', 'family'], { timeout: 5000 }, (err, stdout) => {
+      if (err) return resolve('')
+      const first = String(stdout)
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)[0]
+      const family = first ? first.split(':')[0].split(',')[0].trim() : ''
+      resolve(family || '')
+    })
+  })
+}
+
 async function ensureFf() {
   if (FF) return FF
+  const font = await findCjkFont()
   for (const bin of FFMPEG_CANDIDATES) {
     if (await hasSubtitlesFilter(bin)) {
-      FF = { bin, probe: siblingProbe(bin), ass: true }
+      FF = { bin, probe: siblingProbe(bin), ass: Boolean(font), ...(font ? { font } : {}) }
       return FF
     }
   }
   const bin = FFMPEG_CANDIDATES.find((b) => fs.existsSync(b)) || FFMPEG
-  FF = { bin, probe: siblingProbe(bin), ass: false }
+  FF = { bin, probe: siblingProbe(bin), ass: false, ...(font ? { font } : {}) }
   return FF
 }
 
@@ -1019,9 +1394,13 @@ type ExportJob = {
   url?: string
   message?: string
   shots?: number
+  transitions?: number
   seconds?: number
   voiced?: number
   subbed?: number
+  captions?: number
+  srtUrl?: string
+  captionWarnings?: string[]
   overflows?: { shot: number; voice: number; shotLen: number }[]
   startedAt: number
   elapsed?: number
@@ -1065,6 +1444,109 @@ function materialize(ref: string, root: string, tmpDir: string, tag: string): st
   return path.join(root, 'public', ref.replace(/^\//, '').split('?')[0])
 }
 
+function normalizeLipSyncSettings(raw: any) {
+  const provider: 'off' | 'sync-labs' = raw?.provider === 'sync-labs' ? 'sync-labs' : 'off'
+  return {
+    provider,
+    baseUrl: String(raw?.baseUrl || 'https://api.sync.so').trim(),
+    apiKey: String(raw?.apiKey || ''),
+    pricePerSecond: Math.max(0, Number(raw?.pricePerSecond) || 0),
+  }
+}
+
+/** 只允许 public 或 /project-assets/<项目>/<文件> 的本地媒体。 */
+function localMediaFile(appRoot: string, ref: string): string {
+  const value = String(ref || '').trim()
+  if (!value) throw new Error('缺少媒体路径')
+  if (value.startsWith('http') || value.startsWith('data:')) throw new Error('口型只接受本地媒体')
+  if (value.startsWith('/project-assets/')) {
+    const parts = value.split('?')[0].split('/').filter(Boolean)
+    if (parts.length < 3) throw new Error('项目媒体路径不完整')
+    return resolveProjectMediaPath(appRoot, decodeURIComponent(parts[1]), decodeURIComponent(parts[2]))
+  }
+  if (!value.startsWith('/')) throw new Error('媒体路径必须是站内路径')
+  const publicDir = path.join(appRoot, 'public')
+  const file = path.join(publicDir, value.replace(/^\//, '').split('?')[0])
+  const rel = path.relative(publicDir, file)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('媒体路径越界')
+  if (!fs.existsSync(file)) throw new Error(`媒体文件不存在：${value}`)
+  return file
+}
+
+
+/** APIMart Seedance 2.5 音色参考：URL 直传；本地音频转 data URL。 */
+async function resolveApimartAudioRef(appRoot: string, ref: string): Promise<string> {
+  const value = String(ref || '').trim()
+  if (!value) throw new Error('缺少音色参考音频')
+  if (/^https?:\/\//i.test(value)) return value
+  if (/^data:audio\//i.test(value)) return value
+  const file = localMediaFile(appRoot, value)
+  const bytes = fs.readFileSync(file)
+  if (bytes.length > 15 * 1024 * 1024) throw new Error('音色参考音频超过 15MB')
+  const seconds = await probeDuration(file)
+  if (seconds < 2 || seconds > 30) throw new Error(`音色参考需 2-30 秒，当前 ${seconds.toFixed(1)} 秒`)
+  const ext = path.extname(file).slice(1).toLowerCase()
+  const mime = mimeOf(ext)
+  return `data:${mime};base64,${bytes.toString('base64')}`
+}
+
+type VoicePerformance = DialogueDelivery
+type VoiceSynthResult = {
+  url: string
+  engine: string
+  seconds: number
+  applied?: string[]
+  unsupported?: string[]
+}
+
+const VOICE_EMOTIONS = new Set(['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'])
+const PACE_SPEED = { slow: 0.9, normal: 1, fast: 1.1 } as const
+const VOLUME_VOL = { whisper: 0.5, soft: 0.75, normal: 1, loud: 1.35, shout: 1.6 } as const
+
+function normalizedPerformance(input?: VoicePerformance): VoicePerformance {
+  const p = input || {}
+  const out: VoicePerformance = {}
+  if (p.emotion && VOICE_EMOTIONS.has(p.emotion)) out.emotion = p.emotion
+  if (typeof p.intensity === 'number' && Number.isFinite(p.intensity)) {
+    out.intensity = Math.max(0, Math.min(5, Math.round(p.intensity)))
+  }
+  if (p.pace && p.pace in PACE_SPEED) out.pace = p.pace
+  if (p.volume && p.volume in VOLUME_VOL) out.volume = p.volume
+  if (p.emphasis?.trim()) out.emphasis = p.emphasis.trim()
+  return out
+}
+
+function unsupportedVoice(p: VoicePerformance, applied: string[]): string[] {
+  const requested: string[] = []
+  if (p.emotion && p.emotion !== 'neutral') requested.push('emotion')
+  if (typeof p.intensity === 'number') requested.push('intensity')
+  if (p.pace && p.pace !== 'normal') requested.push('pace')
+  if (p.volume && p.volume !== 'normal') requested.push('volume')
+  if (p.emphasis) requested.push('emphasis')
+  return requested.filter((key) => !applied.includes(key))
+}
+
+function voiceInstructions(p: VoicePerformance): string {
+  const parts: string[] = []
+  if (p.emotion && p.emotion !== 'neutral') {
+    parts.push(`情绪 ${p.emotion}${typeof p.intensity === 'number' ? `，强度 ${p.intensity}/5` : ''}`)
+  }
+  if (p.pace && p.pace !== 'normal') parts.push(`语速 ${p.pace}`)
+  if (p.volume && p.volume !== 'normal') parts.push(`音量 ${p.volume}`)
+  if (p.emphasis) parts.push(`重读「${p.emphasis}」`)
+  return parts.length ? `表演要求：${parts.join('；')}。台词保持原文。` : ''
+}
+
+function elevenTags(p: VoicePerformance): string {
+  const tags: string[] = []
+  if (p.emotion && p.emotion !== 'neutral') tags.push(`[${p.emotion}]`)
+  if (p.pace === 'slow') tags.push('[drawn out]')
+  if (p.pace === 'fast') tags.push('[rushed]')
+  if (p.volume === 'whisper') tags.push('[whispers]')
+  if (p.volume === 'shout') tags.push('[shouts]')
+  return tags.join('')
+}
+
 /**
  * 配音 provider 分发：
  *   1. 有 ELEVENLABS_API_KEY → ElevenLabs REST（多角色，中文走 multilingual_v2）
@@ -1078,11 +1560,46 @@ async function synthesize(
   outDir: string,
   stamp: string,
   modelKey?: string,
-): Promise<{ url: string; engine: string; seconds: number }> {
+  inputPerformance?: VoicePerformance,
+  allowCustomVoice = false,
+): Promise<VoiceSynthResult> {
+  const performance = normalizedPerformance(inputPerformance)
   // 设置页选了哪个音频模型，就走对应渠道；没配 Key 再回落旧行为
   const { provider, entry } = pickModel('audio', modelKey)
   const kind = provider?.kind
   const ownKey = providerKey(provider)
+  if (kind === 'apimart') {
+    if (!ownKey) throw new Error('APIMart 渠道没有填 API Key，去设置页填一下')
+    const base = String(provider?.baseUrl || 'https://api.apimart.ai/v1').replace(/\/+$/, '')
+    const model = entry?.model || 'gpt-4o-mini-tts'
+    const supportsInstructions = /gpt-4o-mini-tts/i.test(model)
+    const applied = ['pace']
+    const instructions = supportsInstructions ? voiceInstructions(performance) : ''
+    if (instructions) {
+      applied.push('emotion', 'intensity', 'volume')
+      if (performance.emphasis) applied.push('emphasis')
+    }
+    const out = await synthesizeApimartSpeech({
+      baseUrl: base,
+      apiKey: ownKey,
+      text,
+      voice,
+      model,
+      speed: PACE_SPEED[performance.pace ?? 'normal'],
+      instructions: instructions || undefined,
+      strictVoice: allowCustomVoice,
+    })
+    const file = path.join(outDir, `voice-${stamp}.mp3`)
+    fs.writeFileSync(file, out.audio)
+    const seconds = await probeDuration(file)
+    return {
+      url: `/voices/voice-${stamp}.mp3`,
+      engine: `apimart:${out.voice}`,
+      seconds,
+      applied,
+      unsupported: unsupportedVoice(performance, applied),
+    }
+  }
   if (kind === 'volc-tts') {
     if (!ownKey) throw new Error('火山 TTS 渠道没有填 API Key，去设置页填一下')
     const base = String(provider?.baseUrl || 'https://openspeech.bytedance.com/api/v3/plan').replace(
@@ -1090,21 +1607,32 @@ async function synthesize(
       '',
     )
     const speaker = VOLC_TTS_VOICES.some((v) => v.id === voice) ? voice : DEFAULT_VOLC_TTS_VOICE
-    const out = await synthesizeVolcTts({ baseUrl: base, apiKey: ownKey, text, speaker })
+    const out = await synthesizeVolcTts({ baseUrl: base, apiKey: ownKey, text, speaker, performance, allowCustomSpeaker: allowCustomVoice })
     const file = path.join(outDir, `voice-${stamp}.mp3`)
     fs.writeFileSync(file, out.audio)
     const seconds = await probeDuration(file)
-    return { url: `/voices/voice-${stamp}.mp3`, engine: out.engine, seconds }
+    return {
+      url: `/voices/voice-${stamp}.mp3`,
+      engine: out.engine,
+      seconds,
+      applied: out.applied,
+      unsupported: out.unsupported,
+    }
   }
   if (kind === 'minimax' && ownKey) {
-    return synthesizeMinimax(text, voice, ownKey, outDir, stamp, provider!, entry?.model)
+    return synthesizeMinimax(text, voice, ownKey, outDir, stamp, provider!, entry?.model, performance, allowCustomVoice)
   }
   if (kind === 'elevenlabs' && ownKey) {
-    return synthesizeEleven(text, voice, ownKey, outDir, stamp, entry?.model)
+    return synthesizeEleven(text, voice, ownKey, outDir, stamp, entry?.model, performance)
   }
   const elevenKey = readEnvKey('ELEVENLABS_API_KEY')
-  if (elevenKey) return synthesizeEleven(text, voice, elevenKey, outDir, stamp, entry?.model)
-  return synthesizeSay(text, voice, rate, outDir, stamp)
+  if (elevenKey) return synthesizeEleven(text, voice, elevenKey, outDir, stamp, entry?.model, performance)
+  const applied: string[] = []
+  return {
+    ...(await synthesizeSay(text, voice, rate, outDir, stamp)),
+    applied,
+    unsupported: unsupportedVoice(performance, applied),
+  }
 }
 
 /** MiniMax 语音合成：t2a_v2 返回 hex 音频 */
@@ -1116,9 +1644,32 @@ async function synthesizeMinimax(
   stamp: string,
   provider: Provider,
   model?: string,
-): Promise<{ url: string; engine: string; seconds: number }> {
+  inputPerformance?: VoicePerformance,
+  allowCustomVoice = false,
+): Promise<VoiceSynthResult> {
   const base = String(provider.baseUrl || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')
-  const vid = MINIMAX_VOICES.some((v) => v.id === voiceId) ? voiceId : 'male-qn-qingse'
+  const vid = allowCustomVoice && voiceId
+    ? voiceId
+    : MINIMAX_VOICES.some((v) => v.id === voiceId)
+      ? voiceId
+      : 'male-qn-qingse'
+  const performance = normalizedPerformance(inputPerformance)
+  const applied: string[] = []
+  const voiceSetting: Record<string, unknown> = {
+    voice_id: vid,
+    speed: PACE_SPEED[performance.pace ?? 'normal'],
+    vol: VOLUME_VOL[performance.volume ?? 'normal'],
+    pitch: 0,
+  }
+  if (performance.pace) applied.push('pace')
+  if (performance.volume) applied.push('volume')
+  if (performance.emotion && performance.emotion !== 'neutral') {
+    const emotion = performance.emotion === 'fearful' ? 'fearful' : performance.emotion
+    if (['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'].includes(emotion)) {
+      voiceSetting.emotion = emotion
+      applied.push('emotion')
+    }
+  }
   const r = await fetch(`${base}/t2a_v2`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -1126,7 +1677,7 @@ async function synthesizeMinimax(
       model: model || 'speech-02-hd',
       text,
       stream: false,
-      voice_setting: { voice_id: vid, speed: 1, vol: 1, pitch: 0 },
+      voice_setting: voiceSetting,
       audio_setting: { sample_rate: 32000, bitrate: 128000, format: 'mp3' },
     }),
   })
@@ -1149,7 +1700,13 @@ async function synthesizeMinimax(
   const file = path.join(outDir, `voice-${stamp}.mp3`)
   fs.writeFileSync(file, buf)
   const seconds = await probeDuration(file)
-  return { url: `/voices/voice-${stamp}.mp3`, engine: `minimax:${vid}`, seconds }
+  return {
+    url: `/voices/voice-${stamp}.mp3`,
+    engine: `minimax:${vid}`,
+    seconds,
+    applied,
+    unsupported: unsupportedVoice(performance, applied),
+  }
 }
 
 async function synthesizeEleven(
@@ -1159,15 +1716,39 @@ async function synthesizeEleven(
   outDir: string,
   stamp: string,
   model?: string,
-): Promise<{ url: string; engine: string; seconds: number }> {
+  inputPerformance?: VoicePerformance,
+  allowCustomVoice = false,
+): Promise<VoiceSynthResult> {
   const id = voiceId || '21m00Tcm4TlvDq8ikWAM'
+  const performance = normalizedPerformance(inputPerformance)
+  const applied = new Set<string>()
+  const tags = elevenTags(performance)
+  const isV3 = /v3/i.test(model || '')
+  const ttsText = isV3 && tags ? `${tags} ${text}` : text
+  if (isV3 && tags) {
+    if (performance.emotion && performance.emotion !== 'neutral') applied.add('emotion')
+    if (performance.pace && performance.pace !== 'normal') applied.add('pace')
+    if (performance.volume && performance.volume !== 'normal') applied.add('volume')
+  }
+  const style = Math.max(
+    0.1,
+    Math.min(1, 0.15 + (typeof performance.intensity === 'number' ? performance.intensity * 0.08 : 0)),
+  )
+  if (performance.emotion && performance.emotion !== 'neutral' && !applied.has('emotion')) {
+    applied.add('emotion')
+  }
+  if (typeof performance.intensity === 'number') applied.add('intensity')
   const r = await fetch(`${ELEVEN_TTS}/${encodeURIComponent(id)}?output_format=mp3_44100_128`, {
     method: 'POST',
     headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      text,
+      text: ttsText,
       model_id: model || ELEVEN_MODEL,
-      voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0.15 },
+      voice_settings: {
+        stability: performance.emotion && performance.emotion !== 'neutral' ? 0.35 : 0.45,
+        similarity_boost: 0.8,
+        style,
+      },
     }),
   })
   if (!r.ok) {
@@ -1179,7 +1760,14 @@ async function synthesizeEleven(
   const file = path.join(outDir, `voice-${stamp}.mp3`)
   fs.writeFileSync(file, buf)
   const seconds = await probeDuration(file)
-  return { url: `/voices/voice-${stamp}.mp3`, engine: `elevenlabs:${id.slice(0, 6)}`, seconds }
+  const appliedList = [...applied]
+  return {
+    url: `/voices/voice-${stamp}.mp3`,
+    engine: `elevenlabs:${id.slice(0, 6)}`,
+    seconds,
+    applied: appliedList,
+    unsupported: unsupportedVoice(performance, appliedList),
+  }
 }
 
 /** macOS say → aiff → m4a（Chrome 不认 aiff，必须转码） */
@@ -1252,48 +1840,111 @@ function filtQuote(v: string): string {
   return `'${v.replace(/\\/g, '\\\\').replace(/'/g, "'\\''")}'`
 }
 
+/** CSS 颜色 → ASS &HAABBGGRR（AA 在前） */
+function assColor(input: string, fallback: string): string {
+  const raw = String(input || '').trim()
+  const rgba = /^rgba?\(([^)]+)\)$/i.exec(raw)
+  if (rgba) {
+    const parts = rgba[1].split(',').map((part) => Number(part.trim()))
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+      const [r, g, b] = parts
+      const a = parts.length >= 4 && Number.isFinite(parts[3]) ? parts[3] : 1
+      const hex = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0').toUpperCase()
+      const alpha = hex((1 - Math.max(0, Math.min(1, a))) * 255)
+      return `&H${alpha}${hex(b)}${hex(g)}${hex(r)}`
+    }
+  }
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(raw)
+  if (hex6) {
+    const v = hex6[1].toUpperCase()
+    return `&H00${v.slice(4, 6)}${v.slice(2, 4)}${v.slice(0, 2)}`
+  }
+  return fallback
+}
+
+type CaptionCueInput = {
+  startOffsetMs: number
+  endOffsetMs: number
+  text: string
+  /** 无 libass 时该 cue 的整帧透明 PNG */
+  sub?: string
+}
+
+type CaptionStyleInput = {
+  fontRatio?: number
+  bottomRatio?: number
+  maxWidthRatio?: number
+  lineHeight?: number
+  maxLines?: number
+  background?: string
+  textColor?: string
+}
+
 type ResolvedSeg = {
+  kind: 'shot' | 'transition'
   file: string
   isVideo: boolean
   dur: number
+  /** 生成转场只取前 N 秒（仅首帧模型） */
+  trim?: number
   voice?: string
-  sub?: string
-  dialogue?: string
   voiceDur?: number
+  audioMode?: 'tts' | 'native' | 'none'
   voiceOffset: number
-  subOffset: number
+  captions: CaptionCueInput[]
 }
+
+type ExportJoinInput =
+  | { mode: 'cut' }
+  | { mode: 'effect'; seconds?: number; xfade?: string }
+
+type EffectiveJoin =
+  | { mode: 'cut' }
+  | { mode: 'effect'; seconds: number; xfade: string }
 
 /**
  * 一条 ffmpeg 命令把静帧 + 视频混编成片：
  *   每段统一 分辨率/帧率/SAR（letterbox 补边，不裁切）
  *   → 有字幕的段先 overlay 一张整帧透明 PNG（本机 ffmpeg 没有 libass，不能用 subtitles 滤镜）
- *   → concat
+ *   → 按接缝折叠：cut 走 concat，effect 走 xfade（重叠 T 秒）
  *   → 台词配音按镜头起点 adelay 后 amix 到音轨
  */
 async function buildAnimatic(
   segments: {
+    kind?: 'shot' | 'transition'
     seconds: number
     video?: string
     image?: string
+    /** 生成转场只取前 N 秒 */
+    trim?: number
+    audioMode?: 'tts' | 'native' | 'none'
     voice?: string
     /** 配音相对镜头起点的偏移（秒，可负＝提前），由时间线拖动产生 */
     voiceOffset?: number
-    /** 字幕相对镜头起点的偏移（秒） */
+    /** 字幕相对镜头起点的偏移（秒）；旧调用兼容，新客户端用 captions */
     subOffset?: number
-    /** 无 libass 时的兜底：整帧透明 PNG */
+    /** 无 libass 时的兜底：整帧透明 PNG；旧调用兼容 */
     sub?: string
-    /** 有 libass 时走真字幕（SRT + subtitles 滤镜） */
+    /** 有 libass 时走真字幕（SRT + subtitles 滤镜）；旧调用兼容 */
     dialogue?: string
+    /** 相对镜头起点的字幕 cue；新客户端使用 */
+    captions?: CaptionCueInput[]
   }[],
   resolution: '480p' | '720p' | '1080p',
   root: string,
   outFile: string,
+  joins: ExportJoinInput[] = [],
+  captionStyle: CaptionStyleInput = {},
+  captionMode: 'auto' | 'png' = 'auto',
 ): Promise<{
   shots: number
+  transitions: number
   seconds: number
   voiced: number
   subbed: number
+  captions: number
+  captionWarnings: string[]
+  srtFile?: string
   overflows: { shot: number; voice: number; shotLen: number }[]
 }> {
   const [W, H] = EXPORT_SIZE[resolution] || EXPORT_SIZE['720p']
@@ -1302,6 +1953,7 @@ async function buildAnimatic(
 
   // 先解析每段并拿到真实时长 —— 字幕/配音都要按真实起点对齐
   const resolved: ResolvedSeg[] = []
+  const captionWarnings: string[] = []
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
     const nominal = Math.min(30, Math.max(0.5, Number(seg.seconds) || 2))
@@ -1315,11 +1967,15 @@ async function buildAnimatic(
     }
     if (!file || !fs.existsSync(file)) continue
 
-    const dur = isVideo ? (await probeDuration(file)) || nominal : nominal
+    const probed = isVideo ? (await probeDuration(file)) || nominal : nominal
+    // 只有显式给了 trim 才裁；缺省 0 表示保留整段（首尾帧模型的成片不能裁尾）
+    const rawTrim = Number(seg.trim)
+    const trimTo = Number.isFinite(rawTrim) && rawTrim > 0 ? Math.min(30, Math.max(0.4, rawTrim)) : 0
+    const dur = isVideo && trimTo ? Math.min(probed, trimTo) : probed
 
     let voice: string | undefined
     let voiceDur: number | undefined
-    if (seg.voice) {
+    if (seg.voice && seg.audioMode !== 'native') {
       const vf = materialize(seg.voice, root, tmpDir, `exp-a-${i}`)
       if (fs.existsSync(vf)) {
         voice = vf
@@ -1327,25 +1983,65 @@ async function buildAnimatic(
       }
     }
 
-    let sub: string | undefined
-    if (seg.sub) {
-      const sf = materialize(seg.sub, root, tmpDir, `exp-s-${i}`)
-      if (fs.existsSync(sf)) sub = sf
+    const captions: CaptionCueInput[] = []
+    if (Array.isArray(seg.captions)) {
+      for (const cue of seg.captions) {
+        const text = String(cue?.text ?? '').trim()
+        if (!text) continue
+        const rawStart = Number(cue.startOffsetMs) || 0
+        const rawEnd = Number(cue.endOffsetMs) || 0
+        if (rawEnd > dur * 1000 + 1) {
+          captionWarnings.push(`第 ${i + 1} 段字幕超出真实时长，已夹紧`)
+        }
+        const start = Math.max(0, Math.min(dur * 1000, rawStart))
+        const end = Math.max(start, Math.min(dur * 1000, rawEnd))
+        if (end <= start + 20) continue
+        captions.push({
+          startOffsetMs: start,
+          endOffsetMs: end,
+          text,
+          ...(cue.sub ? { sub: String(cue.sub) } : {}),
+        })
+      }
     }
 
     // 偏移只在镜头时长内有效，夹紧避免拖出荒唐值
     const vo = Math.max(-dur, Math.min(dur, Number(seg.voiceOffset) || 0))
-    const so = Math.max(-dur, Math.min(dur, Number(seg.subOffset) || 0))
-    resolved.push({ file, isVideo, dur, voice, voiceDur, sub, dialogue: seg.dialogue, voiceOffset: vo, subOffset: so })
+    resolved.push({
+      kind: seg.kind === 'transition' ? 'transition' : 'shot',
+      file,
+      isVideo,
+      dur,
+      ...(isVideo && trimTo ? { trim: trimTo } : {}),
+      voice,
+      voiceDur,
+      audioMode: seg.audioMode || (seg.voice ? 'tts' : 'none'),
+      voiceOffset: vo,
+      captions,
+    })
   }
 
   if (resolved.length === 0) throw new Error('没有任何可用的画面或视频，先出图/出片再导出')
 
+  // 接缝在真实片长上再夹一次：短镜最多让出 80%，低于 0.2s 退回硬切
+  const effective: EffectiveJoin[] = resolved.map((r, i) => {
+    if (i === 0) return { mode: 'cut' }
+    const raw = joins[i]
+    if (!raw || raw.mode !== 'effect') return { mode: 'cut' }
+    const want = Math.max(0, Number(raw.seconds) || 0)
+    const max = Math.min(1.5, Math.min(resolved[i - 1].dur, r.dur) * 0.8)
+    const seconds = Math.min(want, max)
+    if (seconds < 0.2) return { mode: 'cut' }
+    return { mode: 'effect', seconds: Math.round(seconds * 100) / 100, xfade: String(raw.xfade || 'fade') }
+  })
+
   const starts: number[] = []
   let total = 0
-  for (const r of resolved) {
-    starts.push(total)
-    total += r.dur
+  for (let i = 0; i < resolved.length; i++) {
+    const j = effective[i]
+    const start = i === 0 ? 0 : total - (j.mode === 'effect' ? j.seconds : 0)
+    starts.push(Math.max(0, start))
+    total = starts[i] + resolved[i].dur
   }
 
   /** 配音比镜头长 → 会被截断，回传给前端告警 */
@@ -1365,24 +2061,38 @@ async function buildAnimatic(
   const vFilters: string[] = []
   const aFilters: string[] = []
   const vIdx: number[] = []
-  const sIdx: (number | null)[] = []
-  const aInputs: { idx: number; startMs: number; keep: number; cut: boolean }[] = []
+  const cueInputs: { seg: number; start: number; end: number; idx: number }[] = []
+  const aInputs: { idx: number; startMs: number; keep: number; cut: boolean; volume?: number }[] = []
   let inputIdx = 0
 
   // 输入顺序：画面 → 字幕 PNG → 配音（索引必须按这个顺序记）
   resolved.forEach((r) => {
-    if (r.isVideo) args.push('-i', r.file)
-    else args.push('-loop', '1', '-t', r.dur.toFixed(3), '-i', r.file)
+    if (r.isVideo) {
+      // 生成转场只取前 N 秒；输入 -t 比在滤镜里 trim 更省解码
+      if (r.trim) args.push('-t', r.trim.toFixed(3))
+      args.push('-i', r.file)
+    } else {
+      args.push('-loop', '1', '-t', r.dur.toFixed(3), '-i', r.file)
+    }
     vIdx.push(inputIdx++)
   })
 
-  resolved.forEach((r) => {
-    if (!r.sub) {
-      sIdx.push(null)
-      return
-    }
-    args.push('-i', r.sub)
-    sIdx.push(inputIdx++)
+  resolved.forEach((r, i) => {
+    r.captions.forEach((cue, j) => {
+      if (!cue.sub) return
+      const sf = materialize(cue.sub, root, tmpDir, `exp-c-${i}-${j}`)
+      if (!fs.existsSync(sf)) {
+        captionWarnings.push(`第 ${i + 1} 段字幕 PNG 缺失，已跳过`)
+        return
+      }
+      args.push('-i', sf)
+      cueInputs.push({
+        seg: i,
+        start: cue.startOffsetMs / 1000,
+        end: cue.endOffsetMs / 1000,
+        idx: inputIdx++,
+      })
+    })
   })
 
   resolved.forEach((r, i) => {
@@ -1404,61 +2114,100 @@ async function buildAnimatic(
     inputIdx++
   })
 
+  // native 镜头直接取视频输入的音轨；与 TTS 镜头一起参与 mix。
+  resolved.forEach((r, i) => {
+    if (r.audioMode !== 'native' || !r.isVideo) return
+    aInputs.push({ idx: vIdx[i], startMs: Math.round(starts[i] * 1000), keep: 0, cut: false, volume: 1 })
+  })
+
   const vTails = resolved.map((r, i) => {
     vFilters.push(
       `[${vIdx[i]}:v]scale=${W}:${H}:force_original_aspect_ratio=decrease:in_range=auto:out_range=tv,` +
         `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=0x000000,` +
         `fps=24,setsar=1,format=yuv420p[v${i}]`,
     )
-    const si = sIdx[i]
-    if (si === null) return `[v${i}]`
-    // 单帧 PNG + eof_action=repeat（默认）即可覆盖整段
-    vFilters.push(`[v${i}][${si}:v]overlay=0:0:format=auto,format=yuv420p[vw${i}]`)
+    const cues = cueInputs.filter((cue) => cue.seg === i)
+    if (cues.length === 0) return `[v${i}]`
+    // 每条 cue 一张整帧透明 PNG，按自己的相对镜头时间窗口叠加
+    let cur = `[v${i}]`
+    cues.forEach((cue, j) => {
+      const tag = `[vw${i}_${j}]`
+      vFilters.push(
+        `${cur}[${cue.idx}:v]overlay=0:0:format=auto:enable='between(t,${cue.start.toFixed(
+          3,
+        )},${cue.end.toFixed(3)})'${tag}`,
+      )
+      cur = tag
+    })
+    vFilters.push(`${cur}format=yuv420p[vw${i}]`)
     return `[vw${i}]`
   })
 
-  vFilters.push(`${vTails.join('')}concat=n=${resolved.length}:v=1:a=0[out]`)
-
-  // 有 libass：用真字幕（SRT + subtitles 滤镜），比 overlay PNG 干净得多
-  let srtFile = ''
-  let vOut = '[out]'
-  if (FF?.ass) {
-    const cues: { start: number; end: number; text: string }[] = []
-    resolved.forEach((r, i) => {
-      const text = (r.dialogue ?? '').replace(/\r?\n/g, ' ').trim()
-      if (!text) return
-      const base = Math.max(0, starts[i] + r.subOffset)
-      const lead = 0.15
-      const start = base + lead
-      const voiced = r.voiceDur && r.voiceDur > 0.3
-      const want = voiced ? (r.voiceDur as number) : r.dur - lead - 0.15
-      const end = Math.min(start + Math.max(0.5, want), base + r.dur - 0.08)
-      if (end > start + 0.25) cues.push({ start, end, text })
-    })
-
-    if (cues.length > 0) {
-      srtFile = path.join(tmpDir, `subs-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.srt`)
-      const body = cues
-        .map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`)
-        .join('\n')
-      fs.writeFileSync(srtFile, body, 'utf8')
-
-      // ASS 颜色是 &HAABBGGRR —— AA 在前，00 才是不透明。
-      // 之前写成 &HC8000000 等于 78% 透明的描边，等于没描边。
-      const fontSize = Math.round(H * 0.05)
-      const marginV = Math.round(H * 0.05)
-      const outline = Math.max(1.5, Math.round(H * 0.0035 * 10) / 10)
-      const style =
-        `FontName=PingFang SC,FontSize=${fontSize},` +
-        `PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,` +
-        `BorderStyle=1,Outline=${outline},Shadow=0,Spacing=1,` +
-        `Alignment=2,MarginV=${marginV}`
+  // 折叠：cut 直接拼；effect 用 xfade 重叠（offset 正好等于当前段的起点）
+  let vOut = vTails[0]
+  for (let i = 1; i < vTails.length; i++) {
+    const j = effective[i]
+    if (j.mode === 'effect') {
+      const tag = `[vx${i}]`
       vFilters.push(
-        `[out]subtitles=filename=${filtQuote(srtFile)}:` +
-          `original_size=${W}x${H}:force_style=${filtQuote(style)}[vsub]`,
+        `${vOut}${vTails[i]}xfade=transition=${j.xfade}:duration=${j.seconds.toFixed(3)}:offset=${starts[i].toFixed(3)}${tag}`,
       )
-      vOut = '[vsub]'
+      vOut = tag
+    } else {
+      const tag = `[vc${i}]`
+      vFilters.push(`${vOut}${vTails[i]}concat=n=2:v=1:a=0${tag}`)
+      vOut = tag
     }
+  }
+
+  // 字幕 cue 由客户端提供，服务端只加真实段起点；SRT 同时作为烧录源和 sidecar
+  const captionCues = resolved
+    .flatMap((r, i) =>
+      r.captions.map((cue) => ({
+        start: starts[i] + cue.startOffsetMs / 1000,
+        end: starts[i] + cue.endOffsetMs / 1000,
+        text: cue.text,
+      })),
+    )
+    .filter((cue) => cue.end > cue.start + 0.03)
+    .sort((a, b) => a.start - b.start)
+
+  let srtFile = ''
+  if (captionCues.length > 0) {
+    srtFile = outFile.replace(/\.mp4$/i, '.srt')
+    const body = captionCues
+      .map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`)
+      .join('\n')
+    fs.writeFileSync(srtFile, body, 'utf8')
+  }
+
+  // 有 libass + CJK 字体：用真字幕；否则走 cue PNG overlay
+  if (FF?.ass && captionMode !== 'png' && captionCues.length > 0) {
+    const fontRatio = Math.min(0.1, Math.max(0.02, Number(captionStyle.fontRatio) || 0.044))
+    const bottomRatio = Math.min(0.2, Math.max(0, Number(captionStyle.bottomRatio) || 0.06))
+    const maxWidthRatio = Math.min(0.95, Math.max(0.4, Number(captionStyle.maxWidthRatio) || 0.78))
+    const fontSize = Math.round(H * fontRatio)
+    const marginV = Math.round(H * bottomRatio)
+    const marginLR = Math.round((W * (1 - maxWidthRatio)) / 2)
+    const bg = assColor(String(captionStyle.background || 'rgba(4,8,14,0.58)'), '&H6604080E')
+    const fg = assColor(String(captionStyle.textColor || '#f4f8fc'), '&H00FCF8F4')
+    const fontName = FF.font || 'PingFang SC'
+    const style =
+      `FontName=${fontName},FontSize=${fontSize},` +
+      `PrimaryColour=${fg},OutlineColour=${bg},BackColour=${bg},` +
+      `BorderStyle=3,Outline=${Math.max(2, Math.round(fontSize * 0.12))},Shadow=0,Spacing=1,` +
+      `Alignment=2,MarginV=${marginV},MarginL=${marginLR},MarginR=${marginLR}`
+    vFilters.push(
+      `${vOut}subtitles=filename=${filtQuote(srtFile)}:` +
+        `original_size=${W}x${H}:force_style=${filtQuote(style)}[vsub]`,
+    )
+    vOut = '[vsub]'
+  } else if (captionCues.length > 0) {
+    resolved.forEach((r, i) => {
+      r.captions.forEach((cue) => {
+        if (!cue.sub) captionWarnings.push(`第 ${i + 1} 段字幕缺少 PNG，无法烧录`)
+      })
+    })
   }
 
   if (aInputs.length > 0) {
@@ -1472,7 +2221,7 @@ async function buildAnimatic(
         chain += `,atrim=0:${a.keep.toFixed(3)},asetpts=PTS-STARTPTS`
         if (st > 0) chain += `,afade=t=out:st=${st.toFixed(3)}:d=${fade}`
       }
-      chain += `,volume=1.6,adelay=${a.startMs}:all=1[a${i}]`
+      chain += `,volume=${a.volume ?? 1.6},adelay=${a.startMs}:all=1[a${i}]`
       aFilters.push(chain)
     })
     aFilters.push(
@@ -1521,10 +2270,14 @@ async function buildAnimatic(
   }
 
   return {
-    shots: resolved.length,
+    shots: resolved.filter((r) => r.kind === 'shot').length,
+    transitions: resolved.filter((r) => r.kind === 'transition').length,
     seconds: Math.round(real * 10) / 10,
     voiced: aInputs.length,
-    subbed: srtFile ? resolved.filter((r) => (r.dialogue ?? '').trim()).length : sIdx.filter((v) => v !== null).length,
+    subbed: resolved.filter((r) => r.captions.length > 0).length,
+    captions: captionCues.length,
+    captionWarnings: [...new Set(captionWarnings)],
+    ...(srtFile ? { srtFile } : {}),
     overflows,
   }
 }
@@ -1537,6 +2290,21 @@ function seedreamProxy(): Plugin {
       const root = server.config.root
       appRoot = root
       const outDir = path.join(root, 'public', 'generated')
+      // dev server 重启后清掉上一次的残留作业目录；运行中的作业随进程退出终止。
+      try {
+        cleanupStaleJobs(root)
+      } catch {
+        /* 清理失败不阻塞启动 */
+      }
+      try {
+        sweepStaleDrafts(root)
+      } catch {
+        /* 清理失败不阻塞启动 */
+      }
+      server.httpServer?.on('close', () => {
+        shutdownRenderJobs()
+        discardAllDrafts()
+      })
 
       server.middlewares.use(async (req, res, next) => {
         const url = (req.url || '').split('?')[0]
@@ -1585,6 +2353,7 @@ function seedreamProxy(): Plugin {
             JSON.stringify({
               hasKey: Boolean(readApiKey()),
               ffmpegAss: ff.ass,
+              ffmpegCaptionFont: ff.font || '',
               ffmpegPath: ff.bin,
               model: effImageModel(),
               videoModel: effVideoModel(),
@@ -1598,18 +2367,144 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 聊天线程：按项目/工作台/集/镜头隔离，只存文本和摘要 ----
+        if (url === '/api/chat-thread') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            const q = new URL(req.url || '', 'http://x')
+            const readKey = (source: Record<string, unknown> | URLSearchParams) => {
+              const get = (k: string) =>
+                source instanceof URLSearchParams ? source.get(k) : (source[k] as unknown)
+              const project = safeProjectName(String(get('project') || ''))
+              const surface = String(get('surface') || '').trim()
+              if (!/^[a-z0-9-]{1,40}$/.test(surface)) throw new Error(`surface 不合法：${surface}`)
+              const ep = Number(get('episode'))
+              const episode = Number.isFinite(ep) ? Math.max(0, Math.floor(ep)) : 0
+              const shotId = String(get('shotId') || '').trim().slice(0, 80)
+              return { project, surface, episode, shotId }
+            }
+            if (req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, thread: getChatThread(readKey(q.searchParams)) ?? null }))
+              return
+            }
+            if (req.method === 'DELETE') {
+              deleteChatThread(readKey(q.searchParams))
+              res.end(JSON.stringify({ ok: true }))
+              return
+            }
+            if (req.method === 'PUT') {
+              const body = await readJson(req)
+              const key = readKey(body || {})
+              if (!Array.isArray(body.messages)) throw new Error('messages 必须是数组')
+              if (body.activeSkills !== undefined && !Array.isArray(body.activeSkills)) {
+                throw new Error('activeSkills 必须是数组')
+              }
+              const thread = saveChatThread(key, body.messages, body.activeSkills || [])
+              res.end(JSON.stringify({ ok: true, thread }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / PUT / DELETE' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 技能：内置 SKILL.md + 用户覆盖（只读文件、数据-only）----
+        if (url === '/api/skills' || url.startsWith('/api/skills/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            const tail = url.slice('/api/skills'.length).replace(/^\/+/, '')
+            const overrides = listSkillOverrides()
+            const asRecord = (id: string, text: string) => {
+              const ov = overrides[id]
+              return {
+                id,
+                text: ov ? withBuiltinFrontmatter(text, ov.body) : text,
+                builtinText: text,
+                source: ov ? 'override' : 'builtin',
+                ...(ov ? { baseVersion: ov.baseVersion, updatedAt: ov.updatedAt } : {}),
+              }
+            }
+            if (req.method === 'GET') {
+              if (!tail) {
+                const { skills, errors } = listSkillFiles(root)
+                res.end(JSON.stringify({ ok: true, skills: skills.map((s) => asRecord(s.id, s.text)), errors }))
+                return
+              }
+              const id = safeSkillId(decodeURIComponent(tail))
+              const text = readSkillFile(root, id)
+              res.end(JSON.stringify({ ok: true, skill: asRecord(id, text) }))
+              return
+            }
+            if (!tail) {
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 GET /api/skills 或 /api/skills/<id>' }))
+              return
+            }
+            const id = safeSkillId(decodeURIComponent(tail))
+            if (req.method === 'PUT') {
+              const body = await readJson(req)
+              const submitted = String(body.body || '')
+              const { body: skillBody } = splitSkillText(submitted)
+              if (!skillBody.trim()) throw new Error('技能正文不能为空')
+              if (Buffer.byteLength(skillBody, 'utf8') > MAX_SKILL_BYTES) {
+                throw new Error(`技能正文超过 ${MAX_SKILL_BYTES} 字节`)
+              }
+              const builtin = readSkillFile(root, id)
+              setSkillOverride(id, skillBody, Number(body.baseVersion) || 1)
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  skill: {
+                    id,
+                    text: withBuiltinFrontmatter(builtin, skillBody),
+                    builtinText: builtin,
+                    source: 'override',
+                  },
+                }),
+              )
+              return
+            }
+            if (req.method === 'DELETE') {
+              const builtin = readSkillFile(root, id)
+              deleteSkillOverride(id)
+              res.end(JSON.stringify({ ok: true, skill: { id, text: builtin, builtinText: builtin, source: 'builtin' } }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / PUT / DELETE' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         // ---- 设置页：大模型 + 技能规则包，存 SQLite settings 表 ----
         if (url === '/api/settings') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           try {
             if (req.method === 'GET') {
-              res.end(JSON.stringify({ ok: true, settings: getAppSettings(), db: dbPath(resolveRoot(root)) }))
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  settings: withKeyStatus(getAppSettings()),
+                  db: dbPath(resolveRoot(root)),
+                }),
+              )
               return
             }
             if (req.method === 'PUT') {
               const body = await readJson(req)
               const settings = saveAppSettings(body || {})
-              res.end(JSON.stringify({ ok: true, settings }))
+              res.end(JSON.stringify({ ok: true, settings: withKeyStatus(settings) }))
               return
             }
             res.statusCode = 405
@@ -1617,6 +2512,51 @@ function seedreamProxy(): Plugin {
           } catch (e: any) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- APIMart 模型目录：只读，不写设置库；用草稿渠道的 Key/Base URL ----
+        if (url === '/api/provider-catalog') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const s = getAppSettings()
+            const p =
+              (body.provider as Provider | undefined) ||
+              s.providers.find((x) => x.id === String(body.id || ''))
+            if (!p) throw new Error('找不到这个渠道')
+            if (p.kind !== 'apimart') {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'unsupported', message: '只有 APIMart 渠道支持模型目录同步' }))
+              return
+            }
+            const key = providerKey(p)
+            if (!key) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'no-key', message: '这个渠道还没有 APIMart API Key' }))
+              return
+            }
+            const entries = await fetchApimartCatalog({
+              baseUrl: String(p.baseUrl || 'https://api.apimart.ai/v1'),
+              apiKey: key,
+            })
+            res.end(JSON.stringify({ ok: true, entries }))
+          } catch (e: any) {
+            res.statusCode = e?.status || 500
+            res.end(
+              JSON.stringify({
+                ok: false,
+                kind: e?.kind || 'api',
+                status: e?.status,
+                message: e?.message || String(e),
+              }),
+            )
           }
           return
         }
@@ -1633,8 +2573,8 @@ function seedreamProxy(): Plugin {
             const body = await readJson(req)
             const s = getAppSettings()
             const p =
-              s.providers.find((x) => x.id === String(body.id || '')) ||
-              (body.provider as Provider | undefined)
+              (body.provider as Provider | undefined) ||
+              s.providers.find((x) => x.id === String(body.id || ''))
             if (!p) throw new Error('找不到这个渠道')
             const key = providerKey(p)
             if (!key) {
@@ -1663,6 +2603,76 @@ function seedreamProxy(): Plugin {
             if (p.kind === 'elevenlabs') {
               endpoint = `${base}/v1/user`
               init = { headers: { 'xi-api-key': key } }
+            } else if (p.kind === 'apimart') {
+              // 目录是 APIMart 最轻的鉴权调用；404 再退到 1-token 对话
+              endpoint = `${base}/models?expand=category`
+              const t0Apimart = Date.now()
+              let rv = await fetch(endpoint, { headers: { Authorization: `Bearer ${key}` } })
+              let raw = (await rv.text()).slice(0, 800)
+              let endpointUsed = endpoint
+              if (rv.status === 404) {
+                const m = s.models.find((x) => x.provider === p.id && hasTextCap(x) && isRunnableModel(x))?.model
+                if (!m) {
+                  res.end(
+                    JSON.stringify({
+                      ok: false,
+                      kind: 'config',
+                      message: '这个渠道还没有可运行的文本模型，先同步目录或手动添加一条',
+                      latency: Date.now() - t0Apimart,
+                      endpoint,
+                    }),
+                  )
+                  return
+                }
+                endpointUsed = `${base}/chat/completions`
+                rv = await fetch(endpointUsed, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    model: m,
+                    messages: [{ role: 'user', content: 'ping' }],
+                    max_tokens: 1,
+                    stream: false,
+                  }),
+                })
+                raw = (await rv.text()).slice(0, 800)
+              }
+              const latencyApimart = Date.now() - t0Apimart
+              if (rv.ok) {
+                let count = 0
+                try {
+                  const j = JSON.parse(raw)
+                  count = Array.isArray(j?.data) ? j.data.length : 0
+                } catch {
+                  /* 对话成功但不一定可解析，按连通处理 */
+                }
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    kind: 'ok',
+                    status: rv.status,
+                    latency: latencyApimart,
+                    endpoint: endpointUsed,
+                    message: count ? `连通，目录 ${count} 个模型` : '连通，鉴权通过',
+                  }),
+                )
+                return
+              }
+              const err = errorFromResponse(raw, rv.status)
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: err.kind,
+                  status: rv.status,
+                  latency: latencyApimart,
+                  endpoint: endpointUsed,
+                  message:
+                    err.kind === 'billing'
+                      ? `余额不足，充值后再试：${err.message}`
+                      : err.message,
+                }),
+              )
+              return
             } else if (p.kind === 'minimax') {
               // MiniMax 没有稳定的 models 端点，用 1 token 文本对话验鉴权
               const m = s.models.find((x) => x.provider === p.id && x.cap === 'text')?.model || 'MiniMax-M1'
@@ -1940,7 +2950,7 @@ function seedreamProxy(): Plugin {
           try {
             const body = await readJson(req)
             const prompt = String(body.prompt || '').trim()
-            const image = String(body.image || '').trim()
+            let image = String(body.image || '').trim()
             if (!prompt) throw new Error('prompt 不能为空')
             const m = image.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/)
             if (!m) throw new Error('参考板必须是 png/jpeg/webp 的 dataURL')
@@ -1959,9 +2969,9 @@ function seedreamProxy(): Plugin {
             }
             const entry = picked.entry
             const provider = picked.provider
-            if (!provider || !['ark', 'ark-plan', 'openai'].includes(provider.kind)) {
+            if (!provider || !['ark', 'ark-plan', 'apimart', 'openai'].includes(provider.kind)) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, kind: 'unsupported-vision-provider', message: '视觉模型只支持方舟 / OpenAI 兼容渠道' }))
+              res.end(JSON.stringify({ ok: false, kind: 'unsupported-vision-provider', message: '视觉模型只支持方舟 / APIMart / OpenAI 兼容渠道' }))
               return
             }
             const key = providerKey(provider)
@@ -1994,7 +3004,7 @@ function seedreamProxy(): Plugin {
             })
             const raw = await r.text()
             if (!r.ok) throw new Error(`${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}`)
-            const j = JSON.parse(raw)
+            const j = parseChatBody(raw, r.headers.get('content-type') || '')
             const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
             if (!text.trim()) throw new Error('视觉模型没有返回内容')
             res.end(JSON.stringify({
@@ -2115,8 +3125,16 @@ function seedreamProxy(): Plugin {
             const body = await readJson(req)
             const system = String(body.system || '')
             const prompt = String(body.prompt || '')
-            if (!prompt.trim()) throw new Error('prompt 不能为空')
             const wantJson = Boolean(body.json)
+            const chatMessages = normalizeChatMessages(body.messages)
+            const tools = normalizeToolSchemas(body.tools)
+            const toolMode = tools.length > 0
+            if (!chatMessages.length && !prompt.trim()) throw new Error('prompt 不能为空')
+            if (Array.isArray(body.tools) && body.tools.length && !toolMode) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'tools-invalid', message: 'tools 不是合法的 function 定义' }))
+              return
+            }
 
             // 选模型：modelKey（设置页里的模型表键，text/textPro 都算）> 档位 lite/pro
             const modelKey = String(body.modelKey || '').trim()
@@ -2155,35 +3173,226 @@ function seedreamProxy(): Plugin {
             if (kind === 'elevenlabs') {
               throw new Error('ElevenLabs 渠道不支持文本生成，请换文本模型')
             }
+            if (toolMode) {
+              const toolErr = toolRequestError({
+                tools,
+                providerId: provider?.id,
+                model,
+                supported: supportsNativeTools(provider?.id, model),
+              })
+              if (toolErr) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, kind: 'tools-unsupported', message: toolErr }))
+                return
+              }
+            }
             const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
             // MiniMax 也走 OpenAI 兼容 /chat/completions；这个端点支持 thinking 开关
             const endpoint = `${base}/chat/completions`
 
-            const messages: { role: string; content: string }[] = []
-            if (system) messages.push({ role: 'system', content: system })
-            messages.push({ role: 'user', content: prompt })
+            const messages = chatMessages.length
+              ? chatMessages
+              : [
+                  ...(system ? [{ role: 'system', content: system }] : []),
+                  { role: 'user', content: prompt },
+                ]
 
             const isMiniMaxM3 = kind === 'minimax' && /^MiniMax-M3$/i.test(model)
             const deepThink = deepSeekThinking(entry, provider, model, wantJson)
+            // 工具调用模式优先关 thinking：M3/豆包/DeepSeek Flash 的 reasoning 会吃掉参数输出预算。
+            const toolThinking =
+              toolMode && toolThinkingMode(provider?.id, model) === 'disable' ? 'disabled' : undefined
+            const thinkingMode =
+              toolThinking ||
+              deepThink ||
+              (isMiniMaxM3 && !toolMode ? (wantJson ? 'disabled' : 'adaptive') : undefined)
+            const providerBody = {
+              model,
+              messages,
+              max_tokens: Number(body.maxTokens) || 8192,
+              temperature: body.temperature ?? 0.7,
+              ...(tools.length
+                ? {
+                    tools,
+                    tool_choice:
+                      typeof body.toolChoice === 'string' || (body.toolChoice && typeof body.toolChoice === 'object')
+                        ? body.toolChoice
+                        : 'auto',
+                  }
+                : {}),
+              ...(thinkingMode ? { thinking: { type: thinkingMode } } : {}),
+            }
+            if (toolMode) {
+              console.log(
+                '[text] tool-mode',
+                JSON.stringify({
+                  provider: provider?.id,
+                  model,
+                  thinking: thinkingMode || 'omit',
+                  tools: tools.length,
+                  messages: messages.length,
+                }),
+              )
+            }
+
+            // ---- 流式：只发进度与最终结果；JSON 模式不把原始片段发给客户端
+            if (body.stream) {
+              res.writeHead(200, {
+                'Content-Type': 'text/event-stream; charset=utf-8',
+                'Cache-Control': 'no-cache, no-transform',
+                Connection: 'keep-alive',
+                'X-Accel-Buffering': 'no',
+              })
+              res.flushHeaders?.()
+              const upstreamCtrl = new AbortController()
+              let closed = false
+              res.on('close', () => {
+                closed = true
+                upstreamCtrl.abort()
+              })
+              const send = (payload: Record<string, unknown>) => {
+                if (closed || res.writableEnded) return
+                res.write(`data: ${JSON.stringify(payload)}\n\n`)
+              }
+              const streamMeta = {
+                model,
+                modelKey: entry.key,
+                modelLabel: entry.label,
+                provider: provider?.label || kind,
+              }
+              send({ type: 'meta', ...streamMeta })
+              try {
+                const upstream = await fetch(endpoint, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ...providerBody, stream: true }),
+                  signal: upstreamCtrl.signal,
+                })
+                if (!upstream.ok) {
+                  const raw = await upstream.text()
+                  send({
+                    type: 'error',
+                    message: `${provider?.label || kind} ${upstream.status}: ${raw.slice(0, 300)}`.slice(0, 600),
+                  })
+                  res.end()
+                  return
+                }
+                const contentType = String(upstream.headers.get('content-type') || '')
+                if (!upstream.body || !contentType.includes('text/event-stream')) {
+                  // 渠道忽略 stream：按整段 JSON 回退，客户端仍能完成本轮。
+                  const raw = await upstream.text()
+                  const j = parseChatBody(raw, contentType)
+                  const message = j?.choices?.[0]?.message
+                  const toolCalls = normalizeToolCalls(message?.tool_calls, `call_${Date.now().toString(36)}`)
+                  const text = String(message?.content ?? j?.reply ?? '')
+                  if (!text.trim() && !toolCalls.length) {
+                    send({ type: 'error', message: '模型没有返回内容' })
+                    res.end()
+                    return
+                  }
+                  let jsonValue: unknown
+                  if (wantJson && text.trim()) {
+                    try {
+                      jsonValue = extractJson(text)
+                    } catch {
+                      jsonValue = undefined
+                    }
+                  }
+                  send({
+                    type: 'done',
+                    text,
+                    toolCalls,
+                    ...(wantJson ? { json: jsonValue } : {}),
+                    ...streamMeta,
+                    ...(j?.choices?.[0]?.finish_reason ? { finishReason: j.choices[0].finish_reason } : {}),
+                    ...(j?.usage ? { usage: j.usage } : {}),
+                  })
+                  res.end()
+                  return
+                }
+                const parser = new ChatStreamParser()
+                const reader = upstream.body.getReader()
+                const decoder = new TextDecoder()
+                let lastChars = 0
+                let lastAt = Date.now()
+                for (;;) {
+                  const { done, value } = await reader.read()
+                  if (done) break
+                  const out = parser.push(decoder.decode(value, { stream: true }))
+                  for (const delta of out.toolDeltas || []) {
+                    send({
+                      type: 'tool_call_delta',
+                      index: delta.index,
+                      id: delta.id,
+                      name: delta.name,
+                      delta: delta.delta,
+                    })
+                  }
+                  if (out.done) break
+                  const now = Date.now()
+                  if (out.chars > lastChars && (out.chars - lastChars >= 32 || now - lastAt >= 150)) {
+                    lastChars = out.chars
+                    lastAt = now
+                    send({ type: 'progress', chars: out.chars })
+                  }
+                }
+                // 放出被 think 标签检测扣住的尾巴；未闭合的 think 块会被丢弃。
+                parser.flush()
+                if (parser.error) {
+                  send({ type: 'error', message: parser.error.slice(0, 600) })
+                  res.end()
+                  return
+                }
+                const text = parser.text.trim()
+                const toolCalls = parser.finalToolCalls()
+                if (!text && !toolCalls.length) {
+                  send({
+                    type: 'error',
+                    message: `模型没有返回内容（finish=${parser.finishReason || '?'}）`,
+                  })
+                  res.end()
+                  return
+                }
+                let jsonValue: unknown
+                if (wantJson && text) {
+                  try {
+                    jsonValue = extractJson(text)
+                  } catch {
+                    jsonValue = undefined
+                  }
+                }
+                send({
+                  type: 'done',
+                  text,
+                  toolCalls,
+                  ...(wantJson ? { json: jsonValue } : {}),
+                  ...streamMeta,
+                  ...(parser.finishReason ? { finishReason: parser.finishReason } : {}),
+                  ...(parser.usage ? { usage: parser.usage } : {}),
+                })
+                res.end()
+              } catch (e: any) {
+                if (!closed) {
+                  send({ type: 'error', message: (e?.message || String(e)).slice(0, 600) })
+                  res.end()
+                }
+              }
+              return
+            }
+
             const r = await fetch(endpoint, {
               method: 'POST',
               headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model,
-                messages,
-                max_tokens: Number(body.maxTokens) || 8192,
-                temperature: body.temperature ?? 0.7,
-                // M3 的 reasoning 会吃掉整个输出预算；结构化 JSON 直接关掉思考
-                ...(isMiniMaxM3 ? { thinking: { type: wantJson ? 'disabled' : 'adaptive' } } : {}),
-                ...(deepThink ? { thinking: { type: deepThink } } : {}),
-              }),
+              body: JSON.stringify(providerBody),
             })
             const raw = await r.text()
             if (!r.ok) throw new Error(`${provider?.label || kind} ${r.status}: ${raw.slice(0, 300)}`)
 
-            const j = JSON.parse(raw)
-            const text = String(j?.choices?.[0]?.message?.content ?? j?.reply ?? '')
-            if (!text.trim()) {
+            const j = parseChatBody(raw, r.headers.get('content-type') || '')
+            const message = j?.choices?.[0]?.message
+            const toolCalls = normalizeToolCalls(message?.tool_calls, `call_${Date.now().toString(36)}`)
+            const text = String(message?.content ?? j?.reply ?? '')
+            if (!text.trim() && !toolCalls.length) {
               const finish = j?.choices?.[0]?.finish_reason
               const usage = j?.usage
               const reasoning = usage?.completion_tokens_details?.reasoning_tokens
@@ -2198,24 +3407,23 @@ function seedreamProxy(): Plugin {
               modelKey: entry.key,
               modelLabel: entry.label,
               provider: provider?.label || kind,
-              ...(deepThink ? { thinking: deepThink } : {}),
-            }
-            if (!wantJson) {
-              res.end(JSON.stringify({ ok: true, text, ...meta }))
-              return
+              ...(thinkingMode ? { thinking: thinkingMode } : {}),
             }
             let parsedJson: unknown
-            try {
-              parsedJson = extractJson(text)
-            } catch {
-              // 保留原始文本，让客户端按 action 协议报错/修复；不要把 provider 的原始 JSON 丢掉。
-              parsedJson = undefined
+            if (wantJson && text.trim()) {
+              try {
+                parsedJson = extractJson(text)
+              } catch {
+                // 保留原始文本，让客户端按 action 协议报错/修复；不要把 provider 的原始 JSON 丢掉。
+                parsedJson = undefined
+              }
             }
             res.end(
               JSON.stringify({
                 ok: true,
-                json: parsedJson,
+                ...(wantJson ? { json: parsedJson } : {}),
                 text,
+                toolCalls,
                 finishReason: j?.choices?.[0]?.finish_reason,
                 usage: j?.usage,
                 ...meta,
@@ -2223,6 +3431,108 @@ function seedreamProxy(): Plugin {
             )
           } catch (e: any) {
             res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 场景草稿：agent 分片写代码的临时文件 ----
+        if (url.startsWith('/api/scene-draft')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            if (req.method === 'GET') {
+              const id = new URL(req.url || '', 'http://x').searchParams.get('id') || ''
+              res.end(JSON.stringify({ ok: true, ...draftText(id) }))
+              return
+            }
+            if (req.method !== 'POST') {
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+              return
+            }
+            const body = await readJson(req)
+            const action = url.slice('/api/scene-draft'.length).replace(/^\/+/, '')
+            if (action === 'begin') {
+              res.end(JSON.stringify({ ok: true, draft: beginDraft(body, root) }))
+              return
+            }
+            if (action === 'append') {
+              res.end(JSON.stringify({ ok: true, draft: appendDraft(body.id, body.chunk) }))
+              return
+            }
+            if (action === 'read') {
+              res.end(JSON.stringify({ ok: true, ...readDraft(body.id, body.startLine, body.endLine) }))
+              return
+            }
+            if (action === 'patch') {
+              res.end(JSON.stringify({ ok: true, draft: patchDraft(body.id, body.startLine, body.endLine, body.text) }))
+              return
+            }
+            if (action === 'commit') {
+              res.end(JSON.stringify({ ok: true, ...commitDraft(body.id) }))
+              return
+            }
+            if (action === 'discard' || action === 'close') {
+              res.end(JSON.stringify({ ok: true, ...discardDraft(body.id) }))
+              return
+            }
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的草稿接口' }))
+          } catch (e: any) {
+            res.statusCode = e?.code === 'not-found' ? 404 : 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- Blender 渲染宿主：健康检查 / 提交 / 进度 / 取消 ----
+        if (url.startsWith('/api/blender/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const action = url.slice('/api/blender/'.length)
+          try {
+            if (action === 'health') {
+              const refresh = new URL(req.url || '', 'http://x').searchParams.get('refresh') === '1'
+              res.end(JSON.stringify(await blenderHealth({ refresh })))
+              return
+            }
+            if (action === 'render') {
+              if (req.method !== 'POST') {
+                res.statusCode = 405
+                res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+                return
+              }
+              const body = await readJson(req)
+              const job = await submitRenderJob(body, root)
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            if (action === 'progress') {
+              const id = new URL(req.url || '', 'http://x').searchParams.get('id') || ''
+              const job = getRenderJob(id)
+              if (!job) throw new Error('作业不存在或已清理')
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            if (action === 'jobs') {
+              res.end(JSON.stringify({ ok: true, jobs: listRenderJobs() }))
+              return
+            }
+            if (action === 'cancel') {
+              if (req.method !== 'POST') {
+                res.statusCode = 405
+                res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+                return
+              }
+              const body = await readJson(req)
+              const job = cancelRenderJob(String(body.id || ''))
+              if (!job) throw new Error('作业不存在')
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的 Blender 接口' }))
+          } catch (e: any) {
+            res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
           }
           return
@@ -2434,7 +3744,7 @@ function seedreamProxy(): Plugin {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           try {
             const q = new URL(req.url || '', 'http://x').searchParams
-            const list = await listVoices(q.get('modelKey') || '')
+            const list = await listVoices(q.get('modelKey') || '', q.get('refresh') === '1')
             res.end(JSON.stringify({ ok: true, ...list }))
           } catch (e) {
             res.statusCode = 500
@@ -2471,24 +3781,36 @@ function seedreamProxy(): Plugin {
             const voiceKey = String(body.modelKey || '').trim()
             const voice = String(body.voice || 'Tingting')
             const rate = Math.min(260, Math.max(110, Number(body.rate) || 180))
+            const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+            const sampleProject = String(body.project || '').trim()
+            const attachProjectAudio = async (url: string) => {
+              if (!sampleProject) return url
+              const source = path.join(root, 'public', url.replace(/^\//, '').split('?')[0])
+              const ext = path.extname(source) || '.mp3'
+              const copied = copyIntoProjectMedia(root, sampleProject, source, `voice-sample-${stamp}${ext}`)
+              return copied.url
+            }
 
             await ensureFf()
             const t0 = Date.now()
             const outDir = path.join(root, 'public', 'voices')
             fs.mkdirSync(outDir, { recursive: true })
-            const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
 
             // 一镜多说话人：每行各自合成，再拼成一条音轨
             const lines = Array.isArray(body.lines) ? body.lines.slice(0, 12) : []
             if (lines.length > 0) {
               const parts: { file: string; seconds: number; engine: string }[] = []
+              const applied = new Set<string>()
+              const unsupported = new Set<string>()
               for (let i = 0; i < lines.length; i++) {
                 const t = String(lines[i]?.text || '').trim()
                 if (!t) continue
                 if (t.length > 400) throw new Error(`第 ${i + 1} 句台词过长（上限 400 字）`)
                 const v = String(lines[i]?.voice || voice)
                 const r = Math.min(260, Math.max(110, Number(lines[i]?.rate) || rate))
-                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`, voiceKey)
+                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`, voiceKey, lines[i], true)
+                for (const k of one.applied ?? []) applied.add(k)
+                for (const k of one.unsupported ?? []) unsupported.add(k)
                 parts.push({
                   file: path.join(root, 'public', one.url.replace(/^\//, '')),
                   seconds: one.seconds,
@@ -2506,6 +3828,8 @@ function seedreamProxy(): Plugin {
                     engine: only.engine,
                     seconds: only.seconds,
                     lines: 1,
+                    applied: [...applied],
+                    unsupported: [...unsupported],
                     elapsed: Date.now() - t0,
                   }),
                 )
@@ -2532,22 +3856,115 @@ function seedreamProxy(): Plugin {
                   engine: parts[0].engine,
                   seconds: total,
                   lines: parts.length,
+                  applied: [...applied],
+                  unsupported: [...unsupported],
                   elapsed: Date.now() - t0,
                 }),
               )
               return
             }
 
-            const result = await synthesize(text, voice, rate, outDir, stamp, voiceKey)
+            const result = await synthesize(text, voice, rate, outDir, stamp, voiceKey, body.performance, true)
+            const finalUrl = await attachProjectAudio(result.url)
             res.end(
               JSON.stringify({
                 ok: true,
-                url: result.url,
+                url: finalUrl,
                 engine: result.engine,
                 seconds: result.seconds,
+                applied: result.applied ?? [],
+                unsupported: result.unsupported ?? [],
                 elapsed: Date.now() - t0,
               }),
             )
+          } catch (e) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+          }
+          return
+        }
+
+        // ---- 口型：外部 provider + 本地抽帧验收 ----
+        if (url === '/api/lipsync') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const config = normalizeLipSyncSettings(getAppSettings().lipSync)
+            if (config.provider !== 'sync-labs') {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '口型 provider 未配置' }))
+              return
+            }
+            const apiKey = String(config.apiKey || '').trim() || readEnvKey('SYNC_LABS_API_KEY')
+            if (!apiKey) throw new Error('Sync Labs Key 未配置，去设置页填写')
+            const project = String(body.project || '').trim()
+            if (!project) throw new Error('缺少项目名')
+            const video = localMediaFile(root, String(body.video || ''))
+            const audio = localMediaFile(root, String(body.audio || ''))
+            const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+            const tmp = path.join(root, 'public', 'videos', `lipsync-${stamp}.mp4`)
+            const result = await runSyncLabs({
+              baseUrl: config.baseUrl,
+              apiKey,
+              videoFile: video,
+              audioFile: audio,
+              outputFile: tmp,
+              model: String(body.model || 'lipsync-2'),
+            })
+            const copied = copyIntoProjectMedia(root, project, result.outputFile, `lipsync-${stamp}.mp4`)
+            try {
+              fs.unlinkSync(tmp)
+            } catch {
+              /* 临时文件删不掉不影响结果 */
+            }
+            res.end(
+              JSON.stringify({
+                ok: true,
+                provider: 'sync-labs',
+                outputVideo: copied.url,
+                jobId: result.jobId,
+              }),
+            )
+          } catch (e) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+          }
+          return
+        }
+
+        if (url === '/api/lipsync/qa') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const video = localMediaFile(root, String(body.video || ''))
+            const audio = body.audio ? localMediaFile(root, String(body.audio)) : undefined
+            const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+            const outDir = path.join(root, 'public', 'lipsync-qa', stamp)
+            const ff = await ensureFf()
+            const result = await analyzeLipSync({
+              video,
+              audio,
+              outDir,
+              ffmpeg: ff.bin,
+              ffprobe: ffProbe(),
+              noise: body.noise || '-35dB',
+              minSilence: Number(body.minSilence) || 0.35,
+            })
+            const frames = result.frames.map((frame) => ({
+              ...frame,
+              path: `/lipsync-qa/${stamp}/${path.basename(frame.path)}`,
+            }))
+            res.end(JSON.stringify({ ok: true, ...result, frames }))
           } catch (e) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
@@ -2594,6 +4011,16 @@ function seedreamProxy(): Plugin {
             const resolution = ['480p', '720p', '1080p'].includes(String(body.resolution))
               ? (String(body.resolution) as '480p' | '720p' | '1080p')
               : '720p'
+            const joins: ExportJoinInput[] = Array.isArray(body.joins)
+              ? body.joins.map((j: any) =>
+                  j?.mode === 'effect'
+                    ? { mode: 'effect' as const, seconds: Number(j.seconds) || 0, xfade: String(j.xfade || 'fade') }
+                    : { mode: 'cut' as const },
+                )
+              : []
+            const captionStyle: CaptionStyleInput =
+              body.captionStyle && typeof body.captionStyle === 'object' ? body.captionStyle : {}
+            const captionMode: 'auto' | 'png' = body.captionMode === 'png' ? 'png' : 'auto'
 
             const id = `e-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
             exportJobs.set(id, { status: 'running', startedAt: Date.now() })
@@ -2606,14 +4033,26 @@ function seedreamProxy(): Plugin {
                 fs.mkdirSync(outRoot, { recursive: true })
                 const name = `animatic-${resolution}-${Date.now()}.mp4`
                 const outFile = path.join(outRoot, name)
-                const info = await buildAnimatic(segments, resolution, root, outFile)
+                const info = await buildAnimatic(
+                  segments,
+                  resolution,
+                  root,
+                  outFile,
+                  joins,
+                  captionStyle,
+                  captionMode,
+                )
                 exportJobs.set(id, {
                   status: 'succeeded',
                   url: `/exports/${name}`,
                   shots: info.shots,
+                  transitions: info.transitions,
                   seconds: info.seconds,
                   voiced: info.voiced,
                   subbed: info.subbed,
+                  captions: info.captions,
+                  ...(info.srtFile ? { srtUrl: `/exports/${path.basename(info.srtFile)}` } : {}),
+                  captionWarnings: info.captionWarnings,
                   overflows: info.overflows,
                   startedAt: t0,
                   elapsed: Date.now() - t0,
@@ -2659,7 +4098,7 @@ function seedreamProxy(): Plugin {
 
           try {
             const body = await readJson(req)
-            const image = String(body.image || '')
+            let image = String(body.image || '')
             // 参考图（reference_image）模式：1~4 张，多了截断（方舟上限）
             const refImages: string[] = Array.isArray(body.refImages)
               ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 4)
@@ -2668,11 +4107,39 @@ function seedreamProxy(): Plugin {
             const refVideos: string[] = Array.isArray(body.refVideos)
               ? body.refVideos.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 3)
               : []
-            const videoRefMode = refVideos.length > 0
-            const refMode = refImages.length > 0
+            const generateAudio = Boolean(body.generateAudio)
+            const audioRefInput = String(body.audioRef || '').trim()
+            // 原生音频与首尾帧互斥：关键帧改走 reference_image，保持参考模式。
+            if (generateAudio && image) {
+              refImages.unshift(image)
+              refImages.splice(4)
+              image = ''
+            }
+            // 转场：关键帧是必填；边界帧由服务端按模型能力决定用不用
+            const rawTransition = body.transition && typeof body.transition === 'object' ? body.transition : null
+            const transition = rawTransition
+              ? {
+                  keyframe: String(rawTransition.keyframe || ''),
+                  boundaryOut: String(rawTransition.boundaryOut || ''),
+                  boundaryIn: String(rawTransition.boundaryIn || ''),
+                }
+              : null
+            const transitionMode = Boolean(transition?.keyframe)
+            if (generateAudio && transitionMode) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '原生音频与首尾帧/生成转场互斥，请改用参考图模式或关闭原生音频', kind: 'bad-request' }))
+              return
+            }
+            const videoRefMode = !transitionMode && refVideos.length > 0
+            const refMode = !transitionMode && refImages.length > 0
             // 全模态参考（图 / 视频）与首帧互斥
             const referenceMode = refMode || videoRefMode
-            if (!image && !referenceMode) {
+            if (rawTransition && !transitionMode) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '生成转场视频前必须有已确认的关键帧', kind: 'bad-request' }))
+              return
+            }
+            if (!image && !referenceMode && !transitionMode) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
               return
@@ -2721,12 +4188,13 @@ function seedreamProxy(): Plugin {
               )
               return
             }
-            if (provider && provider.kind !== 'ark') {
+            if (provider && provider.kind !== 'ark' && provider.kind !== 'apimart') {
               res.statusCode = 400
               res.end(
                 JSON.stringify({
                   ok: false,
-                  message: '视频出片目前只支持方舟协议渠道，请在设置里选方舟渠道的视频模型',
+                  message: '视频出片目前只支持方舟或 APIMart 渠道，请在设置里选择对应渠道的视频模型',
+                  kind: 'unsupported',
                 }),
               )
               return
@@ -2736,6 +4204,191 @@ function seedreamProxy(): Plugin {
               '',
             )
 
+            if (provider?.kind === 'apimart') {
+              const family = videoFamilyFor(model)
+              if (generateAudio && family !== 'seedance-2.5') {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '当前 APIMart 视频族未接入原生音频参考', kind: 'unsupported' }))
+                return
+              }
+              if (generateAudio && seconds < 4) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: 'Seedance 2.5 原生音频最短 4 秒', kind: 'bad-request' }))
+                return
+              }
+              if (generateAudio && !audioRefInput) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '原生音频需要角色音色样本', kind: 'bad-request' }))
+                return
+              }
+              if (!family) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message: `视频模型「${model}」尚未接入 APIMart 运行时`,
+                    kind: 'unsupported',
+                  }),
+                )
+                return
+              }
+
+              const skipped: string[] = []
+              const refUrls: string[] = []
+              const refVideoUrls: string[] = []
+              // 转场分流：关键帧永远作首帧；首尾帧模型再把 B 首帧当尾帧。
+              // Seedance 2.5 上游禁止尾帧与 reference_image 混用，所以转场不送参考图。
+              const tKeyframe = transition?.keyframe || ''
+              const tIn = transition?.boundaryIn || ''
+              const useLastFrame =
+                Boolean(transition) &&
+                (family === 'kling-v3' || family === 'seedance-2.5') &&
+                Boolean(tIn)
+              const firstSource = transition ? tKeyframe : image
+              const lastSource = transition
+                ? useLastFrame
+                  ? tIn
+                  : ''
+                : String(body.lastFrame || '')
+              const refSources = transition ? [] : refImages
+              const effRefMode = transition ? false : refMode
+              const effVideoRefMode = transition ? false : videoRefMode
+              const effReferenceMode = effRefMode || effVideoRefMode
+              const withFrames = transition ? true : !effReferenceMode
+              const uploadApimartRef = async (ref: string, tag: string) => {
+                const dataUrl = resolveRef(ref, root)
+                if (/^https?:\/\//i.test(dataUrl)) return dataUrl
+                const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/)
+                if (!m) throw new ApimartError(`参考图格式不支持：${tag}`, { kind: 'bad-request' })
+                const ext = /png/i.test(m[1]) ? 'png' : /webp/i.test(m[1]) ? 'webp' : 'jpg'
+                const up = await uploadApimartImage({
+                  baseUrl: base,
+                  apiKey: runKey,
+                  buffer: Buffer.from(m[2], 'base64'),
+                  mime: m[1],
+                  filename: `video-ref-${tag}.${ext}`,
+                })
+                return up.url
+              }
+
+              let firstFrame = ''
+              let lastFrame = ''
+              try {
+                if (withFrames && firstSource) firstFrame = await uploadApimartRef(firstSource, 'first')
+                if (withFrames && lastSource) lastFrame = await uploadApimartRef(lastSource, 'last')
+                if (effRefMode) {
+                  for (const r of refSources) {
+                    try {
+                      refUrls.push(await uploadApimartRef(r, `ref-${refUrls.length}`))
+                    } catch {
+                      skipped.push(r)
+                    }
+                  }
+                  if (refUrls.length === 0) throw new ApimartError(`参考图都不可用：${skipped.join('、')}`, { kind: 'download' })
+                }
+                if (effVideoRefMode) {
+                  for (const r of refVideos) {
+                    const v = resolveVideoRef(r, root)
+                    if (!v.external) {
+                      throw new ApimartError('APIMart 视频参考只接受公网 URL；本地参考视频无法上传', { kind: 'unsupported' })
+                    }
+                    refVideoUrls.push(v.external)
+                  }
+                }
+              } catch (e) {
+                const err = e as ApimartError
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message: err.message,
+                    kind: err.kind || 'video-ref',
+                  }),
+                )
+                return
+              }
+
+              let payload: Record<string, unknown>
+              let nativeAudioUrl = ''
+              try {
+                if (generateAudio) nativeAudioUrl = await resolveApimartAudioRef(root, audioRefInput)
+                payload = buildApimartVideoPayload({
+                  family,
+                  model,
+                  prompt,
+                  ratio,
+                  seconds,
+                  resolution,
+                  firstFrame,
+                  lastFrame,
+                  referenceImages: refUrls,
+                  referenceVideos: refVideoUrls,
+                  audioUrl: nativeAudioUrl,
+                  generateAudio,
+                })
+              } catch (e) {
+                const err = e as ApimartError
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: err.message, kind: err.kind || 'bad-request' }))
+                return
+              }
+
+              const mode = generateAudio ? 'native' : transitionMode ? 'transition' : videoRefMode ? 'video' : refMode ? 'ref' : 'first'
+              if (body.dryRun) {
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    id: 'dry-run',
+                    mode,
+                    family,
+                    model,
+                    skipped,
+                    request: payload,
+                  }),
+                )
+                return
+              }
+
+              const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
+              const startedAt = Date.now()
+              videoJobs.set(id, { status: 'running', startedAt })
+              const outDir = path.join(root, 'public', 'videos')
+              fs.mkdirSync(outDir, { recursive: true })
+              res.end(JSON.stringify({ ok: true, id, mode, family, model, skipped, provider: provider.label }))
+
+              ;(async () => {
+                let taskId = ''
+                try {
+                  const submitted = await submitApimartVideo({ baseUrl: base, apiKey: runKey, payload })
+                  taskId = submitted.taskId
+                  const running = videoJobs.get(id)
+                  if (running) running.taskId = taskId
+                  const done = await pollApimartTask({ baseUrl: base, apiKey: runKey, taskId })
+                  const videoUrl = videoUrlFromTask(done)
+                  if (!videoUrl) throw new ApimartError('任务未返回视频地址', { kind: 'api' })
+                  const dl = await downloadApimartResult({ url: videoUrl })
+                  const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+                  fs.writeFileSync(path.join(outDir, name), dl.bytes)
+                  videoJobs.set(id, {
+                    status: 'succeeded',
+                    url: `/videos/${name}`,
+                    startedAt,
+                    elapsed: Date.now() - startedAt,
+                    taskId,
+                  })
+                } catch (e) {
+                  videoJobs.set(id, {
+                    status: 'failed',
+                    message: (e as Error).message,
+                    startedAt,
+                    elapsed: Date.now() - startedAt,
+                    ...(taskId ? { taskId } : {}),
+                  })
+                }
+              })()
+              return
+            }
+
             // 本地图片转 data URL（方舟访问不到 127.0.0.1）；参考图个别失效不整单失败
             let firstUrl = ''
             let lastUrl = ''
@@ -2743,6 +4396,8 @@ function seedreamProxy(): Plugin {
             const refVideoUrls: string[] = []
             const skipped: string[] = []
             const tempVideos: string[] = []
+            // 方舟没有尾帧：转场用关键帧当首帧，生成后由成片裁到目标时长
+            const arkImage = transition ? transition.keyframe : image
             try {
               if (refMode) {
                 for (const r of refImages) {
@@ -2753,8 +4408,8 @@ function seedreamProxy(): Plugin {
                   }
                 }
                 if (refUrls.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
-              } else if (!videoRefMode && image) {
-                firstUrl = resolveRef(image, root)
+              } else if (!videoRefMode && arkImage) {
+                firstUrl = resolveRef(arkImage, root)
               }
 
               if (videoRefMode) {
@@ -2833,7 +4488,7 @@ function seedreamProxy(): Plugin {
               return
             }
 
-            const mode = videoRefMode ? 'video' : refMode ? 'ref' : 'first'
+            const mode = transitionMode ? 'transition' : videoRefMode ? 'video' : refMode ? 'ref' : 'first'
             // dryRun：只回显将要提交的请求体，不真的出片（调试 / 验证用）
             if (body.dryRun) {
               res.end(
@@ -2905,19 +4560,6 @@ function seedreamProxy(): Plugin {
           return
         }
 
-        const key = readApiKey()
-        if (!key) {
-          res.statusCode = 500
-          res.end(
-            JSON.stringify({
-              ok: false,
-              message: '未找到 ARK_API_KEY，请配置 ~/.canghe-skills/.env',
-              kind: 'no-key',
-            }),
-          )
-          return
-        }
-
         try {
           const body = await readJson(req)
           let mediaProject = ''
@@ -2946,6 +4588,16 @@ function seedreamProxy(): Plugin {
           // 渠道分发：方舟 Seedream 支持参考图；第三方走 OpenAI 兼容 images/generations（纯文生图）
           const cap: Cap = body.cap === 'view' ? 'view' : 'image'
           const { entry: imgEntry, provider: imgProvider } = pickModel(cap, String(body.modelKey || ''))
+          if (!imgEntry) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: `没有可用的${cap === 'view' ? '三视图' : '图像'}模型，请到设置页配置`, kind: 'no-image-model' }))
+            return
+          }
+          if (!isRunnableModel(imgEntry)) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: `模型「${imgEntry.label}」尚未接入运行时`, kind: 'unsupported' }))
+            return
+          }
           const kind: ProviderKind = imgProvider?.kind || 'ark'
           const model = imgEntry?.model || effImageModel(cap)
           const imgKey = providerKey(imgProvider)
@@ -2960,6 +4612,165 @@ function seedreamProxy(): Plugin {
             )
             return
           }
+
+          if (kind === 'apimart') {
+            const base = String(imgProvider?.baseUrl || 'https://api.apimart.ai/v1').replace(/\/+$/, '')
+            const ratio = String(body.ratio || '16:9')
+            const n = Math.min(4, Math.max(1, Number(body.n) || 1))
+            const featureRef = imgEntry.features?.imageRef
+            const rawRefs = [body.refImage, ...(Array.isArray(body.refImages) ? body.refImages : [])]
+              .filter(Boolean)
+              .map(String)
+              .filter((r) => !r.startsWith('data:image/svg'))
+            if (featureRef === 'none' && rawRefs.length) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: `模型「${imgEntry.label}」不支持参考图`, kind: 'unsupported' }))
+              return
+            }
+
+            const t0 = Date.now()
+            const routeAbort = new AbortController()
+            const onClientClose = () => {
+              if (!res.writableEnded) routeAbort.abort()
+            }
+            res.on('close', onClientClose)
+            req.on('aborted', onClientClose)
+            res.socket?.on('close', onClientClose)
+
+            const refUrls: string[] = []
+            const dropped: string[] = []
+            const maxRefs = featureRef === 'single' ? 1 : 10
+            for (const ref of rawRefs) {
+              if (refUrls.length >= maxRefs) {
+                dropped.push(ref)
+                continue
+              }
+              try {
+                if (/^https?:\/\//i.test(ref)) {
+                  refUrls.push(ref)
+                  continue
+                }
+                const dataUrl = resolveRef(ref, root)
+                const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.*)$/)
+                if (!m) {
+                  dropped.push(ref)
+                  continue
+                }
+                const ext = /png/i.test(m[1]) ? 'png' : /webp/i.test(m[1]) ? 'webp' : 'jpg'
+                const up = await uploadApimartImage({
+                  baseUrl: base,
+                  apiKey: imgKey,
+                  buffer: Buffer.from(m[2], 'base64'),
+                  mime: m[1],
+                  filename: `ref-${refUrls.length}.${ext}`,
+                  signal: routeAbort.signal,
+                })
+                refUrls.push(up.url)
+              } catch {
+                dropped.push(ref)
+              }
+            }
+            if (rawRefs.length && refUrls.length === 0) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '参考图全部不可用，请重新选择', kind: 'download', droppedRefs: dropped.length }))
+              return
+            }
+
+            const callApimart = async () => {
+              const payload = buildApimartImagePayload({ model, prompt, ratio, refUrls, n: 1 })
+              const submitted = await submitApimartImage({
+                baseUrl: base,
+                apiKey: imgKey,
+                payload,
+                signal: routeAbort.signal,
+              })
+              const taskData = submitted.url
+                ? { result: { images: [{ url: [submitted.url] }] } }
+                : await pollApimartTask({
+                    baseUrl: base,
+                    apiKey: imgKey,
+                    taskId: submitted.taskId || '',
+                    signal: routeAbort.signal,
+                  })
+              const urls = imageUrlsFromTask(taskData)
+              if (!urls.length) throw new ApimartError('任务未返回图片', { kind: 'api' })
+              const files: { bytes: Buffer; contentType: string }[] = []
+              for (const u of urls) {
+                files.push(await downloadApimartResult({ url: u, signal: routeAbort.signal }))
+              }
+              return files
+            }
+
+            const settled = await Promise.allSettled(Array.from({ length: n }, () => callApimart()))
+            if (routeAbort.signal.aborted) {
+              if (!res.writableEnded) {
+                res.statusCode = 499
+                res.end(JSON.stringify({ ok: false, message: '请求已取消', kind: 'aborted' }))
+              }
+              return
+            }
+            const fulfilled = settled.filter((s): s is PromiseFulfilledResult<any> => s.status === 'fulfilled')
+            const timedOut = settled.filter(
+              (s) => s.status === 'rejected' && (s.reason as Error & { kind?: string })?.kind === 'timeout',
+            ).length
+            const failed = settled.length - fulfilled.length - timedOut
+            if (fulfilled.length === 0) {
+              const first = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined
+              const e = first?.reason as (Error & { kind?: string; status?: number }) | undefined
+              res.statusCode = timedOut > 0 ? 504 : e?.status || 500
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: timedOut > 0 ? '生成超时，可重试' : e?.message || '生成失败，可重试',
+                  kind: timedOut > 0 ? 'timeout' : e?.kind ?? 'api',
+                  timedOut,
+                }),
+              )
+              return
+            }
+
+            fs.mkdirSync(outDir, { recursive: true })
+            const urls: string[] = []
+            for (const item of fulfilled.flatMap((s) => s.value as { bytes: Buffer; contentType: string }[])) {
+              const ext = /jpeg|jpg/i.test(item.contentType)
+                ? 'jpg'
+                : /webp/i.test(item.contentType)
+                  ? 'webp'
+                  : 'png'
+              if (mediaProject) {
+                const saved = saveProjectImage(root, mediaProject, item.bytes, ext, cap === 'view' ? 'char' : 'design')
+                urls.push(saved.url)
+              } else {
+                const name = `shot-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
+                fs.writeFileSync(path.join(outDir, name), item.bytes)
+                urls.push(`/generated/${name}`)
+              }
+            }
+            if (urls.length === 0) {
+              res.statusCode = 502
+              res.end(JSON.stringify({ ok: false, message: '候选图片下载失败，请重试', kind: 'download' }))
+              return
+            }
+            const warnings = [
+              dropped.length ? `${dropped.length} 张参考图未使用` : '',
+              timedOut ? `${timedOut} 个候选超时` : '',
+              failed ? `${failed} 个候选失败` : '',
+            ].filter(Boolean)
+            res.end(
+              JSON.stringify({
+                ok: true,
+                urls,
+                url: urls[0],
+                size: RATIO_SIZE[ratio] || RATIO_SIZE['16:9'],
+                model,
+                provider: imgProvider?.label || 'APIMart',
+                ...(warnings.length ? { warning: warnings.join('，') + '，已使用成功结果', timedOut, failed } : {}),
+                elapsed: Date.now() - t0,
+              }),
+            )
+            return
+          }
+
           const base = String(imgProvider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(
             /\/+$/,
             '',
@@ -3157,8 +4968,15 @@ function seedreamProxy(): Plugin {
           )
         } catch (e) {
           if (res.writableEnded || res.destroyed) return
-          res.statusCode = 500
-          res.end(JSON.stringify({ ok: false, message: (e as Error).message, kind: 'network' }))
+          const err = e as Error & { kind?: string; status?: number }
+          res.statusCode = err.status || (err.kind === 'timeout' ? 504 : 500)
+          res.end(
+            JSON.stringify({
+              ok: false,
+              message: err.message,
+              kind: err.kind || 'network',
+            }),
+          )
         }
       })
     },
@@ -3176,5 +4994,21 @@ export default defineConfig({
     // ngrok / 反代 / 局域网访问时 Vite 默认按 Host 头拦请求（403 text/plain）。
     // 这里显式放开，否则公网只能通 /api/*，页面和模块全被挡。
     allowedHosts: true,
+    watch: {
+      // 验收脚本、OpenSpec 产物、渲染作业与项目数据不属于前端模块；
+      // 监听它们会在生成/渲染过程中触发整页刷新，把 agent 运行和 Playwright 流程打断。
+      ignored: [
+        '**/openspec/**',
+        '**/verify-*.mjs',
+        '**/.blender-jobs/**',
+        '**/.scene-drafts/**',
+        '**/fixtures/**',
+        '**/projects/**',
+        '**/public/videos/**',
+        '**/public/generated/**',
+        '**/public/voices/**',
+        '**/public/exports/**',
+      ],
+    },
   },
 })

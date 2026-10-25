@@ -1,23 +1,37 @@
-import { useRef, useState } from 'react'
-import { generateImage, saveImageDataUrl, type AppSettings, type Stage } from './api'
-import { imageCost, money, type Pricing } from './pricing'
-import { endTask, startTask } from './tasks'
-import { TURNAROUND_SUFFIX, type CharacterSheet } from './characters'
-import { CapModelSelect, StageModelSelect, type StagePick } from './ModelSelect'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { getProject, type AppSettings, type ProjectData, type Stage, type VoiceOption } from './api'
+import type { Pricing } from './pricing'
+import type { CharacterSheet } from './characters'
+import CharacterCard from './CharacterCard'
+import { CapModelSelect, hasTextModels, StageModelSelect, type StagePick } from './ModelSelect'
+import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
+import { dialogueToText } from './prompts'
+import {
+  type BuiltinResult,
+  WORKBENCH_BUILTINS,
+  type WorkbenchChatAdapter,
+} from './agent/workbenchChat'
+import { AgentButton } from './agent/AgentButton'
+import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
+import { useWorkbenchChatOpen } from './agent/chatPanel'
+import WorkbenchBar from './WorkbenchBar'
+
+const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
 type Props = {
   characters: CharacterSheet[]
   patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   selectedShot: { id: string; no: string } | null
+  selectedShotBudget?: { used: number; max: number; expression: boolean; omitted: number } | null
   onInject: (charId: string) => void
   /** 可用音色（一镜多说话人时按角色取） */
-  voices: { id: string; label: string }[]
+  voices: VoiceOption[]
   onAdd: () => void
   onDelete: (charId: string) => void
   /** 改名 = 换 id，需要同步连线与布局 */
   onRename: (oldId: string, name: string) => void
   /** 大模型拆角色：本集剧本+分镜 / 全剧素材 */
-  onExtract: (scope: 'episode' | 'script') => void
+  onExtract: (scope: 'episode' | 'script', signal?: AbortSignal) => Promise<BuiltinResult>
   extracting: '' | 'episode' | 'script'
   /** 三视图用的图像模型（设置页 view 能力的默认或手选） */
   viewModel?: string
@@ -32,16 +46,28 @@ type Props = {
   projectName: string
   /** 图片/候选变更后立即落库，不等防抖 */
   onPersist: (next: CharacterSheet[]) => void
+  /** 将角色表情总图发布/更新为画布素材卡 */
+  onPublishSheet: (charId: string) => void
+  /** 聊天提交角色草稿：整表替换（合并由聊天 adapter 完成） */
+  onReplace: (next: CharacterSheet[]) => void
+  /** 当前集，用于角色聊天的本集上下文 */
+  epNo: number
+  /** App 的短提示 */
+  toast: (message: string) => void
   /** 服务端报告的缺失图片引用 */
   missing: Set<string>
   /** 图片加载失败时补记缺失 */
   onImageMissing: (ref: string) => void
+  /** 角色卡是否已显示在画布上 */
+  charsOn: boolean
+  onToggleChars: () => void
 }
 
 export default function CharacterBoard({
   characters,
   patch,
   selectedShot,
+  selectedShotBudget,
   onInject,
   voices,
   onAdd,
@@ -57,65 +83,192 @@ export default function CharacterBoard({
   price,
   projectName,
   onPersist,
+  onPublishSheet,
+  onReplace,
+  epNo,
+  toast,
   missing,
   onImageMissing,
+  charsOn,
+  onToggleChars,
 }: Props) {
-  return (
-    <div className="board">
-      <div className="board-head">
-        <div>
-          <h2>角色设定板</h2>
-          <p>
-            三视图锁定外观，<code>lookEn</code> 会原样注入到每个镜头的提示词，保证多镜头长相一致。
-          </p>
-        </div>
-        <div className="board-acts">
-          <div className="board-hint">
-            {selectedShot ? `当前镜头 ${selectedShot.no}` : '先在分镜视图里选一个镜头'}
-          </div>
-          <button
-            className="btn-ghost"
-            disabled={!!extracting}
-            onClick={() => onExtract('episode')}
-            title="用大模型从本集剧本场次 + 本集分镜里拆出角色，自动写外观锚点"
-          >
-            {extracting === 'episode' ? '拆解中…' : '从本集拆角色'}
-          </button>
-          <button
-            className="btn-ghost"
-            disabled={!!extracting}
-            onClick={() => onExtract('script')}
-            title="用大模型从全剧原文梗概与分集场次里拆出角色"
-          >
-            {extracting === 'script' ? '拆解中…' : '从全剧拆角色'}
-          </button>
-          <button className="btn" onClick={onAdd} title="新建一张角色卡">
-            + 新建角色
-          </button>
-        </div>
-      </div>
+  const [project, setProject] = useState<ProjectData | null>(null)
+  const [chatRunning, setChatRunning] = useState(false)
+  /** 空板起始提示：本次会话关掉就不再出现 */
+  const [tipOpen, setTipOpen] = useState(true)
+  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('characters')
+  const chatVisible = chatOpen && Boolean(projectName)
+  const liveRef = useRef(characters)
+  liveRef.current = characters
 
-      <div className="board-models">
-        <StageModelSelect
-          stage="character"
-          label="拆角色模型"
-          settings={settings}
-          pick={stagePick}
-          onChange={onPickStage}
-        />
-        <CapModelSelect
-          cap="view"
-          label="三视图模型"
-          settings={settings}
-          value={viewModel}
-          onChange={onPickViewModel}
-          className="wb-field"
-        />
-      </div>
+  useEffect(() => {
+    let alive = true
+    if (!projectName) {
+      setProject(null)
+      return
+    }
+    getProject(projectName)
+      .then((p) => {
+        if (alive) setProject(p)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [projectName])
+
+  const chatAdapter = useMemo<WorkbenchChatAdapter>(
+    () => ({
+      surface: 'characters',
+      skillId: 'character',
+      stage: 'character',
+      artifact: 'characters',
+      writeTool: 'submit_characters',
+      writeContract: 'characters-v1',
+      threadKey: { project: projectName, surface: 'characters' },
+      scope: () => '本集',
+      inputs: () => {
+        const ep = project?.episodes?.find((x) => Number(x.no) === epNo)
+        const shots = (project?.shots ?? []).filter((s) => (Number(s.episode) || 1) === epNo)
+        return {
+          scopeLabel: `第 ${epNo} 集的剧本场次与分镜`,
+          sceneText: ep ? digestEpisodes([ep]) : '',
+          shotBlock: shots.length
+            ? `\n\n【本集分镜出场与台词】\n${digestShots(
+                shots.map((s) => ({
+                  no: s.no,
+                  cast: s.cast,
+                  dialogue: dialogueToText(s.dialogue),
+                  prompt: s.keyframe_prompt || s.desc,
+                })),
+              )}`
+            : '',
+        }
+      },
+      ownDraft: () => liveRef.current,
+      projectSnapshot: () => getProject(projectName),
+      applyDraft: (payload) => {
+        const list = pickExtracted(payload)
+        if (list.length === 0) return { ok: false, summary: '', error: '没有可写入的角色' }
+        const { next, added, filled, skipped } = mergeCharacters(liveRef.current, list)
+        liveRef.current = next
+        onReplace(next)
+        return {
+          ok: true,
+          summary: `已写入角色草稿：${next.length} 个（新增 ${added.length} / 补空 ${filled.length} / 跳过 ${skipped.length}）`,
+          counts: { total: next.length, added: added.length, filled: filled.length, skipped: skipped.length },
+        }
+      },
+      builtins: [
+        {
+          ...WORKBENCH_BUILTINS.extract_characters_episode,
+          disabled: () => {
+            if (!projectName) return { disabled: true, reason: '先选择项目' }
+            if (extracting) return { disabled: true, reason: '正在拆角色' }
+            if (!hasTextModels(settings)) return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            return { disabled: false }
+          },
+          run: (signal) => onExtract('episode', signal),
+        },
+        {
+          ...WORKBENCH_BUILTINS.extract_characters_script,
+          disabled: () => {
+            if (!projectName) return { disabled: true, reason: '先选择项目' }
+            if (extracting) return { disabled: true, reason: '正在拆角色' }
+            if (!hasTextModels(settings)) return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            return { disabled: false }
+          },
+          run: (signal) => onExtract('script', signal),
+        },
+      ],
+    }),
+    [projectName, epNo, project, onReplace, onExtract, extracting, settings],
+  )
+
+  const runExtract = async (scope: 'episode' | 'script') => {
+    const r = await onExtract(scope)
+    if (!r.ok) {
+      if (!r.cancelled) toast(r.error || '拆角色失败')
+      return
+    }
+    toast(r.summary)
+  }
+
+  return (
+    <div className="board-with-chat">
+      <div className="board">
+      <WorkbenchBar
+        scope={<span className="wb-bar-title">角色</span>}
+        scopeDetail={
+          <span className="board-hint">
+            E{String(epNo).padStart(2, '0')} · {characters.length} 个角色 ·{' '}
+            {selectedShot ? `当前镜头 ${selectedShot.no}` : '未选镜头'}
+          </span>
+        }
+        settings={
+          <>
+            <StageModelSelect
+              stage="character"
+              label="拆角色模型"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+            />
+            <CapModelSelect
+              cap="view"
+              label="三视图模型"
+              settings={settings}
+              value={viewModel}
+              onChange={onPickViewModel}
+              className="wb-field"
+            />
+          </>
+        }
+        actions={
+          <>
+            <AgentButton
+              open={chatVisible}
+              onToggle={() => setChatOpen((v) => !v)}
+              disabled={!projectName}
+              running={chatRunning}
+              controlsId="workbench-chat-characters"
+            />
+            <button
+              className="btn-ghost"
+              disabled={!!extracting}
+              onClick={() => void runExtract('script')}
+              title="用大模型从全剧原文梗概与分集场次里拆出角色"
+            >
+              {extracting === 'script' ? '拆解中…' : '从全剧拆'}
+            </button>
+            <button
+              className={characters.length === 0 ? 'btn primary' : 'btn-ghost'}
+              disabled={!!extracting}
+              onClick={() => void runExtract('episode')}
+              title="用大模型从本集剧本场次 + 本集分镜里拆出角色，自动写外观锚点"
+            >
+              {extracting === 'episode' ? '拆解中…' : '从本集拆角色'}
+            </button>
+            <button className="btn" onClick={onAdd} title="新建一张角色卡">
+              + 新建角色
+            </button>
+            {characters.length > 0 && (
+              <button
+                className={charsOn ? 'btn-ghost' : 'btn primary'}
+                onClick={onToggleChars}
+                title="把角色卡显示到画布上（画布视图可见，可拖到分镜旁）"
+              >
+                {charsOn ? '角色已在画布' : '全部上画布'}
+              </button>
+            )}
+          </>
+        }
+      />
 
       <div className="char-grid">
         {characters.map((c) => (
-          <CharCard
+          <CharacterCard
             key={c.id}
             c={c}
             patch={patch}
@@ -125,345 +278,53 @@ export default function CharacterBoard({
             onDelete={() => onDelete(c.id)}
             onRename={(name) => onRename(c.id, name)}
             viewModel={viewModel}
+            audioModelKey={settings?.defaults?.audio}
             price={price}
             projectName={projectName}
             onPersist={onPersist}
+            onPublishSheet={() => onPublishSheet(c.id)}
+            selectedShot={selectedShot}
+            selectedBudget={selectedShotBudget}
             missing={missing}
             onImageMissing={onImageMissing}
           />
         ))}
         {characters.length === 0 && (
-          <div className="char-empty-board">还没有角色，点右上角「+ 新建角色」开始</div>
+          <div className="char-empty-board">
+            {tipOpen ? (
+              <>
+                <span>还没有角色。三视图锁定外观，lookEn 会原样注入到每个镜头的提示词，保证多镜头长相一致。</span>
+                <button className="btn-mini ghost" onClick={() => setTipOpen(false)}>
+                  知道了
+                </button>
+              </>
+            ) : (
+              '还没有角色，点右上角「+ 新建角色」开始'
+            )}
+          </div>
         )}
       </div>
-    </div>
-  )
-}
-
-function CharCard({
-  c,
-  patch,
-  canInject,
-  onInject,
-  voices,
-  onDelete,
-  onRename,
-  viewModel,
-  price,
-  projectName,
-  onPersist,
-  missing,
-  onImageMissing,
-}: {
-  c: CharacterSheet
-  patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
-  canInject: boolean
-  onInject: () => void
-  voices: { id: string; label: string }[]
-  onDelete: () => void
-  onRename: (name: string) => void
-  viewModel?: string
-  price?: Pricing
-  projectName: string
-  onPersist: (next: CharacterSheet[]) => void
-  missing: Set<string>
-  onImageMissing: (ref: string) => void
-}) {
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(c.name)
-  const [kw, setKw] = useState(c.keywords.join('、'))
-  const candidates = c.candidates ?? []
-  const activeIdx = c.activeIdx ?? 0
-
-  const generate = async () => {
-    if (!projectName) {
-      patch(c.id, { state: 'error', error: '先选择项目再生成三视图' })
-      return
-    }
-    if (!c.lookEn.trim()) {
-      patch(c.id, { state: 'error', error: '先填英文外观锚点（lookEn）再生成' })
-      return
-    }
-    patch(c.id, { state: 'running', error: undefined })
-    const tid = startTask('image', `三视图 ${c.name}`, {
-      cost: price ? imageCost(price, 2) : undefined,
-    })
-    try {
-      const res = await generateImage({
-        prompt: `${c.lookEn}, ${TURNAROUND_SUFFIX}`,
-        ratio: '16:9',
-        n: 2,
-        cap: 'view',
-        modelKey: viewModel,
-        project: projectName,
-      })
-      const urls = res.urls?.length ? res.urls : [res.url]
-      const next = patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
-      onPersist(next)
-      endTask(tid)
-    } catch (e) {
-      patch(c.id, { state: 'error', error: (e as Error).message })
-      endTask(tid, (e as Error).message)
-    }
-  }
-
-  const upload = async (file: File) => {
-    if (!projectName) {
-      patch(c.id, { state: 'error', error: '先选择项目再上传图片' })
-      return
-    }
-    patch(c.id, { state: 'running', error: undefined })
-    try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result || ''))
-        reader.onerror = () => reject(new Error('读取图片失败'))
-        reader.readAsDataURL(file)
-      })
-      const url = await saveImageDataUrl(dataUrl, { project: projectName, prefix: 'char' })
-      const next = patch(c.id, {
-        image: url,
-        candidates: undefined,
-        activeIdx: undefined,
-        state: 'idle',
-        error: undefined,
-      })
-      onPersist(next)
-    } catch (e) {
-      patch(c.id, { state: 'error', error: (e as Error).message })
-    }
-  }
-
-  /** 清除选中的缺失引用；候选图一并清空，回到待生成状态 */
-  const clearImage = () => {
-    const next = patch(c.id, {
-      image: undefined,
-      candidates: undefined,
-      activeIdx: undefined,
-      state: 'idle',
-      error: undefined,
-    })
-    onPersist(next)
-  }
-
-  const imageMissing = Boolean(c.image && missing.has(c.image))
-
-  const commitName = () => {
-    if (name.trim() && name.trim() !== c.name) onRename(name.trim())
-    else setName(c.name)
-  }
-
-  return (
-    <div className={`char-card ${editing ? 'editing' : ''}`}>
-      <div className="char-head">
-        <span className="char-name">{c.name}</span>
-        <span className="char-role">{c.role}</span>
-        <span className="char-head-acts">
-          <button
-            className="btn-mini"
-            onClick={() => {
-              setName(c.name)
-              setKw(c.keywords.join('、'))
-              setEditing((v) => !v)
-            }}
-            title="编辑名字 / 外观锚点 / 关键词"
-          >
-            {editing ? '收起' : '编辑'}
-          </button>
-          <button
-            className="btn-mini danger"
-            onClick={() => {
-              if (window.confirm(`删除角色「${c.name}」？相关参考连线会一起解除`)) onDelete()
-            }}
-            title="删除这张角色卡"
-          >
-            删除
-          </button>
-        </span>
       </div>
-
-      {editing && (
-        <div className="char-edit">
-          <label>
-            <span>角色名</span>
-            <input
-              data-char-field="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={commitName}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                if (e.key === 'Escape') setName(c.name)
-              }}
+      <WorkbenchChatAside
+        surface="characters"
+        open={chatVisible}
+        onClose={() => setChatOpen(false)}
+      >
+        {projectName ? (
+          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
+            <LazySkillChat
+              adapter={chatAdapter}
+              settings={settings}
+              stagePick={stagePick}
+              onToast={toast}
+              onRunningChange={setChatRunning}
+              onClose={() => setChatOpen(false)}
             />
-          </label>
-          <label>
-            <span>定位</span>
-            <input
-              data-char-field="role"
-              value={c.role}
-              onChange={(e) => patch(c.id, { role: e.target.value })}
-              placeholder="主角 · 义体回收人"
-            />
-          </label>
-          <label>
-            <span>年龄</span>
-            <input
-              data-char-field="age"
-              value={c.age ?? ''}
-              onChange={(e) => patch(c.id, { age: e.target.value })}
-              placeholder="28 岁"
-            />
-          </label>
-          <label className="wide">
-            <span>中文外观</span>
-            <textarea
-              data-char-field="lookCn"
-              rows={2}
-              value={c.lookCn}
-              onChange={(e) => patch(c.id, { lookCn: e.target.value })}
-            />
-          </label>
-          <label className="wide">
-            <span>英文锚点（lookEn，注入提示词）</span>
-            <textarea
-              data-char-field="lookEn"
-              rows={3}
-              value={c.lookEn}
-              onChange={(e) => patch(c.id, { lookEn: e.target.value })}
-            />
-          </label>
-          <label>
-            <span>配色</span>
-            <input
-              data-char-field="palette"
-              value={c.palette}
-              onChange={(e) => patch(c.id, { palette: e.target.value })}
-              placeholder="暗灰 + 黄铜"
-            />
-          </label>
-          <label>
-            <span>关键词（顿号/逗号分隔）</span>
-            <input
-              data-char-field="keywords"
-              value={kw}
-              onChange={(e) => {
-                setKw(e.target.value)
-                patch(c.id, {
-                  keywords: e.target.value
-                    .split(/[、,，]/)
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                })
-              }}
-            />
-          </label>
-        </div>
-      )}
-
-      {voices.length > 0 && (
-        <label className="char-voice" title="这个角色的配音音色；一镜多说话人时按行取">
-          <span>音色</span>
-          <select
-            value={c.voiceId ?? ''}
-            onChange={(e) => patch(c.id, { voiceId: e.target.value || undefined })}
-          >
-            <option value="">跟随镜头</option>
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      <div className="char-sheet">
-        {imageMissing ? (
-          <div className="char-empty char-missing">
-            <span>图片文件缺失</span>
-            <span className="char-empty-sub">文件已不在项目媒体目录，请重新生成或清除引用</span>
-          </div>
-        ) : c.image ? (
-          <img src={c.image} alt={c.name} onError={() => c.image && onImageMissing(c.image)} />
+          </Suspense>
         ) : (
-          <div className="char-empty">
-            <span>还没有三视图</span>
-            <span className="char-empty-sub">点下方「生成三视图」</span>
-          </div>
+          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
-
-        {c.state === 'running' && (
-          <div className="gen-overlay">
-            <span className="spinner" />
-            生成中
-          </div>
-        )}
-
-        {candidates.length > 1 && (
-          <div className="cand-bar">
-            {candidates.map((u, i) => (
-              <button
-                key={u}
-                className={`cand-dot ${i === activeIdx ? 'on' : ''}`}
-                onClick={() => onPersist(patch(c.id, { activeIdx: i, image: u }))}
-                title={`候选 ${i + 1}`}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="char-look">
-        <span className="char-label">外观锚点</span>
-        <p>{c.lookCn || '（未填）'}</p>
-        <code className="char-en">{c.lookEn || '（未填，生成三视图前必须补）'}</code>
-      </div>
-
-      <div className="char-tags">
-        {c.palette && <span className="char-palette">{c.palette}</span>}
-        {c.keywords.map((k) => (
-          <span key={k} className="char-tag">
-            {k}
-          </span>
-        ))}
-      </div>
-
-      {c.state === 'error' && c.error && <div className="gen-error">{c.error}</div>}
-
-      <div className="char-actions">
-        <button className="btn" disabled={c.state === 'running'} onClick={generate}>
-          {c.image ? '重出三视图' : '生成三视图'}
-          {price ? ` · ¥${money(imageCost(price, 2))}` : ''}
-        </button>
-        <button className="btn-ghost" onClick={() => fileRef.current?.click()}>
-          上传
-        </button>
-        {imageMissing && (
-          <button className="btn-ghost" onClick={clearImage} title="清空这个角色缺失的图片引用">
-            清除引用
-          </button>
-        )}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) upload(f)
-          }}
-        />
-        <button
-          className="btn-ghost"
-          disabled={!canInject}
-          title={canInject ? '把 lookEn 追加到当前镜头的提示词' : '先在分镜视图选一个镜头'}
-          onClick={onInject}
-        >
-          注入镜头
-        </button>
-      </div>
+      </WorkbenchChatAside>
     </div>
   )
 }

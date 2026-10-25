@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MOVES, SHOT_SIZES } from './types'
 import {
   callText,
@@ -7,13 +7,31 @@ import {
   listProjects,
   mergeProjectShots,
   type AppSettings,
+  type ProjectEpisode,
   type ProjectShot,
   type Stage,
 } from './api'
 import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
-import { dialogueToText, parseDialogue, storyboardSys } from './prompts'
-import { mergeGenerated } from './shotSync'
+import { dialogueToText, parseDialogue, reconcileDialogueDelivery } from './prompts'
+import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
+import { clearHandEdited, mergeGenerated } from './shotSync'
+import PerformanceEditor from './PerformanceEditor'
+import WorkbenchBar from './WorkbenchBar'
+import LipSyncPanel from './LipSyncPanel'
+import { performanceSummary } from './performance'
 import { endTask, startTask } from './tasks'
+import { buildShotsFromModel } from './agent/shotDraft'
+import {
+  builtinFailure,
+  type BuiltinResult,
+  WORKBENCH_BUILTINS,
+  type WorkbenchChatAdapter,
+} from './agent/workbenchChat'
+import { AgentButton } from './agent/AgentButton'
+import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
+import { useWorkbenchChatOpen } from './agent/chatPanel'
+
+const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
 type Props = {
   projectName: string
@@ -65,6 +83,85 @@ export default function ShotTable({
   const [newName, setNewName] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [making, setMaking] = useState(false)
+  const [chatRunning, setChatRunning] = useState(false)
+  const [perfEdit, setPerfEdit] = useState<string | null>(null)
+  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('shots')
+  const chatVisible = chatOpen && Boolean(projectName)
+
+  const liveRef = useRef({ shots, style, aspect, brief, target, episodes })
+  liveRef.current = { shots, style, aspect, brief, target, episodes }
+  const saveRef = useRef<() => Promise<void>>(async () => {})
+  const builtinStateRef = useRef({ genning, brief, settings, projectName })
+  builtinStateRef.current = { genning, brief, settings, projectName }
+  const runSplitRef = useRef<(signal?: AbortSignal) => Promise<BuiltinResult>>(async () =>
+    builtinFailure('split_shots', '拆镜尚未就绪', {
+      label: '拆镜',
+      scope: 'episode',
+      saveMode: 'explicit',
+    }),
+  )
+
+  const chatAdapter = useMemo<WorkbenchChatAdapter>(
+    () => ({
+      surface: 'shots',
+      skillId: 'shotlist',
+      stage: 'shot',
+      artifact: 'shots',
+      writeTool: 'submit_shots',
+      writeContract: 'shots-v1',
+      threadKey: { project: projectName, surface: 'shots', episode: epNo },
+      scope: () => '本集',
+      inputs: () => {
+        const l = liveRef.current
+        return {
+          style: l.style || '近未来科幻写实',
+          aspect: l.aspect,
+          brief: l.brief,
+          target: l.target,
+        }
+      },
+      ownDraft: () => liveRef.current.shots,
+      projectSnapshot: () => getProject(projectName),
+      applyDraft: (payload) => {
+        const data = (payload || {}) as { shots?: unknown[] }
+        const got = Array.isArray(data.shots) ? data.shots : []
+        const built = buildShotsFromModel(got, liveRef.current.episodes as ProjectEpisode[], epNo)
+        const current = liveRef.current.shots
+        const visibleNow = current.filter((s) => (Number(s.episode) || 1) === epNo)
+        const beforeIds = new Set(visibleNow.map((s) => s.id))
+        const merged = mergeGenerated(visibleNow, built.shots)
+        const added = merged.filter((s) => !beforeIds.has(s.id)).length
+        const updated = merged.length - added
+        const next = [...current.filter((s) => (Number(s.episode) || 1) !== epNo), ...merged]
+        liveRef.current.shots = next
+        setShots(next)
+        setDirty(true)
+        return {
+          ok: true,
+          summary: `已写入镜头草稿：E${String(epNo).padStart(2, '0')} ${merged.length} 镜（新增 ${added} / 更新 ${updated}），尚未保存`,
+          counts: { total: merged.length, added, updated, sceneFallback: built.sceneFallback },
+        }
+      },
+      saveDraft: () => saveRef.current(),
+      builtins: [
+        {
+          ...WORKBENCH_BUILTINS.split_shots,
+          disabled: () => {
+            const st = builtinStateRef.current
+            if (!st.projectName) return { disabled: true, reason: '先选择项目' }
+            if (st.genning) return { disabled: true, reason: '正在拆镜' }
+            if (!st.brief.trim()) return { disabled: true, reason: '先写本集内容或梗概' }
+            if (!hasTextModels(st.settings)) {
+              return { disabled: true, reason: '设置页还没有可用的文本模型' }
+            }
+            return { disabled: false }
+          },
+          run: (signal) => runSplitRef.current(signal),
+        },
+      ],
+    }),
+    [projectName, epNo],
+  )
 
   const load = useCallback(
     async (name: string) => {
@@ -163,89 +260,121 @@ export default function ShotTable({
     setDirty(true)
   }
 
-  const generate = async () => {
-    if (!brief.trim()) {
-      toast('先写本集内容或梗概，再来拆镜')
-      return
-    }
-    if (!hasTextModels(settings)) {
-      toast('设置页还没有可用的文本模型，先加一条再拆镜')
-      return
-    }
-    setGenning(true)
-    setElapsed(0)
-    const t0 = Date.now()
-    const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
-    const tid = startTask('text', `E${pad(epNo)} 拆镜`)
-    try {
-      const r = await callText<{ shots: any[] }>({
-        system: storyboardSys(settings?.rules),
-        prompt:
-          `画风：${style || '近未来科幻写实'}\n画幅：${aspect}\n\n` +
-          `${brief}\n\n目标总时长 ${target} 秒。相邻镜头景别要有变化。\n` +
-          `每镜必须带 scene_no（输入场次号）和 scene_slug（场次简称），同一场的镜头用同一个编号。\n` +
-          `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。` +
-          `只在台词/描述里被提到、实际在画外的角色不要写进去。`,
-        modelKey: stageModelKey(settings, 'shot', stagePick),
-        json: true,
-        maxTokens: 8192,
-      })
-      const got = r.json?.shots
-      if (!Array.isArray(got) || got.length === 0) throw new Error('模型没给出镜头列表')
-      const curEp = episodes.find((x: any) => Number(x?.no) === epNo)
-      const known = new Map<number, string>()
-      for (const [si, sc] of (curEp?.scenes ?? []).entries()) {
-        const no = Number((sc as any)?.no) || si + 1
-        known.set(no, String((sc as any)?.slug || ''))
-      }
-      const fallbackSceneNo = known.keys().next().value ?? 1
-      const fallbackSceneSlug = known.get(fallbackSceneNo) ?? ''
-      let sceneFallback = 0
-      const next: ProjectShot[] = got.map((s, i) => {
-        const no = String(s?.no || `S${pad(i + 1)}`)
-        const rawScene = Number(s?.scene_no ?? s?.sceneNo ?? s?.scene)
-        const sceneOk = Number.isFinite(rawScene) && known.has(rawScene)
-        if (!sceneOk) sceneFallback++
-        const sceneNo = sceneOk ? rawScene : fallbackSceneNo
-        const sceneSlug =
-          (sceneOk ? known.get(sceneNo) : fallbackSceneSlug) ||
-          String(s?.scene_slug ?? s?.sceneSlug ?? '').trim()
-        return {
-          id: `E${pad(epNo)}-${no}`,
-          episode: epNo,
-          no,
-          scene_no: sceneNo,
-          ...(sceneSlug ? { scene_slug: sceneSlug } : {}),
-          seconds: Number(s?.seconds) || 3,
-          size: s?.size || '中景',
-          move: s?.move || '固定',
-          desc: s?.desc || '',
-          dialogue: Array.isArray(s?.dialogue) ? s.dialogue : [],
-          cast: Array.isArray(s?.cast) ? s.cast.map(String) : undefined,
+  /** 一次改多个字段、只合并一次手改标记（表演需要同时写 performance + dialogue_delivery）。 */
+  const editMany = (id: string, patch: Partial<ProjectShot>, fields: string[]) => {
+    setShots((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s
+        const hand = new Set([...(s.handEdited ?? []), ...fields])
+        return { ...s, ...patch, handEdited: [...hand] }
+      }),
+    )
+    setDirty(true)
+  }
+
+  const clearPerfHand = (s: ProjectShot) => {
+    setShots((prev) => prev.map((x) => (x.id === s.id ? clearHandEdited(x, ['performance', 'dialogue_delivery']) : x)))
+    setDirty(true)
+  }
+
+  const runSplit = useCallback(
+    async (signal?: AbortSignal): Promise<BuiltinResult> => {
+      const label = '拆镜'
+      const action = 'split_shots'
+      const fail = (message: string, cancelled = false) =>
+        builtinFailure(action, message, {
+          label,
+          scope: 'episode',
+          saveMode: 'explicit',
+          ...(cancelled ? { cancelled: true } : {}),
+        })
+      const l = liveRef.current
+      if (!projectName) return fail('先选择项目')
+      if (!l.brief.trim()) return fail('先写本集内容或梗概，再来拆镜')
+      if (!hasTextModels(settings)) return fail('设置页还没有可用的文本模型，先加一条再拆镜')
+      if (signal?.aborted) return fail('已取消', true)
+      setGenning(true)
+      setElapsed(0)
+      const t0 = Date.now()
+      const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
+      const tid = startTask('text', `E${pad(epNo)} 拆镜`)
+      try {
+        const resolvedStyle = l.style || '近未来科幻写实'
+        const skill = await buildBoardSkillPrompt('shotlist', {
+          style: resolvedStyle,
+          aspect: l.aspect,
+          brief: l.brief,
+          target: l.target,
+        })
+        const r = await callText<{ shots: any[] }>({
+          system: skill.system,
+          prompt: skill.task,
+          modelKey: stageModelKey(settings, 'shot', stagePick),
+          json: true,
+          maxTokens: 8192,
+          signal,
+        })
+        assertSkillOutput('shots-v1', r.json)
+        const got = r.json?.shots
+        if (!Array.isArray(got) || got.length === 0) throw new Error('模型没给出镜头列表')
+        if (signal?.aborted) {
+          endTask(tid, '已取消')
+          return fail('已取消', true)
         }
-      })
-      // 手改过的字段在重新生成时保住，这是 handEdited 唯一生效的地方
-      const merged = mergeGenerated(visible, next)
-      const kept = merged.filter((s) => (s.handEdited?.length ?? 0) > 0).length
-      // 只替换本集，别集的镜头原样保留
-      setShots((prev) => [...prev.filter((x) => (Number(x.episode) || 1) !== epNo), ...merged])
-      setDirty(true)
-      const sum = merged.reduce((a, s) => a + (Number(s.seconds) || 0), 0)
-      endTask(tid)
-      toast(
-        `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${Math.round((Date.now() - t0) / 1000)}s` +
-          (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
-          (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
-          (sceneFallback > 0 ? ` · ${sceneFallback} 镜场次缺失/无效，已回退第 ${fallbackSceneNo} 场` : '') +
-          '，记得先审阅再保存',
-      )
-    } catch (e: any) {
-      endTask(tid, String(e?.message || '拆镜失败'))
-      toast(e.message || '拆镜失败')
-    } finally {
-      window.clearInterval(timer)
-      setGenning(false)
+        const built = buildShotsFromModel(got, l.episodes as ProjectEpisode[], epNo)
+        const visibleNow = l.shots.filter((s) => (Number(s.episode) || 1) === epNo)
+        // 手改过的字段在重新生成时保住，这是 handEdited 唯一生效的地方
+        const merged = mergeGenerated(visibleNow, built.shots)
+        const kept = merged.filter((s) => (s.handEdited?.length ?? 0) > 0).length
+        // 只替换本集，别集的镜头原样保留
+        setShots((prev) => [...prev.filter((x) => (Number(x.episode) || 1) !== epNo), ...merged])
+        setDirty(true)
+        const sum = merged.reduce((a, s) => a + (Number(s.seconds) || 0), 0)
+        const secs = Math.round((Date.now() - t0) / 1000)
+        endTask(tid)
+        return {
+          ok: true,
+          action,
+          label,
+          scope: 'episode',
+          summary:
+            `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${secs}s` +
+            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
+            (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
+            (built.sceneFallback > 0
+              ? ` · ${built.sceneFallback} 镜场次缺失/无效，已回退第 ${built.fallbackSceneNo} 场`
+              : '') +
+            '，草稿未保存',
+          counts: {
+            shots: merged.length,
+            kept,
+            sceneFallback: built.sceneFallback,
+          },
+          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
+          elapsedMs: Date.now() - t0,
+          saveMode: 'explicit',
+        }
+      } catch (e) {
+        const err = e as Error
+        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
+        endTask(tid, cancelled ? '已取消' : err.message || '拆镜失败')
+        return fail(cancelled ? '已取消' : err.message || '拆镜失败', cancelled)
+      } finally {
+        window.clearInterval(timer)
+        setGenning(false)
+      }
+    },
+    [projectName, epNo, settings, stagePick],
+  )
+  runSplitRef.current = runSplit
+
+  const generate = async () => {
+    const r = await runSplit()
+    if (!r.ok) {
+      if (!r.cancelled) toast(r.error || '拆镜失败')
+      return
     }
+    toast(r.summary)
   }
 
   const save = async () => {
@@ -264,43 +393,68 @@ export default function ShotTable({
       setSaving(false)
     }
   }
+  saveRef.current = save
 
   return (
-    <main className="wb">
-      <div className="wb-bar">
-        <button className="btn-mini" onClick={() => setCreating((v) => !v)} title="新建一个空项目">
-          {creating ? '取消' : '+ 新建'}
-        </button>
+    <div className="wb-with-chat">
+      <main className="wb">
+      <WorkbenchBar
+        scope={
+          <>
+            <span className="wb-bar-title">镜头表</span>
+            <span className="ep-chip">E{String(epNo).padStart(2, '0')}</span>
+          </>
+        }
+        scopeDetail={<>{visible.length} 镜</>}
+        settings={
+          <>
+            <div className="wb-field">
+              <span className="label">目标时长</span>
+              <input
+                type="number"
+                min={10}
+                step={5}
+                value={target}
+                onChange={(e) => setTarget(Math.max(10, Number(e.target.value) || 60))}
+                style={{ width: 64 }}
+              />
+              <span className="label">秒</span>
+            </div>
 
-        <div className="wb-field">
-          <span className="label">目标时长</span>
-          <input
-            type="number"
-            min={10}
-            step={5}
-            value={target}
-            onChange={(e) => setTarget(Math.max(10, Number(e.target.value) || 60))}
-            style={{ width: 64 }}
-          />
-          <span className="label">秒</span>
-        </div>
+            <StageModelSelect
+              stage="shot"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+            />
 
-        <StageModelSelect
-          stage="shot"
-          settings={settings}
-          pick={stagePick}
-          onChange={onPickStage}
-        />
-
-        <div className="spacer" />
-
-        <span className="wb-root" title={root}>
-          项目根：{root || '…'}
-        </span>
-        <button className="btn" onClick={() => load(projectName)} disabled={loading}>
-          {loading ? '加载中…' : '重新加载'}
-        </button>
-      </div>
+            <div className="wb-field wb-bar-optional">
+              <button className="btn-mini" onClick={() => setCreating((v) => !v)} title="新建一个空项目">
+                {creating ? '取消' : '+ 新建项目'}
+              </button>
+              <span className="wb-root" title={root}>
+                {root || '…'}
+              </span>
+            </div>
+          </>
+        }
+        actions={
+          <>
+            <AgentButton
+              open={chatVisible}
+              onToggle={() => setChatOpen((v) => !v)}
+              disabled={!projectName}
+              running={chatRunning}
+              dirty={dirty}
+              controlsId="workbench-chat-shots"
+            />
+            <button className="btn" onClick={() => load(projectName)} disabled={loading}>
+              {loading ? '加载中…' : '重新加载'}
+            </button>
+          </>
+        }
+      />
 
       {creating && (
         <div className="wb-new">
@@ -337,7 +491,7 @@ export default function ShotTable({
           rows={3}
         />
         <button
-          className="btn primary wb-genbtn"
+          className="btn wb-genbtn"
           onClick={generate}
           disabled={genning || !brief.trim() || !hasTextModels(settings)}
         >
@@ -360,6 +514,7 @@ export default function ShotTable({
                 <th style={{ width: 84 }}>运镜</th>
                 <th>描述</th>
                 <th style={{ width: 200 }}>台词</th>
+                <th style={{ width: 150 }}>表演</th>
                 <th style={{ width: 78 }}>状态</th>
               </tr>
             </thead>
@@ -367,8 +522,14 @@ export default function ShotTable({
               {visible.map((s, i) => {
                 const isPushed = onCanvas.has(s.id)
                 const hand = new Set(s.handEdited ?? [])
+                const dialogue = Array.isArray(s.dialogue)
+                  ? s.dialogue
+                  : typeof s.dialogue === 'string'
+                    ? parseDialogue(s.dialogue)
+                    : []
                 return (
-                  <tr key={s.id} className={s.orphan ? 'orphan' : ''}>
+                  <Fragment key={s.id}>
+                  <tr className={s.orphan ? 'orphan' : ''}>
                     <td className="mono">
                       <input value={s.no ?? ''} onChange={(e) => edit(s.id, 'no', e.target.value)} />
                     </td>
@@ -409,8 +570,31 @@ export default function ShotTable({
                         rows={2}
                         value={dialogueToText(s.dialogue)}
                         placeholder="角色：台词（一行一句）"
-                        onChange={(e) => edit(s.id, 'dialogue', parseDialogue(e.target.value))}
+                        onChange={(e) => {
+                          const next = parseDialogue(e.target.value)
+                          const { delivery } = reconcileDialogueDelivery(dialogue, s.dialogue_delivery, next)
+                          editMany(s.id, { dialogue: next, dialogue_delivery: delivery }, ['dialogue'])
+                        }}
                       />
+                    </td>
+                    <td>
+                      <div className="perf-cell">
+                        <span className={s.performance?.length ? 'perf-summary' : 'perf-empty-mini'}>
+                          {performanceSummary(s.performance) || '—'}
+                        </span>
+                        <button className="btn-mini" onClick={() => setPerfEdit(perfEdit === s.id ? null : s.id)}>
+                          {perfEdit === s.id ? '收起' : '编辑'}
+                        </button>
+                        {(hand.has('performance') || hand.has('dialogue_delivery')) && (
+                          <button
+                            className="btn-mini ghost"
+                            title="清除手改保护，下一次拆镜可以按模型结果重写表演"
+                            onClick={() => clearPerfHand(s)}
+                          >
+                            恢复模型建议
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="state">
                       {/* 默认什么都不显示：整表都是「在画布」时逐行标注是纯噪音 */}
@@ -418,6 +602,55 @@ export default function ShotTable({
                       {!isPushed && !s.orphan && <i className="wb-dot" title="还没推到画布" />}
                     </td>
                   </tr>
+                  {perfEdit === s.id && (
+                    <tr className="perf-expanded">
+                      <td colSpan={8}>
+                        <PerformanceEditor
+                          cast={s.cast}
+                          performance={s.performance}
+                          dialogue={dialogue}
+                          delivery={s.dialogue_delivery}
+                          onChange={(next) =>
+                            editMany(
+                              s.id,
+                              { performance: next.performance, dialogue_delivery: next.dialogueDelivery },
+                              ['performance', 'dialogue_delivery'],
+                            )
+                          }
+                        />
+                        <LipSyncPanel
+                          data={{
+                            no: s.no ?? '',
+                            seconds: Number(s.seconds) || 0,
+                            size: s.size ?? '',
+                            move: s.move ?? '',
+                            dialogue: dialogueToText(s.dialogue),
+                            prompt: s.keyframe_prompt ?? '',
+                            videoPrompt: s.video_prompt,
+                            videoUrl: s.clip,
+                            voiceUrl: undefined,
+                            performance: s.performance,
+                            dialogueDelivery: s.dialogue_delivery,
+                            lipSync: s.lip_sync,
+                            cast: s.cast,
+                            marks: [],
+                          }}
+                          onPatch={(patch) =>
+                            editMany(
+                              s.id,
+                              {
+                                ...(patch.lipSync !== undefined ? { lip_sync: patch.lipSync } : {}),
+                              },
+                              ['lip_sync'],
+                            )
+                          }
+                          settings={settings}
+                          projectName={projectName}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -449,6 +682,28 @@ export default function ShotTable({
         </button>
       </div>
     </main>
+      <WorkbenchChatAside
+        surface="shots"
+        open={chatVisible}
+        onClose={() => setChatOpen(false)}
+      >
+        {projectName ? (
+          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
+            <LazySkillChat
+              adapter={chatAdapter}
+              settings={settings}
+              stagePick={stagePick}
+              onToast={toast}
+              onRunningChange={setChatRunning}
+              onClose={() => setChatOpen(false)}
+              dirty={dirty}
+            />
+          </Suspense>
+        ) : (
+          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
+        )}
+      </WorkbenchChatAside>
+    </div>
   )
 }
 

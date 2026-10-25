@@ -13,19 +13,24 @@ export type SceneAssetInput = {
   frameTime?: number
 }
 
+/**
+ * 交给渲染宿主的素材清单：只给站内 URL 与元数据。
+ * 宿主负责把它复制进一次性工作目录并做尺寸约束，浏览器不再传字节。
+ */
 export type PreparedSceneAsset = {
   payload: {
     key: string
     kind: 'image' | 'video-frame'
     label: string
-    mime: string
-    bytes: ArrayBuffer
+    url: string
     width: number
     height: number
     videoDuration?: number
     frameTime?: number
   }
   ref: SceneCodeAssetRef
+  /** 原始文件字节数；只用于总量限制，不发送给宿主 */
+  bytes: number
 }
 
 export type PreparedSceneAssets = {
@@ -57,48 +62,15 @@ function absoluteLocal(url: string): string | null {
   }
 }
 
-function mimeFromBlob(blob: Blob, url: string): string {
-  if (blob.type) return blob.type
-  const ext = String(url).split('?')[0].toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
-  if (ext === 'png') return 'image/png'
-  if (ext === 'webp') return 'image/webp'
-  if (ext === 'gif') return 'image/gif'
-  return 'image/jpeg'
-}
-
-async function normalizeImage(
-  original: Blob,
-  url: string,
-  maxEdge: number,
-): Promise<{ blob: Blob; mime: string; width: number; height: number }> {
-  const mime = mimeFromBlob(original, url)
-  let bitmap: ImageBitmap | null = null
+async function measureImage(blob: Blob): Promise<{ width: number; height: number }> {
   try {
-    bitmap = await createImageBitmap(original)
+    const bitmap = await createImageBitmap(blob)
+    const size = { width: bitmap.width, height: bitmap.height }
+    bitmap.close?.()
+    return size
   } catch {
-    return { blob: original, mime, width: 0, height: 0 }
+    return { width: 0, height: 0 }
   }
-  const width = bitmap.width
-  const height = bitmap.height
-  const scale = Math.min(1, maxEdge / Math.max(width, height || 1))
-  if (scale >= 0.999 || typeof document === 'undefined') {
-    bitmap.close?.()
-    return { blob: original, mime, width, height }
-  }
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(width * scale))
-  canvas.height = Math.max(1, Math.round(height * scale))
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    bitmap.close?.()
-    return { blob: original, mime, width, height }
-  }
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-  bitmap.close?.()
-  const type = mime === 'image/png' || mime === 'image/webp' ? 'image/png' : 'image/jpeg'
-  const resized = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.9))
-  if (!resized) return { blob: original, mime, width, height }
-  return { blob: resized, mime: resized.type || type, width: canvas.width, height: canvas.height }
 }
 
 async function loadOne(input: SceneAssetInput): Promise<PreparedSceneAsset> {
@@ -106,24 +78,26 @@ async function loadOne(input: SceneAssetInput): Promise<PreparedSceneAsset> {
   if (!url) throw new SceneCodeAssetError('external-url', `素材「${input.label}」不是项目内地址，已拒绝`)
   const res = await fetch(url, { credentials: 'same-origin' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const original = await res.blob()
-  if (!original.size) throw new Error('空文件')
-  const normalized =
-    input.kind === 'video-frame'
-      ? { blob: original, mime: mimeFromBlob(original, url), width: 0, height: 0 }
-      : await normalizeImage(original, url, SCENE_CODE_LIMITS.imageEdge)
-  const bytes = await normalized.blob.arrayBuffer()
+  const blob = await res.blob()
+  if (!blob.size) throw new Error('空文件')
+  // 仍然要读一遍内容：指纹靠内容哈希判断「同 URL 换了文件」。
+  const bytes = await blob.arrayBuffer()
   const contentHash = await assetContentHash(bytes)
+  const size =
+    input.kind === 'video-frame' ? { width: 0, height: 0 } : await measureImage(blob)
+  if (size.width > SCENE_CODE_LIMITS.imageEdge || size.height > SCENE_CODE_LIMITS.imageEdge) {
+    // 尺寸上限由宿主在落盘时缩放，这里只提示，不阻塞。
+    console.warn(`素材「${input.label}」超过 ${SCENE_CODE_LIMITS.imageEdge}px，渲染时会缩放`)
+  }
   const key = input.key || stableAssetKey(input.source, input.videoUrl || url)
   return {
     payload: {
       key,
       kind: input.kind,
       label: input.label,
-      mime: normalized.mime,
-      bytes,
-      width: normalized.width,
-      height: normalized.height,
+      url: input.url,
+      width: size.width,
+      height: size.height,
       ...(input.videoDuration != null ? { videoDuration: input.videoDuration } : {}),
       ...(input.frameTime != null ? { frameTime: input.frameTime } : {}),
     },
@@ -134,17 +108,18 @@ async function loadOne(input: SceneAssetInput): Promise<PreparedSceneAsset> {
       source: input.source,
       label: input.label,
       contentHash,
-      ...(normalized.width ? { width: normalized.width } : {}),
-      ...(normalized.height ? { height: normalized.height } : {}),
+      ...(size.width ? { width: size.width } : {}),
+      ...(size.height ? { height: size.height } : {}),
       ...(input.videoDuration != null ? { videoDuration: input.videoDuration } : {}),
       ...(input.frameTime != null ? { frameTime: input.frameTime } : {}),
     },
+    bytes: blob.size,
   }
 }
 
 /**
- * 把选择解析成真实的图片/关键帧字节。
- * 同一 URL 只加载一次；图片超限抛错，不静默截断。
+ * 把选择解析成素材清单（URL + 元数据 + 内容哈希）。
+ * 同一 URL 只加载一次；图片数量和总大小超限直接抛错，不静默截断。
  */
 export async function prepareSceneAssets(inputs: SceneAssetInput[]): Promise<PreparedSceneAssets> {
   const unique = new Map<string, SceneAssetInput>()
@@ -172,7 +147,7 @@ export async function prepareSceneAssets(inputs: SceneAssetInput[]): Promise<Pre
   for (const input of unique.values()) {
     try {
       const one = await loadOne(input)
-      totalBytes += one.payload.bytes.byteLength
+      totalBytes += one.bytes
       if (totalBytes > SCENE_CODE_LIMITS.totalAssetBytes) {
         throw new SceneCodeAssetError(
           'too-large',

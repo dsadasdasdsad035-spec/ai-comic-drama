@@ -4,10 +4,14 @@ import { shortHash } from './scheduleGeometry'
 export type SceneCodeFingerprintInput = {
   codeHash: string
   abiVersion: number
+  runtime?: 'three' | 'blender'
+  engineVersion?: string
   assets: Pick<SceneCodeAssetRef, 'key' | 'kind' | 'contentHash'>[]
   duration: number
   aspect: string
   mode: 'clean' | 'review'
+  fps?: number
+  frames?: number
 }
 
 export function normalizeCodeText(code: string): string {
@@ -68,19 +72,23 @@ export function sceneCodeFingerprint(input: SceneCodeFingerprintInput): string {
     .sort((a, b) => a[0].localeCompare(b[0]))
   return shortHash(
     JSON.stringify({
-      version: 1,
-      abiVersion: Number(input.abiVersion) || 1,
+      version: 2,
+      runtime: input.runtime || 'blender',
+      engineVersion: input.engineVersion || '',
+      abiVersion: Number(input.abiVersion) || 2,
       codeHash: input.codeHash,
       assets,
       duration: Number(input.duration.toFixed(3)),
       aspect: input.aspect,
       mode: input.mode,
+      fps: Number(input.fps) || 30,
+      frames: Number(input.frames) || 0,
     }),
   )
 }
 
 export function metaMatchesFingerprint(meta: SceneCodeMeta | undefined, fingerprint: string): boolean {
-  return Boolean(meta && meta.version === 1 && meta.fingerprint === fingerprint)
+  return Boolean(meta && (meta.version === 1 || meta.version === 2) && meta.fingerprint === fingerprint)
 }
 
 export function codeAssetSignature(assets: Pick<SceneCodeAssetRef, 'key' | 'kind' | 'contentHash'>[]): string {

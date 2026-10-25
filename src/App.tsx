@@ -17,6 +17,9 @@ import {
 
 import '@xyflow/react/dist/style.css'
 import './theme.css'
+// 聊天层的 Tailwind/shadcn token 是全局一次加载的；不能只在 3D 工作台懒加载，
+// 否则五个工作台的聊天在没打开过 3D 时拿不到工具类。
+import './chat-ui/chat.css'
 
 import ShotNode from './ShotNode'
 import CharNode from './CharNode'
@@ -29,23 +32,24 @@ import AssetBoard from './AssetBoard'
 import ThemeToggle from './ThemeToggle'
 import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
-import SceneCodeWorkbench, { type CodeEditorRendered, type CodeEditorSave } from './SceneCodeWorkbench'
 import ShotTable from './ShotTable'
 import PromptTable from './PromptTable'
-import EpisodeBar from './EpisodeBar'
+import EpPicker from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
 import ProjectSelect from './ProjectSelect'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
+import TransitionPanel from './TransitionPanel'
 import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
-import { defaultCharacters, type CharacterSheet } from './characters'
+import { defaultCharacters, identityFingerprint, markExpressionSheetStale, markExpressionsStale, markVoiceSampleStale, type CharacterSheet } from './characters'
+import { isSheetUsable } from './expressionSheet'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
-import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ScheduleMeta, type SceneCodeMeta, type SceneLayout, type ShotData, type Tool } from './types'
+import { cardWidth, effectiveSeconds, isRenderableSceneCode, migrateMarks, uid, type Relation, type ScheduleMeta, type SceneCodeMeta, type SceneLayout, type ShotData, type Tool, type TransitionOut } from './types'
 import {
   callText,
   checkHealth,
@@ -73,26 +77,43 @@ import {
   type ProjectSummary,
   type VoiceOption,
 } from './api'
-import { characterSys, dialogueToText, parseDialogue } from './prompts'
+import { dialogueToText, parseDialogue } from './prompts'
+import { deliveryForSpeaker, voiceFingerprint } from './performance'
+import { audioRefCapabilitiesFor, nativeAudioFingerprint } from './nativeAudio'
+import { resolveVoiceForSpeaker } from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
-import { isSceneCodeFresh, shouldBlockCanvasCodeRender } from './sceneCodeFreshness'
-import { buildShot3DContextCatalog } from './shot3dContextCatalog'
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, resolveNeighborToken, SHOT_NEXT, SHOT_PREV } from './shotReferences'
-import { contextFingerprint, sanitizeShot3DContext } from './shot3dContext'
-import { prepareSceneCodeContext } from './sceneCodePrepare'
-import { runSceneCodeJob } from './sceneCodeJob'
-import { renderSceneCodeVideo, saveSceneCodeVideo, sceneCodeRenderError } from './sceneCodeRender'
-import { codeHashOf, sceneCodeFingerprint } from './sceneCodeFingerprint'
+import { resolveShotSchedule } from './scheduleStatus'
+import { buildShotVideoRequest, effectiveVideoPrompt, type VideoModelInput } from './videoPrompt'
 import { type Ask } from './scheduleAI'
-import { runShot3DJob } from './shot3dJob'
 import { resolveShotScene } from './shotScene'
-import { renderScheduleVideo } from './schedule3d'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
+import { ensureSkillsMigrated } from './skills/migrate'
+import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
+import { builtinFailure, type BuiltinResult } from './agent/workbenchChat'
+import { buildEditList, transitionFor } from './editList'
+import {
+  defaultTransition,
+  normalizeEffect,
+  normalizeGenerated,
+  normalizeTransitionOut,
+  transitionFingerprint,
+  transitionSummary,
+} from './transition'
+import {
+  clampKeyframeRefs,
+  effectiveTransitionRefs,
+  ensureTransitionBoundary,
+  keyframePrompt,
+  modelSupportsLastFrame,
+  transitionRequestSeconds,
+  transitionVideoPrompt,
+} from './transitionGen'
 
 const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
 const edgeTypes = { shot: ShotEdge }
@@ -256,7 +277,7 @@ function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): ShotNodeTyp
   })
 }
 
-/** 每个集内按镜头号串一条 cut 边，画布没有项目级边时用 */
+/** 每个集内按镜头号串一条边，画布没有项目级边时用；转场按 source.transitionOut 恢复 */
 function chainEdges(shotNodes: ShotNodeType[]): ShotEdgeType[] {
   const byEp = new Map<number, ShotNodeType[]>()
   for (const n of shotNodes) {
@@ -269,22 +290,66 @@ function chainEdges(shotNodes: ShotNodeType[]): ShotEdgeType[] {
   for (const list of byEp.values()) {
     list.sort((a, b) => String(a.data?.no ?? '').localeCompare(String(b.data?.no ?? ''), undefined, { numeric: true }))
     for (let i = 1; i < list.length; i++) {
+      const src = list[i - 1]
+      const tgt = list[i]
+      const to = tgt.data.shotId || tgt.id
+      const isTransition = src.data.transitionOut?.to === to
       out.push({
-        id: `seq-${list[i - 1].id}-${list[i].id}`,
-        source: list[i - 1].id,
-        target: list[i].id,
+        id: `seq-${src.id}-${tgt.id}`,
+        source: src.id,
+        target: tgt.id,
         type: 'shot',
-        data: { relation: 'cut' },
+        data: { relation: isTransition ? 'transition' : 'cut' },
       })
     }
   }
   return out
 }
 
+/**
+ * 按源镜头的 transitionOut.to 找回转场边：
+ * 节点重建、画布清空、项目重新加载后，线都还能回到正确的一对镜头上。
+ */
+function repairTransitionEdges(nodes: ShotNodeType[], edges: ShotEdgeType[]): ShotEdgeType[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const byShot = new Map<string, ShotNodeType>()
+  for (const n of nodes) if (n.data.shotId) byShot.set(String(n.data.shotId), n)
+  const out = edges.map((e) => ({ ...e }))
+  for (const src of nodes) {
+    const t = src.data.transitionOut
+    if (!t?.to) continue
+    const tgt = byShot.get(t.to) ?? byId.get(t.to)
+    if (!tgt || tgt.id === src.id) continue
+    const hit = out.find((e) => e.source === src.id && e.target === tgt.id)
+    if (hit) {
+      if ((hit.data?.relation ?? 'cut') !== 'transition') {
+        hit.data = { ...hit.data, relation: 'transition' }
+      }
+      continue
+    }
+    out.push({
+      id: `tr-repair-${src.id}-${tgt.id}`,
+      source: src.id,
+      target: tgt.id,
+      type: 'shot',
+      data: { relation: 'transition' },
+    })
+  }
+  return out
+}
+
+/** 画布节点里哪些是分镜（素材卡/角色卡不进播放序列） */
+const isShotCanvasNode = (n: ShotNodeType) => {
+  const type = (n as unknown as { type?: string }).type
+  return type === 'shot' || type == null
+}
+
 function Shell() {
   const saved = useMemo(loadSaved, [])
   const [nodes, setNodes, onNodesChange] = useNodesState<ShotNodeType>(saved?.nodes ?? initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(saved?.edges ?? initialEdges)
+  const [edges, setEdges, onEdgesChange] = useEdgesState<ShotEdgeType>(
+    repairTransitionEdges(saved?.nodes ?? initialNodes, saved?.edges ?? initialEdges),
+  )
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
   const [view, setView] = useState<'board' | 'chars' | 'assets' | 'table' | 'prompts' | 'script' | 'settings'>('board')
   const [projectName, setProjectName] = useState('')
@@ -293,6 +358,7 @@ function Shell() {
   const [readyProject, setReadyProject] = useState('')
   /** 剧本页是否有未保存分集：切项目/全剧拆角色前检查 */
   const [scriptDirty, setScriptDirty] = useState(false)
+  const [promptEditorDirty, setPromptEditorDirty] = useState(false)
   const projectEpochRef = useRef(0)
   /** 当前集：镜头表 / 提示词共用 */
   const [epNo, setEpNo] = useState(1)
@@ -304,6 +370,8 @@ function Shell() {
   const [color, setColor] = useState(COLORS[0])
   const [relation, setRelation] = useState<Relation>('cut')
   const [selId, setSelId] = useState<string | null>(null)
+  /** 选中的转场连线（与 selId 互斥） */
+  const [selEdgeId, setSelEdgeId] = useState<string | null>(null)
   const [ratio, setRatio] = useState('16:9')
   const [refMode, setRefMode] = useState(false)
   const [marksAsGuide, setMarksAsGuide] = useState(true)
@@ -313,8 +381,6 @@ function Shell() {
   const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
-  const [editorNodeId, setEditorNodeId] = useState<string | null>(null)
-  const [editorDirty, setEditorDirty] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
   const [voices, setVoices] = useState<VoiceOption[]>([])
@@ -373,10 +439,17 @@ function Shell() {
     (next: string) => {
       if (next === projectName) return
       if (scriptDirty && !window.confirm('剧本页有未保存的分集，切换项目会丢失。继续？')) return
+      if (
+        promptEditorDirty &&
+        !window.confirm('提示词页的 3D 编辑器有未保存修改，切换项目会丢失。继续？')
+      ) {
+        return
+      }
+      setPromptEditorDirty(false)
       setReadyProject('')
       setProjectName(next)
     },
-    [projectName, scriptDirty],
+    [projectName, scriptDirty, promptEditorDirty],
   )
 
   /** 离开剧本页也保护未保存分集；确认后才允许卸载剧本组件 */
@@ -390,10 +463,18 @@ function Shell() {
       ) {
         return
       }
+      if (
+        view === 'prompts' &&
+        promptEditorDirty &&
+        !window.confirm('提示词页的 3D 编辑器有未保存修改，离开会丢失。继续？')
+      ) {
+        return
+      }
       setScriptDirty(false)
+      setPromptEditorDirty(false)
       setView(next)
     },
-    [view, scriptDirty],
+    [view, scriptDirty, promptEditorDirty],
   )
 
   /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
@@ -402,8 +483,7 @@ function Shell() {
     let alive = true
     setReadyProject('')
     setSelId(null)
-    setEditorNodeId(null)
-    setEditorDirty(false)
+    setSelEdgeId(null)
     setSceneLayouts([])
     setProjectAspect('16:9')
     if (!projectName) {
@@ -451,7 +531,12 @@ function Shell() {
         const wantedEp = Number(stored?.epNo) || 1
 
         setNodes([...assetCards, ...shotNodes])
-        setEdges(stored?.edges?.length ? stored.edges : chainEdges(shotNodes))
+        setEdges(
+          repairTransitionEdges(
+            shotNodes,
+            stored?.edges?.length ? stored.edges : chainEdges(shotNodes),
+          ),
+        )
         setCharacters(sheets)
         setAssets(projectAssets)
         setSceneLayouts((p.sceneLayouts ?? []) as SceneLayout[])
@@ -510,13 +595,36 @@ function Shell() {
 
   const patchCharacter = useCallback(
     (id: string, p: Partial<CharacterSheet>): CharacterSheet[] => {
-      const next = charactersRef.current.map((c) => (c.id === id ? { ...c, ...p } : c))
+      const next = charactersRef.current.map((c) => {
+        if (c.id !== id) return c
+        const identityChanged =
+          (p.lookEn !== undefined && p.lookEn !== c.lookEn) ||
+          (p.palette !== undefined && p.palette !== c.palette) ||
+          (p.keywords !== undefined && JSON.stringify(p.keywords) !== JSON.stringify(c.keywords))
+        const expressions = identityChanged
+          ? markExpressionsStale(c.expressions)
+          : p.expressions ?? c.expressions
+        const expressionSheet = identityChanged
+          ? markExpressionSheetStale(c.expressionSheet)
+          : p.expressionSheet ?? c.expressionSheet
+        const voiceSample =
+          p.voiceId !== undefined && p.voiceId !== c.voiceId
+            ? markVoiceSampleStale(c.voiceSample)
+            : p.voiceSample ?? c.voiceSample
+        return { ...c, ...p, expressions, expressionSheet, voiceSample }
+      })
       charactersRef.current = next
       setCharacters(next)
       return next
     },
     [],
   )
+
+  /** 聊天提交整表角色草稿：合并由 adapter 完成，这里只替换状态和 ref。 */
+  const replaceCharacters = useCallback((next: CharacterSheet[]) => {
+    charactersRef.current = next
+    setCharacters(next)
+  }, [])
 
   /** 角色图片类变更立即落库：不等 1.2s 防抖，刷新不会丢 */
   const saveCharactersNow = useCallback(
@@ -551,17 +659,21 @@ function Shell() {
    * 画布只加载了当前集的卡片，所以除了改内存节点，还得改后端 shots 上的 refIds。
    */
   const migrateCharRefs = useCallback(
-    async (from: string, to: string | null) => {
+    async (from: string, to: string | null, dropTokens: string[] = []) => {
       const rid = `char-${from}`
+      const drop = new Set(dropTokens)
       try {
         const p = await getProject(projectName)
         const changed = (p.shots ?? [])
-          .filter((s) => (s.refIds ?? []).includes(rid))
+          .filter((s) => {
+            const refs = s.refIds ?? []
+            return refs.includes(rid) || refs.some((x) => drop.has(x))
+          })
           .map((s) => ({
             ...s,
             refIds: to
-              ? (s.refIds ?? []).map((x) => (x === rid ? `char-${to}` : x))
-              : (s.refIds ?? []).filter((x) => x !== rid),
+              ? (s.refIds ?? []).map((x) => (x === rid ? `char-${to}` : x)).filter((x) => !drop.has(x))
+              : (s.refIds ?? []).filter((x) => x !== rid && !drop.has(x)),
           }))
         if (changed.length) await mergeProjectShots(projectName, changed)
       } catch {
@@ -587,13 +699,28 @@ function Shell() {
   const deleteCharacter = useCallback(
     (id: string) => {
       const rid = `char-${id}`
+      const orphanIds = nodesRef.current
+        .filter((n) => {
+          const d = n.data as unknown as { kind?: string; characterName?: string }
+          return (n as unknown as AssetNodeType).type === 'asset' && d.kind === 'expression-sheet' && d.characterName === id
+        })
+        .map((n) => n.id)
+      const drop = new Set(orphanIds)
       setCharacters((cs) => cs.filter((c) => c.id !== id))
       setNodes((ns) =>
-        ns.map((n) => {
-          const cur = (n.data as unknown as { refIds?: string[] }).refIds
-          if (!cur?.includes(rid)) return n
-          return { ...n, data: { ...n.data, refIds: cur.filter((x) => x !== rid) } } as typeof n
-        }),
+        ns
+          .filter((n) => {
+            const d = n.data as unknown as { kind?: string; characterName?: string }
+            return !((n as unknown as AssetNodeType).type === 'asset' && d.kind === 'expression-sheet' && d.characterName === id)
+          })
+          .map((n) => {
+            const cur = (n.data as unknown as { refIds?: string[] }).refIds
+            if (!cur?.some((x) => x === rid || drop.has(x))) return n
+            return {
+              ...n,
+              data: { ...n.data, refIds: cur.filter((x) => x !== rid && !drop.has(x)) },
+            } as typeof n
+          }),
       )
       setCharPos((p) => {
         if (!(id in p)) return p
@@ -602,7 +729,7 @@ function Shell() {
         return next
       })
       setSelRef(null)
-      void migrateCharRefs(id, null)
+      void migrateCharRefs(id, null, orphanIds)
       setToast(`已删除角色「${id}」，相关连线已解除`)
       window.setTimeout(() => setToast(''), 2600)
     },
@@ -621,6 +748,17 @@ function Shell() {
       setCharacters((cs) => cs.map((c) => (c.id === oldId ? { ...c, id: name, name } : c)))
       setNodes((ns) =>
         ns.map((n) => {
+          const asset = n.data as unknown as { kind?: string; characterName?: string; title?: string }
+          if ((n as unknown as AssetNodeType).type === 'asset' && asset.characterName === oldId) {
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                characterName: name,
+                ...(asset.kind === 'expression-sheet' ? { title: `${name} · 表情总图` } : {}),
+              },
+            } as typeof n
+          }
           const cur = (n.data as unknown as { refIds?: string[] }).refIds
           const from = `char-${oldId}`
           if (!cur?.includes(from)) return n
@@ -681,6 +819,20 @@ function Shell() {
   }, [])
   /** 生效单价：设置页 > 默认估算 */
   const price: Pricing = normalizePricing(appSettings?.pricing)
+  /** 当前视频模型的能力描述；预览与出片共用，避免两处各查一遍设置 */
+  const selectedVideoModel = useMemo<VideoModelInput | null>(() => {
+    const key = modelPick.video || appSettings?.defaults?.video || ''
+    const entry = appSettings?.models.find((m) => m.key === key)
+    if (!entry) return key ? { key } : null
+    const provider = appSettings?.providers.find((p) => p.id === entry.provider)
+    return {
+      key,
+      model: entry.model,
+      providerKind: provider?.kind,
+      audioOut: entry.features?.audioOut,
+      supportsVideoRef: entry.supportsVideoRef,
+    }
+  }, [modelPick.video, appSettings])
   const reloadSettings = useCallback(() => {
     getSettings()
       .then(({ settings }) => setAppSettings(settings as AppSettings))
@@ -689,6 +841,20 @@ function Shell() {
   useEffect(() => {
     reloadSettings()
   }, [reloadSettings])
+
+  // 旧规则包只迁移一次；失败不影响使用，下次打开再试。
+  useEffect(() => {
+    if (!appSettings || appSettings.skillsMigrated) return
+    let alive = true
+    ensureSkillsMigrated(appSettings)
+      .then((changed) => {
+        if (alive && changed) reloadSettings()
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [appSettings, reloadSettings])
 
   /** 当前生效的配音模型：手动选择 > 设置页默认；切换后重新取对应渠道的音色 */
   const audioModelKey = modelPick.audio || appSettings?.defaults?.audio || ''
@@ -710,20 +876,21 @@ function Shell() {
    */
   const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
   const extractCharacters = useCallback(
-    async (scope: 'episode' | 'script') => {
-      if (extracting) return
-      if (!projectName) {
-        setToast('先绑定一个项目')
-        return
-      }
-      if (readyProject !== projectName) {
-        setToast('项目还在加载，稍后再试')
-        return
-      }
-      if (scope === 'script' && scriptDirty) {
-        setToast('剧本页有未保存的分集，先保存再拆角色')
-        return
-      }
+    async (scope: 'episode' | 'script', signal?: AbortSignal): Promise<BuiltinResult> => {
+      const label = scope === 'episode' ? '从本集拆角色' : '从全剧拆角色'
+      const action = scope === 'episode' ? 'extract_characters_episode' : 'extract_characters_script'
+      const fail = (message: string, cancelled = false) =>
+        builtinFailure(action, message, {
+          label,
+          scope,
+          saveMode: 'auto',
+          ...(cancelled ? { cancelled: true } : {}),
+        })
+      if (extracting) return fail('正在拆角色，请稍候')
+      if (!projectName) return fail('先绑定一个项目')
+      if (readyProject !== projectName) return fail('项目还在加载，稍后再试')
+      if (scope === 'script' && scriptDirty) return fail('剧本页有未保存的分集，先保存再拆角色')
+      if (signal?.aborted) return fail('已取消', true)
       setExtracting(scope)
       const t0 = Date.now()
       try {
@@ -767,33 +934,52 @@ function Shell() {
               : '当前项目没有剧本素材（source 与分集场次都为空）。先去「剧本」页生成并保存分集，或切换到有剧本的项目。',
           )
         }
+        const scopeLabel =
+          scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原文梗概与分集场次'
+        const shotBlock = shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : ''
+        const skill = await buildBoardSkillPrompt('character', { scopeLabel, sceneText, shotBlock })
+        const modelKey = stageModelKey(st.settings as AppSettings, 'character', stagePick)
+        if (!modelKey) throw new Error('设置页还没有可用的文本模型')
         const r = await callText<{ characters?: unknown[] }>({
-          system: characterSys(st.settings.rules),
-          modelKey: stageModelKey(st.settings as AppSettings, 'character', stagePick),
+          system: skill.system,
+          modelKey,
           json: true,
           maxTokens: 6000,
-          prompt:
-            `以下是${scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原文梗概与分集场次'}。\n\n` +
-            sceneText +
-            (shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : '') +
-            '\n\n要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。' +
-            '跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。',
+          prompt: skill.task,
+          signal,
         })
+        assertSkillOutput('characters-v1', r.json)
         const list = pickExtracted(r.json)
         if (list.length === 0) throw new Error('模型没给出角色，换个范围再试')
+        if (signal?.aborted) return fail('已取消', true)
         const { next, added, filled, skipped } = mergeCharacters(charactersRef.current, list)
         setCharacters(next)
         const secs = Math.round((Date.now() - t0) / 1000)
-        setToast(
-          `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
+        return {
+          ok: true,
+          action,
+          label,
+          scope,
+          summary:
+            `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
             (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
             (filled.length ? ` · 补全 ${filled.length}` : '') +
-            (skipped.length ? ` · 跳过已有 ${skipped.length}` : ''),
-        )
-        window.setTimeout(() => setToast(''), 4200)
+            (skipped.length ? ` · 跳过已有 ${skipped.length}` : '') +
+            '，约 1 秒后自动落库',
+          counts: {
+            total: next.length,
+            added: added.length,
+            filled: filled.length,
+            skipped: skipped.length,
+          },
+          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
+          elapsedMs: Date.now() - t0,
+          saveMode: 'auto',
+        }
       } catch (e) {
-        setToast((e as Error).message || '拆角色失败')
-        window.setTimeout(() => setToast(''), 4200)
+        const err = e as Error
+        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
+        return fail(cancelled ? '已取消' : err.message || '拆角色失败', cancelled)
       } finally {
         setExtracting('')
       }
@@ -839,18 +1025,36 @@ function Shell() {
     [characters, selId, patch],
   )
 
+  /** 设置连线关系；首次落到转场时补默认叠化（已有配置不重置） */
+  const setEdgeRelation = useCallback(
+    (id: string, next: Relation) => {
+      const edge = edges.find((e) => e.id === id)
+      setEdges((eds) =>
+        eds.map((e) => (e.id === id ? { ...e, data: { ...e.data, relation: next } } : e)),
+      )
+      if (next !== 'transition' || !edge) return
+      const source = nodesRef.current.find((n) => n.id === edge.source)
+      const target = nodesRef.current.find((n) => n.id === edge.target)
+      if (!source || !target) return
+      const to = target.data.shotId || target.id
+      const cur = source.data.transitionOut
+      const hand = [...new Set([...(source.data.handEdited ?? []), 'transition_out'])]
+      if (!cur) {
+        patch(source.id, { transitionOut: defaultTransition(to), handEdited: hand })
+      } else if (cur.to !== to) {
+        patch(source.id, { transitionOut: { ...cur, to }, handEdited: hand })
+      }
+    },
+    [edges, setEdges, patch],
+  )
+
   const cycleEdge = useCallback(
     (id: string) => {
       const order: Relation[] = ['cut', 'transition', 'flashback', 'branch']
-      setEdges((eds) =>
-        eds.map((e) => {
-          if (e.id !== id) return e
-          const cur = e.data?.relation ?? 'cut'
-          return { ...e, data: { relation: order[(order.indexOf(cur) + 1) % order.length] } }
-        }),
-      )
+      const cur = edges.find((e) => e.id === id)?.data?.relation ?? 'cut'
+      setEdgeRelation(id, order[(order.indexOf(cur) + 1) % order.length])
     },
-    [setEdges],
+    [edges, setEdgeRelation],
   )
 
   const onConnect = useCallback(
@@ -870,19 +1074,39 @@ function Shell() {
         return
       }
       setEdges((eds) => addEdge({ ...c, type: 'shot', data: { relation } } as ShotEdgeType, eds))
+      if (relation === 'transition' && c.source && c.target) {
+        const src = nodesRef.current.find((n) => n.id === c.source)
+        const tgt = nodesRef.current.find((n) => n.id === c.target)
+        if (src && tgt) {
+          const to = tgt.data.shotId || tgt.id
+          const hand = [...new Set([...(src.data.handEdited ?? []), 'transition_out'])]
+          if (!src.data.transitionOut) patch(src.id, { transitionOut: defaultTransition(to), handEdited: hand })
+          else if (src.data.transitionOut.to !== to) {
+            patch(src.id, { transitionOut: { ...src.data.transitionOut, to }, handEdited: hand })
+          }
+        }
+      }
     },
     [relation, setEdges, patch],
   )
 
-  /** 删除参考连线 = 从目标镜头的 refIds 里移除 */
+  /** 删除参考连线 = 从目标镜头的 refIds 里移除；删除转场连线 = 清掉源镜头的 transitionOut */
   const onEdgesDeleted = useCallback(
     (eds: Edge[]) => {
       for (const e of eds) {
-        if (!e.id.startsWith('ref-')) continue
+        if (e.id.startsWith('ref-')) {
+          const tgt = nodesRef.current.find((n) => n.id === e.target)
+          if (!tgt) continue
+          const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+          if (cur.includes(e.source)) patch(e.target, { refIds: cur.filter((x) => x !== e.source) } as never)
+          continue
+        }
+        const src = nodesRef.current.find((n) => n.id === e.source)
         const tgt = nodesRef.current.find((n) => n.id === e.target)
-        if (!tgt) continue
-        const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
-        if (cur.includes(e.source)) patch(e.target, { refIds: cur.filter((x) => x !== e.source) } as never)
+        if (!src || !tgt) continue
+        const to = tgt.data.shotId || tgt.id
+        if (src.data.transitionOut?.to !== to) continue
+        patch(src.id, { transitionOut: undefined })
       }
     },
     [patch],
@@ -1017,12 +1241,13 @@ function Shell() {
   useEffect(() => {
     if (!projectName || readyProject !== projectName) return
     const cards = assetNodes.map((a) => {
-      const d = a.data as unknown as { kind?: string; title?: string; url?: string; designId?: string }
+      const d = a.data as unknown as { kind?: string; title?: string; url?: string; designId?: string; characterName?: string }
       return {
         kind: d.kind || 'image',
         title: d.title || '',
         url: d.url || '',
         ...(d.designId ? { designId: d.designId } : {}),
+        ...(d.characterName ? { characterName: d.characterName } : {}),
       }
     })
     const sig = JSON.stringify(cards)
@@ -1042,7 +1267,13 @@ function Shell() {
       id: `asset-${uid()}`,
       type: 'asset',
       position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
-      data: { title: a.title, kind: a.kind, url: a.url, ...(a.designId ? { designId: a.designId } : {}) },
+      data: {
+        title: a.title,
+        kind: a.kind,
+        url: a.url,
+        ...(a.designId ? { designId: a.designId } : {}),
+        ...(a.characterName ? { characterName: a.characterName } : {}),
+      },
     })) as unknown as ShotNodeType[]
     setNodes((ns) => [...ns, ...cards])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1099,6 +1330,12 @@ function Shell() {
    */
   /** 选中的参考连线（派生边不在 edges 状态里，React Flow 的选中态会被重算覆盖，自己管一份） */
   const [selRef, setSelRef] = useState<string | null>(null)
+  /** 打开转场面板：与镜头/参考选择互斥 */
+  const openTransition = useCallback((id: string) => {
+    setSelId(null)
+    setSelRef(null)
+    setSelEdgeId(id)
+  }, [])
   const refEdges = useMemo<Edge[]>(() => {
     const out: Edge[] = []
     const inCanvas = new Set(canvasNodes.map((n) => n.id))
@@ -1167,7 +1404,7 @@ function Shell() {
     for (const a of assetNodes) {
       const d = a.data as unknown as { title?: string; kind?: string; url?: string }
       if (d.kind === 'video' || !d.url) continue
-      const tag = { scene: '场景', prop: '道具', image: '图片' }[d.kind ?? 'image'] ?? '图片'
+      const tag = { scene: '场景', prop: '道具', image: '图片', 'expression-sheet': '表情' }[d.kind ?? 'image'] ?? '图片'
       out.push({ id: a.id, title: d.title || '未命名素材', tag, img: d.url })
     }
     return out
@@ -1226,357 +1463,6 @@ function Shell() {
       })),
     }
   }, [ctx, canvasNodes, refCards, shownNodes])
-
-  /** 右击快速生成代码视频：代码镜头直接渲染；没有代码时先生成一次代码。 */
-  const genSceneCodeVideo = useCallback(
-    async (nodeId: string, useFrames = false) => {
-      if (shouldBlockCanvasCodeRender(editorNodeId, editorDirty, nodeId)) {
-        setToast('工作台有未保存的 3D 代码修改；请先在编辑器中保存或渲染视频')
-        window.setTimeout(() => setToast(''), 3200)
-        return
-      }
-      const node = nodesRef.current.find((n) => n.id === nodeId)
-      if (!node) return
-      const data = node.data
-      const ep = Number(data.episode) || epNo
-      const sceneNo = Math.max(1, Math.round(Number(data.sceneNo) || 1))
-      setToast('正在准备代码 3D 渲染…')
-      try {
-        let project: ProjectData | null = null
-        try {
-          project = await getProject(projectName)
-        } catch {
-          project = null
-        }
-        const media = await listMedia(projectName)
-        const catalog = buildShot3DContextCatalog({
-          project,
-          characters,
-          shot: { ...data, episode: ep, sceneNo, sceneSlug: data.sceneSlug || '' },
-          media,
-          nodes: nodesRef.current,
-          sceneNo,
-          sceneSlug: data.sceneSlug || '',
-        })
-        const context = data.shot3DContext ? sanitizeShot3DContext(data.shot3DContext) : catalog.defaults
-        const prepared = await prepareSceneCodeContext({
-          context,
-          catalog,
-          settings: appSettings,
-          stagePick,
-          withBrief: !data.sceneCode,
-          allowVideoVision: !data.sceneCode,
-        })
-        let sceneCode = data.sceneCode
-        if (!sceneCode) {
-          if (!stageModelKey(appSettings, 'sceneCode', stagePick)) {
-            throw new Error('没有可用的 3D 代码文本模型，请到设置页绑定「3D 代码」环节')
-          }
-          setToast('正在生成 3D 代码…')
-          const result = await runSceneCodeJob({
-            shot: { ...data, episode: ep, sceneNo, sceneSlug: data.sceneSlug || '' },
-            project,
-            context,
-            catalog,
-            assets: prepared.assets,
-            mediaBrief: prepared.mediaBrief,
-            videoBrief: prepared.videoBrief,
-            duration: effectiveSeconds(data.seconds),
-            aspect: projectAspect,
-            settings: appSettings,
-            stagePick,
-          })
-          sceneCode = {
-            version: 1,
-            abiVersion: 1,
-            code: result.code,
-            codeHash: result.codeHash,
-            source: 'ai',
-            ...(result.motionNote ? { motionNote: result.motionNote } : {}),
-            updatedAt: new Date().toISOString(),
-          }
-        }
-        const codeHash = sceneCode.codeHash || (await codeHashOf(sceneCode.code))
-        const duration = effectiveSeconds(data.seconds)
-        setToast('正在渲染 3D 代码视频…')
-        const blob = await renderSceneCodeVideo({
-          code: sceneCode.code,
-          assets: prepared.assets.map((a) => a.payload),
-          duration,
-          aspect: projectAspect,
-          mode: 'clean',
-        })
-        const url = await saveSceneCodeVideo(blob, undefined, duration)
-        const { width, height } = renderSize(projectAspect)
-        const fingerprint = sceneCodeFingerprint({
-          codeHash,
-          abiVersion: 1,
-          assets: prepared.assets.map((a) => a.ref),
-          duration,
-          aspect: projectAspect,
-          mode: 'clean',
-        })
-        const sceneMeta: SceneCodeMeta = {
-          version: 1,
-          fingerprint,
-          codeHash,
-          abiVersion: 1,
-          assets: prepared.assets.map((a) => a.ref),
-          selectionFingerprint: contextFingerprint(context),
-          duration,
-          aspect: projectAspect,
-          width,
-          height,
-          fps: 30,
-          mode: 'clean',
-          renderedAt: new Date().toISOString(),
-        }
-        const scheduleMeta: ScheduleMeta = {
-          version: 1,
-          fingerprint,
-          mode: 'clean',
-          duration,
-          aspect: projectAspect,
-          width,
-          height,
-          renderedAt: sceneMeta.renderedAt,
-        }
-        const nextData: ShotData = {
-          ...data,
-          sceneCode,
-          sceneCodeMeta: sceneMeta,
-          shot3DContext: context,
-          scheduleVideo: url,
-          scheduleMeta,
-          motionNote: sceneCode.motionNote || data.motionNote || '',
-          ...(useFrames ? { useScheduleFrames: true } : {}),
-        }
-        patch(nodeId, nextData as never)
-        if (projectName && data.shotId) {
-          await mergeProjectShots(projectName, [nodeToShot(nextData, data.shotId)])
-        }
-        if (useFrames) {
-          try {
-            const f = await extractFrames(url, 3)
-            patch(nodeId, { scheduleFrames: f.urls } as never)
-          } catch {
-            /* 抽帧失败不影响视频 */
-          }
-        }
-        setToast(useFrames ? '3D 代码视频已生成，关键帧已挂参考' : '3D 代码视频已生成')
-      } catch (e) {
-        setToast(sceneCodeRenderError(e))
-      }
-      window.setTimeout(() => setToast(''), 3200)
-    },
-    [patch, appSettings, stagePick, projectName, projectAspect, characters, assets, epNo, editorNodeId, editorDirty],
-  )
-
-  /**
-   * 右击卡片：生成/读取场景布局与镜头走位，按镜头有效时长渲染干净 POV 预演。
-   * useFrames = true 时顺手把抽出的关键帧挂成出片参考（白模会带风格，默认不挂）。
-   */
-  const genScheduleVideo = useCallback(
-    async (nodeId: string, useFrames = false) => {
-      const node = nodesRef.current.find((n) => n.id === nodeId)
-      if (!node) return
-      const data = node.data
-      const codePath = Boolean(data.sceneCode) || (!data.shotScene && !data.shotBlocking && !data.layout)
-      if (codePath) {
-        await genSceneCodeVideo(nodeId, useFrames)
-        return
-      }
-      const ep = Number(data.episode) || epNo
-      const sceneNo = Math.max(1, Math.round(Number(data.sceneNo) || 1))
-      const shotId = data.shotId || node.id
-      const ask: Ask = (o) =>
-        callText({
-          ...o,
-          modelKey: stageModelKey(appSettings, 'shot', stagePick),
-        })
-      setToast('正在准备本镜 3D 预演…')
-      try {
-        let project: ProjectData | null = null
-        try {
-          project = await getProject(projectName)
-        } catch {
-          /* 项目暂时读不到时仍可用画布数据与兜底 */
-        }
-        const sceneSlug = data.sceneSlug || ''
-        const resolved = resolveShotScene(data, {
-          shotId,
-          sceneLayouts,
-          episode: ep,
-          sceneNo,
-          sceneSlug,
-        })
-        let scene = resolved.scene
-        let blocking = data.shotBlocking ?? legacyLayoutToBlocking(data.layout)
-        let visualBrief = data.visualBrief
-        let visualBriefMeta = data.visualBriefMeta
-        let seedFrom = resolved.seedFrom
-        const roster = rosterOf(data.cast, data.dialogue)
-        if (!data.shotScene || !data.shotBlocking) {
-          setToast('正在生成参考板、空间与走位…')
-          try {
-            const job = await runShot3DJob({
-              projectName,
-              data,
-              shotId,
-              project,
-              sceneLayouts,
-              characters,
-              assets,
-              nodes: nodesRef.current,
-              settings: appSettings,
-              stagePick,
-              aspect: projectAspect,
-              ask,
-              existingBrief: data.visualBrief,
-              existingBriefMeta: data.visualBriefMeta,
-            })
-            scene = job.scene
-            blocking = job.blocking
-            visualBrief = job.visualBrief
-            visualBriefMeta = job.visualBriefMeta
-            seedFrom = job.seedScene?.id
-            if (job.warnings.length) window.setTimeout(() => setToast(job.warnings[0]), 2600)
-          } catch (e) {
-            blocking = fallbackBlocking(roster, scene)
-            setToast(`本镜 3D 生成失败，使用兜底空间：${(e as Error).message}`)
-          }
-        }
-        if (!blocking) blocking = fallbackBlocking(roster, scene)
-        const duration = effectiveSeconds(data.seconds)
-        const check = validateBlocking(blocking, { layout: scene, roster, aspect: projectAspect, duration })
-        if (check.errors.length) {
-          throw new Error(`走位有 ${check.errors.length} 处冲突：${check.errors[0].message}。请打开编辑器修正后再渲染`)
-        }
-        setToast('正在渲染 3D 调度…')
-        const blob = await renderScheduleVideo({
-          layout: scene,
-          blocking,
-          duration,
-          aspect: projectAspect,
-          mode: 'clean',
-          move: data.move,
-        })
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const fr = new FileReader()
-          fr.onload = () => resolve(String(fr.result))
-          fr.onerror = () => reject(new Error('读取录制结果失败'))
-          fr.readAsDataURL(blob)
-        })
-        const url = await saveScheduleVideo(dataUrl)
-        const { width, height } = renderSize(projectAspect)
-        const meta = {
-          version: 1 as const,
-          fingerprint: scheduleFingerprint({
-            layout: scene,
-            blocking,
-            duration,
-            aspect: projectAspect,
-            mode: 'clean',
-          }),
-          mode: 'clean' as const,
-          duration,
-          aspect: projectAspect,
-          width,
-          height,
-          renderedAt: new Date().toISOString(),
-        }
-        const note = motionNoteOf(scene, blocking, duration, data.move)
-        const nextData: ShotData = {
-          ...data,
-          sceneNo: scene.sceneNo,
-          sceneSlug: scene.sceneSlug || sceneSlug,
-          shotScene: scene,
-          shotSceneSeed: seedFrom,
-          visualBrief,
-          visualBriefMeta,
-          shotBlocking: blocking,
-          scheduleVideo: url,
-          scheduleMeta: meta,
-          motionNote: note,
-          ...(useFrames ? { useScheduleFrames: true } : {}),
-        }
-        patch(nodeId, nextData as never)
-        if (projectName && data.shotId) {
-          await mergeProjectShots(projectName, [nodeToShot(nextData, data.shotId)])
-        }
-        try {
-          const f = await extractFrames(url, 3)
-          patch(nodeId, { scheduleFrames: f.urls } as never)
-        } catch {
-          /* 抽帧失败不影响视频 */
-        }
-        setToast(useFrames ? '调度视频已生成，关键帧已挂为参考' : '本镜 3D 预演已生成')
-      } catch (e) {
-        setToast((e as Error).message || '生成调度视频失败')
-      }
-      window.setTimeout(() => setToast(''), 3200)
-    },
-    [patch, appSettings, stagePick, sceneLayouts, projectAspect, characters, assets, projectName, epNo, genSceneCodeVideo],
-  )
-
-  const openScheduleEditor = useCallback(
-    (nodeId: string) => {
-      if (!projectName) {
-        setToast('先选择一个项目再编辑 3D 调度')
-        window.setTimeout(() => setToast(''), 2400)
-        return
-      }
-      setEditorNodeId(nodeId)
-      setEditorDirty(false)
-    },
-    [projectName],
-  )
-
-  const saveEditor = useCallback(
-    async (input: CodeEditorSave) => {
-      if (!projectName) throw new Error('先选择一个项目')
-      const id = editorNodeId
-      const node = id ? nodesRef.current.find((n) => n.id === id) : null
-      if (!node) throw new Error('镜头节点已经不存在')
-      const nextData = {
-        ...node.data,
-        sceneCode: input.sceneCode,
-        shot3DContext: input.shot3DContext,
-        ...(input.sceneCodeMeta ? { sceneCodeMeta: input.sceneCodeMeta } : {}),
-      } as ShotData
-      patch(node.id, nextData as never)
-      if (node.data.shotId) {
-        await mergeProjectShots(projectName, [nodeToShot(nextData, node.data.shotId)])
-      }
-    },
-    [editorNodeId, patch, projectName],
-  )
-
-  const applyEditorRender = useCallback(
-    async (input: CodeEditorRendered) => {
-      if (!projectName) throw new Error('先选择一个项目')
-      const id = editorNodeId
-      const node = id ? nodesRef.current.find((n) => n.id === id) : null
-      if (!node) throw new Error('镜头节点已经不存在')
-      const nextData = {
-        ...node.data,
-        sceneCode: input.sceneCode,
-        sceneCodeMeta: input.sceneCodeMeta,
-        shot3DContext: input.shot3DContext,
-        scheduleVideo: input.video,
-        scheduleMeta: input.scheduleMeta,
-        motionNote: input.sceneCode.motionNote ?? node.data.motionNote,
-        scheduleFrames: input.frames ?? [],
-        useScheduleFrames: Boolean(input.useFrames && input.frames?.length),
-      } as ShotData
-      // 先落项目，再更新节点；项目写入失败时不留下“界面已保存、项目没保存”的假状态。
-      if (node.data.shotId) {
-        await mergeProjectShots(projectName, [nodeToShot(nextData, node.data.shotId)])
-      }
-      patch(node.id, nextData as never)
-    },
-    [editorNodeId, patch, projectName],
-  )
 
   /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
   const toggleRef = useCallback(
@@ -1683,14 +1569,51 @@ function Shell() {
     return [...m.entries()].filter(([e]) => e !== epNo).sort((a, b) => a[0] - b[0])
   }, [nodes, epNo])
 
+  /** 当前集真正的分镜（素材卡/角色卡不进播放序列） */
+  const episodeShots = useMemo(
+    () => shownNodes.filter(isShotCanvasNode),
+    [shownNodes],
+  )
+  /** 唯一剪辑序列：时间线、预览、导出都从这里取时间 */
+  const edit = useMemo(() => buildEditList(episodeShots, edges), [episodeShots, edges])
+  const inactiveEdgeIds = useMemo(
+    () => new Set(edit.inactive.map((x) => x.edgeId)),
+    [edit],
+  )
+
   const shownEdges = useMemo<Edge[]>(() => {
     const ids = new Set(canvasNodes.map((n) => n.id))
-    return [
-      ...edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
-      ...castEdges,
-      ...refEdges,
-    ]
-  }, [edges, canvasNodes, castEdges, refEdges])
+    const shotsById = new Map(episodeShots.map((n) => [n.id, n]))
+    const decorated = edges
+      .filter((e) => ids.has(e.source) && ids.has(e.target))
+      .map((e) => {
+        if ((e.data?.relation ?? 'cut') !== 'transition') return e as Edge
+        const src = shotsById.get(e.source)
+        const tgt = shotsById.get(e.target)
+        if (!src || !tgt) return e as Edge
+        const t = transitionFor(src, tgt)
+        const fp = transitionFingerprint(src.data, tgt.data, t.generated)
+        const pending = t.mode === 'generated' && !t.generated?.video?.url
+        const stale = Boolean(
+          t.mode === 'generated' &&
+            t.generated?.video?.url &&
+            t.meta?.fingerprint &&
+            t.meta.fingerprint !== fp,
+        )
+        const state = inactiveEdgeIds.has(e.id)
+          ? 'inactive'
+          : stale
+            ? 'stale'
+            : pending
+              ? 'pending'
+              : 'ready'
+        return {
+          ...e,
+          data: { ...e.data, transition: { summary: transitionSummary(t), state } },
+        } as Edge
+      })
+    return [...decorated, ...castEdges, ...refEdges]
+  }, [edges, canvasNodes, castEdges, refEdges, episodeShots, inactiveEdgeIds])
 
   /** 点角色节点 → 聚焦到它的出场镜头（名单带修饰也能命中） */
   const focusChar = (name: string) => {
@@ -1782,12 +1705,16 @@ function Shell() {
         const kept = prev.filter((e) => !pushed.has(e.source) && !pushed.has(e.target))
         const chain: ShotEdgeType[] = []
         for (let i = 1; i < ids.length; i++) {
+          const prevShot = shots[i - 1]
+          const to = shots[i].id
+          const rel: Relation =
+            prevShot?.transition_out?.to === to ? 'transition' : 'cut'
           chain.push({
             id: `seq-${ids[i - 1]}-${ids[i]}`,
             source: ids[i - 1],
             target: ids[i],
             type: 'shot',
-            data: { relation: 'cut' },
+            data: { relation: rel },
           })
         }
         return [...kept, ...chain]
@@ -1891,6 +1818,82 @@ function Shell() {
       window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.5, duration: 400 }), 80)
     },
     [setNodes, fitView, missingMedia],
+  )
+
+  /** 角色表情总图 → 画布：每个角色只有一张卡，重复发布只更新图片/标题。 */
+  const publishExpressionSheet = useCallback(
+    (charId: string) => {
+      const character = charactersRef.current.find((c) => c.id === charId || c.name === charId)
+      const sheet = character?.expressionSheet
+      if (!character || !sheet) {
+        setToast('先生成表情总图，再发布到画布')
+        window.setTimeout(() => setToast(''), 2600)
+        return
+      }
+      if (!isSheetUsable(sheet, identityFingerprint(character))) {
+        setToast('表情总图已失效，请先重生成')
+        window.setTimeout(() => setToast(''), 2600)
+        return
+      }
+      if (sheet.image && missingMedia.has(sheet.image)) {
+        setToast('表情总图文件缺失，请重新生成或上传')
+        window.setTimeout(() => setToast(''), 3000)
+        return
+      }
+      const title = `${character.name} · 表情总图`
+      const existing = nodesRef.current.find((n) => {
+        const d = n.data as unknown as { kind?: string; characterName?: string }
+        return (
+          (n as unknown as AssetNodeType).type === 'asset' &&
+          d.kind === 'expression-sheet' &&
+          d.characterName === character.name
+        )
+      })
+      if (existing) {
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.id === existing.id
+              ? {
+                  ...n,
+                  data: {
+                    ...n.data,
+                    title,
+                    kind: 'expression-sheet',
+                    url: sheet.image,
+                    characterName: character.name,
+                  },
+                } as typeof n
+              : n,
+          ),
+        )
+        setToast('已更新画布上的表情总图')
+      } else {
+        const base = nodesRef.current.filter(
+          (n) => (n as unknown as AssetNodeType).type === 'asset',
+        ).length
+        setNodes((prev) => [
+          ...prev,
+          {
+            id: `asset-${uid()}`,
+            type: 'asset',
+            position: {
+              x: 80 + (base % 4) * 250,
+              y: -560 - Math.floor(base / 4) * 180,
+            },
+            data: {
+              title,
+              kind: 'expression-sheet',
+              url: sheet.image,
+              characterName: character.name,
+            },
+          } as unknown as ShotNodeType,
+        ])
+        setToast('已发布表情总图到画布')
+      }
+      window.setTimeout(() => setToast(''), 2800)
+      window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.5, duration: 400 }), 80)
+    },
+    [fitView, missingMedia, setNodes],
   )
 
   /** 打开角色上画布；本集一条名单都没有时明确告知，而不是静默无反应 */
@@ -2087,153 +2090,85 @@ function Shell() {
   )
 
   /**
-   * 连线 → 参考图清单。共享解析器统一角色/相邻分镜/素材/手工参考，
-   * 相邻参考缺失会明确报错；视频只使用有效图片。
+   * 图生视频：预览与实际请求共用 buildShotVideoRequest。
+   * 有手改快照时逐字发送手改正文；附件仍由当前连线与开关决定。
    */
-  const collectRefImgs = useCallback(
-    (node: ShotNodeType) => {
-      const collected = collectShotReferences({
-        node,
-        nodes: nodesRef.current,
-        characters,
-        missingMedia,
-      })
-      const invalidNeighbor = collected.missing.find((m) => m.token === SHOT_PREV || m.token === SHOT_NEXT)
-      if (invalidNeighbor) throw new Error(`${invalidNeighbor.label}：${invalidNeighbor.reason}`)
-      return {
-        imgs: collected.refs.map((r) => r.url),
-        labels: collected.refs.map((r) => r.label),
-        omitted: [] as string[],
-      }
-    },
-    [characters, missingMedia],
-  )
-
-  /** 图生视频：多张连线图走 reference_image；勾了 3D 视频参考则走 reference_video，否则用首帧图生视频 */
   const generateVideoOne = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      const { imgs, labels } = collectRefImgs(node)
-      const first = node.data.refImage
-      // 视频参考与首帧模式互斥：勾了就用整段调度视频，不再抽帧
-      const useVideoRef = Boolean(node.data.useScheduleVideoRef && node.data.scheduleVideo)
-      const sceneNo = Math.max(1, Math.round(Number(node.data.sceneNo) || 1))
-      const sceneLayout = resolveShotScene(node.data, {
-        shotId: node.data.shotId || node.id,
+      const schedule = resolveShotSchedule({
+        data: node.data,
+        shotId: node.id,
         sceneLayouts,
-        episode: Number(node.data.episode) || 1,
-        sceneNo,
-        sceneSlug: node.data.sceneSlug,
-      }).scene
-      const liveBlocking =
-        node.data.shotBlocking ??
-        legacyLayoutToBlocking(node.data.layout) ??
-        fallbackBlocking(rosterOf(node.data.cast, node.data.dialogue), sceneLayout)
-      const scheduleDuration = effectiveSeconds(node.data.seconds)
-      const scheduleReady = node.data.sceneCode
-        ? isSceneCodeFresh({
-            sceneCode: node.data.sceneCode,
-            meta: node.data.sceneCodeMeta,
-            context: node.data.shot3DContext,
-            seconds: node.data.seconds,
-            aspect: projectAspect,
-            hasVideo: Boolean(node.data.scheduleVideo),
-          })
-        : Boolean(
-            node.data.scheduleVideo &&
-              node.data.scheduleMeta &&
-              isScheduleFresh(node.data.scheduleMeta, {
-                layout: sceneLayout,
-                blocking: liveBlocking,
-                duration: scheduleDuration,
-                aspect: projectAspect,
-                mode: 'clean',
-              }),
-          )
-      if ((useVideoRef || node.data.useScheduleFrames) && !scheduleReady) {
-        const why = !node.data.scheduleVideo
-          ? '还没有 3D 调度视频'
-          : node.data.scheduleMeta?.mode === 'review'
-            ? '当前调度视频只是审阅视角，不能作参考'
-            : '调度视频已过期，请先重新渲染'
-        patch(id, { vidState: 'error', vidError: `${why}，已取消出片` })
-        setToast(`${why}，已取消出片`)
-        window.setTimeout(() => setToast(''), 3200)
+        projectAspect,
+      })
+      const request = buildShotVideoRequest({
+        data: node.data,
+        nodeId: node.id,
+        nodes: nodesRef.current,
+        characters: charactersRef.current,
+        missingMedia,
+        schedule,
+        model: selectedVideoModel,
+        resolution: vidRes,
+      })
+      const blocked = request.blocking[0]
+      if (blocked) {
+        patch(id, { vidState: 'error', vidError: blocked.message })
+        if (blocked.code !== 'no-image' && blocked.code !== 'native-no-image') {
+          setToast(blocked.message)
+          window.setTimeout(() => setToast(''), 3600)
+        }
         return
       }
-      // 当前画面优先；角色/相邻分镜/素材由共享解析器排序；最后才是调度关键帧。
-      const allRefs: { url: string; label: string }[] = []
-      const seenRefs = new Set<string>()
-      const pushRef = (url: string | undefined, label: string) => {
-        if (!url || seenRefs.has(url)) return
-        seenRefs.add(url)
-        allRefs.push({ url, label })
-      }
-      if (node.data.refImage) pushRef(node.data.refImage, '当前画面构图')
-      for (let i = 0; i < imgs.length; i++) pushRef(imgs[i], labels[i] || '参考素材')
-      if (node.data.useScheduleFrames && !useVideoRef) {
-        for (const f of node.data.scheduleFrames ?? []) {
-          pushRef(f, '3D 调度关键帧：只取走位与机位变化，不要照搬几何体画风')
-        }
-      }
-      const limited = allRefs.slice(0, 4)
-      const omitted = allRefs.slice(4)
-      const refList = limited.map((r) => r.url)
-      const refNotes = limited.map((r) => r.label)
-      if (omitted.length) {
-        setToast(`视频参考图最多 4 张，已省略：${omitted.map((r) => r.label).join('、')}`)
+      const omittedNotes = [
+        request.omitted.length
+          ? `参考图最多 4 张，已省略：${request.omitted.map((r) => r.label).join('、')}`
+          : '',
+        request.omittedVideos.length
+          ? `首期只使用第一条视频素材，已忽略：${request.omittedVideos.map((r) => r.label).join('、')}`
+          : '',
+      ].filter(Boolean)
+      if (omittedNotes.length) {
+        setToast(omittedNotes.join('；'))
         window.setTimeout(() => setToast(''), 4200)
       }
-      if (refList.length === 0 && !first && !useVideoRef) {
-        patch(id, { vidState: 'error', vidError: '先出画面，或在画布上连线一张参考图' })
-        return
-      }
       patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
-      // 出片要的是「运动」，优先用 video_prompt；没有才退回画面提示词
-      const motion = (node.data.videoPrompt || node.data.prompt).trim()
-      const liveMotionNote = motionNoteOf(sceneLayout, liveBlocking, scheduleDuration, node.data.move) || node.data.motionNote
-      // fallback 不用「电影感」这类抽象词：给模型可见的物理量
-      const fallback = `${node.data.size}，${
-        node.data.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${node.data.move}`
-      }，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
-      // 多参考图模式：提示词里用 [图N] / @图像N 指代，模型才知道每张图管什么
-      const refHint =
-        refList.length > 0
-          ? useVideoRef
-            ? `\n\n参考图：${refNotes.map((n, i) => `@图像${i + 1}=${n}`).join('，')}。画面风格、人物外观、场景以参考图为准。`
-            : `\n\n参考图：${refNotes.map((n, i) => `[图${i + 1}]=${n}`).join('，')}。主体外观、场景与道具必须与参考图一致。`
-          : ''
-      // 视频参考只约束运动关系，画风交给参考图或文字，避免白模污染
-      const videoHint = useVideoRef
-        ? `\n\n参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。${
-            refList.length === 0 ? '画面风格、人物外观与场景以文字描述为准。' : ''
-          }`
-        : ''
+      const effective = effectiveVideoPrompt(request, node.data.videoPromptOverride)
+      const imageUrls = request.refs.map((r) => r.url)
+      const audioRef = request.audio
+        ? {
+            character: request.audio.character || '',
+            url: request.audio.url,
+            label: request.audio.label,
+          }
+        : null
+      const modelKey = selectedVideoModel?.key || ''
       const tid = startTask('video', `${node.data.no} 出片`, {
-        cost: videoCost(price, Math.round(node.data.seconds), vidRes),
+        cost: videoCost(price, request.seconds, vidRes),
         retry: () => void generateVideoOne(id),
       })
       try {
         const res = await startVideo({
-          ...(useVideoRef
-            ? {
-                refVideos: [String(node.data.scheduleVideo)],
-                ...(refList.length > 0 ? { refImages: refList } : {}),
-              }
-            : refList.length > 0
-              ? { refImages: refList }
-              : { image: first }),
-          prompt:
-            (motion || fallback) +
-            (liveMotionNote ? `\n【运镜与走位】${liveMotionNote}` : '') +
-            refHint +
-            videoHint,
-          seconds: Math.round(node.data.seconds),
+          ...(request.mode === 'native'
+            ? { refImages: imageUrls, generateAudio: true, audioRef: request.audio?.url }
+            : request.video
+              ? {
+                  refVideos: [request.video.url],
+                  ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
+                }
+              : imageUrls.length > 0
+                ? { refImages: imageUrls }
+                : { image: request.firstFrame?.url || '' }),
+          prompt: effective.text,
+          seconds: request.seconds,
           ratio,
           resolution: vidRes,
-          ...(useVideoRef ? {} : { cameraFixed: node.data.move === '固定' }),
-          modelKey: modelPick.video || appSettings?.defaults?.video || '',
+          ...(request.video || request.mode === 'native'
+            ? {}
+            : { cameraFixed: node.data.move === '固定' }),
+          modelKey,
         })
         if (res.skipped?.length) {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
@@ -2243,10 +2178,33 @@ function Shell() {
         const done = await waitVideo(taskId, (elapsed) =>
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
         )
+        const createdAt = new Date().toISOString()
         patch(id, {
           videoUrl: done.url,
           vidState: 'idle',
           vidAt: undefined,
+          videoMeta: {
+            url: done.url,
+            prompt: effective.text,
+            fingerprint: request.fingerprint,
+            modelKey,
+            createdAt,
+          },
+          ...(request.mode === 'native' && audioRef
+            ? {
+                audioMode: 'native' as const,
+                audioRef,
+                audioMeta: {
+                  fingerprint: nativeAudioFingerprint({
+                    modelKey,
+                    audioRef,
+                    dialogue: parseDialogue(node.data.dialogue),
+                  }),
+                  modelKey,
+                  createdAt,
+                },
+              }
+            : {}),
         })
         endTask(tid)
       } catch (e) {
@@ -2254,8 +2212,283 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, collectRefImgs, modelPick, appSettings, sceneLayouts, projectAspect],
+    [patch, ratio, vidRes, selectedVideoModel, sceneLayouts, projectAspect, missingMedia],
   )
+
+  /** 转场配置写回：始终基于最新节点数据合并，避免异步生成覆盖用户同时改的其他字段 */
+  const writeTransition = useCallback(
+    (sourceId: string, to: string, updater: (cur: TransitionOut) => TransitionOut) => {
+      setNodes((ns) =>
+        ns.map((n) => {
+          if (n.id !== sourceId) return n
+          const cur = normalizeTransitionOut(n.data.transitionOut, to)
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              transitionOut: updater(cur),
+              handEdited: [...new Set([...(n.data.handEdited ?? []), 'transition_out'])],
+            },
+          }
+        }),
+      )
+    },
+    [setNodes],
+  )
+
+  const transitionPair = useCallback(
+    (edgeId: string) => {
+      const edge = edges.find((e) => e.id === edgeId)
+      if (!edge) return null
+      const source = nodesRef.current.find((n) => n.id === edge.source)
+      const target = nodesRef.current.find((n) => n.id === edge.target)
+      if (!source || !target) return null
+      return { edge, source, target, to: target.data.shotId || target.id }
+    },
+    [edges],
+  )
+
+  const generateTransitionKeyframe = useCallback(
+    async (edgeId: string) => {
+      const pair = transitionPair(edgeId)
+      if (!pair) return
+      const { source, target, to } = pair
+      const base = normalizeTransitionOut(source.data.transitionOut, to)
+      const g = normalizeGenerated(base.generated)
+      if (g.keyframe?.state === 'running') return
+      if (!source.data.shotId) {
+        setToast('这张镜头卡没有业务 ID，转场配置只存在画布，无法写回项目')
+        window.setTimeout(() => setToast(''), 3600)
+      }
+      writeTransition(source.id, to, (cur) => ({
+        ...cur,
+        mode: 'generated',
+        generated: {
+          ...normalizeGenerated(cur.generated),
+          keyframe: {
+            ...(cur.generated?.keyframe ?? { candidates: [] }),
+            state: 'running',
+            error: undefined,
+          },
+        },
+      }))
+      const tid = startTask('image', '转场关键帧', { cost: imageCost(price, 1) })
+      try {
+        const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
+        const missing = [
+          ...collectShotReferences({ node: source, nodes: nodesRef.current, characters, missingMedia }).missing,
+          ...collectShotReferences({ node: target, nodes: nodesRef.current, characters, missingMedia }).missing,
+        ].map((m) => `${m.label}：${m.reason}`)
+        const refs = effectiveTransitionRefs(
+          source,
+          target,
+          nodesRef.current,
+          characters,
+          missingMedia,
+          g,
+        )
+        const limited = clampKeyframeRefs([
+          boundary.out || '',
+          boundary.in || '',
+          ...refs.map((r) => r.url),
+        ])
+        if (limited.urls.length === 0) throw new Error('没有可用的参考图，先给相邻镜头出画面')
+        const prompt = keyframePrompt(source, target, g)
+        const res = await generateImage({
+          prompt,
+          ratio: projectAspect,
+          refImages: limited.urls,
+          n: 1,
+          modelKey: modelPick.image,
+          ...(projectName ? { project: projectName } : {}),
+        })
+        const urls = res.urls?.length ? res.urls : [res.url]
+        const keyframe = {
+          candidates: urls,
+          activeIdx: 0,
+          image: urls[0],
+          prompt,
+          state: 'idle' as const,
+        }
+        writeTransition(source.id, to, (cur) => {
+          const generated = { ...normalizeGenerated(cur.generated), boundary, keyframe }
+          return {
+            ...cur,
+            mode: 'generated',
+            generated,
+            meta: {
+              fingerprint: transitionFingerprint(source.data, target.data, generated),
+              modelKey: modelPick.image,
+              createdAt: new Date().toISOString(),
+            },
+          }
+        })
+        endTask(tid)
+        if (missing.length) {
+          setToast(`参考图缺失：${missing.slice(0, 3).join('；')}`)
+          window.setTimeout(() => setToast(''), 4200)
+        } else if (warnings.length) {
+          setToast(warnings.join('；'))
+          window.setTimeout(() => setToast(''), 4200)
+        } else if (limited.omitted > 0) {
+          setToast(`参考图超过 10 张，已省略 ${limited.omitted} 张`)
+          window.setTimeout(() => setToast(''), 3200)
+        }
+      } catch (e) {
+        const message = (e as Error).message || '关键帧生成失败'
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            keyframe: {
+              ...(cur.generated?.keyframe ?? { candidates: [] }),
+              state: 'error',
+              error: message,
+            },
+          },
+        }))
+        endTask(tid, message)
+      }
+    },
+    [
+      transitionPair,
+      writeTransition,
+      characters,
+      missingMedia,
+      projectAspect,
+      modelPick,
+      projectName,
+      price,
+    ],
+  )
+
+  const generateTransitionVideo = useCallback(
+    async (edgeId: string) => {
+      const pair = transitionPair(edgeId)
+      if (!pair) return
+      const { source, target, to } = pair
+      const base = normalizeTransitionOut(source.data.transitionOut, to)
+      const g = normalizeGenerated(base.generated)
+      const keyframe = g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0]
+      if (!keyframe) {
+        setToast('先生成并确认关键帧，再生成转场视频')
+        window.setTimeout(() => setToast(''), 2600)
+        return
+      }
+      if (g.video?.state === 'running') return
+      const videoKey = modelPick.video || appSettings?.defaults?.video || ''
+      const entry = appSettings?.models.find((m) => m.key === videoKey)
+      const supportsLast = modelSupportsLastFrame(entry)
+      const req = transitionRequestSeconds(g.targetSeconds, entry?.model, supportsLast)
+      writeTransition(source.id, to, (cur) => ({
+        ...cur,
+        mode: 'generated',
+        generated: {
+          ...normalizeGenerated(cur.generated),
+          video: {
+            ...(cur.generated?.video ?? {}),
+            state: 'running',
+            error: undefined,
+            at: Date.now(),
+            modelKey: videoKey,
+            seconds: req.seconds,
+            ...(req.trimTo ? { trimTo: req.trimTo } : {}),
+          },
+        },
+      }))
+      const tid = startTask('video', '转场视频', {
+        cost: videoCost(price, req.seconds, vidRes),
+      })
+      try {
+        const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
+        const res = await startVideo({
+          transition: {
+            boundaryOut: boundary.out,
+            boundaryIn: boundary.in,
+            keyframe,
+          },
+          prompt: transitionVideoPrompt(source, target, g),
+          seconds: req.seconds,
+          ratio: projectAspect,
+          resolution: vidRes,
+          cameraFixed: false,
+          modelKey: videoKey,
+        })
+        const done = await waitVideo(res.id)
+        writeTransition(source.id, to, (cur) => {
+          const generated = {
+            ...normalizeGenerated(cur.generated),
+            boundary,
+            video: {
+              url: done.url,
+              modelKey: videoKey,
+              seconds: req.seconds,
+              ...(req.trimTo ? { trimTo: req.trimTo } : {}),
+              state: 'idle' as const,
+            },
+          }
+          return {
+            ...cur,
+            mode: 'generated',
+            generated,
+            meta: {
+              fingerprint: transitionFingerprint(source.data, target.data, generated),
+              modelKey: videoKey,
+              createdAt: new Date().toISOString(),
+            },
+          }
+        })
+        endTask(tid)
+        if (warnings.length) {
+          setToast(warnings.join('；'))
+          window.setTimeout(() => setToast(''), 4200)
+        }
+      } catch (e) {
+        const message = (e as Error).message || '转场视频生成失败'
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            video: {
+              ...(cur.generated?.video ?? {}),
+              state: 'error',
+              error: message,
+            },
+          },
+        }))
+        endTask(tid, message)
+      }
+    },
+    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price],
+  )
+
+  /** 批量只动效果转场；生成转场必须逐条手动，避免一次点掉多次视频生成 */
+  const unifyTransitions = useCallback(() => {
+    let changed = 0
+    for (const e of edges) {
+      if ((e.data?.relation ?? 'cut') !== 'transition') continue
+      const source = nodesRef.current.find((n) => n.id === e.source)
+      const target = nodesRef.current.find((n) => n.id === e.target)
+      if (!source || !target) continue
+      const to = target.data.shotId || target.id
+      const cur = normalizeTransitionOut(source.data.transitionOut, to)
+      if (cur.mode === 'generated') continue
+      const effect = normalizeEffect(cur.effect)
+      if (effect.type === 'dissolve' && Math.abs(effect.seconds - 0.5) < 0.001) continue
+      writeTransition(source.id, to, (c) => ({
+        ...c,
+        mode: 'effect',
+        effect: normalizeEffect({ type: 'dissolve', seconds: 0.5 }),
+      }))
+      changed++
+    }
+    setToast(
+      changed
+        ? `已把 ${changed} 条转场统一为叠化 0.5s（生成转场保持不变）`
+        : '没有需要改的效果转场；生成转场保持原样',
+    )
+    window.setTimeout(() => setToast(''), 3200)
+  }, [edges, writeTransition])
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
   const generateVoiceOne = useCallback(
@@ -2268,37 +2501,70 @@ function Shell() {
         return
       }
       const available = voicesRef.current
-      if (available.length === 0) {
-        patch(id, { voiceState: 'error', voiceError: '当前没有可用音色（未配置 TTS 引擎）' })
+      const lines = parseDialogue(text)
+      const audioModel = appSettings?.models.find((m) => m.key === audioModelKey)
+      const currentProviderId = audioModel?.provider
+      const charOf = (speaker: string) => charactersRef.current.find((c) => c.name === speaker)
+      const pick = available.find((v) => v.id === node.data.voiceName) ?? available[0]
+      const resolutions = lines.map((line) =>
+        resolveVoiceForSpeaker({
+          character: charOf(line.speaker),
+          currentProviderId,
+          fallbackVoice: pick?.id,
+        }),
+      )
+      const failed = resolutions.find((r) => !r.ok)
+      if (failed && !failed.ok) {
+        patch(id, { voiceState: 'error', voiceError: failed.reason })
         return
       }
-      // 旧数据里的 voiceName 可能已不可用（如未下载的 say 音色），回落到首个可用音色
-      const pick = available.find((v) => v.id === node.data.voiceName) ?? available[0]
-      patch(id, { voiceState: 'running', voiceError: undefined, voiceName: pick.id })
-
-      // 一镜多说话人：按行拆开，各自用角色的音色；单行也要剥掉「角色名：」前缀
-      const lines = parseDialogue(text)
-      const usable = (v?: string) => (v && available.some((x) => x.id === v) ? v : undefined)
-      const voiceOf = (speaker: string) =>
-        usable(charactersRef.current.find((c) => c.name === speaker)?.voiceId) ?? pick.id
+      const voiceOf = (speaker: string) => {
+        const idx = lines.findIndex((l) => l.speaker === speaker)
+        const r = idx >= 0 ? resolutions[idx] : null
+        return r?.ok ? r.voice : pick?.id || ''
+      }
+      patch(id, { voiceState: 'running', voiceError: undefined, ...(pick ? { voiceName: pick.id } : {}) })
+      const deliveryOf = (speaker: string, i: number) =>
+        deliveryForSpeaker(node.data.performance, speaker, node.data.dialogueDelivery, i)
+      const deliveries = lines.map((l, i) => deliveryOf(l.speaker, i))
+      const firstVoice = lines.length ? charOf(lines[0].speaker)?.voiceId || pick?.id || '' : ''
       const payload = lines.length > 1
         ? {
-            lines: lines.map((l) => ({
+            lines: lines.map((l, i) => ({
               text: l.text,
               voice: voiceOf(l.speaker),
               rate: node.data.voiceRate ?? 180,
+              ...deliveries[i],
             })),
           }
-        : { text: lines[0]?.text ?? text, voice: voiceOf(lines[0]?.speaker ?? ''), rate: node.data.voiceRate ?? 180 }
+        : {
+            text: lines[0]?.text ?? text,
+            voice: voiceOf(lines[0]?.speaker ?? ''),
+            rate: node.data.voiceRate ?? 180,
+            performance: deliveries[0],
+          }
 
       try {
         const r = await generateVoice({ ...payload, modelKey: modelPick.audio })
-        patch(id, { voiceUrl: r.url, voiceState: 'idle', voiceSeconds: r.seconds })
+        patch(id, {
+          voiceUrl: r.url,
+          voiceState: 'idle',
+          voiceSeconds: r.seconds,
+          voiceMeta: {
+            engine: r.engine,
+            model: modelPick.audio || undefined,
+            voice: firstVoice,
+            applied: r.applied ?? [],
+            unsupported: r.unsupported ?? [],
+            fingerprint: voiceFingerprint(text, deliveries),
+            createdAt: new Date().toISOString(),
+          },
+        })
       } catch (e) {
         patch(id, { voiceState: 'error', voiceError: (e as Error).message })
       }
     },
-    [patch, modelPick],
+    [patch, modelPick, appSettings, audioModelKey],
   )
 
   const voiceAll = async () => {
@@ -2364,19 +2630,7 @@ function Shell() {
   }
 
   /** 画面轨换序：把某镜移到目标下标（时间线上拖动触发） */
-  const reorderShot = useCallback((id: string, toIndex: number) => {
-    setNodes((prev) => {
-      const from = prev.findIndex((n) => n.id === id)
-      if (from < 0) return prev
-      const to = Math.max(0, Math.min(prev.length - 1, toIndex))
-      if (to === from) return prev
-      const next = [...prev]
-      const [moved] = next.splice(from, 1)
-      next.splice(to, 0, moved)
-      return next
-    })
-  }, [setNodes])
-
+  /** 时间线换序只动分镜，素材卡保持原位 */
   const pickShot = (id: string) => {
     const n = nodes.find((x) => x.id === id)
     if (!n) return
@@ -2486,14 +2740,60 @@ function Shell() {
       charImages,
       patch,
       cycleEdge,
+      setEdgeRelation,
+      openTransition,
       generate: generateOne,
       cancelGenerate,
       generateVideo: generateVideoOne,
     }),
-    [tool, guides, color, charImages, patch, cycleEdge, generateOne, cancelGenerate, generateVideoOne],
+    [
+      tool,
+      guides,
+      color,
+      charImages,
+      patch,
+      cycleEdge,
+      setEdgeRelation,
+      openTransition,
+      generateOne,
+      cancelGenerate,
+      generateVideoOne,
+    ],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
-  const editorNode = editorNodeId ? nodes.find((n) => n.id === editorNodeId) ?? null : null
+  /** 选中镜头的出片请求预览；与 generateVideoOne 调用同一个纯拼装器 */
+  const selectedVideoRequest = useMemo(() => {
+    const type = (selected as unknown as { type?: string } | null)?.type
+    if (!selected || (type && type !== 'shot')) return null
+    const schedule = resolveShotSchedule({
+      data: selected.data,
+      shotId: selected.id,
+      sceneLayouts,
+      projectAspect,
+    })
+    return buildShotVideoRequest({
+      data: selected.data,
+      nodeId: selected.id,
+      nodes,
+      characters,
+      missingMedia,
+      schedule,
+      model: selectedVideoModel,
+      resolution: vidRes,
+    })
+  }, [
+    selected,
+    nodes,
+    characters,
+    missingMedia,
+    sceneLayouts,
+    projectAspect,
+    selectedVideoModel,
+    vidRes,
+  ])
+  const selEdge = selEdgeId ? edges.find((e) => e.id === selEdgeId) ?? null : null
+  const selEdgeSource = selEdge ? nodes.find((n) => n.id === selEdge.source) ?? null : null
+  const selEdgeTarget = selEdge ? nodes.find((n) => n.id === selEdge.target) ?? null : null
 
   return (
     <CanvasCtx.Provider value={api}>
@@ -2507,43 +2807,65 @@ function Shell() {
 
           <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
 
-          <div className="viewtabs">
-            <button className={view === 'script' ? 'on' : ''} onClick={() => changeView('script')}>
+          <EpPicker
+            projectName={projectName}
+            epNo={epNo}
+            setEpNo={setEpNo}
+            version={epVersion}
+          />
+
+          <div className="viewtabs" role="navigation" aria-label="工作台视图">
+            <button
+              className={view === 'script' ? 'on' : ''}
+              aria-current={view === 'script' ? 'page' : undefined}
+              onClick={() => changeView('script')}
+            >
               剧本
             </button>
-            <button className={view === 'chars' ? 'on' : ''} onClick={() => changeView('chars')}>
+            <button
+              className={view === 'chars' ? 'on' : ''}
+              aria-current={view === 'chars' ? 'page' : undefined}
+              onClick={() => changeView('chars')}
+            >
               角色
             </button>
-            <button className={view === 'assets' ? 'on' : ''} onClick={() => changeView('assets')}>
+            <button
+              className={view === 'assets' ? 'on' : ''}
+              aria-current={view === 'assets' ? 'page' : undefined}
+              onClick={() => changeView('assets')}
+            >
               素材
             </button>
-            <button className={view === 'table' ? 'on' : ''} onClick={() => changeView('table')}>
+            <button
+              className={view === 'table' ? 'on' : ''}
+              aria-current={view === 'table' ? 'page' : undefined}
+              onClick={() => changeView('table')}
+            >
               镜头表
             </button>
-            <button className={view === 'prompts' ? 'on' : ''} onClick={() => changeView('prompts')}>
+            <button
+              className={view === 'prompts' ? 'on' : ''}
+              aria-current={view === 'prompts' ? 'page' : undefined}
+              onClick={() => changeView('prompts')}
+            >
               提示词
             </button>
-            <button className={view === 'board' ? 'on' : ''} onClick={() => changeView('board')}>
+            <button
+              className={view === 'board' ? 'on' : ''}
+              aria-current={view === 'board' ? 'page' : undefined}
+              onClick={() => changeView('board')}
+            >
               画布
             </button>
-            <button className={view === 'settings' ? 'on' : ''} onClick={() => changeView('settings')} title="大模型 / 技能规则包 / 存储">
+            <button
+              className={view === 'settings' ? 'on' : ''}
+              aria-current={view === 'settings' ? 'page' : undefined}
+              onClick={() => changeView('settings')}
+              title="大模型 / 技能 / 存储"
+            >
               设置
             </button>
           </div>
-
-          {view === 'board' && (
-            <ToolMenu
-              tool={tool}
-              setTool={setTool}
-              color={color}
-              setColor={setColor}
-              colors={COLORS}
-              guides={guides}
-              setGuides={setGuides}
-              relation={relation}
-              setRelation={setRelation}
-            />
-          )}
 
           <div className="spacer" />
 
@@ -2552,63 +2874,12 @@ function Shell() {
               未配置密钥
             </span>
           )}
-          {view === 'board' ? (
-            <>
-              <BoardMenu
-              perImage={money(price.image)}
-                canGen={hasKey !== false}
-                batch={batch}
-                vidBatch={vidBatch}
-                vbatch={vbatch}
-                charsOn={charsOn}
-                diagOn={diagOn}
-                onAddShot={addShot}
-                onGenAll={generateAll}
-                onGenVideoAll={generateVideoAll}
-                onVoiceAll={voiceAll}
-                onFit={() => fitView({ padding: 0.2, duration: 400 })}
-                onToggleChars={toggleChars}
-                onToggleDiag={() => setDiagOn((v) => !v)}
-                onClear={clearCanvas}
-              />
-              <button
-                className="btn"
-                onClick={addAsset}
-                title="添加素材卡：场景图 / 道具图 / 参考图 / 视频素材，连线到分镜卡即为参考"
-              >
-                + 素材
-              </button>
-              <button
-                className="btn"
-                onClick={() => setPreview(true)}
-                title="按时间尺顺序连播：有视频放视频，没视频按镜头时长定格"
-              >
-                ▶ 连播
-              </button>
-            </>
-          ) : view === 'table' || view === 'prompts' || view === 'script' ? (
-            <span className="board-count">{projectName || '未选项目'}</span>
-          ) : view === 'settings' ? (
-            <span className="board-count">设置</span>
-          ) : view === 'assets' ? (
-            <span className="board-count">场景 / 道具</span>
-          ) : (
-            <span className="board-count">{characters.length} 个角色</span>
-          )}
           <ThemeToggle />
           <TaskCenter />
-          <button className="btn primary" onClick={exportJson}>导出 JSON</button>
+          <button className="btn" onClick={exportJson}>
+            导出 JSON
+          </button>
         </header>
-
-        {/* 画布也按集过滤，所以集栏必须在画布上也能用，否则切不了集、也看不出当前是哪一集 */}
-        {(view === 'board' || view === 'table' || view === 'prompts' || view === 'script' || view === 'assets') && (
-          <EpisodeBar
-            projectName={projectName}
-            epNo={epNo}
-            setEpNo={setEpNo}
-            version={epVersion}
-          />
-        )}
 
         {view === 'table' ? (
           <ShotTable
@@ -2652,6 +2923,11 @@ function Shell() {
             stagePick={stagePick}
             onPickStage={pickStageModel}
             onPush={pushShotsToCanvas}
+            canvasNodes={nodes}
+            assets={assets}
+            sceneLayouts={sceneLayouts}
+            projectAspect={projectAspect}
+            onEditorDirtyChange={setPromptEditorDirty}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
@@ -2689,6 +2965,16 @@ function Shell() {
             characters={characters}
             patch={patchCharacter}
             selectedShot={selected ? { id: selected.id, no: selected.data.no } : null}
+            selectedShotBudget={
+              selectedVideoRequest
+                ? {
+                    used: selectedVideoRequest.refs.length,
+                    max: 4,
+                    expression: Boolean(selected?.data.useExpressionRef),
+                    omitted: selectedVideoRequest.omitted.length,
+                  }
+                : null
+            }
             onInject={injectCharacter}
             voices={voices}
             onAdd={addCharacter}
@@ -2704,12 +2990,66 @@ function Shell() {
             price={price}
             projectName={projectName}
             onPersist={saveCharactersNow}
+            onPublishSheet={publishExpressionSheet}
+            onReplace={replaceCharacters}
+            epNo={epNo}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2800)
+            }}
             missing={missingMedia}
             onImageMissing={markMissing}
+            charsOn={charsOn}
+            onToggleChars={toggleChars}
           />
         ) : (
         <main className="main">
           <div className={`canvas ${zoomLite ? 'zoom-lite' : ''}`}>
+            <div className="canvas-tools">
+              <ToolMenu
+                tool={tool}
+                setTool={setTool}
+                color={color}
+                setColor={setColor}
+                colors={COLORS}
+                guides={guides}
+                setGuides={setGuides}
+                relation={relation}
+                setRelation={setRelation}
+              />
+              <BoardMenu
+                perImage={money(price.image)}
+                canGen={hasKey !== false}
+                batch={batch}
+                vidBatch={vidBatch}
+                vbatch={vbatch}
+                charsOn={charsOn}
+                diagOn={diagOn}
+                onAddShot={addShot}
+                onGenAll={generateAll}
+                onGenVideoAll={generateVideoAll}
+                onVoiceAll={voiceAll}
+                onUnifyTransitions={unifyTransitions}
+                onFit={() => fitView({ padding: 0.2, duration: 400 })}
+                onToggleChars={toggleChars}
+                onToggleDiag={() => setDiagOn((v) => !v)}
+                onClear={clearCanvas}
+              />
+              <button
+                className="btn-mini"
+                onClick={addAsset}
+                title="添加素材卡：场景图 / 道具图 / 参考图 / 视频素材，连线到分镜卡即为参考"
+              >
+                + 素材
+              </button>
+              <button
+                className="btn-mini"
+                onClick={() => setPreview(true)}
+                title="按时间尺顺序连播：有视频放视频，没视频按镜头时长定格"
+              >
+                ▶ 连播
+              </button>
+            </div>
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
             {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
               <div className="canvas-hint">
@@ -2795,27 +3135,59 @@ function Shell() {
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
               onEdgesDelete={onEdgesDeleted}
+              onBeforeDelete={async ({ edges: delEdges }) => {
+                const trans = delEdges.filter(
+                  (e) => !e.id.startsWith('ref-') && (e.data?.relation ?? 'cut') === 'transition',
+                )
+                if (trans.length === 0) return true
+                const risky = trans.some((e) => {
+                  const src = nodesRef.current.find((n) => n.id === e.source)
+                  const tgt = nodesRef.current.find((n) => n.id === e.target)
+                  if (!src || !tgt) return false
+                  const to = tgt.data.shotId || tgt.id
+                  const cur = src.data.transitionOut
+                  return Boolean(
+                    cur &&
+                      cur.to === to &&
+                      (cur.generated?.video?.url || cur.generated?.keyframe?.candidates?.length),
+                  )
+                })
+                return (
+                  !risky ||
+                  window.confirm('删除这条转场连线会同时清除已生成的关键帧/视频配置。继续？')
+                )
+              }}
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               onNodeClick={(_, n) => {
                 setSelRef(null)
+                setSelEdgeId(null)
                 if (n.id.startsWith('char-')) focusChar(charNameOf(n.id))
                 else setSelId(n.id)
               }}
               onEdgeClick={(_, e) => {
                 if (e.id.startsWith('ref-')) {
                   setSelId(null)
+                  setSelEdgeId(null)
                   setSelRef(e.id)
+                  return
+                }
+                if ((e.data?.relation ?? 'cut') === 'transition') {
+                  setSelId(null)
+                  setSelRef(null)
+                  setSelEdgeId(e.id)
                 }
               }}
               onPaneClick={() => {
                 setSelRef(null)
                 setSelId(null)
+                setSelEdgeId(null)
                 setCtx(null)
               }}
               onNodeContextMenu={(e, n) => {
                 e.preventDefault()
                 setSelRef(null)
+                setSelEdgeId(null)
                 setSelId(n.id)
                 setCtx({ x: e.clientX, y: e.clientY, id: n.id })
               }}
@@ -2861,42 +3233,6 @@ function Shell() {
                 onFirstFrame={
                   ctxData.mode === 'shot' ? (id) => useAsFirstFrame(ctxData.targetId, id) : undefined
                 }
-                actions={
-                  ctxData.mode === 'shot'
-                    ? [
-                        {
-                          key: 'scheduleEdit',
-                          label: '编辑 3D 调度…',
-                          hint: '代码 · 参考内容 · 渲染',
-                          onClick: () => {
-                            const id = ctx.id
-                            setCtx(null)
-                            openScheduleEditor(id)
-                          },
-                        },
-                        {
-                          key: 'schedule3d',
-                          label: '生成调度视频（3D）',
-                          hint: '代码渲染 · 抽帧 · 文案',
-                          onClick: () => {
-                            const id = ctx.id
-                            setCtx(null)
-                            void genScheduleVideo(id)
-                          },
-                        },
-                        {
-                          key: 'schedref',
-                          label: '调度关键帧作参考',
-                          hint: '抽 3 帧当参考图 · 可能带代码画风',
-                          onClick: () => {
-                            const id = ctx.id
-                            setCtx(null)
-                            void genScheduleVideo(id, true)
-                          },
-                        },
-                      ]
-                    : undefined
-                }
                 onEdit={() => {
                   setSelId(ctx.id)
                   setCtx(null)
@@ -2914,16 +3250,38 @@ function Shell() {
             )}
 
             <Timeline
-              nodes={shownNodes}
+              nodes={episodeShots}
+              edges={edges}
               activeId={selId}
               charImages={charImages}
               onPick={pickShot}
               onPatch={patch}
-              onReorder={reorderShot}
+              onOpenTransition={openTransition}
             />
           </div>
 
-          <Inspector
+          {selEdge && selEdgeSource && selEdgeTarget ? (
+            <TransitionPanel
+              edge={selEdge}
+              source={selEdgeSource}
+              target={selEdgeTarget}
+              nodes={episodeShots}
+              characters={characters}
+              missingMedia={missingMedia}
+              settings={appSettings}
+              pick={modelPick}
+              projectName={projectName}
+              price={price}
+              vidRes={vidRes}
+              inactive={inactiveEdgeIds.has(selEdge.id)}
+              onPatch={patch}
+              onSetRelation={setEdgeRelation}
+              onClose={() => setSelEdgeId(null)}
+              onGenerateKeyframe={generateTransitionKeyframe}
+              onGenerateVideo={generateTransitionVideo}
+            />
+          ) : (
+            <Inspector
             node={selected}
             patch={patch}
             onDelete={removeShot}
@@ -2941,11 +3299,11 @@ function Shell() {
             vidRes={vidRes}
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
-            onOpenSchedule={openScheduleEditor}
-            sceneLayouts={sceneLayouts}
             projectAspect={projectAspect}
             price={price}
             projectName={projectName}
+            characters={characters}
+            videoRequest={selectedVideoRequest}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
@@ -2953,44 +3311,20 @@ function Shell() {
             voices={voices}
             voiceProvider={voiceProvider}
           />
+          )}
         </main>
         )}
 
         {preview && (
           <Preview
             nodes={nodes}
+            edges={edges}
             startId={selId}
             onClose={() => setPreview(false)}
             onPick={pickShot}
             assReady={assReady}
             epNo={epNo}
             onEpChange={setEpNo}
-          />
-        )}
-
-        {editorNodeId && editorNode && (
-          <SceneCodeWorkbench
-            projectName={projectName}
-            node={editorNode}
-            nodes={nodes}
-            characters={characters}
-            assets={assets}
-            sceneLayouts={sceneLayouts}
-            projectAspect={projectAspect}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStageModel={pickStageModel}
-            onClose={() => {
-              setEditorNodeId(null)
-              setEditorDirty(false)
-            }}
-            onSave={saveEditor}
-            onRendered={applyEditorRender}
-            onDirtyChange={setEditorDirty}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3000)
-            }}
           />
         )}
 

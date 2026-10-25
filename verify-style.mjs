@@ -18,7 +18,7 @@ await p.waitForTimeout(1600)
 const t = await p.evaluate(() => {
   const cs = getComputedStyle(document.documentElement)
   const out = {}
-  for (const k of ['--bg','--bg-2','--panel','--panel-2','--line','--line-2','--text','--text-2','--muted','--accent','--accent-ink','--warn','--danger','--ok','--font-sans','--font-mono','--dur-fast','--dur-base','--dur-slow']) {
+  for (const k of ['--bg','--bg-2','--panel','--panel-2','--chrome-1','--chrome-2','--chrome-line','--line','--line-2','--text','--text-2','--muted','--accent','--accent-ink','--warn','--danger','--ok','--font-sans','--font-mono','--dur-fast','--dur-base','--dur-slow']) {
     out[k] = cs.getPropertyValue(k).trim() || '(INVALID)'
   }
   return out

@@ -28,7 +28,7 @@ const check = (name, cond, extra = '') => {
 }
 
 const input = {
-  code: 'let S; function init(ctx){S=ctx} function renderAt(t){} function dispose(){}',
+  code: 'import bpy\n\ndef build(ctx):\n    bpy.ops.mesh.primitive_cube_add()\n\ndef pose(t, mode):\n    pass\n\ndef dispose():\n    pass',
   codeHash: 'abcdef1234567890',
   assets: [],
   duration: 4,

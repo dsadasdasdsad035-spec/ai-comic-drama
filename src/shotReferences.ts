@@ -1,5 +1,6 @@
-import type { CharacterSheet } from './characters'
-import type { ShotData } from './types'
+import { type CharacterSheet } from './characters'
+import { selectExpressionReference } from './expressionSheet'
+import { PERFORMANCE_EMOTION_LABELS, type ShotData } from './types'
 import type { ShotNodeType } from './data'
 
 export const SHOT_PREV = 'shot-prev'
@@ -18,9 +19,25 @@ export type NeighborCandidate = {
 
 export type ResolvedShotReference = {
   token: string
-  source: 'character' | 'adjacent' | 'asset' | 'extra'
+  source: 'expression' | 'character' | 'adjacent' | 'asset' | 'extra'
   url: string
   label: string
+  /** 仅表情单格：用于视频预算只选说话角色 */
+  character?: string
+  emotion?: string
+}
+
+/** 连线里的视频素材；独立于图片参考，不占 4 张额度。 */
+export type ResolvedVideoReference = {
+  token: string
+  url: string
+  label: string
+  title?: string
+}
+
+export type VideoReferenceCollection = {
+  refs: ResolvedVideoReference[]
+  missing: MissingShotReference[]
 }
 
 export type MissingShotReference = {
@@ -150,7 +167,34 @@ export function collectShotReferences(input: {
   const missing: MissingShotReference[] = []
   const missingMedia = input.missingMedia ?? new Set<string>()
 
-  // 1. 角色：显式 char token；没有 token 时保留旧的 cast 自动匹配。
+  // 1. 表情参考：优先说话/主动作角色；失效或缺图静默回退文字表演，不阻塞出图。
+  const expressionSeen = new Set<string>()
+  const expressionOrder = [...(data.performance ?? [])]
+    .filter((p) => p.character)
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.speaks)) - Number(Boolean(a.speaks)) ||
+        Number(Boolean(b.action)) - Number(Boolean(a.action)),
+    )
+  for (const entry of expressionOrder) {
+    if (expressionSeen.has(entry.character)) continue
+    expressionSeen.add(entry.character)
+    const card = input.characters.find((c) => c.name === entry.character || c.id === entry.character)
+    if (!card) continue
+    const selected = selectExpressionReference({ character: card, emotion: entry.emotion })
+    if (selected.kind === 'none') continue
+    if (missingMedia.has(selected.url)) continue
+    addRef(refs, seen, {
+      token: `expr:${card.name}:${entry.emotion}`,
+      source: 'expression',
+      url: selected.url,
+      label: `角色「${card.name}」表情 · ${PERFORMANCE_EMOTION_LABELS[entry.emotion]}`,
+      character: card.name,
+      emotion: entry.emotion,
+    })
+  }
+
+  // 2. 角色：显式 char token；没有 token 时保留旧的 cast 自动匹配。
   const charTokens = refIds.filter((id) => id.startsWith('char-'))
   const fallbackCast = refIds.length === 0 ? (data.cast ?? []) : []
   if (charTokens.length || fallbackCast.length) {
@@ -200,7 +244,7 @@ export function collectShotReferences(input: {
     if (!rid.startsWith('asset-')) continue
     const asset = input.nodes.find((n) => n.id === rid)
     const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-    if (!d || d.kind === 'video' || !d.url) continue
+    if (!d || d.kind === 'video' || d.kind === 'expression-sheet' || !d.url) continue
     if (missingMedia.has(d.url)) {
       addMissing(missing, rid, `素材「${d.title || rid}」`, '素材图片文件缺失')
       continue
@@ -226,6 +270,53 @@ export function collectShotReferences(input: {
       source: 'extra',
       url,
       label: '手工参考图',
+    })
+  }
+
+  return { refs, missing }
+}
+
+/**
+ * 解析连线里的视频素材。视频参考独立于图片 4 张额度，
+ * 因此不复用 collectShotReferences 的图片去重与排序。
+ */
+export function collectVideoReferences(input: {
+  node: ShotNodeType
+  nodes: ShotNodeType[]
+  missingMedia?: Set<string>
+}): VideoReferenceCollection {
+  const data = input.node.data
+  const refIds = data.refIds ?? []
+  const missingMedia = input.missingMedia ?? new Set<string>()
+  const refs: ResolvedVideoReference[] = []
+  const missing: MissingShotReference[] = []
+  const seen = new Set<string>()
+
+  for (const rid of refIds) {
+    if (!rid.startsWith('asset-')) continue
+    const asset = input.nodes.find((n) => n.id === rid)
+    const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
+    if (!d) {
+      addMissing(missing, rid, `素材「${rid}」`, '素材节点不存在')
+      continue
+    }
+    if (d.kind !== 'video') continue
+    const title = d.title || '未命名'
+    if (!d.url) {
+      addMissing(missing, rid, `视频素材「${title}」`, '视频素材没有地址')
+      continue
+    }
+    if (missingMedia.has(d.url)) {
+      addMissing(missing, rid, `视频素材「${title}」`, '视频素材文件缺失')
+      continue
+    }
+    if (seen.has(d.url)) continue
+    seen.add(d.url)
+    refs.push({
+      token: rid,
+      url: d.url,
+      label: `视频素材「${title}」`,
+      ...(d.title ? { title: d.title } : {}),
     })
   }
 

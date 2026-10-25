@@ -7,11 +7,12 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
   prop: { label: '道具', cls: 'asset-badge-prop' },
   image: { label: '图', cls: 'asset-badge-image' },
   video: { label: '视频', cls: 'asset-badge-video' },
+  'expression-sheet': { label: '表情', cls: 'asset-badge-expression' },
 }
 
 /**
- * 素材卡：场景图 / 道具图 / 参考图 / 视频素材。
- * 连到分镜卡的边 = 参考关系（生成画面时按连线取参考图）。
+ * 素材卡：场景图 / 道具图 / 参考图 / 视频素材 / 角色表情总图。
+ * 连到分镜卡的边 = 参考关系（表情总图只显示，实际发送按表演裁出的单格）。
  * 节点数据（title/kind/url）存画布 localStorage，位置随拖拽持久化。
  */
 function AssetNodeInner({ data, selected }: NodeProps<AssetNodeType>) {

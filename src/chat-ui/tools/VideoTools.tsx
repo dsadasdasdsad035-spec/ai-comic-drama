@@ -99,9 +99,9 @@ export function VideoPart({ data: video }: DataMessagePartProps<AgentVideoPart>)
         )}
         {video.frames.length > 0 && (
           <div data-chat-video-frames className="flex gap-1.5 overflow-x-auto pb-0.5">
-            {video.frames.map((frame: AgentFrame) => (
+            {video.frames.map((frame: AgentFrame, i: number) => (
               <a
-                key={`${frame.t}-${frame.url.slice(0, 12)}`}
+                key={`${i}-${frame.t}-${frame.url}`}
                 href={frame.url}
                 target="_blank"
                 rel="noreferrer"

@@ -6,10 +6,7 @@ import {
   useState,
 } from 'react'
 import {
-  AssistantRuntimeProvider,
-  ComposerPrimitive,
   MessagePrimitive,
-  ThreadPrimitive,
   makeAssistantToolUI,
   useExternalStoreRuntime,
   type AppendMessage,
@@ -17,11 +14,14 @@ import {
 } from '@assistant-ui/react'
 import type { AppSettings } from '../api'
 import type { StagePick } from '../ModelSelect'
+import { resolveStageModel } from '../ModelSelect'
+import { resolveToolProtocol } from './toolCapabilities'
 import type { SceneCodeCheck } from '../sceneCodeSanitize'
 import type { PreparedCodeContext } from '../sceneCodePrepare'
-import type { SandboxAssetPayload } from '../sceneSandbox'
 import { runSceneAgent } from './sceneAgentGraph'
-import { AgentSandboxSession } from './agentSandbox'
+import { manifestSummary, manifestText, type ContextManifest } from '../contextManifest'
+import { AgentBlenderSession } from './agentSandbox'
+import { applyAgentEvent } from './agentMessageReducer'
 import { reviewFramesWithVision } from './agentReview'
 import { agentVideoSummary, runVideoAcceptance, type AgentVideoAcceptanceResult } from './agentVideoAcceptance'
 import {
@@ -37,14 +37,18 @@ import {
   type AgentVideoReviewPart,
   type SceneAgentDeps,
 } from './sceneAgentTypes'
-import type { Shot3DContextItem } from '../shot3dContextCatalog'
-import { ChatRoot } from '@/chat-ui/ChatRoot'
-import { ChatChips } from '@/chat-ui/ChatChips'
+import { ChatContextTray } from '@/chat-ui/ChatContextTray'
+import { ChatContextInspector } from '@/chat-ui/ChatContextInspector'
+import { ChatContextPart } from '@/chat-ui/ChatContextPart'
 import { ChatText } from '@/chat-ui/ChatText'
-import { ChatComposer } from '@/chat-ui/ChatComposer'
-import { ChatEmpty } from '@/chat-ui/ChatEmpty'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
-import { ChatViewport } from '@/chat-ui/ChatViewport'
+import { DraftPart, DraftTool } from '@/chat-ui/tools/DraftTools'
+import { sceneDraftClient } from '../sceneDraft'
+import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
+import { loadChatThread, saveChatThread } from './threads'
+import { getSkill } from '../skills/registry'
+import { buildSkillPrompt } from '../skills/render'
+import type { Skill } from '../skills/types'
 import {
   CodeTool,
   ContextTool,
@@ -56,7 +60,6 @@ import {
   VideoReviewPart,
   VideoUiContext,
 } from '@/chat-ui/tools'
-import { buttonVariants } from '@/chat-ui/ui/button'
 import '@/chat-ui/chat.css'
 
 const AgentUiContext = createContext<{ openCode: () => void }>({ openCode: () => {} })
@@ -76,35 +79,24 @@ function appendText(message: AppendMessage): string {
     .trim()
 }
 
-function preparedContextText(prepared: PreparedCodeContext): string {
-  const lines: string[] = []
-  if (prepared.assets.length) {
-    lines.push('【可注入沙箱的素材（稳定键）】')
-    for (const asset of prepared.assets.slice(0, 32)) {
-      const meta = [
-        asset.payload.kind,
-        asset.payload.width && asset.payload.height ? `${asset.payload.width}x${asset.payload.height}` : '',
-        asset.payload.frameTime != null ? `frame @${asset.payload.frameTime.toFixed(2)}s` : '',
-      ].filter(Boolean).join(' · ')
-      lines.push(`- key=${asset.ref.key}｜${asset.ref.label}｜${meta}`)
+function contextTextOf(manifest: ContextManifest, prepared: PreparedCodeContext): string {
+  const briefs: Record<string, string> = {}
+  for (const item of prepared.mediaBrief.items ?? []) {
+    if (item.key && item.description) briefs[item.key] = item.description
+  }
+  const assetMeta: Record<string, { width?: number; height?: number }> = {}
+  for (const a of prepared.assets) {
+    assetMeta[a.ref.key] = {
+      ...(a.payload.width ? { width: a.payload.width } : {}),
+      ...(a.payload.height ? { height: a.payload.height } : {}),
     }
   }
-  if (prepared.mediaBrief.summary) lines.push(`【媒体理解】${prepared.mediaBrief.summary}`)
-  for (const item of prepared.mediaBrief.items.slice(0, 32)) {
-    const detail = [item.description, item.composition && `构图：${item.composition}`, item.style && `风格：${item.style}`, item.camera && `镜头：${item.camera}`]
-      .filter(Boolean)
-      .join('；')
-    if (detail) lines.push(`- key=${item.key}｜${item.label}：${detail}`)
-  }
-  if (prepared.videoBrief) lines.push(`【视频理解】${prepared.videoBrief}`)
-  if (prepared.missing.length) {
-    lines.push(`【缺失素材】${prepared.missing.map((x) => `${x.label}（${x.reason}）`).join('、')}`)
-  }
-  if (prepared.warnings.length) lines.push(`【注意】${prepared.warnings.slice(0, 4).join('；')}`)
-  if (!prepared.mediaBrief.usedVision && prepared.assets.length) {
-    lines.push('【注意】视觉模型未参与素材理解；只能依据上述标签和稳定键，不要编造图片细节。')
-  }
-  return lines.join('\n').slice(0, 12000)
+  const text = manifestText(manifest, briefs, 12000, assetMeta)
+  const notes = [
+    ...prepared.missing.map((m) => `${m.label}（${m.reason}）`),
+    ...prepared.warnings,
+  ]
+  return notes.length ? `${text}\n【注意】${notes.join('；')}` : text
 }
 
 function makeId() {
@@ -123,6 +115,15 @@ type VideoSession = {
   result?: AgentVideoAcceptanceResult
 }
 
+const DRAFT_TOOL_NAMES = new Set([
+  'begin_scene_draft',
+  'append_scene_draft',
+  'read_scene_draft',
+  'patch_scene_draft',
+  'commit_scene_draft',
+  'discard_scene_draft',
+])
+
 function convertMessage(message: AgentMessage): ThreadMessageLike {
   type Part = Exclude<ThreadMessageLike['content'], string>[number]
   const content: Part[] = []
@@ -130,19 +131,26 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
     if (part.type === 'text') {
       if (part.text) content.push({ type: 'text', text: part.text })
     } else if (part.type === 'step') {
+      const chars = Number(part.chars) || 0
+      const progress = chars > 0 ? `已生成 ${chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : chars} 字符` : '模型调用中…'
       const text =
         part.phase === 'start'
-          ? `第 ${part.turn} 轮 · 模型调用中…`
+          ? `第 ${part.turn} 轮 · ${progress}`
           : part.phase === 'error'
             ? `第 ${part.turn} 轮 · 模型调用失败${part.text ? `：${part.text}` : ''}`
             : `第 ${part.turn} 轮 · ${part.text ? `模型说明：${part.text}` : '模型调用完成'}`
       content.push({ type: 'text', text })
+    } else if (part.type === 'context') {
+      content.push({ type: 'data', name: 'agent-context', data: part })
+    } else if (part.type === 'draft') {
+      content.push({ type: 'data', name: 'agent-draft', data: part })
     } else if (part.type === 'tool-call') {
       content.push({
         type: 'tool-call',
         toolCallId: part.toolCallId,
         toolName: part.toolName,
-        ...(part.args ? { args: part.args as never } : {}),
+        // 草稿分片是代码正文，不放进聊天运行时/线程文件。
+        ...(part.args && !DRAFT_TOOL_NAMES.has(part.toolName) ? { args: part.args as never } : {}),
         ...(part.result !== undefined ? { result: part.result } : {}),
         ...(part.isError ? { isError: true } : {}),
       })
@@ -171,7 +179,7 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
 }
 
 const RunSandboxUI = makeAssistantToolUI({
-  toolName: 'run_sandbox',
+  toolName: 'run_render',
   render: ({ status, result }) => <SandboxTool running={status.type === 'running'} result={result} />,
 })
 
@@ -198,6 +206,22 @@ const GetContextUI = makeAssistantToolUI({
   render: ({ status }) => <ContextTool running={status.type === 'running'} />,
 })
 
+function draftToolUi(toolName: string) {
+  return makeAssistantToolUI({
+    toolName,
+    render: ({ status, result }) => (
+      <DraftTool tool={toolName} running={status.type === 'running'} result={result} />
+    ),
+  })
+}
+
+const DraftBeginUI = draftToolUi('begin_scene_draft')
+const DraftAppendUI = draftToolUi('append_scene_draft')
+const DraftReadUI = draftToolUi('read_scene_draft')
+const DraftPatchUI = draftToolUi('patch_scene_draft')
+const DraftCommitUI = draftToolUi('commit_scene_draft')
+const DraftDiscardUI = draftToolUi('discard_scene_draft')
+
 const FinishUI = makeAssistantToolUI({
   toolName: 'finish',
   render: ({ status, result }) => <FinishTool running={status.type === 'running'} result={result} />,
@@ -221,6 +245,8 @@ function AssistantMessage() {
             by_name: {
               'agent-video': VideoPart,
               'agent-video-review': VideoReviewPart,
+              'agent-context': ChatContextPart,
+              'agent-draft': DraftPart,
             },
           },
         }}
@@ -233,9 +259,12 @@ function AssistantMessage() {
 type Props = {
   settings: AppSettings | null
   stagePick?: StagePick
-  selectedItems: Shot3DContextItem[]
-  onRemoveSelected: (key: string) => void
-  getShotContext: () => string
+  manifest: ContextManifest
+  /** 3D 线程键：项目 + 镜头；关闭工作台后可恢复 */
+  threadKey: { project: string; surface: 'scene3d'; shotId: string }
+  onRemoveAttachment: (key: string) => void
+  onToggleBrief?: (key: string) => void
+  onClearAttachments?: () => void
   prepareAgent: () => Promise<PreparedCodeContext>
   onDraftCode: (code: string, check: SceneCodeCheck, prepared: PreparedCodeContext) => Promise<void> | void
   onVideoAccepted: (input: AgentVideoAcceptedInput) => Promise<void>
@@ -253,9 +282,11 @@ type Props = {
 export default function SceneAgentChat({
   settings,
   stagePick,
-  selectedItems,
-  onRemoveSelected,
-  getShotContext,
+  manifest,
+  threadKey,
+  onRemoveAttachment,
+  onToggleBrief,
+  onClearAttachments,
   prepareAgent,
   onDraftCode,
   onVideoAccepted,
@@ -269,14 +300,102 @@ export default function SceneAgentChat({
   duration,
 }: Props) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [preparedSnapshot, setPreparedSnapshot] = useState<PreparedCodeContext | null>(null)
   const [running, setRunning] = useState(false)
   const [currentCodeHash, setCurrentCodeHash] = useState<string | undefined>(undefined)
   const abortRef = useRef<AbortController | null>(null)
-  const sessionRef = useRef<AgentSandboxSession | null>(null)
+  const sessionRef = useRef<AgentBlenderSession | null>(null)
   const preparedRef = useRef<PreparedCodeContext | null>(null)
   const messageRef = useRef<AgentMessage | null>(null)
   const videoSessionsRef = useRef<Map<string, VideoSession>>(new Map())
+  const draftIdRef = useRef<string | null>(null)
   const requirementsList = requirements?.length ? requirements : undefined
+  // 当前环节模型与协议：只做展示，实际选择在 runSceneAgent 里用同一套能力表
+  const protocol = (() => {
+    const entry = resolveStageModel(settings, 'sceneCode', stagePick).entry
+    const provider = entry ? settings?.providers.find((p) => p.id === entry.provider) : undefined
+    return resolveToolProtocol(settings?.agentToolProtocol, provider?.id, entry?.model)
+  })()
+  const protocolLabel = protocol.error
+    ? '原生（当前模型不支持，运行会报错）'
+    : protocol.protocol === 'native'
+      ? '原生 tool calls'
+      : protocol.reason === 'auto-json'
+        ? 'JSON action（模型未声明支持，自动回退）'
+        : 'JSON action'
+  const [threadLoaded, setThreadLoaded] = useState(false)
+  const [sceneSkillMeta, setSceneSkillMeta] = useState<{
+    id: string
+    version: number
+    source: 'builtin' | 'override'
+  } | null>(null)
+  const [sceneSkill, setSceneSkill] = useState<Skill | null>(null)
+  const messagesRef = useRef<AgentMessage[]>([])
+  messagesRef.current = messages
+  const metaRef = useRef(sceneSkillMeta)
+  metaRef.current = sceneSkillMeta
+  const userStartedRef = useRef(false)
+
+  // 打开工作台时恢复该镜头的线程；运行中的旧消息标记取消，不自动重跑。
+  useEffect(() => {
+    let alive = true
+    setThreadLoaded(false)
+    getSkill('scene3d')
+      .then((s) => {
+        if (alive) {
+          setSceneSkillMeta({ id: s.id, version: s.manifest.version, source: s.source })
+          setSceneSkill(s)
+        }
+      })
+      .catch(() => {})
+    loadChatThread(threadKey)
+      .then((thread) => {
+        if (!alive) return
+        if (thread?.messages?.length && !userStartedRef.current) {
+          setMessages(
+            thread.messages.map((m) =>
+              m.status === 'running' ? { ...m, status: 'cancelled' as const } : m,
+            ),
+          )
+        }
+        setThreadLoaded(true)
+      })
+      .catch(() => {
+        if (alive) setThreadLoaded(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [threadKey.project, threadKey.surface, threadKey.shotId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 完成一轮后落盘；只存文本、工具摘要和产物引用。
+  useEffect(() => {
+    if (!threadLoaded || running || !messages.length) return
+    const active = sceneSkillMeta
+      ? [{ id: sceneSkillMeta.id, mode: 'host' as const, version: sceneSkillMeta.version, source: sceneSkillMeta.source }]
+      : []
+    const timer = setTimeout(() => {
+      void saveChatThread(threadKey, messages, active).catch(() => {})
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [messages, running, threadLoaded, sceneSkillMeta]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 关闭工作台时把运行中的本轮标记取消并保留已确认内容。
+  useEffect(() => {
+    return () => {
+      const msgs = messagesRef.current
+      if (!msgs.length) return
+      const marked = msgs.map((m) =>
+        m.status === 'running' ? { ...m, status: 'cancelled' as const } : m,
+      )
+      const meta = metaRef.current
+      const active = meta
+        ? [{ id: meta.id, mode: 'host' as const, version: meta.version, source: meta.source }]
+        : []
+      void saveChatThread(threadKey, marked, active).catch(() => {})
+    }
+  }, [threadKey.project, threadKey.surface, threadKey.shotId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const patchAssistant = (fn: (message: AgentMessage) => AgentMessage) => {
     setMessages((prev) => {
@@ -313,131 +432,15 @@ export default function SceneAgentChat({
   }
 
   const updateEvent = (event: AgentEvent) => {
-    if (event.type === 'agent_step') {
-      patchAssistant((m) => {
-        const exists = m.parts.some((p) => p.type === 'step' && p.turn === event.turn)
-        if (exists) {
-          return {
-            ...m,
-            parts: m.parts.map((p) =>
-              p.type === 'step' && p.turn === event.turn
-                ? { ...p, phase: event.phase, ...(event.text ? { text: event.text } : {}) }
-                : p,
-            ),
-          }
-        }
-        return {
-          ...m,
-          parts: [...m.parts, { type: 'step', turn: event.turn, phase: event.phase, ...(event.text ? { text: event.text } : {}) }],
-        }
-      })
-      return
-    }
-    if (event.type === 'message') {
-      patchAssistant((m) => ({
-        ...m,
-        parts: [...m.parts, { type: 'text', text: event.text }],
-      }))
-      return
-    }
-    if (event.type === 'tool_start') {
-      patchAssistant((m) => {
-        const existing = m.parts.find(
-          (p): p is AgentToolPart => p.type === 'tool-call' && (p.toolCallId === event.toolCallId || p.toolName === event.toolName),
-        )
-        if (existing) {
-          return {
-            ...m,
-            parts: m.parts.map((p) => (p === existing ? { ...p, status: 'running', args: event.args } : p)),
-          }
-        }
-        return {
-          ...m,
-          parts: [
-            ...m.parts,
-            {
-              type: 'tool-call',
-              toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              args: event.args,
-              status: 'running',
-              startedAt: Date.now(),
-            },
-          ],
-        }
-      })
-      return
-    }
-    if (event.type === 'tool_end') {
-      patchAssistant((m) => {
-        const existing = m.parts.find(
-          (p): p is AgentToolPart => p.type === 'tool-call' && p.toolCallId === event.toolCallId,
-        )
-        if (!existing) {
-          return {
-            ...m,
-            parts: [
-              ...m.parts,
-              {
-                type: 'tool-call',
-                toolCallId: event.toolCallId,
-                toolName: event.toolName,
-                status: event.isError ? 'error' : 'done',
-                result: event.result,
-                isError: event.isError,
-                endedAt: Date.now(),
-              },
-            ],
-          }
-        }
-        return {
-          ...m,
-          parts: m.parts.map((p) =>
-            p === existing
-              ? {
-                  ...p,
-                  status: event.isError ? 'error' : 'done',
-                  result: event.result,
-                  isError: event.isError,
-                  endedAt: Date.now(),
-                }
-              : p,
-          ),
-        }
-      })
-      return
-    }
     if (event.type === 'code') {
       setCurrentCodeHash(event.codeHash)
       return
     }
-    if (event.type === 'done') {
-      patchAssistant((m) => ({
-        ...m,
-        parts: [...m.parts, { type: 'text', text: '代码阶段完成，开始 MP4 视频验收…' }],
-      }))
-      return
+    if (event.type === 'draft_started') draftIdRef.current = event.draftId
+    if (event.type === 'draft_discarded' && draftIdRef.current === event.draftId) {
+      draftIdRef.current = null
     }
-    if (event.type === 'cancelled') {
-      patchAssistant((m) =>
-        m.status === 'cancelled'
-          ? m
-          : { ...m, status: 'cancelled', parts: [...m.parts, { type: 'text', text: '已取消' }] },
-      )
-      return
-    }
-    if (event.type === 'error') {
-      patchAssistant((m) => ({
-        ...m,
-        status: 'error',
-        parts: [
-          ...m.parts.map((p) =>
-            p.type === 'step' && p.phase === 'start' ? { ...p, phase: 'error' as const } : p,
-          ),
-          { type: 'text', text: `失败：${event.message}` },
-        ],
-      }))
-    }
+    patchAssistant((m) => applyAgentEvent(m, event))
   }
 
   const runVideoPhase = async (args: {
@@ -478,7 +481,7 @@ export default function SceneAgentChat({
           videoId,
           code: args.code,
           codeHash: args.codeHash,
-          assets: args.prepared.assets.map((a) => a.payload as SandboxAssetPayload),
+          assets: args.prepared.assets,
           duration,
           aspect,
           requirements: videoRequirements,
@@ -599,6 +602,11 @@ export default function SceneAgentChat({
 
   const run = async (text: string) => {
     if (running) return
+    if (!sceneSkill) {
+      onToast?.('scene3d 技能不可用，无法启动聊天')
+      return
+    }
+    userStartedRef.current = true
     const controller = new AbortController()
     abortRef.current = controller
     setRunning(true)
@@ -609,23 +617,21 @@ export default function SceneAgentChat({
     try {
       const prepared = await prepareAgent()
       preparedRef.current = prepared
-      const preparedText = preparedContextText(prepared)
-      const shotText = getShotContext()
-      const assets = prepared.assets.map((a) => a.payload as SandboxAssetPayload)
+      setPreparedSnapshot(prepared)
+      const contextText = contextTextOf(manifest, prepared)
+      const assets = prepared.assets
       let sessionCode = ''
       const deps: SceneAgentDeps = {
-        getShotContext: () => [shotText, preparedText].filter(Boolean).join('\n\n'),
+        getShotContext: () => contextText,
         runTrial: async (code) => {
           if (sessionRef.current && sessionCode !== code) {
             sessionRef.current.dispose()
             sessionRef.current = null
           }
           if (!sessionRef.current) {
-            sessionRef.current = new AgentSandboxSession({
+            sessionRef.current = new AgentBlenderSession({
               code,
               assets,
-              width,
-              height,
               aspect,
               duration,
             })
@@ -634,8 +640,8 @@ export default function SceneAgentChat({
           return sessionRef.current.start()
         },
         captureFrames: async (code, times) => {
-          if (!sessionRef.current || sessionCode !== code) throw new Error('沙箱会话已失效，请重新运行')
-          return sessionRef.current.capture(times)
+          if (!sessionRef.current || sessionCode !== code) throw new Error('渲染会话已失效，请重新运行 run_render')
+          return sessionRef.current.capture(times, controller.signal)
         },
         reviewFrames: async (frames, reqs) =>
           reviewFramesWithVision({ frames, requirements: reqs, settings, stagePick, signal: controller.signal }),
@@ -644,8 +650,14 @@ export default function SceneAgentChat({
           if (preparedNow) void onDraftCode(code, check, preparedNow)
         },
         onEvent: updateEvent,
+        draftScope: { project: threadKey.project, shotId: threadKey.shotId },
         signal: controller.signal,
       }
+      const requirementsText = requirementsList?.length
+        ? `\n验收要求：\n${requirementsList.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
+        : ''
+      const prompt = buildSkillPrompt(sceneSkill, { requirements: requirementsText }, 'inline')
+      const skillSystem = `${prompt.system}\n${prompt.task}`.trim()
       const result = await runSceneAgent({
         prompt: text,
         deps,
@@ -653,6 +665,8 @@ export default function SceneAgentChat({
         stagePick,
         initialCode: currentCode,
         requirements: requirementsList,
+        system: skillSystem,
+        manifestSummary: manifestSummary(manifest),
         signal: controller.signal,
       })
       if (result.cancelled) {
@@ -812,7 +826,7 @@ export default function SceneAgentChat({
       ? failed.map((item) => `- ${item.label}${item.reason ? `：${item.reason}` : ''}`).join('\n')
       : '- MP4 视频验收未通过，请重新检查并修复画面问题'
     void run(
-      `视频验收未通过。请只修复以下问题，修复后重新运行沙箱、抓帧并 finish：\n${lines}\n不要修改与这些问题无关的内容。`,
+      `视频验收未通过。请只修复以下问题，修复后重新运行渲染试运行、抓帧并 finish：\n${lines}\n不要修改与这些问题无关的内容。`,
     )
   }
 
@@ -820,6 +834,11 @@ export default function SceneAgentChat({
     abortRef.current?.abort()
     sessionRef.current?.dispose()
     sessionRef.current = null
+    // 取消即清理当前草稿；服务端启动时还会 sweep 残留。
+    if (draftIdRef.current) {
+      void sceneDraftClient.discard(draftIdRef.current).catch(() => {})
+      draftIdRef.current = null
+    }
     patchAssistant((m) =>
       m.status === 'cancelled'
         ? m
@@ -832,6 +851,10 @@ export default function SceneAgentChat({
     return () => {
       abortRef.current?.abort()
       sessionRef.current?.dispose()
+      if (draftIdRef.current) {
+        void sceneDraftClient.discard(draftIdRef.current).catch(() => {})
+        draftIdRef.current = null
+      }
     }
   }, [])
 
@@ -857,39 +880,60 @@ export default function SceneAgentChat({
       }}
     >
       <AgentUiContext.Provider value={{ openCode: onOpenCode }}>
-        <AssistantRuntimeProvider runtime={runtime}>
-          <RunSandboxUI />
-          <SetSceneCodeUI />
-          <CaptureFramesUI />
-          <ReviewFramesUI />
-          <GetContextUI />
-          <FinishUI />
-          <ChatRoot data-running={running ? 'true' : 'false'}>
-            <ChatChips items={selectedItems} onRemove={onRemoveSelected} />
-            <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
-              <ChatViewport>
-                <ThreadPrimitive.Empty>
-                  <ChatEmpty />
-                </ThreadPrimitive.Empty>
-                <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
-              </ChatViewport>
-              <ChatComposer>
-                <ComposerPrimitive.Input
-                  data-chat-input
-                  className="flex min-h-[68px] w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-xs leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  placeholder="例如：生成山、男女双剑对打、环绕镜头…"
-                  aria-label="3D agent 聊天输入"
-                />
-                <div data-chat-actions className="flex items-center justify-end gap-1.5 pt-1.5">
-                  <ComposerPrimitive.Cancel className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
-                    取消
-                  </ComposerPrimitive.Cancel>
-                  <ComposerPrimitive.Send className={buttonVariants({ size: 'sm' })}>发送</ComposerPrimitive.Send>
-                </div>
-              </ChatComposer>
-            </ThreadPrimitive.Root>
-          </ChatRoot>
-        </AssistantRuntimeProvider>
+        <ChatThreadShell
+          runtime={runtime}
+          running={running}
+          toolUis={
+            <>
+              <RunSandboxUI />
+              <SetSceneCodeUI />
+              <CaptureFramesUI />
+              <ReviewFramesUI />
+              <GetContextUI />
+              <DraftBeginUI />
+              <DraftAppendUI />
+              <DraftReadUI />
+              <DraftPatchUI />
+              <DraftCommitUI />
+              <DraftDiscardUI />
+              <FinishUI />
+            </>
+          }
+        >
+          {sceneSkillMeta && (
+            <div className="scene-skill-chip" data-scene-skill>
+              技能：{sceneSkillMeta.id} · {sceneSkillMeta.source} · v{sceneSkillMeta.version}
+            </div>
+          )}
+          <div className="scene-skill-chip" data-tool-protocol>
+            工具协议：{protocolLabel}
+          </div>
+          <ChatContextTray
+            manifest={manifest}
+            onRemove={onRemoveAttachment}
+            {...(onToggleBrief ? { onToggleBrief } : {})}
+            {...(onClearAttachments ? { onClear: onClearAttachments } : {})}
+            onInspect={() => setInspectorOpen((v) => !v)}
+            inspecting={inspectorOpen}
+          />
+            {inspectorOpen && (
+              <ChatContextInspector
+                manifest={manifest}
+                prepared={preparedSnapshot}
+                systemPrompt={
+                  sceneSkill ? buildSkillPrompt(sceneSkill, { requirements: '' }, 'inline').system : ''
+                }
+                onClose={() => setInspectorOpen(false)}
+              />
+            )}
+          <ChatThreadBody
+            UserMessage={UserMessage}
+            AssistantMessage={AssistantMessage}
+            placeholder="例如：生成山、男女双剑对打、环绕镜头…"
+            inputLabel="3D agent 聊天输入"
+            disabled={!sceneSkill}
+          />
+        </ChatThreadShell>
       </AgentUiContext.Provider>
     </VideoUiContext.Provider>
   )

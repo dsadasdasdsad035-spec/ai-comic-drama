@@ -158,6 +158,8 @@ await api(`/api/project?name=${PROJECT}`, {
         schedule_meta: uiMeta,
         schedule_video: '/videos/schedule-test.mp4',
         schedule_frames: ['/generated/sched-test-0.jpg', '/generated/sched-test-1.jpg'],
+        use_schedule_video_ref: true,
+        use_schedule_frames: true,
         motion_note: '机位在场地正南侧、距场地中心约 1.0 米、高 1.6 米',
       },
     ],
@@ -223,6 +225,42 @@ try {
     return (s.nodes || []).find((x) => x.data?.shotId === 'E01-S01')?.id
   }, PROJECT)
   check('镜头已生成到画布', Boolean(nodeId), String(nodeId))
+  // 加一张视频素材卡并连到分镜；重载让画布状态生效
+  await page.evaluate(
+    ({ project, nodeId }) => {
+      const key = `storyboard-canvas-v1:${encodeURIComponent(project)}`
+      const s = JSON.parse(localStorage.getItem(key) || '{}')
+      const assetId = 'asset-test-video'
+      if (!(s.nodes || []).some((n) => n.id === assetId)) {
+        s.nodes.push({
+          id: assetId,
+          type: 'asset',
+          position: { x: -260, y: -180 },
+          data: { title: '测试视频', kind: 'video', url: '/videos/schedule-test.webm' },
+        })
+      }
+      const shot = (s.nodes || []).find((n) => n.id === nodeId)
+      if (shot) {
+        shot.data.refIds = [...new Set([...(shot.data.refIds || []), assetId])]
+      }
+      localStorage.setItem(key, JSON.stringify(s))
+    },
+    { project: PROJECT, nodeId },
+  )
+  // 镜头 refIds 以项目为准；把素材节点写进项目后再重载
+  await api(`/api/project?name=${PROJECT}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      shots: [{ id: 'E01-S01', refIds: ['shot-prev', 'asset-test-video'] }],
+    }),
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await page.waitForTimeout(900)
+  await page.locator('header').getByRole('button', { name: '画布', exact: true }).click()
+  await page.waitForTimeout(1000)
   await page.evaluate((nid) => {
     const el = document.querySelector(`[data-id="${nid}"]`)
     if (!el) return
@@ -230,34 +268,24 @@ try {
     for (const t of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, opt))
   }, nodeId)
   await page.waitForTimeout(600)
+  await page.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+  await page.waitForTimeout(250)
+  check('Inspector 没有 3D 调度区块', (await page.locator('[data-section="schedule"]').count()) === 0)
+  const vidBoxText = await page.locator('.vid-box').innerText()
+  check('Inspector 没有 3D 参考开关', !vidBoxText.includes('用 3D 调度视频作参考'), vidBoxText.slice(0, 160))
+  check('Inspector 没有抽帧开关', !vidBoxText.includes('带调度关键帧作参考'), vidBoxText.slice(0, 160))
 
   const modelSelect = page.locator('[data-cap-model-select="video"] select')
   check('视频选择器列出 2.0', (await modelSelect.locator('option', { hasText: 'Seedance 2.0' }).count()) > 0)
   check('当前选中 2.0', (await modelSelect.inputValue()) === 'ark-video-2-0', await modelSelect.inputValue())
 
-  const vrLabel = page.locator('.vid-box label.chk', { hasText: '用 3D 调度视频作参考' })
-  const vrChk = vrLabel.locator('input[type=checkbox]')
-  check('视频参考开关可见', (await vrLabel.count()) === 1)
-  check('视频参考可勾选（模型支持）', !(await vrChk.isDisabled()))
-  await vrChk.check()
-  await page.waitForTimeout(250)
-
-  const framesChk = page
-    .locator('.vid-box label.chk', { hasText: '带调度关键帧作参考' })
-    .locator('input[type=checkbox]')
-  check('勾视频参考后抽帧禁用', await framesChk.isDisabled())
-  check('抽帧显示已忽略', (await page.locator('.vid-box').innerText()).includes('视频参考优先，抽帧已忽略'))
-  check('视频参考界面无尾帧入口', !(await page.locator('.vid-box').innerText()).includes('尾帧'))
-
-  await page.waitForTimeout(1600)
+  const panelText = await page.locator('[data-video-prompt-panel]').innerText()
+  check('面板列出视频素材', panelText.includes('视频1') && panelText.includes('测试视频'), panelText.slice(0, 220))
+  check('面板显示参考视频 1', panelText.includes('参考视频 1'), panelText.slice(0, 220))
+  check('视频参考界面无尾帧入口', !panelText.includes('尾帧'))
   const saved = (await api(`/api/project?name=${PROJECT}`)).project
   const savedShot = (saved.shots || []).find((s) => s.id === 'E01-S01')
-  check('use_schedule_video_ref 落库', savedShot?.use_schedule_video_ref === true, JSON.stringify(savedShot))
-  check(
-    'schedule_video 仍是本地路径',
-    savedShot?.schedule_video === '/videos/schedule-test.mp4',
-    String(savedShot?.schedule_video),
-  )
+  check('旧 3D 开关仍保留在数据里', savedShot?.use_schedule_video_ref === true, JSON.stringify(savedShot?.use_schedule_video_ref))
 
   const posts = []
   await page.route('**/api/seedance**', async (route) => {
@@ -275,14 +303,19 @@ try {
     })
   })
 
-  await page.getByRole('button', { name: '生成视频', exact: true }).click()
+  await page.locator('.si-foot button', { hasText: /生成视频|重出视频/ }).click()
   await page.waitForTimeout(1200)
   check('拦截到出片请求', posts.length === 1, String(posts.length))
   if (posts.length) {
     const b = posts[0]
     check(
-      '请求带 refVideos',
-      Array.isArray(b.refVideos) && b.refVideos[0] === '/videos/schedule-test.mp4',
+      '请求带素材卡视频',
+      Array.isArray(b.refVideos) && b.refVideos[0] === '/videos/schedule-test.webm',
+      JSON.stringify(b.refVideos),
+    )
+    check(
+      '旧 3D 调度视频没有提交',
+      !(b.refVideos || []).includes('/videos/schedule-test.mp4'),
       JSON.stringify(b.refVideos),
     )
     check('不带首帧 image', !b.image, String(b.image))
@@ -291,9 +324,9 @@ try {
     check('modelKey 是 2.0', b.modelKey === 'ark-video-2-0', String(b.modelKey))
     check('提示词用 @视频1', /@视频1/.test(String(b.prompt)), String(b.prompt).slice(0, 120))
     check(
-      '提示词限定白模范围',
-      /不要照搬/.test(String(b.prompt)) && /白模/.test(String(b.prompt)) && /文字标签/.test(String(b.prompt)),
-      String(b.prompt).slice(0, 200),
+      '提示词限定运动范围',
+      /运动、机位与节奏/.test(String(b.prompt)) && !/白模/.test(String(b.prompt)),
+      String(b.prompt).slice(0, 220),
     )
     check(
       '参考图用 @图像N',
@@ -307,31 +340,14 @@ try {
     )
   }
 
-  // 取消视频参考，回到 1.0 的抽帧通路
-  await vrChk.uncheck()
-  await page.waitForTimeout(250)
-  check('取消视频参考后抽帧可勾', !(await framesChk.isDisabled()))
-  await framesChk.check()
-  await page.getByRole('button', { name: '重出视频', exact: true }).click()
-  await page.waitForTimeout(1200)
-  check('第二次出片请求', posts.length === 2, String(posts.length))
-  if (posts.length >= 2) {
-    const b2 = posts[1]
-    check('取消视频参考后不带 refVideos', !b2.refVideos, JSON.stringify(b2.refVideos))
-    check(
-      '抽帧进入 refImages',
-      Array.isArray(b2.refImages) && b2.refImages.includes('/generated/sched-test-0.jpg'),
-      JSON.stringify(b2.refImages),
-    )
-    check('提示词回到 [图N]', /\[图1\]/.test(String(b2.prompt)), String(b2.prompt).slice(0, 120))
-    check('首帧模式带 cameraFixed', 'cameraFixed' in b2, JSON.stringify(b2.cameraFixed))
-  }
-
   // ---- 设置页 ----
   const nav = (name) => page.locator('header').getByRole('button', { name, exact: true }).click()
   await nav('设置')
-  await page.waitForSelector('h3:text-is("模型表")')
+  await page.locator('.st-nav button', { hasText: '默认路由' }).click()
+  await page.waitForTimeout(300)
   check('设置页有视频参考分组', (await page.locator('body').innerText()).includes('视频 · 多参考图 / 视频参考'))
+  await page.locator('.st-nav button', { hasText: '模型' }).click()
+  await page.waitForSelector('.st-model-table')
 
   const itemByLabel = async (label) => {
     const idx = await page.locator('.st-model-item').evaluateAll(
@@ -350,10 +366,11 @@ try {
   await item25.locator('.st-model-video-ref select').selectOption('')
   await page.getByRole('button', { name: '保存设置' }).click()
   await page.waitForTimeout(900)
-  await page.reload({ waitUntil: 'networkidle' })
-  await page.waitForTimeout(700)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(1200)
   await nav('设置')
-  await page.waitForSelector('h3:text-is("模型表")')
+  await page.locator('.st-nav button', { hasText: '模型' }).click()
+  await page.waitForSelector('.st-model-table')
   const item20b = await itemByLabel('Seedance 2.0（视频参考）')
   const item25b = await itemByLabel('Seedance 2.5（视频参考）')
   check('视频参考勾选保存后仍生效', !(await item20b.locator('.st-model-video-ref input').isChecked()))
@@ -503,7 +520,7 @@ try {
   })
   check(
     '非方舟渠道被拒绝',
-    badProvider.ok === false && /方舟协议渠道/.test(badProvider.message),
+    badProvider.ok === false && /方舟.*渠道/.test(badProvider.message),
     JSON.stringify(badProvider),
   )
 } finally {

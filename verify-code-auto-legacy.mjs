@@ -1,5 +1,5 @@
 /**
- * 自动生成与 legacy 转换：空镜头自动出代码；旧结构化镜头只读并可显式转换。
+ * 首开与 legacy 转换：空镜头首开不自动出代码，点击后才生成；旧结构化镜头只读并可显式转换。
  * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-code-auto-legacy.mjs
  */
 import { chromium } from 'playwright-core'
@@ -160,19 +160,27 @@ const s1 = await nodeId('E01-S01')
 const s2 = await nodeId('E01-S02')
 check('两个镜头进入画布', Boolean(s1 && s2))
 await openEditor(s1)
+await page.locator('.cw-empty-preview').waitFor({ timeout: 10000 })
+check('空镜头首开显示空状态', await page.locator('.cw-empty-preview').isVisible())
+check('空镜头首开不调用代码模型', textPosts.length === 0, String(textPosts.length))
+await page.getByRole('tab', { name: /文本/ }).click()
+await page.locator('.ctxp-text-row').first().click()
+await page.waitForTimeout(200)
+check('选择参考后出现生成入口', await page.locator('.cw-empty-preview').getByRole('button', { name: '生成 3D 代码' }).isVisible())
+await page.locator('.cw-empty-preview').getByRole('button', { name: '生成 3D 代码' }).click()
 for (let i = 0; i < 50; i++) {
   const t = await page.locator('.cw-preview-status').textContent().catch(() => '')
   if (t?.includes('代码运行中')) break
   await page.waitForTimeout(300)
 }
-check('空镜头自动生成代码', (await page.locator('.cw-preview-status').textContent())?.includes('代码运行中'))
-check('自动生成调用代码模型', textPosts.length === 1, String(textPosts.length))
+check('点击生成后代码运行', (await page.locator('.cw-preview-status').textContent())?.includes('代码运行中'))
+check('显式生成调用一次代码模型', textPosts.length === 1, String(textPosts.length))
 await page.getByRole('button', { name: '代码', exact: true }).click()
-check('自动生成写出代码页签', (await page.locator('.cw-code').inputValue()).includes('function init'))
+check('显式生成写出代码页签', (await page.locator('.cw-code').inputValue()).includes('function init'))
 await page.locator('.cw-head').getByRole('button', { name: '保存', exact: true }).click()
 await page.waitForTimeout(1000)
 let d1 = await nodeData(s1)
-check('自动生成保存为 sceneCode', Boolean(d1?.sceneCode?.code), String(d1?.sceneCode?.code?.slice(0, 20)))
+check('显式生成保存为 sceneCode', Boolean(d1?.sceneCode?.code), String(d1?.sceneCode?.code?.slice(0, 20)))
 await page.locator('.cw-head').getByRole('button', { name: '关闭', exact: true }).click()
 await page.waitForTimeout(500)
 if (await page.locator('.cw-close-ask').count()) {
@@ -185,6 +193,9 @@ await openEditor(s2)
 check('旧结构化镜头显示只读横幅', await page.locator('.cw-legacy-bar').isVisible())
 check('旧结构化预览存在', await page.locator('.cw-legacy').isVisible())
 check('打开 legacy 不自动调用模型', textPosts.length === beforePosts, `${beforePosts} -> ${textPosts.length}`)
+await page.getByRole('tab', { name: /文本/ }).click()
+await page.locator('.ctxp-text-row').first().click()
+await page.waitForTimeout(200)
 await page.locator('.cw-legacy-bar').getByRole('button', { name: '生成代码版本' }).click()
 for (let i = 0; i < 50; i++) {
   const t = await page.locator('.cw-preview-status').textContent().catch(() => '')

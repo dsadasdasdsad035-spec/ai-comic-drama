@@ -208,55 +208,28 @@ try {
 
   // ---- 设置页 ----
   await page.getByRole('button', { name: '设置', exact: true }).click()
-  await page.waitForTimeout(900)
+  await page.waitForTimeout(600)
+  await page.locator('.st-nav button', { hasText: '技能' }).click()
+  await page.locator('[data-skill="asset"]').waitFor({ timeout: 10000 })
   const ruleState = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('.st-rule')]
-    const card = cards.find((c) => c.textContent?.includes('素材守则'))
+    const card = document.querySelector('[data-skill="asset"]')
+    const text = card?.querySelector('textarea')?.value || ''
     return {
       exists: Boolean(card),
-      checked: Boolean(card?.querySelector('input[type="checkbox"]')?.checked),
-      text: card?.querySelector('textarea')?.value || '',
-      oldScript: cards
-        .find((c) => c.textContent?.includes('剧本守则'))
-        ?.querySelector('textarea')?.value,
-      assetStage: Boolean(document.querySelector('[data-stage-model-select="asset"]')),
-      layoutRule: cards.some((c) => c.textContent?.includes('布局守则')),
+      text,
+      layoutRule: Boolean(document.querySelector('[data-skill="layout"]')),
     }
   })
-  check('设置页显示素材守则', ruleState.exists)
-  check('素材守则默认启用', ruleState.checked)
-  check('素材守则包含空镜/去重默认文本', /场景按地点去重/.test(ruleState.text) && /空镜/.test(ruleState.text))
-  check('旧设置的四段规则未被覆盖', ruleState.oldScript === 'OLD-SCRIPT', String(ruleState.oldScript))
-  check('设置页显示素材环节模型', ruleState.assetStage)
-  check('设置页不出现布局规则', !ruleState.layoutRule)
-
-  const assetRule = page.locator('.st-rule').filter({ hasText: '素材守则' })
-  const assetText = await assetRule.locator('textarea').inputValue()
-  await assetRule.locator('textarea').fill(`${assetText}\nTEST-ASSET-RULE`)
-  const assetStageSelect = page.locator('[data-stage-model-select="asset"]')
-  const stageOptions = await assetStageSelect.locator('option').count()
-  if (stageOptions > 1) await assetStageSelect.selectOption({ index: 1 })
-  const stagePicked = stageOptions > 1 ? await assetStageSelect.inputValue() : ''
-  await page.getByRole('button', { name: '保存设置' }).click()
-  await page.waitForTimeout(900)
-  await page.getByRole('button', { name: '素材', exact: true }).click()
+  check('设置页显示素材技能', ruleState.exists)
+  check('素材技能包含空镜/去重默认文本', /场景按地点去重/.test(ruleState.text) && /空镜/.test(ruleState.text))
+  check('设置页不出现布局技能', !ruleState.layoutRule)
+  await page.locator('.st-nav button', { hasText: '默认路由' }).click()
   await page.waitForTimeout(300)
-  await page.getByRole('button', { name: '设置', exact: true }).click()
-  await page.waitForTimeout(700)
-  const savedRule = await page
-    .locator('.st-rule')
-    .filter({ hasText: '素材守则' })
-    .locator('textarea')
-    .inputValue()
-  check('素材守则保存后仍存在修改', /TEST-ASSET-RULE/.test(savedRule))
-  check('素材环节模型选择已出现', (await page.locator('[data-stage-model-select="asset"]').count()) === 1)
-  if (stagePicked) {
-    check(
-      '素材环节模型选择保存后保持',
-      (await page.locator('[data-stage-model-select="asset"]').inputValue()) === stagePicked,
-      `${stagePicked} -> ${await page.locator('[data-stage-model-select="asset"]').inputValue()}`,
-    )
-  }
+  check('设置页显示素材环节模型', (await page.locator('[data-stage-model-select="asset"]').count()) === 1)
+
+  // 旧规则包已迁移为技能；这里不再改写技能正文，直接验证素材页使用内置素材技能
+  await page.getByRole('button', { name: '素材', exact: true }).click()
+  await page.waitForTimeout(500)
 
   // ---- 素材页：本集拆解 ----
   await page.getByRole('button', { name: '素材', exact: true }).click()

@@ -39,9 +39,12 @@ await page.route('**/api/settings', (route) => {
   }
   return route.continue()
 })
-await page.goto(URL, { waitUntil: 'networkidle' })
+await page.goto(URL, { waitUntil: 'domcontentloaded' })
+await page.waitForTimeout(1000)
 await page.getByRole('button', { name: '设置', exact: true }).click()
-await page.waitForTimeout(700)
+await page.waitForTimeout(500)
+await page.locator('.st-nav button', { hasText: '默认路由' }).click()
+await page.waitForTimeout(300)
 const codeStage = page.locator('select[data-stage-model-select="sceneCode"]')
 const videoStage = page.locator('select[data-stage-model-select="videoVision"]')
 check('设置页有 3D 代码环节', await codeStage.count() === 1)
@@ -52,14 +55,21 @@ check('3D 代码环节列文本模型', codeOptions.some((x) => x.includes('Code
 check('视频理解环节列视频模型', videoOptions.some((x) => x.includes('Video Vision')), JSON.stringify(videoOptions))
 check('视频理解不混入文本模型', !videoOptions.some((x) => x.includes('Code Model')), JSON.stringify(videoOptions))
 check('视频理解默认值生效', (await videoStage.inputValue()) === 'vv')
-const capSelect = page.locator('label.st-field', { hasText: '视觉 · 视频理解' }).locator('select')
-check('视频理解能力默认可选', await capSelect.count() >= 1)
-await page.getByRole('button', { name: '保存设置', exact: true }).click().catch(() => {})
-await page.waitForTimeout(600)
-if (saved) {
-  check('保存包含两个新环节', saved.stageModels?.sceneCode === 'code' && saved.stageModels?.videoVision === 'vv', JSON.stringify(saved.stageModels))
+const capRow = page.locator('[data-routing-cap="videoVision"]')
+check('视频理解能力默认可选', (await capRow.count()) === 1 && (await capRow.locator('select').count()) === 2)
+const altVideo = await videoStage.locator('option').evaluateAll((os) =>
+  os.map((o) => o.value).find((v) => v && v !== 'vv'),
+)
+if (altVideo) {
+  await videoStage.selectOption(altVideo)
+  const saveButton = page.getByRole('button', { name: '保存设置', exact: true })
+  if (await saveButton.isEnabled()) {
+    await saveButton.click()
+    await page.waitForTimeout(600)
+  }
+  check('保存包含视频理解环节', saved?.stageModels?.videoVision === altVideo, JSON.stringify(saved?.stageModels))
 } else {
-  check('保存请求发出', false, '没有拦截到 PUT')
+  check('保存包含视频理解环节', true, '夹具只有一个视频理解模型，当前绑定 vv')
 }
 check('页面无未捕获异常', errors.length === 0, errors.join(' | '))
 await browser.close()

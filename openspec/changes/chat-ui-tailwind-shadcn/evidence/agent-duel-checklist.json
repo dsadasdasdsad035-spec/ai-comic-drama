@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "mode": "mock",
+  "prompt": "生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。",
+  "modelKey": "duel-code",
+  "agent": {
+    "completed": true,
+    "toolCalls": 6,
+    "panelTail": "技能：scene3d · builtin · v1\n工具协议：JSON action（模型未声明支持，自动回退）\n本次上下文 5 项\n查看将发送\n清空\n文本\n画面提示词\n×\n文本\n出场角色\n×\n文本\n景别/运镜\n×\n文本\n台词（2 句）\n×\n文本\nE01 · SC01 · 山顶\n×\n生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。\n第 1 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n已读取镜头上下文\n第 2 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n代码草稿\n162 行 · 21b03761ff\n查看代码\n场景草稿 · 162 行 / 5.5k 字符\n已生效\n渲染试运行已通过，已进入工作台草稿。\n查看草稿\n第 3 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n渲染试运行通过\n第 4 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n关键帧 · 5 张\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n第 5 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n验收通过\n✓ 画面有山体或地形背景\n✓ 画面有两个人物\n✓ 两名人物可区分男女\n✓ 两人各持一把剑\n✓ 两人处于对打/攻防姿态\n✓ 镜头位置随时间环绕变化\n✓ 镜头始终正对两人，两人都在画面内\n\n关键帧符合山、两人、双剑、对打和环绕要求\n\n第 6 轮 · 模型调用完成\n本轮上下文 · 5 项（0 图 / 0 视频 / 5 文本）\n完成\n代码阶段完成\n\n代码阶段说明：山、男女双剑对打与环绕镜头已完成\n\n代码阶段完成，开始 MP4 视频验收…\n完成\nMP4 视频验收通过\n21b03761ff\n4.0s\n16:9\n帧来自 MP4\n已保存\n打开 MP4\n0.0s\n1.0s\n2.0s\n3.0s\n4.0s\n完成\nMP4 帧验收通过 · 7/7\n\n帧来源：最终 MP4 · 视觉模型 duel-vision · 已保存\n\n查看这次验收的 MP4\n✓ 画面有山体或地形背景\n✓ 画面有两个人物\n✓ 两名人物可区分男女\n✓ 两人各持一把剑\n✓ 两人处于对打/攻防姿态\n✓ 镜头位置随时间环绕变化\n✓ 镜头始终正对两人，两人都在画面内\n\n关键帧符合山、两人、双剑、对打和环绕要求\n\n代码 21b03761ff 已通过渲染试运行；MP4 4.0s 已保存；MP4 帧 0.0s / 1.0s / 2.0s / 3.0s / 4.0s；MP4 帧验收 7/7 通过；视频 /videos/blender-1792818350604-eb4ff1.mp4。\n取消\n发送"
+  },
+  "code": {
+    "hash": "21b03761ff58151542df30689df3e73b60283596e4ac50db47a7e52d473cda08",
+    "lines": 162,
+    "source": "ai"
+  },
+  "frames": [
+    "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel-frame-0.jpg",
+    "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel-frame-1.jpg",
+    "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel-frame-2.jpg",
+    "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel-frame-3.jpg",
+    "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel-frame-4.jpg"
+  ],
+  "review": {
+    "items": [
+      {
+        "text": "✓ 画面有山体或地形背景",
+        "ok": false
+      },
+      {
+        "text": "✓ 画面有两个人物",
+        "ok": false
+      },
+      {
+        "text": "✓ 两名人物可区分男女",
+        "ok": false
+      },
+      {
+        "text": "✓ 两人各持一把剑",
+        "ok": false
+      },
+      {
+        "text": "✓ 两人处于对打/攻防姿态",
+        "ok": false
+      },
+      {
+        "text": "✓ 镜头位置随时间环绕变化",
+        "ok": false
+      },
+      {
+        "text": "✓ 镜头始终正对两人，两人都在画面内",
+        "ok": false
+      },
+      {
+        "text": "✓ 画面有山体或地形背景",
+        "ok": false
+      },
+      {
+        "text": "✓ 画面有两个人物",
+        "ok": false
+      },
+      {
+        "text": "✓ 两名人物可区分男女",
+        "ok": false
+      },
+      {
+        "text": "✓ 两人各持一把剑",
+        "ok": false
+      },
+      {
+        "text": "✓ 两人处于对打/攻防姿态",
+        "ok": false
+      },
+      {
+        "text": "✓ 镜头位置随时间环绕变化",
+        "ok": false
+      },
+      {
+        "text": "✓ 镜头始终正对两人，两人都在画面内",
+        "ok": false
+      }
+    ],
+    "passed": true,
+    "needsHumanReview": false,
+    "note": "mock 视觉初筛；最终以关键帧和 mp4 人工检查为准"
+  },
+  "video": {
+    "url": "/videos/blender-1792818350604-eb4ff1.mp4",
+    "file": "openspec/changes/chat-ui-tailwind-shadcn/evidence/agent-duel.mp4",
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 960,
+          "height": 540
+        }
+      ],
+      "format": {
+        "duration": "4.000000"
+      }
+    }
+  },
+  "manualReview": {
+    "status": "agent-inspected",
+    "notes": "已目视检查关键帧和 mp4：山体/地形、两名人物、双剑交叉、环绕变化可见；最终仍建议用户按清单确认。"
+  },
+  "savedAt": "2026-10-24T05:05:53.191Z"
+}

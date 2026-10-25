@@ -3,6 +3,8 @@ import type { AppSettings } from '../api'
 import { stageModelKey, type StagePick } from '../ModelSelect'
 import type { SceneCodeAsk } from '../sceneCodeJob'
 import { ZCodeChatModel } from './zcodeChatModel'
+import { NativeToolChatModel } from './nativeToolChatModel'
+import { resolveToolProtocol } from './toolCapabilities'
 import {
   createSceneAgentSession,
   createSceneAgentTools,
@@ -20,6 +22,7 @@ import { createAgentEventBridge } from './sceneAgentEvents'
 import { checkSceneCode } from '../sceneCodeSanitize'
 import { codeHashOf } from '../sceneCodeFingerprint'
 import { resolveAgentLimits, type AgentRunLimits } from './agentLimits'
+import type { ManifestSummary } from '../contextManifest'
 
 const AgentState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -41,6 +44,10 @@ export type RunSceneAgentInput = {
   requirements?: string[]
   /** 可在本轮开始时作为运行基线的当前工作台代码 */
   initialCode?: string
+  /** 本轮显式附件清单的摘要；用于每轮审计事件 */
+  manifestSummary?: ManifestSummary
+  /** 外部已组装好的 system（技能角色层 + 锁定契约 + 验收要求）；缺省用旧常量 */
+  system?: string
   /** 外部取消信号 */
   signal?: AbortSignal
   /** 仅供测试缩短超时；生产路径从 settings.agentLimits 解析 */
@@ -50,7 +57,7 @@ export type RunSceneAgentInput = {
 function modelFacingResult(toolName: string, result: unknown): unknown {
   if (!result || typeof result !== 'object') return result
   const o = result as Record<string, unknown>
-  if (toolName === 'run_sandbox') {
+  if (toolName === 'run_render') {
     const { firstFrame: _firstFrame, ...rest } = o
     return rest
   }
@@ -82,8 +89,8 @@ function lastText(messages: BaseMessage[]): string {
 }
 
 /**
- * 浏览器内场景 agent：LangGraph 管状态/工具循环，工作台提供沙箱和视觉能力。
- * 代码只有通过 run_sandbox 才会进入工作台草稿；finish 也必须通过验收。
+ * 浏览器内场景 agent：LangGraph 管状态/工具循环，工作台提供 Blender 渲染和视觉能力。
+ * 代码只有通过 run_render 才会进入工作台草稿；finish 也必须通过验收。
  */
 export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAgentResult> {
   const modelKey = stageModelKey(input.settings, 'sceneCode', input.stagePick)
@@ -110,28 +117,36 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
   input.signal?.addEventListener('abort', onExternalAbort, { once: true })
   const deps: SceneAgentDeps = { ...input.deps, signal: controller.signal }
   const { tools, byName } = createSceneAgentTools(deps, session, input.requirements)
-  const model = new ZCodeChatModel({
-    modelKey,
-    ask: input.ask,
-    tools,
-  }).bindTools(tools) as ZCodeChatModel
+  const stageEntryKey = stageModelKey(input.settings, 'sceneCode', input.stagePick)
+  const stageEntry = input.settings?.models.find((m) => m.key === stageEntryKey)
+  const stageProvider = stageEntry
+    ? input.settings?.providers.find((p) => p.id === stageEntry.provider)
+    : undefined
+  const resolution = resolveToolProtocol(
+    input.settings?.agentToolProtocol,
+    stageProvider?.id,
+    stageEntry?.model,
+  )
+  if (resolution.error) throw new Error(resolution.error)
+  const toolProtocol = resolution.protocol
+  const model =
+    toolProtocol === 'native'
+      ? new NativeToolChatModel({
+          modelKey,
+          ask: input.ask,
+          tools,
+        }).bindTools(tools)
+      : new ZCodeChatModel({
+          modelKey,
+          ask: input.ask,
+          tools,
+        }).bindTools(tools)
 
   const requirements = (input.requirements || []).length
     ? `\n验收要求：\n${input.requirements!.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
     : ''
-  const system = new SystemMessage(
-    [
-      '你是当前镜头的 3D 场景 agent。只能通过工具操作当前镜头；不能访问网络、文件系统或保存。',
-      '工作流：get_shot_context → set_scene_code → run_sandbox → capture_frames → review_frames → finish。',
-      '当前镜头已有有效代码时，如果用户只要求运行/验收，可以直接 run_sandbox；只有需要改变画面或场景时才先 set_scene_code。',
-      '失败时根据工具错误修复代码，但不要伪造工具结果；完成前必须调用 finish。',
-      '代码 ABI：必须定义 init(ctx)/renderAt(t)/dispose；所有可见对象必须加到 ctx.scene，镜头必须使用 ctx.camera；不要用 new THREE.Scene()/new THREE.PerspectiveCamera() 替换 ctx 提供的 scene/camera。',
-      '代码必须多行书写，不要压成一行；renderAt(t) 用 t 驱动动画和相机环绕；至少添加一个可见 mesh。',
-      'capture_frames 必须抓满 5 个时间点（默认 0/1/2/3/4，或覆盖完整时长的 5 个等距点）。',
-      '不要输出 chain-of-thought，只输出简短说明和工具调用。',
-      requirements,
-    ].join('\n'),
-  )
+  // 3D 身份只来自 scene3d 技能；这里不再注入硬编码的角色前导。
+  const system = new SystemMessage(`${input.system || ''}${requirements}`.trim())
 
   const bridge = createAgentEventBridge()
   let errorEmitted = false
@@ -139,17 +154,51 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
     session.events.push(event)
     deps.onEvent?.(event)
   }
+  // 流式进度：只发字符数，不把模型原始片段带进事件流。
+  model.onProgress = (chars) => {
+    if (controller.signal.aborted) return
+    emit({ type: 'custom', name: 'progress', value: { chars, turn: bridge.turnCount || 1 } })
+  }
+  if (model instanceof NativeToolChatModel) {
+    // 工具参数增量只作为进度事件；真正执行仍由 tools 节点在参数完整后进行。
+    model.onToolCallDelta = (delta) => {
+      if (controller.signal.aborted || !delta.id) return
+      emit({ type: 'tool_call_args', toolCallId: delta.id, toolName: delta.name, delta: delta.delta })
+    }
+  }
+  emit({
+    type: 'custom',
+    name: 'tool_protocol',
+    value: {
+      protocol: toolProtocol,
+      reason: resolution.reason,
+      provider: stageProvider?.id || '',
+      model: stageEntry?.model || '',
+    },
+  })
   const consume = (raw: unknown) => {
-    const event = bridge.map(raw as never)
-    if (!event) return
-    if (event.type === 'error') errorEmitted = true
-    emit(event)
+    const mapped = bridge.map(raw as never)
+    if (!mapped) return
+    for (const event of Array.isArray(mapped) ? mapped : [mapped]) {
+      if (event.type === 'error') errorEmitted = true
+      emit(event)
+    }
   }
 
   const agentNode = async (state: typeof AgentState.State) => {
     if (controller.signal.aborted) throw new DOMException('已取消', 'AbortError')
+    const turn = state.steps + 1
+    if (input.manifestSummary) {
+      emit({
+        type: 'context_manifest',
+        turn,
+        keys: input.manifestSummary.attachmentKeys,
+        counts: input.manifestSummary.counts,
+        metadata: input.manifestSummary.metadata,
+      })
+    }
     const response = await model.invoke(state.messages, { signal: controller.signal })
-    return { messages: [response], steps: state.steps + 1 }
+    return { messages: [response], steps: turn }
   }
 
   const toolsNode = async (state: typeof AgentState.State, config: RunnableConfig) => {
@@ -204,12 +253,12 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
     if (!ai?.tool_calls?.length) {
       return {
         messages: [
-          new SystemMessage(
+          new HumanMessage(
             session.trial?.ok
               ? session.review
                 ? '请根据验收结果修复并重新运行，通过后调用 finish。'
                 : '请继续 capture_frames 和 review_frames；完成验收后调用 finish。'
-              : '请继续使用工具。提交代码后必须运行 run_sandbox；不要只返回文本。',
+              : '请继续使用工具。提交代码后必须运行 run_render；不要只返回文本。',
           ),
         ],
         steps: state.steps + 1,
@@ -290,6 +339,7 @@ export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAge
     ...(error ? { error } : {}),
     attempts: session.attempts,
     reviewAttempts: session.reviewAttempts,
+    toolProtocol,
     events: session.events,
   }
 }

@@ -1,4 +1,10 @@
-import type { AppSettings, ProjectData } from './api'
+import type {
+  AppSettings,
+  ProjectData,
+  ProviderChatMessage,
+  ProviderToolCall,
+  ProviderToolCallDelta,
+} from './api'
 import { callText } from './api'
 import type { MediaBrief } from './mediaBrief'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
@@ -8,12 +14,12 @@ import { stageModelKey, type StagePick } from './ModelSelect'
 import { checkSceneCode } from './sceneCodeSanitize'
 import { codeHashOf } from './sceneCodeFingerprint'
 import {
-  SCENE_CODE_CHAT_SYSTEM,
-  SCENE_CODE_SYSTEM,
   buildSceneCodeChatPrompt,
   buildSceneCodeGeneratePrompt,
   parseSceneCodeResult,
 } from './sceneCodePrompt'
+import { getSkill } from './skills/registry'
+import { buildSceneJobSystem } from './skills/sceneJob'
 
 class SceneCodeTrialError extends Error {
   code: string
@@ -30,13 +36,31 @@ export type SceneCodeChatMessage = { role: 'user' | 'assistant'; text: string }
 
 export type SceneCodeAsk = (opts: {
   system?: string
-  prompt: string
+  /** 旧方式：system + prompt；原生工具调用改用 messages */
+  prompt?: string
+  messages?: ProviderChatMessage[]
+  tools?: unknown[]
+  toolChoice?: string | Record<string, unknown>
   json?: boolean
   maxTokens?: number
   temperature?: number
   modelKey?: string
   signal?: AbortSignal
-}) => Promise<{ json?: unknown; text?: string; modelKey?: string; modelLabel?: string }>
+  /** 流式进度：已接收的字符数（L1） */
+  onProgress?: (chars: number) => void
+  /** 原生工具参数增量（只用于进度，参数完整前不执行工具） */
+  onToolCallDelta?: (delta: ProviderToolCallDelta) => void
+}) => Promise<{
+  json?: unknown
+  text?: string
+  modelKey?: string
+  modelLabel?: string
+  /** provider 的结束原因；length 表示输出被截断 */
+  finishReason?: string
+  /** 原生工具调用 */
+  toolCalls?: ProviderToolCall[]
+  usage?: Record<string, unknown>
+}>
 
 export type SceneCodeJobInput = {
   shot: ShotData
@@ -50,6 +74,8 @@ export type SceneCodeJobInput = {
   aspect: string
   settings: AppSettings | null
   stagePick?: StagePick
+  /** 本机 Blender 版本，写进提示词 */
+  engineVersion?: string
   /** chat 时必传 */
   mode?: 'generate' | 'chat'
   currentCode?: string
@@ -59,7 +85,7 @@ export type SceneCodeJobInput = {
   history?: SceneCodeChatMessage[]
   signal?: AbortSignal
   ask?: SceneCodeAsk
-  /** 拿到代码后、返回前做沙箱试运行；失败应 throw */
+  /** 拿到代码后、返回前做渲染试运行；失败应 throw */
   trial?: (code: string, input: SceneCodeJobInput) => Promise<void>
 }
 
@@ -95,7 +121,7 @@ function parseJsonText(text: string): unknown {
 }
 
 /**
- * 首次代码生成和聊天改写共用：选代码模型 → 解析完整代码 → 准入门禁 → 可选沙箱试运行。
+ * 首次代码生成和聊天改写共用：选代码模型 → 解析完整代码 → 准入门禁 → 可选渲染试运行。
  * 失败直接抛错；调用方保留旧代码。
  */
 export async function runSceneCodeJob(input: SceneCodeJobInput): Promise<SceneCodeJobResult> {
@@ -116,7 +142,8 @@ export async function runSceneCodeJob(input: SceneCodeJobInput): Promise<SceneCo
         signal: o.signal,
       }))
   const chat = input.mode === 'chat'
-  const system = chat ? SCENE_CODE_CHAT_SYSTEM : SCENE_CODE_SYSTEM
+  const skill = await getSkill(chat ? 'scene-code-chat' : 'scene-code')
+  const system = buildSceneJobSystem(skill)
   const prompt = chat
     ? buildSceneCodeChatPrompt({ ...input, videoBrief: undefined }, String(input.message || ''), input.history || [])
     : buildSceneCodeGeneratePrompt(input)
@@ -153,10 +180,10 @@ export async function runSceneCodeJob(input: SceneCodeJobInput): Promise<SceneCo
     if (!(e instanceof SceneCodeTrialError) || !input.trial) throw e
     // 运行错误允许修复一次；仍然必须通过试运行才返回，失败不会写项目。
     const repairPrompt =
-      `${prompt}\n\n【上次代码】\n\`\`\`js\n${String(e.code || '').slice(0, 20000)}\n\`\`\`\n` +
+      `${prompt}\n\n【上次代码】\n\`\`\`python\n${String(e.code || '').slice(0, 20000)}\n\`\`\`\n` +
       `【运行错误】${e.message}\n` +
       '请只修复这个运行错误，保持用户要求的场景，返回完整代码和 JSON。'
-    const repairSystem = `${system}\n你正在修复上一次代码的运行错误。必须返回完整代码，且保持 function init(ctx) 的参数名；如果错误是“首帧没有绘制任何对象”，必须添加可见 mesh 并设置 ctx.camera。`
+    const repairSystem = `${system}\n你正在修复上一次代码的运行错误。必须返回完整 Blender Python 代码；如果错误是“build 之后场景里没有任何对象”，必须添加可见对象并调整 ctx.camera 朝向主体。`
     try {
       result = await attempt(repairPrompt, repairSystem)
     } catch (repairError) {

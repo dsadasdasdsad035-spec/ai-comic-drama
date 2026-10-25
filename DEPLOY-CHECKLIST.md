@@ -14,9 +14,12 @@
 | 文本生成（剧本/拆镜/提示词） | ✅ | ❌ 需注入 ARK Key |
 | 出图（Seedream） | ✅ | ❌ 同上 |
 | 出片（Seedance） | ✅（HTTP API） | ⚠️ 需注入 ARK Key，不再依赖 Python CLI |
-| 3D 调度视频参考 | ✅（方舟 Files API + Seedance 2.0/2.5） | ⚠️ 同上；需模型权限，默认关闭 |
-| 配音 | ✅（macOS say） | ❌ Linux 无 say，且未配 ElevenLabs |
-| 合成 / 字幕 | ✅（Homebrew ffmpeg-full） | ❌ 只探测 macOS 路径 |
+| APIMart（文本/图像/视频/配音） | ✅ | ⚠️ 需注入 `APIB_API_KEY` / `APIMART_API_KEY`；图像/视频异步任务与目录同步走 HTTP |
+| 视频素材参考 | ✅（素材连线 → 方舟 Files API + Seedance 2.0/2.5） | ⚠️ 同上；需模型权限，首期只取第一条连线视频 |
+| 配音 | ✅（MiniMax / 火山 / ElevenLabs / APIMart / macOS say） | ⚠️ Linux 无 say；需配置任一云端 TTS Key |
+| 口型 | ✅（prompt + 本地抽帧；provider 需 Key） | ⚠️ provider 需要外网与 `SYNC_LABS_API_KEY`；本地抽帧需要 ffmpeg |
+| Seedance 原生音频 | ✅（APIMart Seedance 2.5，单 `audio_url`，4 秒+） | ⚠️ 需要 APIMart 视频额度与可访问音频；参考音频受内容审核 |
+| 合成 / 字幕 | ✅（ffmpeg + libass + CJK 字体） | ⚠️ 只探测 macOS 路径；无 libass 时自动走客户端 PNG 定时叠加 |
 
 ---
 
@@ -29,7 +32,7 @@
 
 **改法**：把中间件抽成独立的 Node HTTP 服务（`server/index.mjs`），开发时由 Vite `proxy` 转发，
 生产时直接 `node server/index.mjs` 监听 `$PORT`。
-**工作量**：中（约 1 天）。要搬的东西：`/api/health · /api/project · /api/text · /api/generate · /api/voice · /api/seedance · /api/assemble`。
+**工作量**：中（约 1 天）。要搬的东西：`/api/health · /api/project · /api/text · /api/generate · /api/voice · /api/seedance · /api/assemble · /api/lipsync · /api/lipsync/qa`。
 
 ### 2. ffmpeg 只探测 macOS 路径
 
@@ -44,8 +47,29 @@ const FFMPEG_CANDIDATES = [
 Linux 上三条都不存在。
 
 **改法**：装 `ffmpeg-static` + `ffprobe-static` npm 包，探测顺序改为「环境变量 → npm 包 → 系统路径」。
-注意 `ffmpeg-static` 默认**不带 libass**，字幕烧录会失效；纯合片不受影响。
-**工作量**：小（半天），但字幕功能需要另外的方案（见下文「软字幕」）。
+注意 `ffmpeg-static` 默认**不带 libass**，SRT 烧录不可用；纯合片不受影响。没有 libass 时会自动走客户端逐 cue PNG 定时叠加，成片仍带字幕，只是渲染路径不同（见 2.2）。
+
+### 2.1 效果转场依赖 `xfade`
+
+叠化/擦除/推移用 ffmpeg 的 `xfade` 滤镜（需要 4.3+；本机 9.0.x 已带）。部署前确认：
+
+```bash
+ffmpeg -filters | grep xfade
+```
+
+`ffmpeg-static` 一般包含；如果打包的 ffmpeg 缺 `xfade`，导出会在效果转场处失败。
+`/api/assemble` 新增的 `joins` 是可选字段：没有它时仍是纯 `concat` 硬切，旧客户端可继续工作。建议服务端与前端同批发布，至少先发服务端。
+
+### 2.2 字幕：libass、CJK 字体与 PNG 兜底
+
+`/api/health` 的 `ffmpegAss` 现在要求 **subtitles 滤镜和可用 CJK 字体同时存在**；任一缺失就返回 false，前端自动走 PNG 兜底。
+
+- 有 libass + 字体：应用把 cue 写成 SRT，走 `subtitles` 烧录，并返回与烧录一致的 `srtUrl` sidecar。
+- 没有 libass 或没有 CJK 字体：前端为每条 cue 渲一张透明 PNG，服务端用 `overlay + enable=between(t,start,end)` 定时叠加；同样返回 SRT sidecar。
+- Linux 部署建议安装带 libass 的 ffmpeg 和 `fonts-noto-cjk`，并确认 `fc-list :lang=zh` 能列出字体；macOS 使用 PingFang/Heiti。
+- 不要只检查 `ffmpeg -filters | grep subtitles`：没有 CJK 字体时 libass 会输出方框，所以 health 会关闭 SRT 路径。
+- SRT 样式和 PNG/预览共用字号、底部安全区、最大宽度、底色/文字色；ASS 的底色是方角、PNG/预览是圆角，这是已知的平台差异。
+- 验收：`node verify-preview-captions.mjs`（连播/音频/字幕/导出 payload）和 `node verify-subs.mjs`（cue/SRT/真实导出/sidecar/强制 PNG）。
 
 ### 3. 配音只有 macOS `say`，没有云端引擎
 
@@ -64,6 +88,14 @@ Linux 上三条都不存在。
 现在 Key 从 `~/.canghe-skills/.env` 读。云端必须走平台环境变量（`ARK_API_KEY`）。
 **安全提醒**：一旦部署成公开链接，任何拿到链接的人都能消耗你的方舟额度。
 发布前至少要加一道口令或访问限制，或者只发给自己人。
+
+APIMart 渠道使用独立的 `APIB_API_KEY` / `APIMART_API_KEY`，不会回退方舟 Key。设置库里的 Key 存在 SQLite `settings` 表，部署时应改用环境变量，避免把 Key 写进镜像或仓库。余额不足时网关对所有请求（包括 `/v1/models`）返回 402；部署后的渠道测试与状态条会把 402 显示为「余额不足」。APIMart 的图像/视频任务需要服务端能访问外网并下载结果到本地；参考视频只接受公网 URL（没有文档化的视频上传接口）。详见 `docs/apimart.md`。
+
+口型 provider 默认关闭；启用后需要 `SYNC_LABS_API_KEY` 或设置页 Key，以及服务端能访问 `api.sync.so` 并上传本地视频/音频。每次 provider 生成仍需人工确认；多说话人镜头不支持。口型验收只使用本地 ffmpeg 抽帧，不依赖云端。
+
+Seedance 2.5 原生音频使用单个 `audio_url` 字符串（公网 URL 或 data URL），视频最短 4 秒，首期只支持单说话人；参考音频只影响音色，模型会重新发声。真实 Seedance 2.0+ 调用仍需人工确认。
+
+出片提示词预览/手改不需要新增服务端配置：面板与实际请求共用前端拼装器，手改写 `video_prompt_override`，成功后写 `video_meta`；旧项目没有这两个字段时走自动拼装。验收脚本 `verify-video-prompt-preview.mjs` 会拦截 `/api/seedance` 比对面板正文与请求 `prompt`。
 
 ### 项目数据要落到持久存储
 
@@ -111,4 +143,5 @@ POST /api/generate        → 返回图片 url
 POST /api/seedance        → 返回任务 id（服务端提交方舟任务并轮询）
 GET  /api/seedance?id=...  → 能轮询到 succeeded，并返回本地视频路径
 POST /api/assemble        → 轮询能到 succeeded
+POST /api/assemble + joins → 带效果转场的成片时长 = A + B − T；joins 缺失时仍按硬切合成
 ```

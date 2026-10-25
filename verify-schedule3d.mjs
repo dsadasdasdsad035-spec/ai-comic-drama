@@ -119,59 +119,30 @@ await p.waitForTimeout(500)
 await p.locator(`[data-id="${nodeId}"]`).dispatchEvent('contextmenu', { clientX: 700, clientY: 420, button: 2 })
 await p.waitForTimeout(300)
 const actionLabels = await p.locator('.ctx-action').evaluateAll((els) => els.map((e) => e.textContent || ''))
-check('右键含编辑/生成 3D', actionLabels.some((t) => t.includes('编辑 3D 调度')) && actionLabels.some((t) => t.includes('生成调度视频（3D）')), actionLabels.join(' | '))
+check('右键没有 3D 动作', !actionLabels.some((t) => /3D 调度|调度视频|调度关键帧/.test(t)), actionLabels.join(' | '))
 check('2D 俯视入口已移除', !actionLabels.some((t) => t.includes('生成调度（俯视）')), actionLabels.join(' | '))
-await p.locator('.ctx-action', { hasText: '生成调度视频（3D）' }).click()
-
-const nodeData = async () => {
-  const s = await p.evaluate((name) => JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(name)}`) || '{}'), NAME)
-  return (s.nodes || []).find((x) => x.id === nodeId)?.data ?? null
-}
-let d = null
-for (let i = 0; i < 80; i++) {
-  await p.waitForTimeout(750)
-  d = await nodeData()
-  if (d?.scheduleVideo && d?.scheduleFrames?.length) break
-}
-check('生成调度视频路径', typeof d?.scheduleVideo === 'string' && d.scheduleVideo.startsWith('/videos/'), String(d?.scheduleVideo))
-check('视频文件落盘', Boolean(d?.scheduleVideo) && fs.existsSync('public' + d.scheduleVideo), d?.scheduleVideo || '')
-check('转出 mp4', String(d?.scheduleVideo || '').endsWith('.mp4'), String(d?.scheduleVideo))
-check('抽出关键帧', Array.isArray(d?.scheduleFrames) && d.scheduleFrames.length >= 2, JSON.stringify(d?.scheduleFrames))
-check('生成走位与干净元数据', d?.shotBlocking?.keys?.length === 2 && d?.scheduleMeta?.mode === 'clean', JSON.stringify(d?.scheduleMeta))
-check('生成运镜文案', typeof d?.motionNote === 'string' && d.motionNote.length > 8 && !d.motionNote.includes('0.6 米'), String(d?.motionNote).slice(0, 80))
-
-await p.waitForTimeout(700)
-check('Inspector 出现 3D 状态', (await p.locator('.sched-head').count()) === 1 && (await p.locator('.sched-badge.ok').count()) === 1)
-check('Inspector 出现 3D 调度行', (await p.locator('.sched-row').count()) === 1)
+await p.keyboard.press('Escape')
+await p.waitForTimeout(200)
+await p.locator(`[data-id="${nodeId}"]`).click()
+await p.waitForTimeout(500)
+check('Inspector 没有 3D 区块', (await p.locator('.sched-head, .sched-row').count()) === 0)
+check('Inspector 没有打开 3D 入口', !(await p.locator('.inspector').innerText()).includes('打开 3D 调度'))
 check('2D 俯视面板已移除', (await p.locator('.layout-box').count()) === 0)
 check('画布卡片无俯视缩略图', (await p.locator('.shot-layout').count()) === 0)
-const frameChk = p.locator('.chk', { hasText: '带调度关键帧作参考' }).locator('input')
-check('出现关键帧勾选项（默认关）', (await frameChk.count()) === 1 && !(await frameChk.isChecked()))
 
-check('Inspector 无尾帧约束入口', (await p.locator('.chk', { hasText: '以下一镜画面作尾帧约束' }).count()) === 0)
-await p.locator('.vid-box button', { hasText: /生成视频|重出视频/ }).first().click()
-await p.waitForTimeout(1400)
-check('未勾选出片请求发出', posts.length === 1, String(posts.length))
-const body1 = posts[0] ?? {}
-check('prompt 带【运镜与走位】', /【运镜与走位】/.test(body1.prompt ?? ''), String(body1.prompt ?? '').slice(-80))
-check('未勾选时不含白模帧', !(body1.refImages ?? []).some((u) => (d?.scheduleFrames ?? []).includes(u)), JSON.stringify(body1.refImages))
+await p.getByRole('button', { name: '提示词', exact: true }).click()
+await p.waitForTimeout(900)
+const cell = p.locator('.pt-table tbody tr').first().locator('.pt-3d')
+check('提示词工作台有 3D 入口', (await cell.locator('button', { hasText: '打开' }).count()) === 1, await cell.innerText())
+await cell.locator('button', { hasText: '打开' }).click()
+await p.waitForTimeout(1600)
+check('提示词侧能打开 3D 工作台', (await p.locator('[aria-label="3D 代码工作台"]').count()) === 1)
+await p.locator('[aria-label="3D 代码工作台"]').getByRole('button', { name: '关闭' }).click()
+await p.waitForTimeout(500)
 
-await p.waitForTimeout(2600)
-await frameChk.check()
-await p.waitForTimeout(400)
-await p.locator('.vid-box button', { hasText: /生成视频|重出视频/ }).first().click()
-await p.waitForTimeout(1500)
-check('勾选后出片请求发出', posts.length === 2, String(posts.length))
-const body2 = posts[1] ?? {}
-check('勾选后白模帧进参考图', (body2.refImages ?? []).some((u) => (d?.scheduleFrames ?? []).includes(u)), JSON.stringify(body2.refImages))
-check('参考图不超过 4 张', (body2.refImages ?? []).length <= 4, String(body2.refImages?.length))
-
-await p.waitForTimeout(2600)
 const saved = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.shots.find((s) => s.id === 'E01-S01')
-check('schedule_video 落库', saved?.schedule_video === d?.scheduleVideo, String(saved?.schedule_video))
-check('schedule_frames 落库', (saved?.schedule_frames ?? []).length === (d?.scheduleFrames ?? []).length)
-check('motion_note 落库', saved?.motion_note === d?.motionNote, String(saved?.motion_note).slice(0, 40))
-check('use_schedule_frames 落库', saved?.use_schedule_frames === true)
+check('没有因打开 3D 自动渲染', !saved?.schedule_video, String(saved?.schedule_video))
+check('没有写旧抽帧开关', saved?.use_schedule_frames !== true, String(saved?.use_schedule_frames))
 
 if (errors.length) console.log('\n--- error ---\n' + errors.slice(0, 3).join('\n---\n'))
 check('无 pageerror', errors.length === 0, errors[0]?.split('\n')[0] ?? '')

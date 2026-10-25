@@ -4,8 +4,10 @@ import { AIMessage, ToolMessage } from '@langchain/core/messages'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import type { ChatResult } from '@langchain/core/outputs'
 import { z } from 'zod'
-import { callText } from '../api'
+import { callTextStream } from '../api'
 import type { SceneCodeAsk } from '../sceneCodeJob'
+import { compactDraftHistory } from './agentHistory'
+import { actionRetryHint, looksLikeActionPayload, parseActionJson } from './actionJson'
 
 export type ZCodeChatModelParams = BaseChatModelParams & {
   modelKey?: string
@@ -13,7 +15,28 @@ export type ZCodeChatModelParams = BaseChatModelParams & {
   tools?: StructuredToolInterface[]
   /** 只用于稳定生成工具 id；多轮会话可以递增 */
   callSequence?: number
+  /** 流式进度回调；由图的 emit 注入 */
+  onProgress?: (chars: number) => void
+  /** 环节运行参数；缺省沿用 3D 代码的 12000/0.3 */
+  maxTokens?: number
+  temperature?: number
 }
+
+/**
+ * 固定协议层：不属于技能，不可被用户编辑。
+ * 技能正文由 SystemMessage 传入，这里只负责 JSON action 协议与工具使用纪律。
+ */
+export const AGENT_PROTOCOL_LINES = [
+  '只通过提供的工具执行动作，不访问网络或文件系统。',
+  '每次回复只输出 JSON：',
+  '{"content":"给用户的简短说明","tool_calls":[{"name":"工具名","args":{}}]}',
+  '只输出一个 JSON 对象：不要 Markdown 围栏，不要在 JSON 前后加说明，也不要在末尾追加多余的括号。',
+  '需要工具时返回 tool_calls；完成时 content 说明结果，不要伪造工具结果。',
+  '不要输出 chain-of-thought。工具参数必须符合 schema。',
+  '大段产物只返回摘要和引用，不要把整份产物重复写进回复。',
+  '长代码分多次 append_scene_draft，每次不超过 1500 字符；看到工具结果后再写下一段。',
+  '代码正文只写进草稿工具（append/patch），不要在 content 或重复的 set_scene_code 里重写整份代码。',
+] as const
 
 function messageText(message: BaseMessage): string {
   const content = message.content as unknown
@@ -46,8 +69,11 @@ function toolsPrompt(tools: StructuredToolInterface[]): string {
     .join('\n\n')
 }
 
-function historyPrompt(messages: BaseMessage[]): string {
-  return messages
+export function historyPrompt(messages: BaseMessage[]): string {
+  const compacted = compactDraftHistory(messages)
+  return compacted
+    // 技能 system 单独拼在 prompt 头部；只放行历史压缩生成的草稿摘要。
+    .filter((m) => m.getType() !== 'system' || messageText(m).startsWith('[场景草稿]'))
     .map((m) => {
       const role = m.getType()
       const text = messageText(m)
@@ -62,84 +88,16 @@ function historyPrompt(messages: BaseMessage[]): string {
     .join('\n\n')
 }
 
-function escapeControlCharsInJsonStrings(text: string): string {
-  let out = ''
-  let inString = false
-  let escaped = false
-  for (const ch of text) {
-    if (escaped) {
-      out += ch
-      escaped = false
-      continue
-    }
-    if (ch === '\\' && inString) {
-      out += ch
-      escaped = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      out += ch
-      continue
-    }
-    if (inString && ch === '\n') {
-      out += '\\n'
-    } else if (inString && ch === '\r') {
-      out += '\\r'
-    } else if (inString && ch === '\t') {
-      out += '\\t'
-    } else {
-      out += ch
-    }
-  }
-  return out
-}
-
-function normalizeToolArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
-  if (name !== 'set_scene_code' || typeof args.code !== 'string') return args
-  let code = args.code
-  // 少数模型把已经转义过的换行再次转义，代码会变成一行字面量 \n；只在没有真实换行时还原。
-  if (!code.includes('\n') && code.includes('\\n')) {
-    code = code.replace(/\\r/g, '').replace(/\\n/g, '\n').replace(/\\t/g, '\t')
-  }
-  return { ...args, code }
+function systemPrompt(messages: BaseMessage[]): string {
+  return messages
+    .filter((m) => m.getType() === 'system')
+    .map(messageText)
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export function parseZCodeActionJson(raw: unknown): unknown {
-  return parseJson(raw)
-}
-
-function parseJson(raw: unknown): unknown {
-  if (raw && typeof raw === 'object') return raw
-  const text = String(raw || '').trim()
-  if (!text) return undefined
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const body = fence ? fence[1] : text
-  try {
-    return JSON.parse(body)
-  } catch {
-    // 多数 provider 的 JSON mode 会正确转义；少数模型会把代码里的换行原样塞进字符串。
-    try {
-      return JSON.parse(escapeControlCharsInJsonStrings(body))
-    } catch {
-      /* 继续尝试截取首个 {...} */
-    }
-    const start = body.indexOf('{')
-    const end = body.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      const sliced = body.slice(start, end + 1)
-      try {
-        return JSON.parse(sliced)
-      } catch {
-        try {
-          return JSON.parse(escapeControlCharsInJsonStrings(sliced))
-        } catch {
-          return undefined
-        }
-      }
-    }
-    return undefined
-  }
+  return parseActionJson(raw)
 }
 
 /**
@@ -152,14 +110,20 @@ export class ZCodeChatModel extends BaseChatModel {
   ask: SceneCodeAsk
   tools: StructuredToolInterface[]
   callSequence: number
+  onProgress?: (chars: number) => void
+  maxTokens: number
+  temperature: number
 
   constructor(params: ZCodeChatModelParams = {}) {
     super(params)
     this.modelKey = params.modelKey
+    this.onProgress = params.onProgress
+    this.maxTokens = params.maxTokens ?? 12000
+    this.temperature = params.temperature ?? 0.3
     this.ask =
       params.ask ||
       ((o) =>
-        callText({
+        callTextStream({
           system: o.system,
           prompt: o.prompt,
           json: o.json,
@@ -167,6 +131,7 @@ export class ZCodeChatModel extends BaseChatModel {
           temperature: o.temperature,
           modelKey: o.modelKey,
           signal: o.signal,
+          ...(o.onProgress ? { onProgress: o.onProgress } : {}),
         }))
     this.tools = params.tools || []
     this.callSequence = params.callSequence || 0
@@ -182,6 +147,7 @@ export class ZCodeChatModel extends BaseChatModel {
       ...this,
       tools,
       callSequence: this.callSequence,
+      ...(this.onProgress ? { onProgress: this.onProgress } : {}),
     }) as this
   }
 
@@ -191,49 +157,66 @@ export class ZCodeChatModel extends BaseChatModel {
     runManager?: unknown,
   ): Promise<ChatResult> {
     void runManager
-    const system = [
-      '你是 3D 场景 agent。只通过提供的工具执行动作，不访问网络或文件系统。',
-      '每次回复只输出 JSON：',
-      '{"content":"给用户的简短说明","tool_calls":[{"name":"工具名","args":{}}]}',
-      '需要工具时返回 tool_calls；完成时 content 说明结果，不要伪造工具结果。',
-      '不要输出 chain-of-thought。工具参数必须符合 schema。',
-      'set_scene_code 的 code 必须是一个合法 JSON 字符串：代码里的换行写成 \\n，双引号要转义。',
-      '代码保持精简，优先完整可运行；单次代码建议不超过 180 行。',
+    const skillSystem = systemPrompt(messages)
+    const baseSystem = [
+      ...(skillSystem ? [skillSystem] : []),
+      ...AGENT_PROTOCOL_LINES,
       '',
       '可用工具：',
       toolsPrompt(this.tools),
     ].join('\n')
     const prompt = historyPrompt(messages)
-    const r = await this.ask({
-      system,
-      prompt,
-      json: true,
-      maxTokens: 12000,
-      temperature: 0.3,
-      modelKey: this.modelKey,
-      signal: options?.signal,
-    })
-    const parsed = parseJson(r.json ?? r.text) as
-      | { content?: unknown; tool_calls?: unknown }
-      | undefined
-    const content = String(parsed?.content ?? r.text ?? '').trim()
-    const rawCalls = Array.isArray(parsed?.tool_calls) ? parsed.tool_calls : []
-    const seq = this.callSequence + 1
-    this.callSequence = seq
-    const toolCalls = rawCalls
-      .filter((x): x is Record<string, unknown> => Boolean(x && typeof x === 'object'))
-      .map((call, i) => {
-        const name = String(call.name || '')
-        const args = call.args && typeof call.args === 'object' ? normalizeToolArgs(name, call.args as Record<string, unknown>) : {}
-        return { name, args, id: `call_${seq}_${i}` }
+    // 模型偶尔会把 {content, tool_calls} 写成坏 JSON（末尾多括号 / 截断）。
+    // 解析不回来时先自行纠一次，避免把原始 JSON 当成回答展示、也避免“伪造已提交”。
+    const maxAttempts = 3
+    let lastRaw = ''
+    let lastFinish: string | undefined
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const system = attempt === 1 ? baseSystem : `${baseSystem}\n\n${actionRetryHint(lastRaw, lastFinish)}`
+      const r = await this.ask({
+        system,
+        prompt,
+        json: true,
+        maxTokens: this.maxTokens,
+        temperature: this.temperature,
+        modelKey: this.modelKey,
+        signal: options?.signal,
+        ...(this.onProgress ? { onProgress: this.onProgress } : {}),
       })
-      .filter((c) => c.name)
-    const message = new AIMessage({
-      content,
-      ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-    })
-    return {
-      generations: [{ message, text: content }],
+      lastFinish = r.finishReason
+      const rawText = String(r.text ?? '')
+      const parsed = parseActionJson(r.json ?? r.text) as
+        | { content?: unknown; tool_calls?: unknown }
+        | undefined
+      if (!parsed && looksLikeActionPayload(rawText)) {
+        lastRaw = rawText
+        if (attempt < maxAttempts) continue
+        throw new Error(
+          `模型连续 ${maxAttempts} 次没有返回合法的工具调用 JSON` +
+            (lastFinish === 'length' ? '（输出达到长度上限被截断）' : '') +
+            '；请缩短单次输出或更换文本模型后重试',
+        )
+      }
+      const content = String(parsed?.content ?? rawText ?? '').trim()
+      const rawCalls = Array.isArray(parsed?.tool_calls) ? parsed.tool_calls : []
+      const seq = this.callSequence + 1
+      this.callSequence = seq
+      const toolCalls = rawCalls
+        .filter((x): x is Record<string, unknown> => Boolean(x && typeof x === 'object'))
+        .map((call, i) => {
+          const name = String(call.name || '')
+          const args = call.args && typeof call.args === 'object' ? (call.args as Record<string, unknown>) : {}
+          return { name, args, id: `call_${seq}_${i}` }
+        })
+        .filter((c) => c.name)
+      const message = new AIMessage({
+        content,
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+      })
+      return {
+        generations: [{ message, text: content }],
+      }
     }
+    throw new Error('模型没有返回可用的回复')
   }
 }

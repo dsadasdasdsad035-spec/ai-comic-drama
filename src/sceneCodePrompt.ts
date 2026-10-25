@@ -1,63 +1,90 @@
 import type { ProjectData } from './api'
 import type { MediaBrief } from './mediaBrief'
-import { mediaBriefText } from './mediaBrief'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
 import type { Shot3DContext, ShotData } from './types'
 import type { Shot3DContextCatalog } from './shot3dContextCatalog'
-import { itemIsSelected } from './shot3dContextCatalog'
-import { selectedDialogue } from './shot3dContext'
+import { buildManifest, manifestText } from './contextManifest'
 
 export const SCENE_CODE_ABI = `运行时会提供：
-- ctx.THREE：Three.js core
-- ctx.scene / ctx.camera / ctx.renderer / ctx.canvas
-- ctx.assets：Map<稳定键, { key, label, kind, texture, width, height, videoDuration?, frameTime? }>
-- ctx.duration（秒）/ ctx.width / ctx.height / ctx.aspect / ctx.shot
-- ctx.render() 可选，手动渲染；每帧 renderAt 返回后运行时也会渲染 scene/camera
+- ctx.scene：bpy 场景；ctx.camera：相机对象；ctx.camera_data：相机数据（焦距/传感器）
+- ctx.width / ctx.height / ctx.aspect / ctx.duration（秒）/ ctx.fps / ctx.mode（clean 或 review）
+- ctx.shot：当前镜头元数据
+- ctx.asset(key)：返回该素材在本机的只读文件路径；不存在时返回 None
+- ctx.assets()：返回 [{key,label,kind,path,width,height,...}]
 
 必须定义三个顶层函数：
-function init(ctx) { /* 建场景、材质、灯光、相机 */ }
-function renderAt(t, mode) { /* t 是 0..duration 秒；mode 是 clean/review */ }
-function dispose() { /* 释放自定义几何/材质/纹理/RenderTarget */ }
+def build(ctx):    # 建场景、材质、灯光、相机；至少添加一个可见对象
+def pose(t, mode): # t 是 0..duration 秒；只改场景状态，不渲染、不写文件
+def dispose():     # 释放自定义数据块/节点组/临时贴图
 
 硬约束：
-- 不要 import / require / fetch / XMLHttpRequest / WebSocket；不能访问 parent、top、Cookie、localStorage。
-- 动画必须由 t 决定，不要用 requestAnimationFrame、Date.now、随机数表达运动；同一 t 要产生同一画面。
-- 使用 ctx.assets.get('稳定键') 取选中素材纹理；素材不存在时要有兜底。
-- 相机必须设置到能看到主体的位置；renderAt 中要按 t 更新运动。
-- init 至少添加一个可见 mesh，并设置 ctx.camera；首帧必须产生 draw call。
+- 只允许 import bpy、math、random、mathutils、colorsys；禁止 os/sys/subprocess/socket/urllib/pathlib/open/eval/exec/compile。
+- 禁止 bpy.ops.wm / bpy.ops.export / bpy.ops.import / bpy.data.libraries / bpy.app / bpy.utils / bpy.path。
+- 不要在模块顶层引用 ctx 或调用 build(ctx)：宿主加载代码后才调用 build(ctx)，再逐帧调用 pose(t)。需要在 build 和 pose 之间共享的对象请存进模块级 _state。
+- 创建可见几何必须有顶点（bpy.ops.mesh.primitive_*_add 或 mesh.from_pydata）；不要用空 mesh 当物体，否则什么都看不见。
+- Blender 4.2–6.0 没有 primitive_capsule_add；人物四肢用 primitive_cylinder_add 组合（圆柱两端可再叠 uv_sphere）。
+- primitive_cube_add 的 size 只接受数字；要做长方体用 size=1，再设 obj.scale。
+- bpy.ops.mesh.primitive_*_add 创建的对象已经自动链接到当前 collection；不要再 link() 同一个对象，否则会报 already in collection。
+- 动画必须由 t 决定；不要读墙钟、不要用未固定种子的随机数表达运动；同一 t 必须产生同一画面。
+- 素材只通过 ctx.asset(key) 取路径；用 bpy.data.images.load() 载入并接进材质；没有素材时用程序化材质兜底。
+- 相机必须朝向主体；相机由宿主创建，代码只需改 ctx.camera.location / rotation_euler / ctx.camera_data.lens。
+- 单位是米；默认相机焦距 45mm；画面比例由宿主设置，不要改分辨率或帧率。
+- 渲染设置（引擎、采样、分辨率、帧率、输出路径）由宿主拥有，代码 MUST NOT 修改。
 - 只输出 JSON，不要 Markdown 围栏。
 
+相机对准目标的常用写法：
+from mathutils import Vector
+def _look_at(obj, target):
+    d = Vector(target) - obj.location
+    obj.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
+
+素材贴图的常用写法：
+img = bpy.data.images.load(path)
+tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+tex.image = img
+mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
+
 最小可用结构（内容可替换，但结构必须保留）：
-let S;
-function init(ctx) {
-  S = ctx;
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x2a9d8f })
-  );
-  S.scene.add(mesh);
-  S.scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 2));
-  ctx.camera.position.set(0, 1.5, 5);
-  ctx.camera.lookAt(0, 0, 0);
-}
-function renderAt(t) {
-  if (S) S.camera.position.x = Math.sin(t * 0.5) * 0.2;
-}
-function dispose() {}`
+import bpy
+from mathutils import Vector
 
-export const SCENE_CODE_SYSTEM = `你是资深 Three.js 场景导演。你会根据当前镜头文本、用户选中的素材和媒体 brief，生成一段可执行的 Three.js 代码，用于 3D 调度预演。
-代码是场景的唯一真相：不要输出 ShotScene、ShotBlocking、JSON 布局或补丁，只输出完整代码。
-${SCENE_CODE_ABI}
+_state = {}
 
-只输出：
-{"reply":"给用户的一句话","code":"完整代码","motionNote":"可选：给下游视频模型的运镜/动作说明，不要声称由几何自动推导"}`
+def _look_at(obj, target):
+    d = Vector(target) - obj.location
+    obj.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
 
-export const SCENE_CODE_CHAT_SYSTEM = `你是当前镜头的 Three.js 代码编辑助手。用户会要求你修改现有 3D 代码。
-你必须返回完整的新代码，而不是片段、diff 或结构化 patch；不要修改其他镜头。
-${SCENE_CODE_ABI}
+def build(ctx):
+    bpy.ops.mesh.primitive_plane_add(size=12, location=(0, 0, 0))
+    bpy.ops.mesh.primitive_cube_add(size=1.2, location=(0, 0, 0.6))
+    box = bpy.context.active_object
+    mat = bpy.data.materials.new('Subject')
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get('Principled BSDF')
+    if bsdf:
+        bsdf.inputs['Base Color'].default_value = (0.14, 0.55, 0.48, 1)
+        bsdf.inputs['Roughness'].default_value = 0.5
+    box.data.materials.append(mat)
 
-只输出：
-{"reply":"给用户的一句话","code":"完整代码","motionNote":"可选：更新后的运镜/动作说明"}`
+    key = bpy.data.objects.new('Key', bpy.data.lights.new('Key', type='AREA'))
+    key.data.energy = 600
+    key.data.size = 4
+    ctx.scene.collection.objects.link(key)
+    key.location = (4, -5, 6)
+    _look_at(key, (0, 0, 1))
+
+    ctx.camera.location = (0, -7, 2.4)
+    _look_at(ctx.camera, (0, 0, 1))
+    ctx.camera_data.lens = 45
+    _state['box'] = box
+
+def pose(t, mode):
+    box = _state.get('box')
+    if box:
+        box.rotation_euler[2] = t * 0.6
+
+def dispose():
+    pass`
 
 export type SceneCodePromptInput = {
   shot: ShotData
@@ -72,6 +99,8 @@ export type SceneCodePromptInput = {
   legacyScene?: unknown
   duration: number
   aspect: string
+  /** 本机 Blender 版本；写入提示词，减少 bpy 版本漂移 */
+  engineVersion?: string
 }
 
 export type SceneCodeResult = {
@@ -93,75 +122,38 @@ const cleanCode = (v: unknown, max = 16000): string =>
     .trim()
     .slice(0, max)
 
-function sceneText(catalog: Shot3DContextCatalog, ctx: Shot3DContext): string[] {
-  const out: string[] = []
-  for (const item of catalog.scenes) {
-    if (item.kind === 'scene-text' && itemIsSelected(ctx, item)) {
-      out.push(`${item.label}${item.subtitle ? `（${item.subtitle}）` : ''}`)
+function briefsOf(mediaBrief?: MediaBrief): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of mediaBrief?.items ?? []) {
+    if (item.key && item.description) out[item.key] = item.description
+  }
+  return out
+}
+
+function assetMetaOf(assets: PreparedSceneAsset[]): Record<string, { width?: number; height?: number }> {
+  const out: Record<string, { width?: number; height?: number }> = {}
+  for (const a of assets) {
+    out[a.ref.key] = {
+      ...(a.payload.width ? { width: a.payload.width } : {}),
+      ...(a.payload.height ? { height: a.payload.height } : {}),
     }
   }
   return out
 }
 
-function assetManifest(assets: PreparedSceneAsset[]): string {
-  return assets
-    .map((a) => {
-      const bits = [
-        `key=${a.ref.key}`,
-        `label=${a.ref.label}`,
-        `kind=${a.payload.kind}`,
-        a.payload.width && a.payload.height ? `${a.payload.width}x${a.payload.height}` : '',
-        a.payload.videoDuration != null ? `video=${a.payload.videoDuration.toFixed(2)}s` : '',
-        a.payload.frameTime != null ? `frame@${a.payload.frameTime.toFixed(2)}s` : '',
-      ].filter(Boolean)
-      return `- ${bits.join(' | ')}`
-    })
-    .join('\n')
-}
-
 /** 代码生成/聊天共用的上下文；素材只给稳定键和 brief，不发 base64。 */
 export function buildSceneCodeContext(input: SceneCodePromptInput): string {
-  const s = input.shot
   const lines: string[] = []
-  lines.push(
-    `【镜头】${clean(s.no, 30) || '未编号'}｜${input.duration.toFixed(1)}s｜${input.aspect}｜` +
-      `${clean(s.size, 20) || '未注明'}｜${clean(s.move, 20) || '未注明'}`,
-  )
-  if (input.context.text.prompt && s.prompt) lines.push(`【画面提示词】${clean(s.prompt, 1200)}`)
-  if (input.context.text.videoPrompt && s.videoPrompt) lines.push(`【运动提示词】${clean(s.videoPrompt, 1000)}`)
-  if (input.context.text.cast && s.cast?.length) lines.push(`【画面出场】${s.cast.map((x) => clean(x, 20)).join('、')}`)
-  if (input.context.text.sizeMove) {
-    lines.push(
-      `【景别/运镜/秒数】${[clean(s.size, 20), clean(s.move, 20), `${Number(s.seconds || 0).toFixed(1)}s`]
-        .filter(Boolean)
-        .join(' · ')}`,
-    )
-  }
-  const selected = selectedDialogue(input.context, s.dialogue)
-  if (input.context.text.dialogue !== 'all' || selected.length) {
-    if (selected.length) {
-      lines.push('【选中台词】')
-      for (const line of selected) lines.push(`- ${line.speaker ? `${line.speaker}：` : ''}${clean(line.text, 300)}`)
-    }
-  }
-  if (input.context.text.marks && s.marks?.length) {
-    lines.push(`【画面标注】${input.catalog.text.marks || `${s.marks.length} 个标注`}`)
-  }
-  const scenes = sceneText(input.catalog, input.context)
-  if (scenes.length) lines.push(`【选中场次】${scenes.join('；')}`)
+  lines.push(`【渲染引擎】Blender ${input.engineVersion || '4.2+'}（bpy）`)
+  const manifest = buildManifest({
+    context: input.context,
+    catalog: input.catalog,
+    shotNo: String(input.shot.no || ''),
+    duration: input.duration,
+    aspect: input.aspect,
+  })
+  lines.push(manifestText(manifest, briefsOf(input.mediaBrief), 12000, assetMetaOf(input.assets)))
 
-  const selectedAssets = input.assets.map((a) => a.ref)
-  if (selectedAssets.length) {
-    lines.push('【选中素材（代码用稳定键取）】')
-    lines.push(assetManifest(input.assets))
-  } else {
-    lines.push('【选中素材】无；代码应使用几何、颜色和程序化材质')
-  }
-  const brief = mediaBriefText(input.mediaBrief)
-  if (brief) {
-    lines.push('【媒体 brief】')
-    lines.push(clean(brief, 5000))
-  }
   if (input.videoBrief) {
     lines.push('【原生视频理解（仅首次生成可用）】')
     lines.push(clean(input.videoBrief, 5000))
@@ -172,11 +164,11 @@ export function buildSceneCodeContext(input: SceneCodePromptInput): string {
   }
   if (input.previousCode) {
     lines.push('【上一镜代码（只作风格/空间连续性参考，不要假设有结构化继承）】')
-    lines.push('```js\n' + cleanCode(input.previousCode, 12000) + '\n```')
+    lines.push('```python\n' + cleanCode(input.previousCode, 12000) + '\n```')
   }
   if (input.currentCode) {
     lines.push('【当前代码（在此基础上改）】')
-    lines.push('```js\n' + cleanCode(input.currentCode, 16000) + '\n```')
+    lines.push('```python\n' + cleanCode(input.currentCode, 16000) + '\n```')
   }
   return lines.join('\n').slice(0, 28000)
 }
@@ -184,7 +176,7 @@ export function buildSceneCodeContext(input: SceneCodePromptInput): string {
 export function buildSceneCodeGeneratePrompt(input: SceneCodePromptInput): string {
   return (
     `${buildSceneCodeContext(input)}\n\n` +
-    '请生成一段完整 Three.js 调度代码。优先用选中素材做背景/纹理；没有素材就用几何与程序化材质。' +
+    '请生成一段完整的 Blender Python（bpy）调度代码。优先用选中素材做背景/贴图；没有素材就用几何与程序化材质。' +
     '不要输出 JSON 以外的内容。'
   )
 }
@@ -198,7 +190,7 @@ export function buildSceneCodeChatPrompt(input: SceneCodePromptInput, userMessag
     `${buildSceneCodeContext(input)}\n\n` +
     (recent ? `【最近聊天】\n${recent}\n\n` : '') +
     `【用户新消息】${clean(userMessage, 2000)}\n\n` +
-    '请直接修改当前代码并返回完整新代码；只输出 JSON。'
+    '请直接修改当前 Blender Python 代码并返回完整新代码；只输出 JSON。'
   )
 }
 

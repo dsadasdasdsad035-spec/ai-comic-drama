@@ -23,6 +23,8 @@ export type Shot3DContextItem = {
   designId?: string
   videoDuration?: number
   missing?: boolean
+  /** 场次文本所属集数；设计卡等项目级条目不填 */
+  episode?: number
 }
 
 export type Shot3DTextCatalog = {
@@ -141,15 +143,19 @@ export function buildShot3DContextCatalog(input: BuildShot3DContextCatalogInput)
   for (const d of designItems) if (d.url) addImage(d, 70)
 
   const sceneMetaItems: Shot3DContextItem[] = []
-  for (const s of episode?.scenes ?? []) {
-    const no = Number(s.no) || sceneMetaItems.length + 1
-    sceneMetaItems.push({
-      key: `scene:${sceneKeyOf(episodeNo, no)}`,
-      category: 'scene',
-      kind: 'scene-text',
-      label: `SC${String(no).padStart(2, '0')} · ${s.slug || s.place || '未命名场次'}`,
-      subtitle: [s.place, s.time, s.characters?.join('、')].filter(Boolean).join(' · '),
-    })
+  for (const ep of project?.episodes ?? []) {
+    const epNo = Number(ep.no) || 1
+    for (const s of ep.scenes ?? []) {
+      const no = Number(s.no) || sceneMetaItems.length + 1
+      sceneMetaItems.push({
+        key: `scene:${sceneKeyOf(epNo, no)}`,
+        category: 'scene',
+        kind: 'scene-text',
+        label: `E${String(epNo).padStart(2, '0')} · SC${String(no).padStart(2, '0')} · ${s.slug || s.place || '未命名场次'}`,
+        subtitle: [s.place, s.time, s.characters?.join('、')].filter(Boolean).join(' · '),
+        episode: epNo,
+      })
+    }
   }
   if (!sceneMetaItems.some((x) => x.key === `scene:${sceneKeyOf(episodeNo, sceneNo)}`)) {
     sceneMetaItems.push({
@@ -158,6 +164,7 @@ export function buildShot3DContextCatalog(input: BuildShot3DContextCatalogInput)
       kind: 'scene-text',
       label: `SC${String(sceneNo).padStart(2, '0')} · ${sceneSlug || '当前场次'}`,
       subtitle: '当前镜头所属场次',
+      episode: episodeNo,
     })
   }
 
@@ -248,7 +255,7 @@ export function buildShot3DContextCatalog(input: BuildShot3DContextCatalogInput)
     sizeMove: [shot.size, shot.move, shot.seconds != null ? `${Number(shot.seconds).toFixed(1)}s` : '']
       .filter(Boolean)
       .join(' · '),
-    marks: marksSummary(shot.marks),
+    marks: shot.marks?.length ? marksSummary(shot.marks) : '',
   }
 
   const defaultDesignIds = new Set<string>()
@@ -424,7 +431,7 @@ export function toggleDialogueLine(ctx: Shot3DContext, index: number, total: num
   return setDialogueSelection(ctx, current.length === total ? 'all' : current)
 }
 
-/** 选择中实际会进入沙箱的图片 URL 去重计数。 */
+/** 选择中实际会进入渲染的图片 URL 去重计数。 */
 export function selectedImageCount(ctx: Shot3DContext, catalog?: Shot3DContextCatalog): number {
   const urls = new Set<string>([...ctx.imageUrls, ...ctx.assetUrls])
   if (catalog) {

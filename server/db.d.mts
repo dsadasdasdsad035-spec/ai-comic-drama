@@ -25,3 +25,35 @@ export declare function createProject(
 export declare function mergeShots(existing: any[] | undefined, incoming: any[]): any[]
 export declare function getSetting(key: string): any
 export declare function setSetting(key: string, value: unknown): void
+export declare function listSkillOverrides(): Record<
+  string,
+  { body: string; baseVersion: number; updatedAt: string }
+>
+export declare function getSkillOverride(
+  id: string,
+): { body: string; baseVersion: number; updatedAt: string } | undefined
+export declare function setSkillOverride(id: string, body: string, baseVersion?: number): void
+export declare function deleteSkillOverride(id: string): void
+export declare type ChatThreadKey = {
+  project: string
+  surface: string
+  episode?: number
+  shotId?: string
+}
+export declare function getChatThread(key: ChatThreadKey):
+  | {
+      project: string
+      surface: string
+      episode: number
+      shotId: string
+      messages: unknown[]
+      activeSkills: unknown[]
+      updatedAt: string
+    }
+  | undefined
+export declare function saveChatThread(
+  key: ChatThreadKey,
+  messages: unknown[],
+  activeSkills?: unknown[],
+): ReturnType<typeof getChatThread>
+export declare function deleteChatThread(key: ChatThreadKey): void

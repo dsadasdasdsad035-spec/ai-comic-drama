@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-23T14:06:00.000Z",
+  "blender": "5.2.2 LTS",
+  "engine": "EEVEE",
+  "tier": "final",
+  "scene": "fixtures/agent-duel-scene.py",
+  "duration": 4,
+  "fps": 30,
+  "frames": 120,
+  "width": 960,
+  "height": 540,
+  "wallMs": 25622,
+  "artifacts": {
+    "video": "evidence/acceptance-4s.mp4",
+    "frames": [
+      "evidence/acceptance-t0.jpg",
+      "evidence/acceptance-t1.33.jpg",
+      "evidence/acceptance-t2.67.jpg",
+      "evidence/acceptance-t3.97.jpg"
+    ]
+  },
+  "checks": {
+    "mountain_backdrop": true,
+    "man_and_woman_distinct": true,
+    "two_swords": true,
+    "camera_orbit": true,
+    "frame_count_exact": true,
+    "duration_exact": true
+  },
+  "note": "关键帧 t=0 与 t=2.67 为相机环绕两侧，均可看到山体背景；人物为蓝色/粉色胶囊+头部，各持一把剑。"
+}

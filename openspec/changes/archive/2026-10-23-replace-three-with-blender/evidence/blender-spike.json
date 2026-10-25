@@ -1,0 +1,150 @@
+{
+  "at": "2026-10-23T13:33:32.101Z",
+  "blender": "5.2.2 LTS",
+  "rows": [
+    {
+      "engine": "workbench",
+      "size": "320x180",
+      "frames": 10,
+      "samples": 4,
+      "ok": true,
+      "wallMs": 1009,
+      "perFrameMs": 101,
+      "videoUrl": "/videos/blender-1792762367610-cb8f11.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fbfz4e4315-0.jpg",
+        "/generated/blender-bmvl0fbfz4e4315-1.jpg",
+        "/generated/blender-bmvl0fbfz4e4315-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "workbench",
+      "size": "960x540",
+      "frames": 10,
+      "samples": 4,
+      "ok": true,
+      "wallMs": 1209,
+      "perFrameMs": 121,
+      "videoUrl": "/videos/blender-1792762368775-ad20f1.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fc7z8e2236-0.jpg",
+        "/generated/blender-bmvl0fc7z8e2236-1.jpg",
+        "/generated/blender-bmvl0fc7z8e2236-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "workbench",
+      "size": "1920x1080",
+      "frames": 10,
+      "samples": 4,
+      "ok": true,
+      "wallMs": 1811,
+      "perFrameMs": 181,
+      "videoUrl": "/videos/blender-1792762370516-220f16.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fd5kef3b63-0.jpg",
+        "/generated/blender-bmvl0fd5kef3b63-1.jpg",
+        "/generated/blender-bmvl0fd5kef3b63-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "eevee",
+      "size": "320x180",
+      "frames": 10,
+      "samples": 8,
+      "ok": true,
+      "wallMs": 3825,
+      "perFrameMs": 383,
+      "videoUrl": "/videos/blender-1792762374462-2cc1f2.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fejv0d5b56-0.jpg",
+        "/generated/blender-bmvl0fejv0d5b56-1.jpg",
+        "/generated/blender-bmvl0fejv0d5b56-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "eevee",
+      "size": "960x540",
+      "frames": 10,
+      "samples": 16,
+      "ok": true,
+      "wallMs": 2214,
+      "perFrameMs": 221,
+      "videoUrl": "/videos/blender-1792762376646-d3306a.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fhi4c198a8-0.jpg",
+        "/generated/blender-bmvl0fhi4c198a8-1.jpg",
+        "/generated/blender-bmvl0fhi4c198a8-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "eevee",
+      "size": "1920x1080",
+      "frames": 10,
+      "samples": 32,
+      "ok": true,
+      "wallMs": 4423,
+      "perFrameMs": 442,
+      "videoUrl": "/videos/blender-1792762380822-177687.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fj7m468d4a-0.jpg",
+        "/generated/blender-bmvl0fj7m468d4a-1.jpg",
+        "/generated/blender-bmvl0fj7m468d4a-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "cycles",
+      "size": "320x180",
+      "frames": 10,
+      "samples": 8,
+      "ok": true,
+      "wallMs": 1210,
+      "perFrameMs": 121,
+      "videoUrl": "/videos/blender-1792762382214-299dad.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fmmh03bbb9-0.jpg",
+        "/generated/blender-bmvl0fmmh03bbb9-1.jpg",
+        "/generated/blender-bmvl0fmmh03bbb9-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "cycles",
+      "size": "960x540",
+      "frames": 10,
+      "samples": 16,
+      "ok": true,
+      "wallMs": 4039,
+      "perFrameMs": 404,
+      "videoUrl": "/videos/blender-1792762386240-68e9ae.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fnk3b9f9c2-0.jpg",
+        "/generated/blender-bmvl0fnk3b9f9c2-1.jpg",
+        "/generated/blender-bmvl0fnk3b9f9c2-2.jpg"
+      ],
+      "error": null
+    },
+    {
+      "engine": "cycles",
+      "size": "1920x1080",
+      "frames": 10,
+      "samples": 32,
+      "ok": true,
+      "wallMs": 25466,
+      "perFrameMs": 2547,
+      "videoUrl": "/videos/blender-1792762411578-f873eb.mp4",
+      "frameUrls": [
+        "/generated/blender-bmvl0fqoaa51ad6-0.jpg",
+        "/generated/blender-bmvl0fqoaa51ad6-1.jpg",
+        "/generated/blender-bmvl0fqoaa51ad6-2.jpg"
+      ],
+      "error": null
+    }
+  ]
+}

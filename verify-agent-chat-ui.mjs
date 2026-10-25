@@ -1,5 +1,5 @@
 /**
- * assistant-ui + LangGraph 聊天 UI 验收：脚本化模型、真实沙箱抓帧、mock vision。
+ * assistant-ui + LangGraph 聊天 UI 验收：脚本化模型、真实 Blender 渲染抓帧、mock vision。
  * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-agent-chat-ui.mjs
  */
 import { chromium } from 'playwright-core'
@@ -19,7 +19,7 @@ const check = (name, cond, extra = '') => {
 const api = async (p, init) => (await fetch(`${URL}${p}`, init)).json()
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex')
 
-const CODE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.js'), 'utf8').trim()
+const CODE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.py'), 'utf8').trim()
 
 await api(`/api/project?name=${encodeURIComponent(NAME)}&create=1`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: NAME, aspect: '16:9' }),
@@ -59,7 +59,7 @@ let toolIndex = 0
 const calls = [
   { name: 'get_shot_context', args: {} },
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
   { name: 'review_frames', args: { requirements: ['山体', '两个人物', '男女可区分', '两把剑', '对打姿态', '镜头环绕', '正对两人'] } },
   { name: 'finish', args: { summary: '山、男女双剑对打和环绕镜头已完成' } },
@@ -67,13 +67,13 @@ const calls = [
 const secondCalls = [
   { name: 'get_shot_context', args: {} },
   { name: 'set_scene_code', args: { code: CODE } },
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2] } },
   { name: 'review_frames', args: { requirements: ['山体', '人物'] } },
   { name: 'finish', args: { summary: '切页签后完成' } },
 ]
 const baselineCalls = [
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2] } },
   { name: 'review_frames', args: { requirements: ['山体', '人物'] } },
   { name: 'finish', args: { summary: '当前基线运行完成' } },
@@ -133,7 +133,8 @@ await page.route('**/api/vision', (route) =>
   }),
 )
 
-await page.goto(URL, { waitUntil: 'networkidle' })
+await page.goto(URL, { waitUntil: 'domcontentloaded' })
+await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
 await page.locator('.topbar-project select').selectOption(NAME)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
@@ -167,7 +168,7 @@ await page.waitForFunction(
   { timeout: 240000 },
 )
 const panel = await page.locator('[data-chat-root]').innerText()
-check('工具卡按顺序出现', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('沙箱'), panel.slice(0, 600))
+check('工具卡按顺序出现', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('渲染'), panel.slice(0, 600))
 check('finish 只显示代码阶段完成', panel.includes('代码阶段完成') && !panel.includes('场景完成'), panel.slice(-800))
 check('MP4 视频卡出现', (await page.locator('[data-chat-video]').count()) === 1)
 check('MP4 播放器出现', (await page.locator('[data-chat-video-player]').count()) === 1)
@@ -252,7 +253,7 @@ await page.getByRole('button', { name: '聊天', exact: true }).click()
 await page.waitForTimeout(200)
 check('切回看到后台完成摘要', (await page.locator('[data-chat-root]').innerText()).includes('切页签后完成'))
 
-// 当前工作台已有代码：run_sandbox 可直接运行，不要求先 set_scene_code。
+// 当前工作台已有代码：run_render 可直接运行，不要求先 set_scene_code。
 phase = 'baseline'
 await page.setViewportSize({ width: 1600, height: 1000 })
 await page.waitForTimeout(300)
@@ -260,7 +261,7 @@ await page.locator('[data-chat-input]').fill('运行当前场景，不要重新�
 await page.getByRole('button', { name: '发送', exact: true }).click()
 await page.waitForFunction(() => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false', null, { timeout: 60000 })
 const baselinePanel = await page.locator('[data-chat-root]').innerText()
-check('已有代码直接运行不报未提交', !baselinePanel.includes('还没有提交代码') && baselinePanel.includes('沙箱通过'), baselinePanel.slice(-1000))
+check('已有代码直接运行不报未提交', !baselinePanel.includes('还没有提交代码') && baselinePanel.includes('渲染试运行通过'), baselinePanel.slice(-1000))
 check('已有代码可直接抓帧', await page.locator('[data-chat-frames] img').count() >= 3)
 check('基线运行完成', baselinePanel.includes('当前基线运行完成'))
 

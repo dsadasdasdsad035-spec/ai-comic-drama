@@ -87,7 +87,7 @@ export async function prepareSceneCodeContext(input: {
       try {
         const r = await askVideoVision({
           system: '你是视频场记。只描述视频里真实看到的运动、机位、节奏、光线和空间关系；不要编造。',
-          prompt: `请描述参考视频，供 Three.js 代码的运镜和空间设计使用。视频标签：${videos[0].label}`,
+          prompt: `请描述参考视频，供 Blender 代码的运镜和空间设计使用。视频标签：${videos[0].label}`,
           video: String(videos[0].url || ''),
           modelKey: videoKey,
           signal: input.signal,

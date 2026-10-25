@@ -39,8 +39,9 @@ function esc(s: string): string {
 
 async function bitmapOf(asset: PreparedSceneAsset): Promise<ImageBitmap | null> {
   try {
-    const blob = new Blob([asset.payload.bytes], { type: asset.payload.mime || 'image/jpeg' })
-    return await createImageBitmap(blob)
+    const res = await fetch(asset.payload.url, { credentials: 'same-origin' })
+    if (!res.ok) return null
+    return await createImageBitmap(await res.blob())
   } catch {
     return null
   }
@@ -228,7 +229,7 @@ export async function buildMediaBrief(input: {
       system: MEDIA_BRIEF_SYSTEM,
       prompt:
         `参考板资源清单（key 必须逐字使用）：\n${manifest}\n\n` +
-        '请逐个描述这些素材，供后续 Three.js 代码决定场景、材质、机位和运动。不要输出代码。',
+        '请逐个描述这些素材，供后续 Blender 代码决定场景、材质、机位和运动。不要输出代码。',
       image: sheet.dataUrl,
       modelKey,
       json: true,

@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS characters (
   image    TEXT DEFAULT '',
   candidates TEXT DEFAULT '[]',
   active_idx INTEGER,
+  expressions TEXT DEFAULT '',
+  expression_sheet TEXT DEFAULT '',
+  voice TEXT DEFAULT '',
+  voice_provider TEXT DEFAULT '',
+  voice_model_key TEXT DEFAULT '',
+  voice_sample TEXT DEFAULT '',
   UNIQUE(project_id, name)
 );
 CREATE TABLE IF NOT EXISTS assets (
@@ -154,6 +160,22 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT,
   updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS skill_overrides (
+  skill_id     TEXT PRIMARY KEY,
+  body         TEXT NOT NULL,
+  base_version INTEGER,
+  updated_at   TEXT
+);
+CREATE TABLE IF NOT EXISTS chat_threads (
+  project       TEXT NOT NULL,
+  surface       TEXT NOT NULL,
+  episode       INTEGER NOT NULL DEFAULT 0,
+  shot_id       TEXT NOT NULL DEFAULT '',
+  messages      TEXT NOT NULL DEFAULT '[]',
+  active_skills TEXT NOT NULL DEFAULT '[]',
+  updated_at    TEXT NOT NULL,
+  PRIMARY KEY (project, surface, episode, shot_id)
+);
 `
 
 /** 固定列之外的 shot 字段全部收进 extra，读写时展开合并 */
@@ -191,6 +213,12 @@ function ensureColumns() {
     ['image', "TEXT DEFAULT ''"],
     ['candidates', "TEXT DEFAULT '[]'"],
     ['active_idx', 'INTEGER'],
+    ['expressions', "TEXT DEFAULT ''"],
+    ['expression_sheet', "TEXT DEFAULT ''"],
+    ['voice', "TEXT DEFAULT ''"],
+    ['voice_provider', "TEXT DEFAULT ''"],
+    ['voice_model_key', "TEXT DEFAULT ''"],
+    ['voice_sample', "TEXT DEFAULT ''"],
   ])
   ensure('assets', [['design_id', "TEXT DEFAULT ''"]])
 }
@@ -245,14 +273,19 @@ function importProject(d, name, data) {
   const pid = Number(r.lastInsertRowid)
   for (const [i, c] of (data.characters || []).entries()) {
     d.prepare(
-      `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO characters
+       (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx,
+        expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       pid, String(c.name || ''), String(c.role || ''), String(c.age || ''),
       String(c.look_cn || ''), String(c.look_en || ''), String(c.palette || ''),
       JSON.stringify(c.keywords ?? []), i,
       String(c.image || ''), JSON.stringify(c.candidates ?? []),
       typeof c.activeIdx === 'number' ? c.activeIdx : null,
+      jsonColumn(c.expressions), jsonColumn(c.expression_sheet),
+      String(c.voice || ''), String(c.voice_provider || ''), String(c.voice_model_key || ''),
+      jsonColumn(c.voice_sample),
     )
   }
   for (const [i, ep] of (data.episodes || []).entries()) {
@@ -319,6 +352,116 @@ export function setSetting(key, value) {
     `INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
   ).run(key, JSON.stringify(value), new Date().toISOString())
+}
+
+// ---------------------------------------------------------------- 技能覆盖
+
+export function listSkillOverrides() {
+  if (!db) return {}
+  const rows = db.prepare('SELECT skill_id, body, base_version, updated_at FROM skill_overrides').all()
+  const out = {}
+  for (const row of rows) {
+    out[row.skill_id] = {
+      body: String(row.body || ''),
+      baseVersion: Number(row.base_version) || 1,
+      updatedAt: String(row.updated_at || ''),
+    }
+  }
+  return out
+}
+
+export function getSkillOverride(id) {
+  if (!db) return undefined
+  const row = db.prepare('SELECT body, base_version, updated_at FROM skill_overrides WHERE skill_id = ?').get(String(id))
+  if (!row) return undefined
+  return {
+    body: String(row.body || ''),
+    baseVersion: Number(row.base_version) || 1,
+    updatedAt: String(row.updated_at || ''),
+  }
+}
+
+export function setSkillOverride(id, body, baseVersion = 1) {
+  if (!db) throw new Error('DB 未打开')
+  db.prepare(
+    `INSERT INTO skill_overrides (skill_id, body, base_version, updated_at) VALUES (?,?,?,?)
+     ON CONFLICT(skill_id) DO UPDATE SET body=excluded.body, base_version=excluded.base_version, updated_at=excluded.updated_at`,
+  ).run(String(id), String(body), Number(baseVersion) || 1, new Date().toISOString())
+}
+
+export function deleteSkillOverride(id) {
+  if (!db) throw new Error('DB 未打开')
+  db.prepare('DELETE FROM skill_overrides WHERE skill_id = ?').run(String(id))
+}
+
+// ---------------------------------------------------------------- 聊天线程
+
+function threadKey(k = {}) {
+  return {
+    project: String(k.project || ''),
+    surface: String(k.surface || ''),
+    episode: Number.isFinite(Number(k.episode)) ? Math.max(0, Math.floor(Number(k.episode))) : 0,
+    shotId: String(k.shotId || ''),
+  }
+}
+
+export function getChatThread(key) {
+  if (!db) return undefined
+  const k = threadKey(key)
+  const row = db
+    .prepare(
+      `SELECT messages, active_skills, updated_at FROM chat_threads
+       WHERE project=? AND surface=? AND episode=? AND shot_id=?`,
+    )
+    .get(k.project, k.surface, k.episode, k.shotId)
+  if (!row) return undefined
+  let messages = []
+  let activeSkills = []
+  try {
+    messages = JSON.parse(row.messages || '[]')
+  } catch {
+    messages = []
+  }
+  try {
+    activeSkills = JSON.parse(row.active_skills || '[]')
+  } catch {
+    activeSkills = []
+  }
+  return { ...k, messages, activeSkills, updatedAt: row.updated_at }
+}
+
+export function saveChatThread(key, messages, activeSkills = []) {
+  if (!db) throw new Error('DB 未打开')
+  const k = threadKey(key)
+  if (!Array.isArray(messages)) throw new Error('messages 必须是数组')
+  const payload = JSON.stringify(messages)
+  if (Buffer.byteLength(payload, 'utf8') > 1024 * 1024) throw new Error('线程超过 1MB，请清理会话后重试')
+  db.prepare(
+    `INSERT INTO chat_threads (project, surface, episode, shot_id, messages, active_skills, updated_at)
+     VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(project, surface, episode, shot_id)
+     DO UPDATE SET messages=excluded.messages, active_skills=excluded.active_skills, updated_at=excluded.updated_at`,
+  ).run(
+    k.project,
+    k.surface,
+    k.episode,
+    k.shotId,
+    payload,
+    JSON.stringify(Array.isArray(activeSkills) ? activeSkills : []),
+    new Date().toISOString(),
+  )
+  return getChatThread(k)
+}
+
+export function deleteChatThread(key) {
+  if (!db) throw new Error('DB 未打开')
+  const k = threadKey(key)
+  db.prepare('DELETE FROM chat_threads WHERE project=? AND surface=? AND episode=? AND shot_id=?').run(
+    k.project,
+    k.surface,
+    k.episode,
+    k.shotId,
+  )
 }
 
 // ---------------------------------------------------------------- 项目 CRUD
@@ -413,23 +556,48 @@ function sanitizeStoredSceneLayout(raw) {
   }
 }
 
+/** 旧库/坏行容错：解析不出来就当没有，不让一条脏 JSON 打挂整个项目读取 */
+function parseJsonColumn(raw, fallback = undefined) {
+  if (raw == null || raw === '') return fallback
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return fallback
+  }
+}
+
+function jsonColumn(value) {
+  return value === undefined || value === null ? '' : JSON.stringify(value)
+}
+
 function assemble(p) {
   const pid = p.id
   const characters = db
     .prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
-    .map((c) => ({
-      name: c.name,
-      role: c.role,
-      age: c.age,
-      look_cn: c.look_cn,
-      look_en: c.look_en,
-      palette: c.palette,
-      keywords: JSON.parse(c.keywords || '[]'),
-      ...(c.image ? { image: c.image } : {}),
-      ...(c.candidates && c.candidates !== '[]' ? { candidates: JSON.parse(c.candidates || '[]') } : {}),
-      ...(c.active_idx == null ? {} : { activeIdx: Number(c.active_idx) }),
-    }))
+    .map((c) => {
+      const expressions = parseJsonColumn(c.expressions)
+      const expressionSheet = parseJsonColumn(c.expression_sheet)
+      const voiceSample = parseJsonColumn(c.voice_sample)
+      return {
+        name: c.name,
+        role: c.role,
+        age: c.age,
+        look_cn: c.look_cn,
+        look_en: c.look_en,
+        palette: c.palette,
+        keywords: JSON.parse(c.keywords || '[]'),
+        ...(c.voice ? { voice: c.voice } : {}),
+        ...(c.voice_provider ? { voice_provider: c.voice_provider } : {}),
+        ...(c.voice_model_key ? { voice_model_key: c.voice_model_key } : {}),
+        ...(c.image ? { image: c.image } : {}),
+        ...(c.candidates && c.candidates !== '[]' ? { candidates: JSON.parse(c.candidates || '[]') } : {}),
+        ...(c.active_idx == null ? {} : { activeIdx: Number(c.active_idx) }),
+        ...(expressions && typeof expressions === 'object' ? { expressions } : {}),
+        ...(expressionSheet && typeof expressionSheet === 'object' ? { expression_sheet: expressionSheet } : {}),
+        ...(voiceSample && typeof voiceSample === 'object' ? { voice_sample: voiceSample } : {}),
+      }
+    })
   const assets = db
     .prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
@@ -620,14 +788,19 @@ export function writeProject(root, name, data = {}) {
     db.prepare('DELETE FROM characters WHERE project_id = ?').run(pid)
     for (const [i, c] of data.characters.entries()) {
       db.prepare(
-        `INSERT INTO characters (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO characters
+         (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx,
+          expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         pid, String(c?.name || ''), String(c?.role || ''), String(c?.age || ''),
         String(c?.look_cn || ''), String(c?.look_en || ''), String(c?.palette || ''),
         JSON.stringify(c?.keywords ?? []), i,
         String(c?.image || ''), JSON.stringify(c?.candidates ?? []),
         typeof c?.activeIdx === 'number' ? c.activeIdx : null,
+        jsonColumn(c?.expressions), jsonColumn(c?.expression_sheet),
+        String(c?.voice || ''), String(c?.voice_provider || ''), String(c?.voice_model_key || ''),
+        jsonColumn(c?.voice_sample),
       )
     }
   }

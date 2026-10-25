@@ -37,10 +37,13 @@ const errors = []
 p.on('pageerror', (e) => errors.push(e.stack || e.message))
 await p.goto(URL, { waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
+// 项目列表按名字排序，默认打开的不一定是 recycle；不显式选择会把角色建到别的项目里
+await p.locator('.topbar-project select').selectOption('recycle')
+await p.waitForTimeout(1400)
 
 const before = await getChars()
 await p.getByRole('button', { name: '角色', exact: true }).click()
-await p.waitForTimeout(600)
+await p.waitForTimeout(900)
 check('角色板列出全部角色', (await p.locator('.char-card').count()) === before.length, String(before.length))
 
 // ---- 1. 新建 ----
@@ -55,19 +58,21 @@ check('新卡有占位名', /^新角色\d+$/.test(newName), newName)
 // ---- 2. 编辑字段 ----
 await card.locator('.btn-mini', { hasText: '编辑' }).click()
 await p.waitForTimeout(300)
-check('编辑区展开', (await card.locator('.char-edit').count()) === 1)
-await card.locator('[data-char-field="lookEn"]').fill('test man in his 30s, grey coat, brown eyes')
-await card.locator('[data-char-field="lookCn"]').fill('测试用外观：灰色外套')
-await card.locator('[data-char-field="role"]').fill('测试角色')
-await card.locator('[data-char-field="keywords"]').fill('灰外套、短发')
-await p.waitForTimeout(300)
-check('卡片显示中文外观', (await card.locator('.char-look p').innerText()).includes('灰色外套'))
+check('编辑抽屉展开', (await p.locator('.char-drawer .char-edit').count()) === 1)
+await p.locator('.char-drawer [data-char-field="lookEn"]').fill('test man in his 30s, grey coat, brown eyes')
+await p.locator('.char-drawer [data-char-field="lookCn"]').fill('测试用外观：灰色外套')
+await p.locator('.char-drawer [data-char-field="role"]').fill('测试角色')
+await p.locator('.char-drawer [data-char-field="keywords"]').fill('灰外套、短发')
+await p.locator('.char-drawer-foot button', { hasText: '保存' }).click()
+await p.waitForTimeout(500)
+check('卡片显示中文外观', (await p.locator('.char-card').last().locator('.char-look p').innerText()).includes('灰色外套'))
 
 // 改名（id 跟着名字走）
-await card.locator('[data-char-field="name"]').fill('测试角色A')
-await card.locator('[data-char-field="name"]').press('Enter')
-await p.waitForTimeout(500)
-check('改名生效', (await card.locator('.char-name').innerText()) === '测试角色A')
+await p.locator('.char-card').last().locator('.btn-mini', { hasText: '编辑' }).click()
+await p.locator('.char-drawer [data-char-field="name"]').fill('测试角色A')
+await p.locator('.char-drawer-foot button', { hasText: '保存' }).click()
+await p.waitForTimeout(700)
+check('改名生效', (await p.locator('.char-card').last().locator('.char-name').innerText()) === '测试角色A')
 
 await p.waitForTimeout(2000) // 回写防抖 1.2s
 let chars = await getChars()
@@ -111,8 +116,8 @@ await p.getByRole('button', { name: '角色', exact: true }).click()
 await p.waitForTimeout(500)
 const chenmo = p.locator('.char-card').filter({ hasText: '陈默' }).first()
 await chenmo.locator('.btn-mini', { hasText: '编辑' }).click()
-await chenmo.locator('[data-char-field="name"]').fill('陈默测')
-await chenmo.locator('[data-char-field="name"]').press('Enter')
+await p.locator('.char-drawer [data-char-field="name"]').fill('陈默测')
+await p.locator('.char-drawer-foot button', { hasText: '保存' }).click()
 await p.waitForTimeout(2600)
 const linkedAfter = await p.evaluate(async ({ nid, base, key }) => {
   const s = JSON.parse(localStorage.getItem(key) || '{}')
@@ -124,8 +129,8 @@ check('连线跟着改名迁移', linkedAfter.includes('char-陈默测') && !lin
 
 // 改回来
 await p.locator('.char-card').filter({ hasText: '陈默测' }).first().locator('.btn-mini', { hasText: '编辑' }).click()
-await p.locator('[data-char-field="name"]').first().fill('陈默')
-await p.locator('[data-char-field="name"]').first().press('Enter')
+await p.locator('.char-drawer [data-char-field="name"]').fill('陈默')
+await p.locator('.char-drawer-foot button', { hasText: '保存' }).click()
 await p.waitForTimeout(2400)
 
 // ---- 4. 删除测试角色 ----

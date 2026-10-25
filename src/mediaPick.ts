@@ -31,6 +31,7 @@ export const KIND_LABEL: Record<AssetKind, string> = {
   prop: '道具',
   image: '图片',
   video: '视频',
+  'expression-sheet': '表情总图',
 }
 
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)(?:[?#].*)?$/i
@@ -91,7 +92,7 @@ function assetItem(a: ProjectAssetItem): PickItem | null {
   const url = String(a.url || '').trim()
   if (!url) return null
   const kind: AssetKind =
-    a.kind === 'scene' || a.kind === 'prop' || a.kind === 'video' || a.kind === 'image'
+    a.kind === 'scene' || a.kind === 'prop' || a.kind === 'video' || a.kind === 'image' || a.kind === 'expression-sheet'
       ? a.kind
       : 'image'
   return {

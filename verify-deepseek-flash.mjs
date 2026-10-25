@@ -109,8 +109,8 @@ try {
   await page.goto(URL, { waitUntil: 'networkidle' })
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: '设置', exact: true }).click()
-  await page.waitForSelector('h3:text-is("生成环节默认模型")')
-  await page.waitForSelector('.st-model-row')
+  await page.locator('.st-nav button', { hasText: '模型' }).click()
+  await page.waitForSelector('.st-model-label')
   await page.waitForTimeout(400)
   const labels = await page.locator('.st-model-label').evaluateAll((els) => els.map((e) => e.value))
   check(
@@ -118,6 +118,8 @@ try {
     labels.some((x) => /DeepSeek Flash/.test(x)),
     JSON.stringify(labels.filter((x) => /DeepSeek/.test(x))),
   )
+  await page.locator('.st-nav button', { hasText: '默认路由' }).click()
+  await page.waitForSelector('select[data-stage-model-select="sceneCode"]')
   const stageSel = page.locator('select[data-stage-model-select="sceneCode"]')
   const stageCount = await stageSel.count()
   check('3D 代码环节选择器存在', stageCount === 1, String(stageCount))
@@ -143,8 +145,11 @@ try {
   if (options.some((o) => o.value === MODEL_KEY)) {
     await stageSel.selectOption(MODEL_KEY)
     if (visionOptions.some((o) => o.value === VISION_KEY)) await visionSel.selectOption(VISION_KEY)
-    await page.getByRole('button', { name: '保存设置' }).click()
-    await page.waitForTimeout(1200)
+    const saveButton = page.getByRole('button', { name: '保存设置' })
+    if (await saveButton.isEnabled()) {
+      await saveButton.click()
+      await page.waitForTimeout(1200)
+    }
     const saved = await getSettings()
     check('保存后 3D 代码绑定 DeepSeek Flash', saved.stageModels?.sceneCode === MODEL_KEY, String(saved.stageModels?.sceneCode))
     check('保存后视觉绑定 DeepSeek Flash Vision', saved.stageModels?.vision === VISION_KEY, String(saved.stageModels?.vision))

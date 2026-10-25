@@ -43,9 +43,9 @@ page.on('console', (m) => m.type() === 'error' && errs.push(m.text()))
 
 try {
   // 预置一张远离原点的占位卡：避免初始示例卡与推送出来的节点重叠，导致点击命中错的卡
-  await page.addInitScript(() => {
+  await page.addInitScript((name) => {
     localStorage.setItem(
-      'storyboard-canvas-v1',
+      `storyboard-canvas-v1:${encodeURIComponent(name)}`,
       JSON.stringify({
         nodes: [
           {
@@ -59,9 +59,12 @@ try {
         characters: [],
       }),
     )
-  })
+  }, PROJECT)
   await page.goto(URL, { waitUntil: 'networkidle' })
   await page.waitForTimeout(800)
+  // 默认选中的是列表第一个项目；断言都以 PROJECT 的接口数据为准，所以先显式选中它
+  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await page.waitForTimeout(1200)
 
   console.log('\n[1] 拆镜工作台加载')
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
@@ -118,8 +121,8 @@ try {
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(1300)
   // editId 在浏览器上下文里不存在，必须作为参数传进去
-  const st = await page.evaluate((id) => {
-    const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+  const st = await page.evaluate(({ id, project }) => {
+    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     const nodes = s.nodes || []
     const withId = nodes.filter((n) => n.data?.shotId)
     return {
@@ -129,7 +132,7 @@ try {
       sec0: nodes.find((n) => n.data?.shotId === id)?.data?.seconds,
       size0: nodes.find((n) => n.data?.shotId === id)?.data?.size,
     }
-  }, editId)
+  }, { id: editId, project: PROJECT })
   check(st.withId === ep1.length, `${ep1.length} 个节点带业务 ID`, JSON.stringify(st))
   check(/^E\d+-S\d+$/.test(String(st.first3[0])), '业务 ID 形如 E01-S01', JSON.stringify(st.first3))
   check(Number(st.sec0) === Number(target), `${editId} 秒数沿用表格值`, String(st.sec0))
@@ -144,10 +147,10 @@ try {
   await page.getByRole('button', { name: /适配视图/ }).click()
   await page.waitForTimeout(900)
   await page.evaluate((v) => { window.__editId = v }, editId)
-  const s01NodeId = await page.evaluate(() => {
-    const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+  const s01NodeId = await page.evaluate((project) => {
+    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     return (s.nodes || []).find((n) => n.data?.shotId === window.__editId)?.id ?? null
-  })
+  }, PROJECT)
   check(Boolean(s01NodeId), `定位到 ${editId} 节点`)
   // 适配后节点会重叠，点到别的卡上就会拿到错的 Inspector —— 点完校验镜号，不对就换位置重试
   const nodeLoc = page.locator(`.react-flow__node[data-id="${s01NodeId}"]`)
@@ -162,6 +165,15 @@ try {
     }
   }
   check(hit, `选中节点业务 ID = ${editId}（不是重叠的示例卡）`)
+  // 驾驶舱的「镜头参数」是可折叠 details，默认收起时子元素不参与可见性；先展开
+  const params = page.locator('.si-section[data-section="shotParams"]')
+  if (await params.count()) {
+    const isOpen = await params.evaluate((el) => el.hasAttribute('open'))
+    if (!isOpen) {
+      await params.locator('summary').click()
+      await page.waitForTimeout(300)
+    }
+  }
   const secBox = page.locator('.inspector input[type=number]').first()
   check((await secBox.count()) > 0, 'Inspector 打开时长输入')
   // number 输入不保留 .0，按数值比较（6 与 6.0 视为一致）
@@ -185,11 +197,11 @@ try {
   await page.waitForTimeout(1300)
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(1300)
-  const st2 = await page.evaluate(() => {
-    const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
+  const st2 = await page.evaluate((project) => {
+    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     const ids = (s.nodes || []).filter((n) => n.data?.shotId).map((n) => n.data.shotId)
     return { withId: ids.length, uniq: new Set(ids).size }
-  })
+  }, PROJECT)
   check(st2.withId === ep1.length && st2.uniq === ep1.length, '重推后仍是唯一节点', JSON.stringify(st2))
   console.log('\n[6] 提示词工作台 + 锚点校验')
   await page.getByRole('button', { name: '提示词', exact: true }).click()

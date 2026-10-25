@@ -15,13 +15,15 @@ import {
   type Shot3DContextCategory,
   type Shot3DContextItem,
 } from './shot3dContextCatalog'
-import { TEXT_CONTEXT_OFF } from './shot3dContext'
+import { sanitizeShot3DContext, TEXT_CONTEXT_OFF } from './shot3dContext'
 
 type Tab = Shot3DContextCategory | 'text'
 
 type Props = {
   catalog: Shot3DContextCatalog
   value: Shot3DContext
+  projectName?: string
+  currentEpisode?: number
   onChange: (next: Shot3DContext) => void
   onInherit?: () => void
   onToast?: (message: string) => void
@@ -82,19 +84,28 @@ function Thumb({ item, broken, onBroken }: { item: Shot3DContextItem; broken: bo
 function Preview({
   item,
   broken,
+  selected,
+  onToggle,
   onClose,
 }: {
   item: Shot3DContextItem
   broken: boolean
+  selected: boolean
+  onToggle: () => void
   onClose: () => void
 }) {
   return (
     <div className="ctxp-preview">
       <div className="ctxp-preview-head">
         <b>{item.label}</b>
-        <button className="btn-mini" onClick={onClose} aria-label="关闭预览">
-          收起
-        </button>
+        <span style={{ display: 'flex', gap: 6 }}>
+          <button className={`btn-mini ${selected ? 'on' : ''}`} onClick={onToggle}>
+            {selected ? '移除' : '加入上下文'}
+          </button>
+          <button className="btn-mini" onClick={onClose} aria-label="关闭预览">
+            收起
+          </button>
+        </span>
       </div>
       <div className="ctxp-preview-media">
         {!item.url || broken ? (
@@ -181,7 +192,15 @@ function TextPanel({
   )
 }
 
-export default function Shot3DContextPicker({ catalog, value, onChange, onInherit, onToast }: Props) {
+export default function Shot3DContextPicker({
+  catalog,
+  value,
+  projectName,
+  currentEpisode,
+  onChange,
+  onInherit,
+  onToast,
+}: Props) {
   const [tab, setTab] = useState<Tab>(() => {
     if (catalog.characters.length) return 'character'
     if (catalog.images.length) return 'image'
@@ -192,6 +211,8 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
     return 'character'
   })
   const [query, setQuery] = useState('')
+  const [episodeFilter, setEpisodeFilter] = useState<number | 'all'>(currentEpisode ?? 'all')
+  const [recommendOpen, setRecommendOpen] = useState(false)
   const [preview, setPreview] = useState<Shot3DContextItem | null>(null)
   const [broken, setBroken] = useState<Set<string>>(() => new Set())
 
@@ -209,10 +230,71 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
     Number(value.text.sizeMove) +
     (value.text.dialogue === 'all' ? catalog.text.dialogue.length : value.text.dialogue.length)
 
+  const episodeOptions = useMemo(() => {
+    const set = new Set<number>()
+    for (const item of catalog.scenes) {
+      if (item.kind === 'scene-text' && item.episode) set.add(item.episode)
+    }
+    if (currentEpisode) set.add(currentEpisode)
+    return [...set].sort((a, b) => a - b)
+  }, [catalog.scenes, currentEpisode])
+
+  const recommendLabels = useMemo(() => {
+    const labels = allCatalogItems(catalog)
+      .filter((item) => itemIsSelected(catalog.defaults, item))
+      .map((item) => item.label)
+    const t = catalog.defaults.text
+    if (t.prompt && catalog.text.prompt) labels.push('画面提示词')
+    if (t.videoPrompt && catalog.text.videoPrompt) labels.push('运动提示词')
+    if (t.cast && catalog.text.cast.length) labels.push('出场角色')
+    if (t.sizeMove && catalog.text.sizeMove) labels.push('景别/运镜')
+    if (t.marks && catalog.text.marks) labels.push('画面标注')
+    if (catalog.text.dialogue.length && t.dialogue === 'all') {
+      labels.push(`全部台词（${catalog.text.dialogue.length} 句）`)
+    }
+    return labels
+  }, [catalog])
+
+  const applyRecommend = () => {
+    const d = catalog.defaults
+    const dialogue: 'all' | number[] =
+      value.text.dialogue === 'all' || d.text.dialogue === 'all'
+        ? 'all'
+        : [...new Set([...value.text.dialogue, ...d.text.dialogue])]
+    onChange(
+      sanitizeShot3DContext({
+        ...value,
+        characterIds: [...new Set([...value.characterIds, ...d.characterIds])],
+        designIds: [...new Set([...value.designIds, ...d.designIds])],
+        assetUrls: [...new Set([...value.assetUrls, ...d.assetUrls])],
+        imageUrls: [...new Set([...value.imageUrls, ...d.imageUrls])],
+        videoUrls: [...new Set([...value.videoUrls, ...d.videoUrls])],
+        sceneKeys: [...new Set([...value.sceneKeys, ...d.sceneKeys])],
+        text: {
+          prompt: value.text.prompt || d.text.prompt,
+          videoPrompt: value.text.videoPrompt || d.text.videoPrompt,
+          cast: value.text.cast || d.text.cast,
+          marks: value.text.marks || d.text.marks,
+          sizeMove: value.text.sizeMove || d.text.sizeMove,
+          dialogue,
+        },
+        ...(d.dialogueHash ? { dialogueHash: d.dialogueHash } : {}),
+      }),
+    )
+    setRecommendOpen(false)
+  }
+
   const itemsForTab = (t: Tab): Shot3DContextItem[] => {
     if (t === 'character') return catalog.characters
     if (t === 'asset') return catalog.assets
-    if (t === 'scene') return catalog.scenes
+    if (t === 'scene') {
+      return catalog.scenes.filter(
+        (item) =>
+          item.kind !== 'scene-text' ||
+          episodeFilter === 'all' ||
+          item.episode === episodeFilter,
+      )
+    }
     if (t === 'prop') return catalog.props
     if (t === 'image') return catalog.images
     if (t === 'video') return catalog.videos
@@ -226,7 +308,7 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
     return list.filter((item) =>
       `${item.label} ${item.subtitle || ''} ${itemKindLabel(item)}`.toLowerCase().includes(q),
     )
-  }, [catalog, tab, query])
+  }, [catalog, tab, query, episodeFilter])
 
   const tabCount = (t: Tab) => {
     if (t === 'text') return selectedTextCount
@@ -310,6 +392,13 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
           <span>{selectedItems.length} 项 + 文本 {selectedTextCount}</span>
         </div>
         <div className="ctxp-head-actions">
+          <button
+            className="btn-mini"
+            onClick={() => setRecommendOpen((v) => !v)}
+            title="先预览本镜相关条目，确认后才加入上下文"
+          >
+            推荐参考
+          </button>
           {onInherit && (
             <button className="btn-mini" onClick={onInherit} title="沿用同集同场上一镜的选择，不复制代码">
               沿用上一镜
@@ -334,6 +423,48 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
               <i>×</i>
             </button>
           ))}
+        </div>
+      )}
+
+      <div className="ctxp-scope">
+        <span>项目：{projectName || '当前项目'}</span>
+        <label>
+          集数
+          <select
+            value={String(episodeFilter)}
+            onChange={(e) =>
+              setEpisodeFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+            }
+          >
+            <option value="all">全部</option>
+            {episodeOptions.map((no) => (
+              <option key={no} value={no}>
+                E{String(no).padStart(2, '0')}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {recommendOpen && (
+        <div className="ctxp-recommend">
+          <b>推荐参考</b>
+          <span>这些是本镜相关的默认条目，确认后才会加入当前上下文。</span>
+          <ul>
+            {recommendLabels.length ? (
+              recommendLabels.map((label) => <li key={label}>{label}</li>)
+            ) : (
+              <li>没有可推荐的条目</li>
+            )}
+          </ul>
+          <div className="ctxp-head-actions">
+            <button className="btn-mini" onClick={applyRecommend} disabled={!recommendLabels.length}>
+              加入这些参考
+            </button>
+            <button className="btn-mini" onClick={() => setRecommendOpen(false)}>
+              取消
+            </button>
+          </div>
         </div>
       )}
 
@@ -367,7 +498,15 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
         </div>
       )}
 
-      {preview && <Preview item={preview} broken={previewBroken} onClose={() => setPreview(null)} />}
+      {preview && (
+        <Preview
+          item={preview}
+          broken={previewBroken}
+          selected={itemIsSelected(value, preview)}
+          onToggle={() => select(preview)}
+          onClose={() => setPreview(null)}
+        />
+      )}
 
       {tab === 'text' ? (
         <TextPanel catalog={catalog} value={value} onChange={onChange} />
@@ -382,8 +521,9 @@ export default function Shot3DContextPicker({ catalog, value, onChange, onInheri
                 key={item.key}
                 role="listitem"
                 className={`ctxp-item ${selected ? 'on' : ''} ${bad || item.missing ? 'bad' : ''}`}
-                onClick={() => select(item)}
+                onClick={() => setPreview(item)}
                 aria-pressed={selected}
+                aria-label={`预览 ${item.label}`}
                 title={itemSubtitle(item)}
               >
                 <Thumb item={item} broken={bad} onBroken={() => setBroken((s) => new Set(s).add(item.key))} />

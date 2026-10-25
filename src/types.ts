@@ -1,6 +1,221 @@
 export type Tool = 'none' | 'pen' | 'rect'
 export type Relation = 'cut' | 'transition' | 'flashback' | 'branch'
 
+// ---------------------------------------------------------------- 表演方向
+
+export type PerformanceEmotion =
+  | 'neutral'
+  | 'happy'
+  | 'sad'
+  | 'angry'
+  | 'fearful'
+  | 'disgusted'
+  | 'surprised'
+  | 'calm'
+
+export const PERFORMANCE_EMOTIONS: PerformanceEmotion[] = [
+  'neutral',
+  'happy',
+  'sad',
+  'angry',
+  'fearful',
+  'disgusted',
+  'surprised',
+  'calm',
+]
+
+export const PERFORMANCE_EMOTION_LABELS: Record<PerformanceEmotion, string> = {
+  neutral: '平静',
+  happy: '喜',
+  sad: '哀',
+  angry: '怒',
+  fearful: '惧',
+  disgusted: '厌',
+  surprised: '惊',
+  calm: '克制',
+}
+
+/** 一个角色在一个镜头里的表演；action/gaze 写当前景别看得见的行为。 */
+export type PerformanceEntry = {
+  character: string
+  emotion: PerformanceEmotion
+  /** 0-5，0 = 几乎不动声色，5 = 爆发 */
+  intensity: number
+  action?: string
+  gaze?: string
+  speaks?: boolean
+}
+
+export type PerformancePace = 'slow' | 'normal' | 'fast'
+export type PerformanceVolume = 'whisper' | 'soft' | 'normal' | 'loud' | 'shout'
+
+/** 与 ProjectShot.dialogue 的行下标平行；只存表演，不写进台词文本。 */
+export type DialogueDelivery = {
+  emotion?: PerformanceEmotion
+  intensity?: number
+  pace?: PerformancePace
+  volume?: PerformanceVolume
+  emphasis?: string
+}
+
+export type ShotAudioMode = 'off' | 'native'
+
+/** 本镜唯一说话角色的音色参考；APIMart 只接受单个 audio_url 字符串。 */
+export type AudioRef = {
+  character: string
+  url: string
+  label?: string
+}
+
+export type AudioMeta = {
+  fingerprint: string
+  modelKey?: string
+  createdAt: string
+}
+
+/** 手改的出片提示词快照；指纹是保存时输入的指纹 */
+export type VideoPromptOverride = {
+  text: string
+  fingerprint: string
+  createdAt: string
+}
+
+/** 一条视频实际使用的提示词来源；url 用于对齐当前挂载的视频 */
+export type VideoMeta = {
+  url: string
+  prompt: string
+  fingerprint: string
+  modelKey?: string
+  createdAt: string
+}
+
+export type LipSyncMode = 'off' | 'prompt' | 'provider'
+
+export type LipSyncQaFrame = {
+  at: number
+  kind: 'silence' | 'speech'
+  path: string
+  expect: 'closed' | 'open'
+  mouth?: 'open' | 'closed' | 'unknown'
+  advisory?: boolean
+}
+
+export type LipSyncFinding = {
+  at: number
+  kind: 'silence-open' | 'speech-closed'
+  frame: string
+  override?: string
+}
+
+export type LipSyncQa = {
+  pass?: boolean
+  checkedAt?: string
+  frames?: LipSyncQaFrame[]
+  findings?: LipSyncFinding[]
+  note?: string
+}
+
+export type LipSyncState = {
+  mode: LipSyncMode
+  provider?: string
+  status?: 'idle' | 'running' | 'done' | 'error' | 'stale'
+  sourceVideo?: string
+  audio?: string
+  outputVideo?: string
+  /** 生成时的源视频/音频/台词指纹 */
+  fingerprint?: string
+  adopted?: boolean
+  error?: string
+  qa?: LipSyncQa
+}
+
+/** 配音实际应用/未应用的表演参数；指纹变化时标记需要重生成。 */
+export type VoiceMeta = {
+  engine: string
+  model?: string
+  voice?: string
+  applied: string[]
+  unsupported: string[]
+  fingerprint: string
+  createdAt: string
+}
+
+// ---------------------------------------------------------------- 分镜接缝（转场）
+
+export type TransitionEffectType = 'dissolve' | 'wipe' | 'slide'
+export type TransitionDirection = 'left' | 'right' | 'up' | 'down'
+
+/** 效果转场：成片里两个镜头重叠 T 秒 */
+export type TransitionEffect = {
+  type: TransitionEffectType
+  /** 擦除/推移才有方向 */
+  dir?: TransitionDirection
+  seconds: number
+}
+
+export type TransitionBoundary = {
+  /** 上一镜尾帧 */
+  out?: string
+  /** 下一镜首帧 */
+  in?: string
+  outAt?: number
+  inAt?: number
+}
+
+export type TransitionKeyframe = {
+  candidates: string[]
+  activeIdx?: number
+  /** 当前选中的候选，生成视频时作为关键帧 */
+  image?: string
+  /** 用户可编辑的过渡画面提示词 */
+  prompt?: string
+  state?: 'idle' | 'running' | 'error'
+  error?: string
+}
+
+export type TransitionVideo = {
+  url?: string
+  modelKey?: string
+  /** 实际请求的生成时长（秒） */
+  seconds?: number
+  /** 仅首帧模型：成片里裁到这个目标时长；首尾帧模型不裁 */
+  trimTo?: number
+  state?: 'idle' | 'running' | 'error'
+  error?: string
+  at?: number
+}
+
+export type TransitionGenerated = {
+  targetSeconds: number
+  prompt: string
+  /** 默认继承相邻两镜已连的角色/素材参考 */
+  inheritRefs: boolean
+  /** 额外补充的参考 token（char-* / asset-* / extra:*） */
+  refIds?: string[]
+  /** 从继承里移除的参考 token */
+  excludeRefIds?: string[]
+  boundary?: TransitionBoundary
+  keyframe?: TransitionKeyframe
+  video?: TransitionVideo
+}
+
+/**
+ * 一条连线上的转场配置，存在源镜头上（transitionOut），
+ * 这样重推镜头、重建画布节点后仍能按 to 找回。
+ */
+export type TransitionOut = {
+  /** 目标镜头的稳定键：优先 shotId，没有时退回画布节点 id */
+  to: string
+  mode: 'effect' | 'generated'
+  effect?: TransitionEffect
+  generated?: TransitionGenerated
+  meta?: {
+    fingerprint: string
+    modelKey?: string
+    createdAt: string
+  }
+}
+
 /** 标注坐标统一用 0..1 归一化，卡片宽度随镜头时长变化时不会错位 */
 export type Mark = {
   id: string
@@ -24,10 +239,16 @@ export type ShotData = {
   prompt: string
   /** 出片用的运动提示词（Seedance）：只写动作/运镜，不重复静态外观 */
   videoPrompt?: string
+  /** 手改的出片提示词快照；有值时整段逐字发送，不再自动拼装 */
+  videoPromptOverride?: VideoPromptOverride
+  /** 最近一次成功出片的提示词来源 */
+  videoMeta?: VideoMeta
   /** 手动附加参考图（场景图/道具图），生成画面时与角色图一起传给 Seedream */
   refExtras?: string[]
   /** 参考连线：连到本镜的角色卡/素材卡节点 id（生成画面时按它取参考图） */
   refIds?: string[]
+  /** 到下一镜的转场配置；只有画布上关系为转场的连线才生效 */
+  transitionOut?: TransitionOut
   /** 旧版调度坐标：仅用于迁移；新数据写 shotBlocking */
   layout?: ShotLayout
   /** 所属场次（1 起）。同集同场共享 SceneLayout */
@@ -43,7 +264,7 @@ export type ShotData = {
   visualBriefMeta?: VisualBriefMeta
   /** 镜头级走位与机位关键帧 */
   shotBlocking?: ShotBlocking
-  /** 代码优先 3D：每镜一段 Three.js 代码 */
+  /** 代码优先 3D：每镜一段 Blender Python 代码 */
   sceneCode?: SceneCode
   /** 代码渲染的输入指纹与输出参数 */
   sceneCodeMeta?: SceneCodeMeta
@@ -51,16 +272,18 @@ export type ShotData = {
   shot3DContext?: Shot3DContext
   /** 最近一次成功渲染的输入指纹与输出参数 */
   scheduleMeta?: ScheduleMeta
-  /** 3D 调度动画（webm/mp4，本地路径）：给人审运镜与走位 */
+  /** 3D 调度动画（webm/mp4，本地路径）：提示词工作台审阅用 */
   scheduleVideo?: string
-  /** 从调度视频抽出的关键帧（可作结构性参考，白模会污染画风，默认不传） */
+  /** 从调度视频抽出的关键帧：只留作旧数据/预览，不再作为参考图提交 */
   scheduleFrames?: string[]
   /** 从 3D 调度推出来的运镜/走位描述，出片时拼进 prompt */
   motionNote?: string
-  /** 出片时是否把调度关键帧当参考图（白模风格可能污染画面，默认关） */
+  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
   useScheduleFrames?: boolean
-  /** 出片时是否把调度视频本身当 reference_video（需 Seedance 2.0+，默认关） */
+  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
   useScheduleVideoRef?: boolean
+  /** 视频出片是否带说话角色的表情单格；默认关，避免挤掉身份/场景 */
+  useExpressionRef?: boolean
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
   shotId?: string
   episode?: number
@@ -70,6 +293,20 @@ export type ShotData = {
   orphan?: boolean
   /** 该镜画面内的角色名（拆镜产出），时间线角色轨用 */
   cast?: string[]
+  /** 按角色分条的表演；旧镜头为空 */
+  performance?: PerformanceEntry[]
+  /** 与 dialogue 行下标平行的台词表演 */
+  dialogueDelivery?: DialogueDelivery[]
+  /** 镜头音轨：off = 静音视频 + TTS，native = 视频自带音轨 */
+  audioMode?: ShotAudioMode
+  /** 唯一说话角色的音色参考；native 时使用 */
+  audioRef?: AudioRef | null
+  /** native 视频的请求指纹 */
+  audioMeta?: AudioMeta
+  /** 口型模式与结果；旧镜头按 off 解释 */
+  lipSync?: LipSyncState
+  /** 最近一次配音实际应用/未应用的表演参数 */
+  voiceMeta?: VoiceMeta
   /** 时间线布局：配音相对镜头起点的偏移（秒，可负＝提前） */
   voiceOffset?: number
   /** 时间线布局：字幕相对镜头起点的偏移（秒） */
@@ -303,10 +540,19 @@ export type ScheduleMeta = {
 
 export type SceneCodeSource = 'ai' | 'manual' | 'legacy-converted' | 'fallback'
 
-/** 每镜一段 Three.js 代码；代码是场景真相，不再维护结构化空间清单。 */
+/** three 只出现在旧数据里；新代码一律是 blender。 */
+export type SceneCodeRuntime = 'three' | 'blender'
+
+/**
+ * 每镜一段 Blender Python 代码；代码是场景真相，不再维护结构化空间清单。
+ * 旧记录（v1 / abiVersion 1）没有 runtime 与 engineVersion，按 three 只读处理。
+ */
 export type SceneCode = {
-  version: 1
-  abiVersion: 1
+  version: 1 | 2
+  abiVersion: 1 | 2
+  runtime?: SceneCodeRuntime
+  /** 渲染引擎版本，例如 5.2.2；参与指纹与准入 */
+  engineVersion?: string
   code: string
   codeHash: string
   source: SceneCodeSource
@@ -314,6 +560,15 @@ export type SceneCode = {
   /** 代码生成/用户编写的运镜说明；不是从几何自动推导 */
   motionNote?: string
   updatedAt: string
+}
+
+/** 旧三.js 代码没有 runtime 字段，一律按 three 处理。 */
+export function sceneCodeRuntime(code: SceneCode | undefined | null): SceneCodeRuntime {
+  return code?.runtime === 'blender' ? 'blender' : 'three'
+}
+
+export function isRenderableSceneCode(code: SceneCode | undefined | null): boolean {
+  return sceneCodeRuntime(code) === 'blender' && Number(code?.abiVersion) === 2
 }
 
 export type SceneCodeAssetRef = {
@@ -331,10 +586,12 @@ export type SceneCodeAssetRef = {
 }
 
 export type SceneCodeMeta = {
-  version: 1
+  version: 1 | 2
   fingerprint: string
   codeHash: string
-  abiVersion: 1
+  abiVersion: 1 | 2
+  runtime?: SceneCodeRuntime
+  engineVersion?: string
   assets: SceneCodeAssetRef[]
   /** 渲染时的参考内容选择指纹；用于判断选择是否变化 */
   selectionFingerprint?: string
@@ -342,7 +599,10 @@ export type SceneCodeMeta = {
   aspect: string
   width: number
   height: number
-  fps: 30
+  fps: number
+  /** 实际渲染帧数；帧精确输出的依据 */
+  frames?: number
+  tier?: 'trial' | 'proxy' | 'final'
   mode: 'clean'
   renderedAt: string
 }
@@ -369,6 +629,8 @@ export type Shot3DContext = {
   /** 场景元数据键，例如 E01-SC02 */
   sceneKeys: string[]
   text: Shot3DContextText
+  /** 被排除媒体 brief 的附件键；缺省表示全部 brief 参与 */
+  briefOff?: string[]
   /** 选择时的台词指纹；台词变化后逐句选择需要重置 */
   dialogueHash?: string
   updatedAt?: string
@@ -382,9 +644,16 @@ export const SCENE_CODE_LIMITS = {
   videoFrames: 3,
   imageEdge: 2048,
   totalAssetBytes: 48 * 1024 * 1024,
-  initMs: 5000,
-  frameMs: 250,
-  trialMs: 15000,
+  /** 试运行：低分辨率、首尾两帧 */
+  trialMs: 60_000,
+  /** 代理预览：短边 540、低采样 */
+  proxyMs: 240_000,
+  /** 定稿：项目分辨率 */
+  finalMs: 900_000,
+  trialEdge: 320,
+  proxyEdge: 540,
+  proxyFps: 15,
+  finalFps: 30,
 } as const
 
 /** 出片与调度共用的有效时长：镜头秒数四舍五入后夹到 2~12 秒 */

@@ -16,15 +16,26 @@ export declare class VolcTtsError extends Error {
   constructor(message: string, opts?: { kind?: string; code?: number; status?: number })
 }
 
+export interface VolcVoicePerformance {
+  emotion?: string
+  intensity?: number
+  pace?: string
+  volume?: string
+  emphasis?: string
+}
+
 export declare function buildTtsBody(opts: {
   text: string
   speaker?: string
+  performance?: VolcVoicePerformance
+  allowCustomSpeaker?: boolean
 }): {
   user: { uid: string }
   req_params: {
     text: string
     speaker: string
     audio_params: { format: string; sample_rate: number }
+    [key: string]: unknown
   }
 }
 
@@ -33,6 +44,14 @@ export declare function synthesizeVolcTts(opts: {
   apiKey: string
   text: string
   speaker?: string
+  performance?: VolcVoicePerformance
+  allowCustomSpeaker?: boolean
   fetchImpl?: typeof fetch
   connectId?: string
-}): Promise<{ audio: Buffer; engine: string; speaker: string }>
+}): Promise<{
+  audio: Buffer
+  engine: string
+  speaker: string
+  applied: string[]
+  unsupported: string[]
+}>

@@ -16,7 +16,7 @@ import type {
 import { SCENE_LIMITS } from './types'
 
 /**
- * 3D 调度的纯几何层：不碰 DOM / Three.js / fetch，方便用 Node 直接测。
+ * 3D 调度的纯几何层：不碰 DOM / 渲染器 / fetch，方便用 Node 直接测。
  *
  * 坐标约定：
  * - 场景布局用米，原点在场地左上角，x 向右、z 向下；
@@ -973,7 +973,7 @@ export function renderSize(aspect: string): { width: number; height: number } {
   return { width: Math.max(2, w), height: Math.max(2, h) }
 }
 
-/** 编辑器/渲染共用：把关键帧的机位转成 Three.js 需要的米制参数 */
+/** 编辑器/渲染共用：把关键帧的机位转成渲染器需要的米制参数 */
 export function cameraMeters(layout: SceneLayout, key: BlockingKey) {
   return {
     x: clamp(key.camera.x, -0.25, 1.25) * layout.w,

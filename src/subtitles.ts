@@ -2,13 +2,11 @@
  * 字幕烧录：本机 ffmpeg 没编 libass（subtitles / drawtext 滤镜都不存在），
  * 所以字幕在浏览器用 2D canvas 渲成「整帧透明 PNG」，交给 ffmpeg 用 overlay 叠上去。
  */
-
-const FONT_STACK =
-  '"PingFang SC", "Hiragino Sans GB", "Heiti SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
+import { CAPTION_STYLE, type CaptionStyle } from './captions'
 
 /** 按分辨率给字号，保证 480p~1080p 观感一致 */
-function fontPx(H: number) {
-  return Math.round(H * 0.044)
+function fontPx(H: number, style: CaptionStyle) {
+  return Math.round(H * style.fontRatio)
 }
 
 /** 中文按字符断行，英文按空格断行 */
@@ -41,15 +39,18 @@ export type SubtitleOpts = {
   height: number
   /** 台词 */
   text: string
+  /** 与预览/ASS 共享的样式；缺省用 CAPTION_STYLE */
+  style?: Partial<CaptionStyle>
 }
 
 /**
  * 渲染成一整帧透明 PNG（dataURL），文字居中贴在安全框下方。
  * 返回 null 表示这句没内容。
  */
-export function renderSubtitlePng({ width, height, text }: SubtitleOpts): string | null {
+export function renderSubtitlePng({ width, height, text, style: styleInput }: SubtitleOpts): string | null {
   const t = text.trim()
   if (!t) return null
+  const style: CaptionStyle = { ...CAPTION_STYLE, ...(styleInput || {}) }
 
   const cv = document.createElement('canvas')
   cv.width = width
@@ -57,29 +58,29 @@ export function renderSubtitlePng({ width, height, text }: SubtitleOpts): string
   const ctx = cv.getContext('2d')
   if (!ctx) return null
 
-  const size = fontPx(height)
-  const maxW = width * 0.78
-  ctx.font = `600 ${size}px ${FONT_STACK}`
+  const size = fontPx(height, style)
+  const maxW = width * style.maxWidthRatio
+  ctx.font = `600 ${size}px ${style.fontFamily}`
   let lines = wrap(ctx, t, maxW)
-  // 超过 3 行说明台词太长，截断加省略号（字幕不是剧本，塞不下就该改词）
-  if (lines.length > 3) {
-    lines = lines.slice(0, 3)
-    lines[2] = lines[2].slice(0, Math.max(1, lines[2].length - 1)) + '…'
+  // 超过 maxLines 说明台词太长；字幕不是剧本，塞不下就该改词
+  if (lines.length > style.maxLines) {
+    lines = lines.slice(0, style.maxLines)
+    const last = style.maxLines - 1
+    lines[last] = lines[last].slice(0, Math.max(1, lines[last].length - 1)) + '…'
   }
-  const lineH = Math.round(size * 1.42)
+  const lineH = Math.round(size * style.lineHeight)
   const blockH = lines.length * lineH
   const padX = Math.round(size * 0.5)
   const padY = Math.round(size * 0.34)
 
-  // 底部安全区：离画面底边 6%
-  const baseY = height - Math.round(height * 0.06) - blockH
+  const baseY = height - Math.round(height * style.bottomRatio) - blockH
 
   // 文字块背景（半透明圆角，保证亮画面上也读得清）
   const blockW = Math.min(maxW, Math.max(...lines.map((l) => ctx.measureText(l).width))) + padX * 2
   const bx = (width - blockW) / 2
   const by = baseY - padY
   const bh = blockH + padY * 2
-  const r = Math.min(14, bh / 2)
+  const r = Math.min(style.radius, bh / 2)
 
   ctx.beginPath()
   ctx.moveTo(bx + r, by)
@@ -88,22 +89,15 @@ export function renderSubtitlePng({ width, height, text }: SubtitleOpts): string
   ctx.arcTo(bx, by + bh, bx, by, r)
   ctx.arcTo(bx, by, bx + blockW, by, r)
   ctx.closePath()
-  ctx.fillStyle = 'rgba(4, 8, 14, 0.52)'
+  ctx.fillStyle = style.background
   ctx.fill()
 
-  // 描边 + 填充，双重保证可读
-  ctx.font = `600 ${size}px ${FONT_STACK}`
+  ctx.font = `600 ${size}px ${style.fontFamily}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'top'
-  ctx.lineJoin = 'round'
+  ctx.fillStyle = style.textColor
   lines.forEach((l, i) => {
-    const x = width / 2
-    const y = baseY + i * lineH
-    ctx.lineWidth = Math.round(size * 0.22)
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.72)'
-    ctx.strokeText(l, x, y)
-    ctx.fillStyle = '#f4f8fc'
-    ctx.fillText(l, x, y)
+    ctx.fillText(l, width / 2, baseY + i * lineH)
   })
 
   return cv.toDataURL('image/png')

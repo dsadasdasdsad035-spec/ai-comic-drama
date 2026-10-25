@@ -171,7 +171,7 @@ try {
   await page.getByRole('button', { name: '角色', exact: true }).click()
   await page.waitForTimeout(500)
   textCalls.length = 0
-  await page.getByRole('button', { name: '从全剧拆角色' }).click()
+  await page.getByRole('button', { name: '从全剧拆角色', exact: true }).click()
   let fullToast = ''
   for (let i = 0; i < 10; i++) {
     await page.waitForTimeout(300)
@@ -182,7 +182,7 @@ try {
   check('全剧无剧本不调用模型', textCalls.length === 0, String(textCalls.length))
 
   await page.waitForTimeout(4200)
-  await page.getByRole('button', { name: '从本集拆角色' }).click()
+  await page.locator('button.btn-ghost', { hasText: '从本集拆角色' }).click()
   for (let i = 0; i < 20 && textCalls.length === 0; i++) await page.waitForTimeout(300)
   check('本集拆角色调用模型', textCalls.length === 1, String(textCalls.length))
   check(

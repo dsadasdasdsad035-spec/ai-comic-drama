@@ -65,9 +65,9 @@ export function SandboxTool({ running, result }: { running: boolean; result: unk
   const status = statusOf(running, result)
   return (
     <ToolCard
-      tool="run_sandbox"
+      tool="run_render"
       status={status}
-      title={running ? '沙箱运行中…' : error ? `沙箱未通过：${error}` : '沙箱通过'}
+      title={running ? '渲染试运行中…' : error ? `渲染未通过：${error}` : '渲染试运行通过'}
       aside={<Play className="size-3.5 text-muted-foreground" />}
     />
   )
@@ -86,9 +86,9 @@ export function FramesTool({ running, result }: { running: boolean; result: unkn
     >
       {frames.length > 0 && (
         <div data-chat-frames className="flex gap-1.5 overflow-x-auto pb-0.5">
-          {frames.map((frame) => (
+          {frames.map((frame, i) => (
             <a
-              key={`${frame.t}-${frame.url.slice(0, 12)}`}
+              key={`${i}-${frame.t}-${frame.url}`}
               href={frame.url}
               target="_blank"
               rel="noreferrer"

@@ -33,16 +33,16 @@ export function ChatCodeBlock({
         >
           <span className="flex min-w-0 items-center gap-1.5">
             <Code2 className="size-3.5 shrink-0" />
-            <span className="truncate text-[10px]">{language || 'text'} · {lines} 行</span>
+            <span className="truncate text-[11px]">{language || 'text'} · {lines} 行</span>
           </span>
-          <span className="flex shrink-0 items-center gap-1 text-[10px]">
+          <span className="flex shrink-0 items-center gap-1 text-[11px]">
             {open ? '收起代码' : '展开代码'}
             <ChevronDown className={cn('size-3 transition-transform', open && 'rotate-180')} />
           </span>
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <pre className="max-h-64 overflow-auto border-t border-border bg-[#07101a] p-2 text-[10px] leading-relaxed text-[#cfe3f7]">
+        <pre className="max-h-64 overflow-auto border-t border-border bg-[var(--code-bg)] p-2 text-[11px] leading-relaxed text-[var(--code-fg)]">
           <code>{code}</code>
         </pre>
       </CollapsibleContent>

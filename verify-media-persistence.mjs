@@ -161,7 +161,8 @@ try {
   await page.getByRole('button', { name: '角色', exact: true }).click()
   await page.waitForTimeout(400)
   const card = page.locator('.char-card').filter({ hasText: '甲' }).first()
-  await card.locator('button', { hasText: '生成三视图' }).click()
+  // 角色卡上空态 CTA 和底部主按钮同名，点主按钮避免 strict mode 冲突
+  await card.locator('.char-primary button', { hasText: '生成三视图' }).first().click()
   await page.waitForFunction(
     () => {
       const img = document.querySelector('.char-card .char-sheet img')

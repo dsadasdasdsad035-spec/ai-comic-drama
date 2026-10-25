@@ -19,11 +19,15 @@ await page.waitForTimeout(1200)
 // 1. board view
 await page.screenshot({ path: `${OUT}/01-board.png` })
 
-// 2. select a shot S02 by clicking its node
-const nodes = page.locator('.react-flow__node')
+// 2. 选中一张分镜卡（角色卡/素材卡不算）
+// 卡片可能互相重叠，坐标点击会命中上层别的卡；直接给分镜卡派发 click 最稳
+const nodes = page.locator('.react-flow__node .shot')
 console.log('nodes:', await nodes.count())
-await nodes.nth(1).click()
-await page.waitForTimeout(400)
+await page.evaluate(() => {
+  const shot = [...document.querySelectorAll('.react-flow__node')].filter((n) => n.querySelector('.shot'))[0]
+  shot?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }))
+})
+await page.waitForTimeout(500)
 await page.screenshot({ path: `${OUT}/02-selected.png` })
 
 // 3. switch to character view
@@ -35,7 +39,9 @@ const cards = page.locator('.char-card')
 console.log('char cards:', await cards.count())
 console.log('board-hint:', await page.locator('.board-hint').innerText())
 
-// 4. inject first character into selected shot
+// 4. inject first character into selected shot（注入按钮在默认收起的「更多」里）
+await page.locator('.char-more > summary').first().click()
+await page.waitForTimeout(200)
 await page.locator('.char-card').nth(0).getByRole('button', { name: '注入镜头' }).click()
 await page.waitForTimeout(600)
 const toast = await page.locator('.toast').innerText().catch(() => '(no toast)')
@@ -43,17 +49,19 @@ console.log('toast:', toast)
 await page.screenshot({ path: `${OUT}/04-injected.png` })
 
 // 5. back to board, read the prompt of the selected shot from inspector
-await page.getByRole('button', { name: '分镜', exact: true }).click()
+await page.getByRole('button', { name: '画布', exact: true }).click()
 await page.waitForTimeout(700)
 await page.screenshot({ path: `${OUT}/05-board-prompt.png` })
-const ta = page.locator('.panel textarea').first()
-console.log('prompt:', await ta.inputValue().catch(() => '(none)'))
+// 驾驶舱里提示词在「画面」页的首帧提示词 textarea
+const ta = page.locator('.inspector textarea').first()
+console.log('prompt:', (await ta.inputValue().catch(() => '(none)')).slice(0, 60))
 
 // 6. persistence check
 const saved = await page.evaluate(() => {
-  const raw = localStorage.getItem('storyboard-canvas-v1')
+  const project = document.querySelector('.topbar-project select')?.value || ''
+  const raw = localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`)
   const p = JSON.parse(raw || '{}')
-  return { hasChars: Array.isArray(p.characters), charCount: p.characters?.length }
+  return { project, hasNodes: Array.isArray(p.nodes), nodeCount: p.nodes?.length }
 })
 console.log('saved:', JSON.stringify(saved))
 

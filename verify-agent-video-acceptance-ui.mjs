@@ -19,7 +19,7 @@ const EXPECTED_FRAMES = SECONDS > 6 ? 9 : 5
 const SUFFIX = process.env.EVIDENCE_SUFFIX || (SECONDS > 6 ? `-long-${SECONDS}s` : '')
 const NAME = `agent-video-ui-${Date.now()}`
 const REQUIREMENTS = ['主体可见', '镜头运动连续']
-const FIXTURE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.js'), 'utf8').trim()
+const FIXTURE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.py'), 'utf8').trim()
 const EVIDENCE = process.env.EVIDENCE_DIR || fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'agent-video-evidence-'))
 const CHANGE_EVIDENCE = path.join(process.cwd(), 'openspec/changes/agent-video-acceptance/evidence')
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex')
@@ -66,7 +66,7 @@ page.on('console', (m) => {
 })
 
 let calls = [
-  { name: 'run_sandbox', args: {} },
+  { name: 'run_render', args: {} },
   { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
   { name: 'review_frames', args: { requirements: REQUIREMENTS } },
   { name: 'finish', args: { summary: '代码阶段完成' } },
@@ -284,7 +284,7 @@ try {
         const newHash = sha(newCode)
         calls = [
           { name: 'set_scene_code', args: { code: newCode } },
-          { name: 'run_sandbox', args: {} },
+          { name: 'run_render', args: {} },
           { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
           { name: 'review_frames', args: { requirements: REQUIREMENTS } },
           { name: 'finish', args: { summary: '新代码阶段完成' } },

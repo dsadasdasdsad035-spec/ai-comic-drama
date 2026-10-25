@@ -1,5 +1,5 @@
 import { createContext } from 'react'
-import type { ShotData, Tool } from './types'
+import type { Relation, ShotData, Tool } from './types'
 
 export type CanvasApi = {
   tool: Tool
@@ -9,6 +9,10 @@ export type CanvasApi = {
   charImages: Record<string, string>
   patch: (id: string, patch: Partial<ShotData>) => void
   cycleEdge: (id: string) => void
+  /** 设置连线关系；落到转场时补默认接缝 */
+  setEdgeRelation: (id: string, relation: Relation) => void
+  /** 打开转场详情面板 */
+  openTransition: (id: string) => void
   generate: (id: string) => void
   cancelGenerate: (id: string) => void
   generateVideo: (id: string) => void
@@ -21,6 +25,8 @@ export const CanvasCtx = createContext<CanvasApi>({
   charImages: {},
   patch: () => {},
   cycleEdge: () => {},
+  setEdgeRelation: () => {},
+  openTransition: () => {},
   generate: () => {},
   cancelGenerate: () => {},
   generateVideo: () => {},

@@ -1,8 +1,8 @@
 import type { AppSettings } from '../api'
 import { extractFrames } from '../api'
 import type { StagePick } from '../ModelSelect'
-import type { SandboxAssetPayload } from '../sceneSandbox'
-import { renderSceneCodeVideo, saveSceneCodeVideo } from '../sceneCodeRender'
+import type { PreparedSceneAsset } from '../sceneCodeAssets'
+import { renderSceneCode } from '../sceneCodeRender'
 import { reviewFramesWithVision } from './agentReview'
 import type {
   AgentFrame,
@@ -21,7 +21,7 @@ export type AgentVideoAcceptanceInput = {
   videoId?: string
   code: string
   codeHash: string
-  assets: SandboxAssetPayload[]
+  assets: PreparedSceneAsset[]
   duration: number
   aspect: string
   requirements: string[]
@@ -49,15 +49,17 @@ export type AgentVideoAcceptanceLimits = {
 }
 
 export type AgentVideoAcceptanceDeps = {
+  /** 渲染直接产出本地可访问的 mp4；不再有 Blob 中转 */
   render: (opts: {
     code: string
-    assets: SandboxAssetPayload[]
+    assets: PreparedSceneAsset[]
     duration: number
     aspect: string
     signal: AbortSignal
     onProgress?: (value: number) => void
-  }) => Promise<Blob>
-  save: (blob: Blob, signal: AbortSignal) => Promise<string>
+  }) => Promise<{ videoUrl: string }>
+  /** 可选的转存/校验步骤；缺省时直接使用渲染产物 */
+  save?: (videoUrl: string, signal: AbortSignal) => Promise<string>
   extract: (
     url: string,
     count: number,
@@ -212,17 +214,19 @@ export async function runVideoAcceptance(
   let review: AgentReview | undefined
 
   const deps: AgentVideoAcceptanceDeps = {
-    render: (opts) =>
-      renderSceneCodeVideo({
+    render: async (opts) => {
+      const result = await renderSceneCode({
         code: opts.code,
         assets: opts.assets,
         duration: opts.duration,
         aspect: opts.aspect,
+        tier: 'final',
         mode: 'clean',
         signal: opts.signal,
-        onProgress: opts.onProgress,
-      }),
-    save: (blob, signal) => saveSceneCodeVideo(blob, signal, input.duration),
+        ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+      })
+      return { videoUrl: result.videoUrl }
+    },
     extract: (url, count, signal, times) => extractFrames(url, count, signal, times),
     review: (nextFrames, requirements, signal) =>
       reviewFramesWithVision({
@@ -260,7 +264,7 @@ export async function runVideoAcceptance(
   try {
     throwIfAborted(input.signal)
     input.onProgress?.({ phase: 'rendering', value: 0 })
-    const blob = await runStep(
+    const rendered = await runStep(
       (signal) =>
         deps.render({
           code: input.code,
@@ -274,11 +278,15 @@ export async function runVideoAcceptance(
       input.signal,
       deadline,
     )
+    videoUrl = rendered.videoUrl
     throwIfAborted(input.signal)
-    phase = 'saving'
-    input.onProgress?.({ phase: 'saving' })
-    videoUrl = await runStep((signal) => deps.save(blob, signal), limits.saveMs, input.signal, deadline)
-    throwIfAborted(input.signal)
+    if (deps.save) {
+      phase = 'saving'
+      input.onProgress?.({ phase: 'saving' })
+      const save = deps.save
+      videoUrl = await runStep((signal) => save(videoUrl, signal), limits.saveMs, input.signal, deadline)
+      throwIfAborted(input.signal)
+    }
 
     phase = 'extracting'
     input.onProgress?.({ phase: 'extracting' })
@@ -390,7 +398,7 @@ export function agentVideoSummary(result: AgentVideoAcceptanceResult): string {
   const failedText = counts.failed.length ? `；未通过：${counts.failed.slice(0, 3).join('、')}` : ''
   if (result.status === 'passed') {
     if (!result.saved) return `代码 ${hash}；${frameText}；MP4 帧验收 ${counts.ok}/${counts.total} 通过；视频尚未保存${url}。`
-    return `代码 ${hash} 已通过沙箱；MP4 ${result.duration.toFixed(1)}s 已保存；${frameText}；MP4 帧验收 ${counts.ok}/${counts.total} 通过${url}。`
+    return `代码 ${hash} 已通过渲染试运行；MP4 ${result.duration.toFixed(1)}s 已保存；${frameText}；MP4 帧验收 ${counts.ok}/${counts.total} 通过${url}。`
   }
   if (result.status === 'rejected') {
     return `代码 ${hash}；MP4 ${result.duration.toFixed(1)}s 已生成但未保存；MP4 帧验收 ${counts.ok}/${counts.total}${failedText}；旧视频保持不变${url}。`

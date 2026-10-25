@@ -2,7 +2,15 @@ import type { Edge, Node } from '@xyflow/react'
 import type { Relation, ShotData } from './types'
 
 export type ShotNodeType = Node<ShotData, 'shot'>
-export type ShotEdgeType = Edge<{ relation: Relation }, 'shot'>
+export type ShotEdgeDataType = {
+  relation: Relation
+  /** 只用于画布显示：转场摘要与状态（真相在源镜头的 transitionOut） */
+  transition?: {
+    summary: string
+    state: 'ready' | 'pending' | 'stale' | 'inactive'
+  }
+}
+export type ShotEdgeType = Edge<ShotEdgeDataType, 'shot'>
 
 /** 画布上的角色节点：数据来自 characters（真相源不在画布），位置单独持久化 */
 export type CharNodeType = Node<
@@ -10,12 +18,19 @@ export type CharNodeType = Node<
   'char'
 >
 
-/** 素材类型：场景图 / 道具图 / 普通参考图 / 视频素材 */
-export type AssetKind = 'scene' | 'prop' | 'image' | 'video'
+/** 素材类型：场景图 / 道具图 / 普通参考图 / 视频 / 角色表情总图 */
+export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'expression-sheet'
 
 /** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
 export type AssetNodeType = Node<
-  { title: string; kind: AssetKind; url?: string; designId?: string },
+  {
+    title: string
+    kind: AssetKind
+    url?: string
+    designId?: string
+    /** expression-sheet 归属的角色名；普通素材/场景/道具为空 */
+    characterName?: string
+  },
   'asset'
 >
 

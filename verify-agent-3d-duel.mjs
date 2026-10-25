@@ -1,7 +1,7 @@
 /**
  * 3D 调度 agent 验收：山体 + 男女双剑对打 + 环绕镜头。
  *
- * 默认 mock：脚本化模型调用工具，真实沙箱抓 5 帧，mock 视觉清单，真实渲染 4 秒 mp4。
+ * 默认 mock：脚本化模型调用工具，真实 Blender 渲染抓 5 帧，mock 视觉清单，真实渲染 4 秒 mp4。
  * 真实模型：AGENT_REAL=1 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs
  *
  * 产物写入当前聊天 UI 变更的 evidence/。
@@ -26,18 +26,18 @@ const REQUIREMENTS = [
   '镜头始终正对两人，两人都在画面内',
 ]
 const EVIDENCE = path.join(process.cwd(), 'openspec/changes/chat-ui-tailwind-shadcn/evidence')
-const FIXTURE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.js'), 'utf8').trim()
-const PLACEHOLDER = `let S;
-function init(ctx) {
-  S = ctx;
-  const box = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x2a9d8f }));
-  S.scene.add(box);
-  S.scene.add(new THREE.HemisphereLight(0xffffff, 0x223344, 2));
-  ctx.camera.position.set(0, 1.2, 4);
-  ctx.camera.lookAt(0, 0, 0);
-}
-function renderAt(t) { if (S) S.scene.rotation.y = t; }
-function dispose() {}`
+const FIXTURE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.py'), 'utf8').trim()
+const PLACEHOLDER = `import bpy
+
+def build(ctx):
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    ctx.camera.location = (0, -6, 2)
+
+def pose(t, mode):
+    pass
+
+def dispose():
+    pass`
 
 let bad = 0
 const check = (name, cond, extra = '') => {
@@ -122,7 +122,7 @@ if (REAL) {
   const calls = [
     { name: 'get_shot_context', args: {} },
     { name: 'set_scene_code', args: { code: FIXTURE } },
-    { name: 'run_sandbox', args: {} },
+    { name: 'run_render', args: {} },
     { name: 'capture_frames', args: { times: [0, 1, 2, 3, 4] } },
     { name: 'review_frames', args: { requirements: REQUIREMENTS } },
     { name: 'finish', args: { summary: '山、男女双剑对打与环绕镜头已完成' } },
@@ -157,7 +157,8 @@ let savedShot = null
 let videoUrl = ''
 let evidenceWritten = false
 try {
-  await page.goto(URL, { waitUntil: 'networkidle' })
+  await page.goto(URL, { waitUntil: 'domcontentloaded' })
+  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
   await page.locator('.topbar-project select').selectOption(NAME)
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
@@ -197,7 +198,7 @@ try {
     { timeout: REAL ? 360000 : 120000 },
   )
   panel = await page.locator('[data-chat-root]').innerText()
-  check('聊天显示 agent 工具轨迹', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('沙箱'), panel.slice(0, 600))
+  check('聊天显示 agent 工具轨迹', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('渲染'), panel.slice(0, 600))
   const frameCount = await page.locator('[data-chat-frames] img').count()
   check('agent 抓取 5 帧', frameCount === 5, String(frameCount))
   check(
@@ -247,7 +248,21 @@ try {
   const frameFiles = []
   for (const [i, frame] of frames.entries()) {
     const file = path.join(EVIDENCE, `${REAL ? 'agent-duel-real-frame' : 'agent-duel-frame'}-${i}.jpg`)
-    if (saveDataUrl(file, frame.src)) frameFiles.push(path.relative(process.cwd(), file))
+    if (saveDataUrl(file, frame.src)) {
+      frameFiles.push(path.relative(process.cwd(), file))
+      continue
+    }
+    if (frame.src.startsWith('/')) {
+      try {
+        const res = await fetch(`${URL}${frame.src}`)
+        if (res.ok) {
+          fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()))
+          frameFiles.push(path.relative(process.cwd(), file))
+        }
+      } catch {
+        /* 帧 URL 不可读时保留失败计数 */
+      }
+    }
   }
   check('关键帧证据已保存', frameFiles.length === 5, String(frameFiles.length))
 

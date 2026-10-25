@@ -1,24 +1,27 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { ShotNodeType } from './data'
+import type { ShotEdgeType, ShotNodeType } from './data'
 import type { ShotData } from './types'
+import { buildEditList } from './editList'
+import { activeVideoUrl } from './lipSync'
+import { buildShotCaptions, type CaptionCue } from './captions'
 
 type Props = {
   nodes: ShotNodeType[]
+  edges: ShotEdgeType[]
   activeId: string | null
   /** 角色名 → 头像图，角色轨用 */
   charImages?: Record<string, string>
   onPick: (id: string) => void
   onPatch: (id: string, p: Partial<ShotData>) => void
-  /** 画面轨换序：把 id 移到 toIndex */
-  onReorder: (id: string, toIndex: number) => void
+  /** 点转场块打开转场面板 */
+  onOpenTransition?: (edgeId: string) => void
 }
 
-type Kind = 'pic' | 'voice' | 'sub'
+type Kind = 'voice' | 'sub'
 
 type Clip = {
   id: string
   no: string
-  index: number
   /** 绝对起点（秒），由镜号顺序累加得来 */
   start: number
   dur: number
@@ -29,6 +32,7 @@ type Clip = {
   voiceOffset: number
   subOffset: number
   dialogue: string
+  captions: CaptionCue[]
   cast: string
   hasPrompt: boolean
   size: string
@@ -44,7 +48,15 @@ const px = (sec: number, zoom: number) => sec * zoom
 /** 吸附到 0.1s，避免拖出 0.033333 这种脏值 */
 const snap = (sec: number) => Math.round(sec * 10) / 10
 
-export default function Timeline({ nodes, activeId, charImages = {}, onPick, onPatch, onReorder }: Props) {
+export default function Timeline({
+  nodes,
+  edges,
+  activeId,
+  charImages = {},
+  onPick,
+  onPatch,
+  onOpenTransition,
+}: Props) {
   const [zoom, setZoom] = useState(40)
   // 常驻 186px 会吃掉画布视野，允许收起
   const [open, setOpen] = useState(true)
@@ -52,36 +64,56 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
   const [live, setLive] = useState<{ id: string; kind: Kind; dx: number } | null>(null)
   const dragRef = useRef<{ id: string; kind: Kind; x0: number } | null>(null)
 
-  /** 顺序累加出每镜的绝对起止：这是画面轨基准，音频/字幕都挂在它上面 */
-  const clips: Clip[] = useMemo(() => {
-    let acc = 0
-    return nodes.map((n, index) => {
-      const d = n.data
-      const c: Clip = {
-        id: n.id,
-        no: String(d.no),
-        index,
-        start: Math.round(acc * 100) / 100,
-        dur: Math.max(0.4, Number(d.seconds) || 3),
-        hasVideo: Boolean(d.videoUrl),
-        hasImage: Boolean(d.refImage),
-        voiceUrl: d.voiceUrl,
-        voiceSec: Number(d.voiceSeconds) || 0,
-        voiceOffset: Number(d.voiceOffset) || 0,
-        subOffset: Number(d.subOffset) || 0,
-        dialogue: String(d.dialogue || ''),
-        cast: (d.cast ?? []).join('、'),
-        hasPrompt: Boolean(String(d.prompt || '').trim()),
-        size: String(d.size || ''),
-        move: String(d.move || ''),
-      }
-      acc += c.dur
-      return c
-    })
-  }, [nodes])
+  /** 唯一剪辑序列：效果转场重叠、生成转场插入，起点不再原地累加 */
+  const edit = useMemo(() => buildEditList(nodes, edges), [nodes, edges])
+  const clips: Clip[] = useMemo(
+    () =>
+      edit.items
+        .filter((x) => x.kind === 'shot' && x.node)
+        .map((x) => {
+          const d = x.node!.data
+          return {
+            id: x.node!.id,
+            no: String(d.no),
+            start: Math.round(x.start * 100) / 100,
+            dur: x.duration,
+            hasVideo: Boolean(activeVideoUrl(d)),
+            hasImage: Boolean(d.refImage),
+            voiceUrl: d.voiceUrl,
+            voiceSec: Number(d.voiceSeconds) || 0,
+            voiceOffset: Number(d.voiceOffset) || 0,
+            subOffset: Number(d.subOffset) || 0,
+            dialogue: String(d.dialogue || ''),
+            captions: buildShotCaptions({
+              shotId: x.node!.id,
+              dialogue: String(d.dialogue || ''),
+              shotSeconds: x.duration,
+              voiceSeconds: Number(d.voiceSeconds) || 0,
+              voiceOffset: Number(d.voiceOffset) || 0,
+              subOffset: Number(d.subOffset) || 0,
+              audioMode: d.audioMode === 'native' ? 'native' : 'off',
+            }),
+            cast: (d.cast ?? []).join('、'),
+            hasPrompt: Boolean(String(d.prompt || '').trim()),
+            size: String(d.size || ''),
+            move: String(d.move || ''),
+          }
+        }),
+    [edit],
+  )
+  const transitionItems = useMemo(
+    () => edit.items.filter((x) => x.kind === 'transition'),
+    [edit],
+  )
+  const fades = useMemo(
+    () =>
+      edit.items
+        .filter((x) => x.kind === 'shot' && x.joinIn.kind === 'effect')
+        .map((x) => ({ id: x.id, start: x.start, join: x.joinIn })),
+    [edit],
+  )
 
-  const last = clips[clips.length - 1]
-  const total = last ? last.start + last.dur : 0
+  const total = edit.total
   const width = Math.max(320, px(total, zoom))
 
   const ticks = useMemo(() => {
@@ -99,6 +131,11 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
   const startDrag = (e: React.PointerEvent, clip: Clip, kind: Kind) => {
     e.stopPropagation()
     e.preventDefault()
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      /* 指针捕获不可用时仍按旧行为拖动 */
+    }
     dragRef.current = { id: clip.id, kind, x0: e.clientX }
     setLive({ id: clip.id, kind, dx: 0 })
     onPick(clip.id)
@@ -125,22 +162,11 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
       // 允许负偏移（台词提前），但不能跑到 0 之前
       const next = Math.max(-clip.start, snap(clip.voiceOffset + deltaSec))
       onPatch(clip.id, { voiceOffset: next })
-    } else if (d.kind === 'sub') {
+    } else {
       const next = Math.max(-clip.start, snap(clip.subOffset + deltaSec))
       onPatch(clip.id, { subOffset: next })
-    } else {
-      // 画面轨：拖过邻镜中点就换序
-      const center = clip.start + clip.dur / 2 + deltaSec
-      let to = clip.index
-      for (const c of clips) {
-        if (c.id === clip.id) continue
-        const mid = c.start + c.dur / 2
-        if (deltaSec > 0 && c.index > clip.index && center > mid) to = c.index
-        if (deltaSec < 0 && c.index < clip.index && center < mid) to = c.index
-      }
-      if (to !== clip.index) onReorder(clip.id, to)
     }
-  }, [live, clips, zoom, onPatch, onReorder])
+  }, [live, clips, zoom, onPatch])
 
   if (clips.length === 0) return null
 
@@ -156,9 +182,13 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
         </button>
         <b>时间线</b>
         <span className="ntl-sum">
-          {clips.length} 镜 · <b>{total.toFixed(1)}s</b>
+          {clips.length} 镜{edit.transitions ? ` · ${edit.transitions} 转场` : ''} · <b>{total.toFixed(1)}s</b>
         </span>
+        <span className="ntl-order" title="播放顺序按镜号，拖动不改顺序">按镜号</span>
         {overflow > 0 && <span className="ntl-warn">{overflow} 条配音超出镜头</span>}
+        {edit.inactive.length > 0 && (
+          <span className="ntl-warn">{edit.inactive.length} 条转场未参与</span>
+        )}
         <div className="spacer" />
         <button
           className="btn-mini"
@@ -199,25 +229,48 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
 
             {/* 画面轨：视频蓝 / 静帧灰 / 空 */}
             <div className="ntl-track" style={{ height: TRACK_H }}>
-              {clips.map((c) => {
-                const shift = live?.kind === 'pic' && live.id === c.id ? live.dx : 0
-                return (
+              {clips.map((c) => (
+                <button
+                  key={c.id}
+                  className={`ntl-clip pic ${c.hasVideo ? 'vid' : c.hasImage ? 'img' : 'empty'} ${
+                    activeId === c.id ? 'on' : ''
+                  }`}
+                  style={{ left: px(c.start, zoom), width: Math.max(18, px(c.dur, zoom)) }}
+                  onClick={() => onPick(c.id)}
+                  title={`${c.no} · ${c.dur}s · ${c.size} ${c.move}（播放顺序按镜号）`}
+                >
+                  <span className="ntl-clip-t">{c.no}</span>
+                </button>
+              ))}
+              {fades.map((f) => {
+                const j = f.join
+                return j.kind === 'effect' ? (
                   <button
-                    key={c.id}
-                    className={`ntl-clip pic ${c.hasVideo ? 'vid' : c.hasImage ? 'img' : 'empty'} ${
-                      activeId === c.id ? 'on' : ''
-                    }`}
-                    style={{ left: px(c.start, zoom) + shift, width: Math.max(18, px(c.dur, zoom)) }}
-                    onPointerDown={(e) => startDrag(e, c, 'pic')}
-                    onPointerMove={onDragMove}
-                    onPointerUp={endDrag}
-                    onPointerCancel={endDrag}
-                    title={`${c.no} · ${c.dur}s · ${c.size} ${c.move}（左右拖动可换序）`}
-                  >
-                    <span className="ntl-clip-t">{c.no}</span>
-                  </button>
-                )
+                    key={`fade-${f.id}`}
+                    className="ntl-xfade"
+                    style={{
+                      left: px(f.start, zoom),
+                      width: Math.max(6, px(j.seconds, zoom)),
+                    }}
+                    onClick={() => j.edgeId && onOpenTransition?.(j.edgeId)}
+                    title={`效果转场 ${j.xfade} · ${j.seconds.toFixed(1)}s`}
+                  />
+                ) : null
               })}
+              {transitionItems.map((t) => (
+                <button
+                  key={t.id}
+                  className={`ntl-clip transition ${t.stale ? 'stale' : ''}`}
+                  style={{
+                    left: px(t.start, zoom),
+                    width: Math.max(18, px(t.duration, zoom)),
+                  }}
+                  onClick={() => t.edgeId && onOpenTransition?.(t.edgeId)}
+                  title={`生成转场 ${t.duration.toFixed(1)}s${t.stale ? ' · 需重生成' : ''}`}
+                >
+                  <span className="ntl-clip-t">转场</span>
+                </button>
+              ))}
             </div>
 
             {/* 配音轨：宽度是音频真实时长，可左右拖改偏移 */}
@@ -250,30 +303,37 @@ export default function Timeline({ nodes, activeId, charImages = {}, onPick, onP
                 })}
             </div>
 
-            {/* 字幕轨 */}
+            {/* 字幕轨：每条 cue 一个块；拖动仍作为整镜 subOffset */}
             <div className="ntl-track" style={{ height: TRACK_H }}>
-              {clips
-                .filter((c) => c.dialogue.trim())
-                .map((c) => {
+              {clips.flatMap((c) =>
+                c.captions.map((cue, cueIndex) => {
                   const shift = live?.kind === 'sub' && live.id === c.id ? live.dx : 0
                   return (
                     <button
-                      key={c.id}
-                      className={`ntl-clip sub ${activeId === c.id ? 'on' : ''}`}
+                      key={`${c.id}-cue-${cueIndex}`}
+                      className={`ntl-clip sub ${activeId === c.id ? 'on' : ''} ${
+                        cue.estimated ? 'estimated' : ''
+                      }`}
                       style={{
-                        left: px(Math.max(0, c.start + c.subOffset), zoom) + shift,
-                        width: Math.max(18, px(c.dur, zoom)),
+                        left: px(Math.max(0, c.start + cue.startOffsetMs / 1000), zoom) + shift,
+                        width: Math.max(
+                          14,
+                          px((cue.endOffsetMs - cue.startOffsetMs) / 1000, zoom),
+                        ),
                       }}
                       onPointerDown={(e) => startDrag(e, c, 'sub')}
                       onPointerMove={onDragMove}
                       onPointerUp={endDrag}
                       onPointerCancel={endDrag}
-                      title={`${c.dialogue.replace(/\n/g, ' / ')}（左右拖动改偏移）`}
+                      title={`${cue.text}${cue.speaker ? ` · ${cue.speaker}` : ''}${
+                        cue.estimated ? ' · 估算' : ''
+                      }（左右拖动改整镜字幕偏移）`}
                     >
-                      <span className="ntl-clip-t">{c.dialogue.split('\n')[0].slice(0, 16)}</span>
+                      <span className="ntl-clip-t">{cue.text.slice(0, 16)}</span>
                     </button>
                   )
-                })}
+                }),
+              )}
             </div>
 
             {/* 角色轨：只读，有头像显示头像，无图退回名字 */}

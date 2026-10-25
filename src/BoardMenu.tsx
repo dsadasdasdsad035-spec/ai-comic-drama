@@ -14,6 +14,7 @@ type Props = {
   onGenAll: () => void
   onGenVideoAll: () => void
   onVoiceAll: () => void
+  onUnifyTransitions: () => void
   onFit: () => void
   onToggleChars: () => void
   onToggleDiag: () => void
@@ -36,6 +37,7 @@ export default function BoardMenu({
   onGenAll,
   onGenVideoAll,
   onVoiceAll,
+  onUnifyTransitions,
   onFit,
   onToggleChars,
   onToggleDiag,
@@ -116,6 +118,15 @@ export default function BoardMenu({
           >
             批量配音
             <span className="bm-hint">{vbatch ? `${vbatch.done}/${vbatch.total}` : 'TTS'}</span>
+          </button>
+          <button
+            className="bm-item"
+            onClick={act(onUnifyTransitions)}
+            disabled={busy}
+            title="只把效果模式的转场统一成叠化 0.5s；生成转场保持不变"
+          >
+            全片统一叠化
+            <span className="bm-hint">0.5s · 跳过生成</span>
           </button>
 
           <div className="bm-sec">画布</div>

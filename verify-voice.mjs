@@ -98,7 +98,7 @@ console.log('导出结果:', msg)
 await page.screenshot({ path: `${OUT}/53-voice-export.png` })
 
 const href = await page.evaluate(() => {
-  const a = document.querySelector('.pv-foot a[download]')
+  const a = document.querySelector('.pv-export a[download$=".mp4"]')
   return a ? a.getAttribute('href') : null
 })
 console.log('成片:', href)

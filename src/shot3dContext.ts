@@ -104,6 +104,7 @@ export function sanitizeShot3DContext(raw: unknown): Shot3DContext {
     videoUrls: strings(o.videoUrls),
     sceneKeys: strings(o.sceneKeys),
     text: sanitizeText(o.text),
+    ...(Array.isArray(o.briefOff) ? { briefOff: strings(o.briefOff).slice(0, 64) } : {}),
     ...(typeof o.dialogueHash === 'string' && o.dialogueHash ? { dialogueHash: o.dialogueHash } : {}),
     ...(typeof o.updatedAt === 'string' && o.updatedAt ? { updatedAt: o.updatedAt } : {}),
   }
@@ -131,6 +132,19 @@ export function defaultShot3DContext(input: DefaultContextInput = {}): Shot3DCon
     sceneKeys: input.sceneKeys ?? [],
     text: TEXT_CONTEXT_ON,
     dialogueHash: input.dialogueHash,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * 工作台首次打开的空选择：不预选媒体、文本或场次键。
+ * 保留台词指纹，后续逐句选择和“沿用上一镜”仍能正确判断台词是否变化。
+ */
+export function emptyShot3DContext(dialogueHash?: string): Shot3DContext {
+  return sanitizeShot3DContext({
+    version: 1,
+    text: TEXT_CONTEXT_OFF,
+    ...(dialogueHash ? { dialogueHash } : {}),
     updatedAt: new Date().toISOString(),
   })
 }

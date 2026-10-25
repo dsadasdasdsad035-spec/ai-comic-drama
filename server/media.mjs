@@ -163,6 +163,41 @@ export function migrateProjectMedia(appRoot, name, project) {
     const next = { ...sheet }
     if (typeof sheet.image === 'string') next.image = rewrite(sheet.image)
     if (Array.isArray(sheet.candidates)) next.candidates = sheet.candidates.map((u) => rewrite(u))
+    // 表情总图 / 单格裁剪 / 旧逐情绪表情 / 音色样本：和 image 一样都是项目媒体引用
+    if (sheet.expression_sheet && typeof sheet.expression_sheet === 'object') {
+      const es = sheet.expression_sheet
+      next.expression_sheet = {
+        ...es,
+        ...(typeof es.image === 'string' ? { image: rewrite(es.image) } : {}),
+        ...(Array.isArray(es.cells)
+          ? {
+              cells: es.cells.map((cell) =>
+                cell && typeof cell === 'object' && typeof cell.cropUrl === 'string'
+                  ? { ...cell, cropUrl: rewrite(cell.cropUrl) }
+                  : cell,
+              ),
+            }
+          : {}),
+      }
+    }
+    if (sheet.expressions && typeof sheet.expressions === 'object') {
+      const expressions = {}
+      for (const [emotion, value] of Object.entries(sheet.expressions)) {
+        if (!value || typeof value !== 'object') {
+          expressions[emotion] = value
+          continue
+        }
+        expressions[emotion] = {
+          ...value,
+          ...(typeof value.image === 'string' ? { image: rewrite(value.image) } : {}),
+          ...(Array.isArray(value.candidates) ? { candidates: value.candidates.map((u) => rewrite(u)) } : {}),
+        }
+      }
+      next.expressions = expressions
+    }
+    if (sheet.voice_sample && typeof sheet.voice_sample === 'object' && typeof sheet.voice_sample.url === 'string') {
+      next.voice_sample = { ...sheet.voice_sample, url: rewrite(sheet.voice_sample.url) }
+    }
     return next
   }
 
