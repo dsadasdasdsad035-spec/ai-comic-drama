@@ -1,0 +1,135 @@
+/* ===== 发布助手：右栏单槽位、准备度条、待确认卡 =====
+ *
+ * 这里只补发布台自己的两处几何：右栏槽位与 1200px 断点。
+ * 回执卡与准备度条用的是 chat-ui 的 Tailwind 原子类 + theme.css 的 token，
+ * 不重复定义颜色。
+ */
+
+.pb-dock-resizer {
+  flex: 0 0 7px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--line) 3px,
+    var(--line) 4px,
+    transparent 4px
+  );
+}
+
+.pb-dock-resizer:hover,
+.pb-dock-resizer:focus-visible {
+  outline: none;
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--accent) 3px,
+    var(--accent) 4px,
+    transparent 4px
+  );
+}
+
+/* 右栏：检查器与助手共用同一个宽度变量 */
+.pb-dock {
+  width: var(--chat-width, 380px);
+  flex: 0 0 auto;
+  border-left: 1px solid var(--line);
+  background: var(--bg-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 320px;
+  max-width: 560px;
+}
+
+/* 检查器填满槽位，不再固定 300px */
+.pb-dock.is-inspect > .pb-inspect {
+  width: auto;
+  min-width: 0;
+  flex: 1;
+  border-left: 0;
+}
+
+/* 助手：内部已经是 .skill-chat 的纵向 flex */
+.pb-dock.is-chat {
+  background: var(--bg);
+}
+
+/* 右栏里的待确认卡固定贴住输入区上方 */
+.pb-dock.is-chat .skill-chat {
+  min-height: 0;
+  flex: 1;
+}
+
+/* 待确认卡的确认按钮刻意用次级样式：页面唯一主色按钮是底部提交 */
+[data-pending-intent] {
+  border-style: dashed;
+}
+
+/* 窄屏：断点对齐 .pb 的 1200px 纵向切换，避免 1180–1200 的死区 */
+@media (max-width: 1200px) {
+  .pb-dock-resizer {
+    display: none;
+  }
+
+  .pb-dock.is-chat {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 92vw);
+    min-width: 0;
+    max-width: none;
+    box-shadow: var(--shadow-pop, 0 8px 30px rgba(0, 0, 0, 0.4));
+  }
+
+  .pb-dock.is-inspect {
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-height: 44vh;
+  }
+
+  /* 抽屉遮罩：只在助手占槽时出现 */
+  .pb-dock-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 19;
+    background: rgba(2, 6, 10, 0.5);
+  }
+}
+
+@media (max-width: 900px) {
+  .pb-dock.is-chat {
+    width: 100%;
+  }
+
+  .pb-dock.is-inspect {
+    max-height: none;
+    flex: 0 0 auto;
+  }
+}
+
+html[data-theme='day'] .pb-dock-scrim {
+  background: rgba(29, 39, 51, 0.28);
+}
+
+/* 准备度条：五格在窄栏里换行而不是横向溢出 */
+[data-publish-readiness] {
+  scrollbar-width: none;
+}
+
+[data-publish-readiness]::-webkit-scrollbar {
+  display: none;
+}
+
+/* 回执卡里的字段差异列表：单行截断，不把面板撑宽 */
+[data-receipt-changes] {
+  min-width: 0;
+}

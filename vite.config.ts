@@ -48,6 +48,14 @@ import { buildPublishPackage } from './server/publish-package.mjs'
 import { autoDraftOnExport } from './server/publish-auto.mjs'
 import { chromeAvailable, profilesRoot, resolveChrome, sanitizeError } from './server/publish-utils.mjs'
 import { recoverInterruptedJobs } from './server/publish-jobs.mjs'
+import {
+  cancelIntent,
+  confirmIntent,
+  expireStaleIntents,
+  getIntent,
+  stageIntent,
+  sweepIntents,
+} from './server/publish-intents.mjs'
 import { MAX_SKILL_BYTES, listSkillFiles, readSkillFile, safeSkillId, splitSkillText, withBuiltinFrontmatter } from './server/skills.mjs'
 import {
   MAX_REF_BYTES,
@@ -260,8 +268,8 @@ type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'v
 const CAP_VALUES: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 'view', 'video', 'videoRef', 'audio']
 
 /** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
-type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
-const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
+type Stage = 'script' | 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision' | 'publish'
+const STAGES: Stage[] = ['script', 'character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision', 'publish']
 
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'apimart' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
@@ -2403,6 +2411,14 @@ function seedreamProxy(): Plugin {
         if (recovered > 0) console.log(`[publish] 恢复中断任务 ${recovered} 条 → unknown`)
       } catch (e) {
         console.warn('[publish] 中断任务恢复失败:', sanitizeError(e))
+      }
+      // 暂存提交意图：超过有效期的先标过期，再清掉早该丢弃的终态行
+      try {
+        const expired = expireStaleIntents(resolveRoot(root))
+        if (expired.expired > 0) console.log(`[publish] 提交意图过期 ${expired.expired} 条`)
+        sweepIntents(resolveRoot(root))
+      } catch (e) {
+        console.warn('[publish] 提交意图清理失败:', sanitizeError(e))
       }
       server.httpServer?.on('close', () => {
         shutdownRenderJobs()
@@ -4682,6 +4698,82 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            // ---- 提交意图：助手暂存，用户确认才建任务 ----
+            if (req.method === 'POST' && tail === 'intents') {
+              const body = await readJson(req)
+              try {
+                const intent = stageIntent(pubRoot, {
+                  deliverableId: String(body.deliverableId || ''),
+                  targets: Array.isArray(body.targets) ? body.targets : [],
+                  config: body.config,
+                  source: body.source === 'assistant' ? 'assistant' : 'manual',
+                  appRoot: root,
+                })
+                res.end(JSON.stringify({ ok: true, intent }))
+              } catch (e) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    code: (e as any)?.code || 'intent_stage_failed',
+                    message: sanitizeError(e),
+                  }),
+                )
+              }
+              return
+            }
+
+            if (tail.startsWith('intents/')) {
+              const rest = tail.slice('intents/'.length)
+              const [id, sub] = rest.split('/')
+              if (req.method === 'GET' && !sub) {
+                const intent = getIntent(pubRoot, id)
+                if (!intent) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '提交意图不存在' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, intent }))
+                return
+              }
+              if (req.method === 'POST' && sub === 'confirm') {
+                const body = await readJson(req)
+                try {
+                  // 只接受 intentId；请求里的 config 仅用于证明「不是旧快照」
+                  const r = confirmIntent(pubRoot, id, {
+                    appRoot: root,
+                    ...(body.config ? { config: body.config } : {}),
+                  })
+                  for (const job of r.jobs) {
+                    if (job.reused) continue
+                    enqueue(String(job.id || ''), { root: pubRoot, appRoot: root, projectsRoot: pubRoot })
+                  }
+                  res.end(JSON.stringify({ ok: true, ...r }))
+                } catch (e) {
+                  res.statusCode = 400
+                  res.end(
+                    JSON.stringify({
+                      ok: false,
+                      code: (e as any)?.code || 'intent_confirm_failed',
+                      message: sanitizeError(e),
+                      ...((e as any)?.preflight ? { preflight: (e as any).preflight } : {}),
+                    }),
+                  )
+                }
+                return
+              }
+              if (req.method === 'POST' && sub === 'cancel') {
+                const intent = cancelIntent(pubRoot, id)
+                if (!intent) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '提交意图不存在' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, intent }))
+                return
+              }
+            }
+
             if (req.method === 'POST' && tail === 'jobs') {
               const body = await readJson(req)
               const deliverable = getDeliverable(pubRoot, String(body.deliverableId || ''))
@@ -4718,7 +4810,7 @@ function seedreamProxy(): Plugin {
                   accountId: t.accountId || '',
                   mode: t.mode || 'draft',
                   deliverableUrl: deliverable.url,
-                  payload: { auto: Boolean(body.auto), aiGenerated: config.master.aiGenerated },
+                  payload: { auto: Boolean(body.auto), source: 'manual', aiGenerated: config.master.aiGenerated },
                   republish: Boolean(body.republish),
                 })
                 created.push({ ...r.job, reused: r.reused })

@@ -11,6 +11,7 @@ const STAGES: Stage[] = [
   'vision',
   'videoVision',
   'creative',
+  'publish',
 ]
 const RUNTIMES = ['json-tools', 'scene3d'] as const
 const ROLE_HEADING = '## 角色与约束'

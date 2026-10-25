@@ -1038,6 +1038,7 @@ export type Stage =
   | 'vision'
   | 'videoVision'
   | 'creative'
+  | 'publish'
 export const STAGES: Stage[] = [
   'script',
   'character',
@@ -1048,6 +1049,7 @@ export const STAGES: Stage[] = [
   'vision',
   'videoVision',
   'creative',
+  'publish',
 ]
 export type ProviderKind =
   | 'ark'

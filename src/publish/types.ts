@@ -18,9 +18,25 @@ export type JobState =
   | 'expired'
   | 'unknown'
 
-export type CoverAspect = '9:16' | '16:9'
+export type CoverAspect = '9:16' | '16:9' | '3:4' | '4:3'
 
-export type PlatformLimits = { title: number; description: number; tags: number }
+/** 封面比例的展示顺序：先竖版后横版 */
+export const COVER_ASPECTS: CoverAspect[] = ['9:16', '3:4', '4:3', '16:9']
+
+export type PlatformLimits = {
+  titleMax: number
+  /** 标题下限；缺省表示没有下限 */
+  titleMin?: number
+  /** 该平台没有独立标题字段（如快手把标题并进描述） */
+  titleOptional?: true
+  descriptionMax: number
+  tagsMax: number
+}
+
+/** 草稿存在哪里：服务端草稿 / 浏览器本地草稿 / 没有草稿 */
+export type DraftKind = 'server' | 'local' | 'none'
+
+export type PlatformBadgeInfo = { text: string; color: string }
 
 export type PlatformCapability = {
   id: string
@@ -35,6 +51,8 @@ export type PlatformCapability = {
   limits: PlatformLimits
   max: { durationSec?: number; bytes?: number }
   notes: string
+  badge?: PlatformBadgeInfo
+  draftKind?: DraftKind
 }
 
 export type PlatformHealth = {
@@ -132,7 +150,14 @@ export type PublishJob = {
   errorMessage: string
   workUrl: string
   deliverableUrl: string
-  payload: Record<string, unknown>
+  /** 任务来源等附加信息；source=assistant 表示由助手暂存后经用户确认创建 */
+  payload: {
+    source?: 'assistant' | 'manual'
+    intentId?: string
+    auto?: boolean
+    aiGenerated?: boolean
+    [key: string]: unknown
+  }
   createdAt: string
   startedAt: string
   endedAt: string
@@ -140,6 +165,27 @@ export type PublishJob = {
 }
 
 export type JobSummary = { running: number; failed: number; unknown: number; total: number }
+
+/** 提交意图：助手暂存的待确认提交，确认后才产生任务 */
+export type IntentState = 'staged' | 'confirmed' | 'cancelled' | 'expired'
+
+export type PublishIntent = {
+  id: string
+  deliverableId: string
+  project: string
+  episode: number
+  source: 'assistant' | 'manual'
+  hash: string
+  config: DeliverableConfig
+  targets: { platform: string; accountId: string; mode: PublishMode }[]
+  preflight: PreflightResult | Record<string, never>
+  state: IntentState
+  jobIds: string[]
+  reason: string
+  createdAt: string
+  expiresAt: string
+  confirmedAt: string
+}
 
 export type PublishPackageResult = {
   ok: boolean

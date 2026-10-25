@@ -197,23 +197,26 @@ export function WorkbenchHeader({
               </select>
             )
           ) : null}
-          <select
-            value=""
-            onChange={(e) => onLoadReadonly(e.target.value)}
-            disabled={readonly.length >= 1}
-            aria-label="加载只读技能"
-            title={readonly.length >= 1 ? '最多一个只读技能' : '加载只读技能'}
-            className="max-w-[150px] rounded border border-border bg-background px-1 py-0.5 text-[10px] text-foreground disabled:opacity-50"
-          >
-            <option value="">+ 参考能力</option>
-            {available
-              .filter((s) => !readonly.some((r) => r.id === s.id))
-              .map((s) => (
-                <option key={s.id} value={s.id} title={s.manifest.description}>
-                  {s.id}
-                </option>
-              ))}
-          </select>
+          {/* 没有可加载的只读技能时（例如发布台）不渲染空下拉 */}
+          {available.filter((s) => !readonly.some((r) => r.id === s.id)).length > 0 ? (
+            <select
+              value=""
+              onChange={(e) => onLoadReadonly(e.target.value)}
+              disabled={readonly.length >= 1}
+              aria-label="加载只读技能"
+              title={readonly.length >= 1 ? '最多一个只读技能' : '加载只读技能'}
+              className="max-w-[150px] rounded border border-border bg-background px-1 py-0.5 text-[10px] text-foreground disabled:opacity-50"
+            >
+              <option value="">+ 参考能力</option>
+              {available
+                .filter((s) => !readonly.some((r) => r.id === s.id))
+                .map((s) => (
+                  <option key={s.id} value={s.id} title={s.manifest.description}>
+                    {s.id}
+                  </option>
+                ))}
+            </select>
+          ) : null}
         </div>
       </div>
     </header>

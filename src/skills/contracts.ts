@@ -203,7 +203,12 @@ const reverseV1 = passthrough({
   })
 })
 
-/** 策划模式：只要求一段回复；方向与镜头草案是可选的展开。 */
+/** 发布助手：只要求一段给用户的回复；配置改动与提交意图走工具，不要求结构化产物。 */
+const publishPlanV1 = passthrough({
+  reply: z.string().min(1),
+  intent: z.enum(['answer', 'apply', 'stage']).optional(),
+  notes: z.array(z.string()).optional(),
+})
 const creativePlanV1 = passthrough({
   reply: z.string().min(1),
   directions: z
@@ -243,6 +248,7 @@ const REGISTRY: Record<string, SkillContract> = {
     schema: scene3dCodeV1,
     lockedBlock: SCENE_CODE_ABI,
   },
+  'publish-plan-v1': { id: 'publish-plan-v1', label: '发布助手回复', schema: publishPlanV1 },
 }
 
 export function getContract(id: string): SkillContract | undefined {

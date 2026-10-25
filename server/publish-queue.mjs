@@ -234,7 +234,11 @@ async function executeItem(item) {
     await adapter.fillMetadata(page, ctx)
     await guard()
 
-    transitionJob(root, id, 'uploading', { stage: 'draft', message: '保存草稿' })
+    const draftKind = platform.draftKind || 'none'
+    transitionJob(root, id, 'uploading', {
+      stage: 'draft',
+      message: draftKind === 'none' ? '填好表单（该平台没有草稿）' : '保存草稿',
+    })
     await adapter.saveDraft(page)
     await guard()
 
@@ -270,7 +274,12 @@ async function executeItem(item) {
 
     transitionJob(root, id, 'awaiting_confirmation', {
       stage: 'draft',
-      message: '草稿已保存，请到平台后台确认发布',
+      message:
+        draftKind === 'local'
+          ? '草稿存在本机浏览器内，清空浏览器数据会丢失；请到平台后台确认发布'
+          : draftKind === 'none'
+            ? '表单已填好但该平台不保存草稿，请立即在已打开的窗口点击发布'
+            : '草稿已保存，请到平台后台确认发布',
     })
   } catch (e) {
     const code = e?.code || 'adapter_error'

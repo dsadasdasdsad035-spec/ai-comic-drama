@@ -9,6 +9,7 @@ import type {
   PreflightIssue,
   PreflightResult,
   PublishAccount,
+  PublishIntent,
   PublishJob,
   PublishPackageResult,
 } from './types'
@@ -227,6 +228,70 @@ export async function buildPackage(input: {
   const j = await readJson(r)
   if (!j.ok) fail(j, '生成发布包失败')
   return j.package as PublishPackageResult
+}
+
+/**
+ * 暂存一次提交意图：服务端只写一行 intent，不创建任务。
+ * 这是助手的唯一提交入口——它拿不到任何直接建任务的能力。
+ */
+export async function stagePublishIntent(input: {
+  deliverableId: string
+  targets: { platform: string; accountId: string; mode: string }[]
+  config: DeliverableConfig
+  source?: 'assistant' | 'manual'
+}): Promise<PublishIntent> {
+  const r = await fetch('/api/publish/intents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const j = await readJson(r)
+  if (!j.ok) {
+    const err = new Error(String(j.message || '暂存提交失败')) as Error & { code?: string }
+    err.code = j.code
+    throw err
+  }
+  return j.intent as PublishIntent
+}
+
+export async function getPublishIntent(id: string): Promise<PublishIntent | null> {
+  const r = await fetch(`/api/publish/intents/${encodeURIComponent(id)}`)
+  const j = await readJson(r)
+  if (!j.ok) return null
+  return j.intent as PublishIntent
+}
+
+/**
+ * 确认提交意图。只传 intentId；带 config 时服务端只把它当「不是旧快照」的证明，
+ * 实际执行永远使用 intent 行内保存的快照。
+ */
+export async function confirmPublishIntent(
+  id: string,
+  config?: DeliverableConfig,
+): Promise<{ intent: PublishIntent; jobs: PublishJob[]; reused: boolean }> {
+  const r = await fetch(`/api/publish/intents/${encodeURIComponent(id)}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config ? { config } : {}),
+  })
+  const j = await readJson(r)
+  if (!j.ok) {
+    const err = new Error(String(j.message || '确认提交失败')) as Error & {
+      code?: string
+      preflight?: PreflightResult
+    }
+    err.code = j.code
+    if (j.preflight) err.preflight = j.preflight as PreflightResult
+    throw err
+  }
+  return { intent: j.intent as PublishIntent, jobs: (j.jobs ?? []) as PublishJob[], reused: Boolean(j.reused) }
+}
+
+export async function cancelPublishIntent(id: string): Promise<PublishIntent | null> {
+  const r = await fetch(`/api/publish/intents/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+  const j = await readJson(r)
+  if (!j.ok) return null
+  return j.intent as PublishIntent
 }
 
 

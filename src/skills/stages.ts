@@ -20,6 +20,8 @@ export const STAGE_RUNTIME: Record<Stage, StageRuntimeConfig> = {
   videoVision: { maxTokens: 4096, temperature: 0.2, output: null },
   /** 创意会话：反推走 reverse-v1；策划模式由技能 frontmatter 覆盖输出 */
   creative: { maxTokens: 8192, temperature: 0.4, output: 'reverse-v1' },
+  /** 发布助手：只驱动发布台的读写工具，没有结构化产物契约 */
+  publish: { maxTokens: 8192, temperature: 0.3, output: null },
 }
 
 export function stageRuntime(stage: Stage): StageRuntimeConfig {

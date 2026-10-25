@@ -297,10 +297,30 @@ CREATE TABLE IF NOT EXISTS publish_events (
   message    TEXT DEFAULT '',
   created_at TEXT
 );
+-- 暂存提交意图：助手只能生成这张卡，用户确认后才建任务。
+-- config 存的是确认时的唯一依据，不接受确认请求里再传一份配置。
+CREATE TABLE IF NOT EXISTS publish_intents (
+  id             TEXT PRIMARY KEY,
+  deliverable_id TEXT NOT NULL,
+  project        TEXT NOT NULL,
+  episode        INTEGER DEFAULT 0,
+  source         TEXT DEFAULT 'assistant',
+  config_hash    TEXT NOT NULL,
+  config         TEXT DEFAULT '{}',
+  targets        TEXT DEFAULT '[]',
+  preflight      TEXT DEFAULT '{}',
+  state          TEXT DEFAULT 'staged',
+  job_ids        TEXT DEFAULT '[]',
+  reason         TEXT DEFAULT '',
+  created_at     TEXT,
+  expires_at     TEXT,
+  confirmed_at   TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_deliverables_project ON deliverables(project, episode);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_key ON publish_jobs(idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_project ON publish_jobs(project, episode);
 CREATE INDEX IF NOT EXISTS idx_publish_events_job ON publish_events(job_id);
+CREATE INDEX IF NOT EXISTS idx_publish_intents_state ON publish_intents(state, expires_at);
 `
 
 /** 固定列之外的 shot 字段全部收进 extra，读写时展开合并 */

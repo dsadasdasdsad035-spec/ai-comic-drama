@@ -53,11 +53,9 @@ patchDeliverableConfig(
   }),
 )
 
-const platforms = [
-  { id: 'douyin', label: '抖音', short: '抖', backendUrl: '#', contentTypes: ['video'], modes: ['draft', 'publish', 'package'], manualOnly: false, verified: false, coverAspects: ['9:16'], limits: { title: 30, description: 1000, tags: 20 }, max: {}, notes: '竖屏优先' },
-  { id: 'bilibili', label: 'B 站', short: 'B', backendUrl: '#', contentTypes: ['video'], modes: ['draft', 'publish', 'package'], manualOnly: false, verified: false, coverAspects: ['16:9'], limits: { title: 80, description: 2000, tags: 12 }, max: {}, notes: '需要分区' },
-  { id: 'toutiao', label: '头条', short: '头', backendUrl: '#', contentTypes: ['video'], modes: ['draft', 'publish', 'package'], manualOnly: false, verified: false, coverAspects: ['16:9'], limits: { title: 30, description: 1000, tags: 10 }, max: {}, notes: '结构变动频繁' },
-]
+// 直接用真实能力表，避免测试里维护第二份平台规则
+const { listPlatforms } = await import('./server/publish-platforms.mjs')
+const platforms = listPlatforms().map((p) => ({ ...p, backendUrl: '#' }))
 
 const calls = { createJobs: 0, package: 0, preflight: 0 }
 
@@ -167,6 +165,58 @@ await check('点问题跳到对应区块', async () => {
   assert.ok(after >= before)
 })
 
+await check('封面只呈现已选平台需要的比例', async () => {
+  // 预置配置只选了抖音与 B 站：应只出现 9:16 与 16:9，不出现 3:4 / 4:3
+  const aspects = await page.$$eval('.pb-cover-frame', (els) =>
+    els.map((e) => e.getAttribute('data-aspect')),
+  )
+  assert.ok(aspects.length > 0, '应有封面框')
+  for (const a of aspects) assert.ok(['9:16', '16:9'].includes(a), `意外比例 ${a}`)
+})
+
+await check('封面比例框有四档样式', async () => {
+  const ratios = await page.$$eval('.pb-cover-frame', (els) =>
+    els.map((e) => getComputedStyle(e).aspectRatio.replace(/\s/g, '')),
+  )
+  assert.ok(ratios.length > 0)
+  // 每个框都应按 data-aspect 得到非 auto 的比例
+  for (const r of ratios) assert.notEqual(r, 'auto')
+})
+
+await check('标题太短与超长给出不同提示', async () => {
+  // 视频号下限 6 字：在待发布页勾上它，再填 3 字
+  await page.click('.wb-bar .viewtabs button:has-text("待发布")')
+  await page.waitForTimeout(500)
+  const vh = page.locator('.pb-target', { hasText: '视频号' }).first()
+  if ((await vh.count()) === 0) return
+  await vh.locator('input[type="checkbox"]').check({ force: true })
+  await page.waitForTimeout(600)
+  const copyTitle = page.locator('.pb-section[data-section="copy"] .pb-field').filter({ hasText: '主标题' }).first().locator('input')
+  await copyTitle.fill('三字啊')
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.pb-issue.block')].some((e) => e.textContent?.includes('太短')),
+    { timeout: 8000 },
+  )
+  const short = await page.$$eval('.pb-issue.block', (els) => els.map((e) => e.textContent?.trim()))
+  assert.ok(short.some((t) => t?.includes('太短')), JSON.stringify(short))
+  assert.ok(short.every((t) => !t?.includes('已超限')), '太短不应与超长混淆')
+})
+
+await check('人工平台只剩导出发布包', async () => {
+  await page.click('.wb-bar .viewtabs button:has-text("平台账号")')
+  await page.waitForTimeout(400)
+  const body = await page.$eval('.pb-accounts', (e) => e.textContent || '')
+  assert.ok(body.includes('微博'), '应列出人工平台')
+  const weibo = page.locator('.pb-account', { hasText: '微博' }).first()
+  const modes = (await weibo.textContent()) || ''
+  assert.ok(modes.includes('发布包'), modes.slice(0, 80))
+  // 账号页的「支持：」一行只应出现发布包
+  const supportLine = await weibo.locator('.pb-account-meta span').first().textContent()
+  assert.ok(!String(supportLine).includes('草稿'), `人工平台不应显示草稿：${supportLine}`)
+  await page.click('.wb-bar .viewtabs button:has-text("待发布")')
+  await page.waitForTimeout(300)
+})
+
 await check('平台账号页不显示 profile 路径', async () => {
   await page.click('.wb-bar .viewtabs button:has-text("平台账号")')
   await page.waitForTimeout(500)
@@ -214,20 +264,57 @@ await check('窄屏不溢出', async () => {
 })
 
 await check('截图产出', async () => {
-  const dir = path.join(projectRoot, 'openspec/changes/multi-platform-publishing/evidence')
+  const dir = path.join(projectRoot, 'openspec/changes/publish-platform-expansion/evidence')
   fs.mkdirSync(dir, { recursive: true })
+  const go = async (label) => {
+    await page.click(`.wb-bar .viewtabs button:has-text("${label}")`)
+    await page.waitForTimeout(350)
+  }
+  const setTheme = async (mode) => {
+    await page.click(`[data-theme-mode="${mode}"]`)
+    await page.waitForTimeout(450)
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), mode, `${mode} 主题未生效`)
+  }
+  const shot = async (name) => page.screenshot({ path: path.join(dir, `${name}.png`), fullPage: false })
+
+  // 1. 待发布：三个宽度
+  await setTheme('night')
+  for (const [w, h, name] of [
+    [1440, 900, 'publish-pending'],
+    [1200, 900, 'publish-pending-1200'],
+    [900, 900, 'publish-narrow'],
+  ]) {
+    await page.setViewportSize({ width: w, height: h })
+    await page.waitForTimeout(400)
+    await go('待发布')
+    await shot(name)
+  }
+
+  // 2. 待发布日间（1440）
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.waitForTimeout(400)
-  await page.screenshot({ path: path.join(dir, 'publish-pending.png'), fullPage: false })
-  await page.click('.wb-bar .viewtabs button:has-text("平台账号")')
-  await page.waitForTimeout(400)
-  await page.screenshot({ path: path.join(dir, 'publish-accounts.png'), fullPage: false })
-  await page.setViewportSize({ width: 900, height: 900 })
-  await page.waitForTimeout(400)
-  await page.click('.wb-bar .viewtabs button:has-text("待发布")')
-  await page.waitForTimeout(400)
-  await page.screenshot({ path: path.join(dir, 'publish-narrow.png'), fullPage: false })
-  assert.ok(fs.existsSync(path.join(dir, 'publish-pending.png')))
+  await page.waitForTimeout(300)
+  await go('待发布')
+  await setTheme('day')
+  await shot('publish-pending-day')
+
+  // 3. 平台账号：夜 + 日
+  await go('平台账号')
+  await shot('publish-accounts-day')
+  await setTheme('night')
+  await shot('publish-accounts')
+
+  await go('待发布')
+
+  for (const name of [
+    'publish-pending',
+    'publish-pending-1200',
+    'publish-narrow',
+    'publish-accounts',
+    'publish-accounts-day',
+    'publish-pending-day',
+  ]) {
+    assert.ok(fs.existsSync(path.join(dir, `${name}.png`)), `缺少截图 ${name}.png`)
+  }
 })
 
 await page.close()

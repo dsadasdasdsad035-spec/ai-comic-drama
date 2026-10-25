@@ -1,10 +1,12 @@
-/* ===== 发布台：三段布局（成片栏 | 编排 | 检查器）===== */
+/* ===== 发布台：三段布局（成片栏 | 编排 | 检查器/助手槽位）===== */
 
 .pb {
   display: flex;
   flex: 1;
   min-height: 0;
   background: var(--bg);
+  /* 窄屏下聊天抽屉是绝对定位，需要这个定位上下文 */
+  position: relative;
 }
 
 .pb-rail {
@@ -313,17 +315,9 @@
   flex: 0 0 auto;
 }
 
-.pb-badge.douyin {
-  background: #161823;
-  border: 1px solid #2b2d3a;
-}
-
-.pb-badge.bilibili {
-  background: #00a1d6;
-}
-
-.pb-badge.toutiao {
-  background: #f04142;
+/* 平台品牌色由平台能力表的 badge.color 提供（内联 style），这里只保留通用兜底 */
+.pb-badge.branded {
+  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 
 .pb-badge.generic {
@@ -389,6 +383,7 @@
   gap: 6px;
 }
 
+/* 封面框比例由 data-aspect 驱动，四档共用一条规则；新增比例只改 JS 侧的枚举 */
 .pb-cover-frame {
   position: relative;
   border-radius: var(--r-sm);
@@ -399,15 +394,26 @@
   justify-content: center;
   color: var(--muted);
   font-size: var(--fs-2xs);
+  aspect-ratio: var(--cover-ratio, 16 / 9);
+  max-width: 100%;
 }
 
-.pb-cover-frame.portrait {
-  aspect-ratio: 9 / 16;
+.pb-cover-frame[data-aspect='9:16'] {
+  --cover-ratio: 9 / 16;
   max-height: 150px;
 }
 
-.pb-cover-frame.landscape {
-  aspect-ratio: 16 / 9;
+.pb-cover-frame[data-aspect='3:4'] {
+  --cover-ratio: 3 / 4;
+  max-height: 150px;
+}
+
+.pb-cover-frame[data-aspect='4:3'] {
+  --cover-ratio: 4 / 3;
+}
+
+.pb-cover-frame[data-aspect='16:9'] {
+  --cover-ratio: 16 / 9;
 }
 
 .pb-cover-frame img {
@@ -665,6 +671,16 @@
   height: 6px;
   border-radius: 50%;
   background: var(--muted);
+}
+
+/* 任务来源：助手提交与手动提交在记录页一眼可分 */
+.pb-chip-tag {
+  padding: 0 4px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  line-height: 1.4;
 }
 
 .pb-chip.run .dot {

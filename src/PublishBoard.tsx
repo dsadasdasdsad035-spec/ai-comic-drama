@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WorkbenchBar from './WorkbenchBar'
 import PlatformBadge from './publish/PlatformBadge'
 import CoverPicker from './publish/CoverPicker'
 import PublishRecords, { PublishJobDrawer } from './publish/PublishRecords'
 import AccountList from './publish/AccountsPanel'
+import PublishDock, { DOCK_DEFAULT_WIDTH, DOCK_MAX_WIDTH, DOCK_MIN_WIDTH } from './publish/PublishDock'
+import { PendingIntentCard, JobProgressReceipt } from './publish/publishReceipts'
 import {
   buildPackage,
   cancelJob,
+  cancelPublishIntent,
+  confirmPublishIntent,
+  connectAccount,
   createJobs,
   getJob,
   getPlatforms,
@@ -19,8 +24,10 @@ import {
   retryJob,
   runPreflight,
   saveDeliverableConfig,
+  stagePublishIntent,
 } from './publish/api'
 import {
+  COVER_ASPECTS,
   copyFor,
   emptyConfig,
   type CoverAspect,
@@ -31,10 +38,51 @@ import {
   type PreflightIssue,
   type PreflightResult,
   type PublishAccount,
+  type PublishIntent,
   type PublishJob,
   type PublishMode,
 } from './publish/types'
+import {
+  applyConfigPatch as applyPatchPure,
+  computeReadiness,
+  pushRound,
+  takeRound,
+  type ConfigChange,
+  type ConfigPatch,
+  type PublishChatAdapter,
+  type RoundSnapshot,
+} from './publish/publishChat'
+import { AgentButton } from './agent/AgentButton'
+import type { AppSettings } from './api'
+import type { StagePick } from './ModelSelect'
 import './publish/publish.css'
+import './publish/publishChat.css'
+
+const LazyPublishChat = lazy(() => import('./publish/PublishChatPanel'))
+
+const DOCK_WIDTH_KEY = 'publish-chat:dock-width'
+const DOCK_OPEN_KEY = 'publish-chat:open'
+
+function readDockWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(DOCK_WIDTH_KEY))
+    if (Number.isFinite(n) && n >= DOCK_MIN_WIDTH && n <= DOCK_MAX_WIDTH) return n
+  } catch {
+    /* localStorage 不可用 */
+  }
+  return DOCK_DEFAULT_WIDTH
+}
+
+function readDockOpen(): boolean {
+  try {
+    const v = localStorage.getItem(DOCK_OPEN_KEY)
+    if (v === '1') return true
+    if (v === '0') return false
+  } catch {
+    /* 忽略 */
+  }
+  return false
+}
 
 type Tab = 'pending' | 'records' | 'accounts'
 type SectionKey = 'targets' | 'copy' | 'cover' | 'mode'
@@ -60,6 +108,21 @@ function fmtRes(w: number | null, h: number | null): string {
   return `${label} · ${w}×${h}`
 }
 
+/** 标题计数：无独立标题的平台不显示计数，有下限的平台显示区间 */
+function titleCountLabel(p: PlatformCapability | undefined, title: string): string {
+  if (!p || p.limits.titleOptional) return '无需标题'
+  const max = p.limits.titleMax ?? '—'
+  return p.limits.titleMin ? `${title.length}/${p.limits.titleMin}–${max}` : `${title.length}/${max}`
+}
+
+/** 标题是否越界：缺省标题被忽略；同时校验下限与上限 */
+function titleOver(p: PlatformCapability | undefined, title: string): boolean {
+  if (!p || p.limits.titleOptional) return false
+  const len = title.length
+  if (p.limits.titleMax != null && len > p.limits.titleMax) return true
+  return p.limits.titleMin != null && len > 0 && len < p.limits.titleMin
+}
+
 /**
  * 发布台：成片栏 | 编排四段 | 预检检查器。
  * 配置随成片保存；切换成片、切换项目/集都按 id 重新取，不沿用上一份内存配置。
@@ -70,6 +133,8 @@ export default function PublishBoard({
   onToast,
   initialDeliverableId,
   onConsumeInitial,
+  settings,
+  stagePick,
 }: {
   projectName: string
   epNo: number
@@ -77,6 +142,9 @@ export default function PublishBoard({
   /** 从预览导出成功后带进来的成片 id */
   initialDeliverableId?: string | null
   onConsumeInitial?: () => void
+  /** 发布助手的模型来源：设置页「发布」环节 */
+  settings?: AppSettings | null
+  stagePick?: StagePick
 }) {
   const [tab, setTab] = useState<Tab>('pending')
   const [platforms, setPlatforms] = useState<PlatformCapability[]>([])
@@ -95,10 +163,35 @@ export default function PublishBoard({
   const [drawerJob, setDrawerJob] = useState<PublishJob | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [loading, setLoading] = useState(true)
+  /** 右栏槽位：助手开 → 助手占槽；关 → 发布检查 */
+  const [chatOpen, setChatOpen] = useState(readDockOpen)
+  const [dockWidth, setDockWidth] = useState(readDockWidth)
+  const [chatRunning, setChatRunning] = useState(false)
+  const [pendingIntent, setPendingIntent] = useState<PublishIntent | null>(null)
+  const [intentSubmitting, setIntentSubmitting] = useState(false)
   const fileRef = useRef<HTMLInputElement | null>(null)
   const saveTimer = useRef<number | null>(null)
+  /** 撤销栈：每轮首个写工具前压一份配置，最多 10 层，不落库 */
+  const undoStack = useRef<RoundSnapshot[]>([])
+  const roundSeq = useRef(0)
 
   const active = useMemo(() => deliverables.find((d) => d.id === activeId) ?? null, [deliverables, activeId])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DOCK_OPEN_KEY, chatOpen ? '1' : '0')
+    } catch {
+      /* 忽略 */
+    }
+  }, [chatOpen])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DOCK_WIDTH_KEY, String(Math.round(dockWidth)))
+    } catch {
+      /* 忽略 */
+    }
+  }, [dockWidth])
 
   // ---- 初始加载：能力 + 健康 + 账号 ----
   useEffect(() => {
@@ -236,6 +329,22 @@ export default function PublishBoard({
     [persist],
   )
 
+  // ---- 助手写配置：窄 patch → 变更列表 + 撤销快照 ----
+  const configRef = useRef(config)
+  configRef.current = config
+
+  const labelOfPlatform = useCallback(
+    (id: string) => platforms.find((p) => p.id === id)?.label || id,
+    [platforms],
+  )
+
+  /** 只接受 ConfigPatch 的四类字段；不整份覆盖，也不碰成片与任务 */
+  const applyConfigPatch = useCallback(
+    (patch: ConfigPatch): { next: DeliverableConfig; changes: ConfigChange[] } =>
+      applyPatchPure({ config: configRef.current, patch, accounts, platformLabel: labelOfPlatform }),
+    [accounts, labelOfPlatform],
+  )
+
   const selectedTargets = useMemo(
     () =>
       Object.entries(config.targets)
@@ -251,9 +360,12 @@ export default function PublishBoard({
     const set = new Set<CoverAspect>()
     for (const t of selectedTargets) {
       const p = platforms.find((x) => x.id === t.platform)
-      for (const a of p?.coverAspects || []) if (a === '9:16' || a === '16:9') set.add(a)
+      for (const a of p?.coverAspects || []) {
+        if (COVER_ASPECTS.includes(a as CoverAspect)) set.add(a as CoverAspect)
+      }
     }
-    return [...set]
+    // 按固定顺序返回，避免平台勾选顺序影响封面区排列
+    return COVER_ASPECTS.filter((a) => set.has(a))
   }, [selectedTargets, platforms])
 
   // ---- 预检（配置变化后防抖） ----
@@ -300,52 +412,72 @@ export default function PublishBoard({
   )
 
   // ---- 提交 ----
+  /**
+   * 统一提交意图：底部按钮与待确认卡都走这里。
+   * 有 intentId 时只认服务端 intent 行内的快照；否则走原有的 /jobs。
+   */
+  const submitIntent = useCallback(
+    async (input: {
+      mode: PublishMode
+      intentId?: string
+    }): Promise<{ count: number; reused: boolean }> => {
+      if (!active) return { count: 0, reused: false }
+      const intentId = input.intentId
+      if (!intentId && !selectedTargets.length) {
+        onToast('至少选择一个发布平台')
+        return { count: 0, reused: false }
+      }
+      if (input.mode === 'package' && !intentId) {
+        const pkg = await buildPackage({
+          deliverableId: active.id,
+          platforms: selectedTargets.map((t) => t.platform),
+          config,
+        })
+        onToast(`发布包已生成：${pkg.zipUrl || pkg.dirUrl}`)
+        setTab('records')
+        return { count: selectedTargets.length, reused: false }
+      }
+      if (intentId) {
+        // 带上当前 config 只用于证明「不是旧快照」；服务端执行永远用行内快照
+        const r = await confirmPublishIntent(intentId, config)
+        const created = r.jobs.filter((j) => !(j as PublishJob & { reused?: boolean }).reused).length
+        onToast(r.reused ? '任务已存在，未重复提交' : `已提交 ${created} 个平台的草稿任务`)
+        setPendingIntent(r.intent)
+        setTab('records')
+        await reloadJobs()
+        return { count: created, reused: r.reused }
+      }
+      const made = await createJobs({
+        deliverableId: active.id,
+        targets: selectedTargets.map((t) => ({ ...t, mode: input.mode })),
+        config,
+      })
+      const anyReused = made.some((j) => (j as PublishJob & { reused?: boolean }).reused)
+      onToast(made.length ? `已提交 ${made.length} 个平台的${input.mode === 'publish' ? '发布' : '草稿'}任务` : '任务已存在，未重复提交')
+      setTab('records')
+      await reloadJobs()
+      return { count: made.length, reused: anyReused }
+    },
+    [active, selectedTargets, config, onToast, reloadJobs],
+  )
+
   const submit = useCallback(
     async (mode: PublishMode) => {
       if (!active) return
-      if (!selectedTargets.length) {
-        onToast('至少选择一个发布平台')
-        return
-      }
-      if (mode === 'package') {
-        setBusy(true)
-        try {
-          const pkg = await buildPackage({
-            deliverableId: active.id,
-            platforms: selectedTargets.map((t) => t.platform),
-            config,
-          })
-          onToast(`发布包已生成：${pkg.zipUrl || pkg.dirUrl}`)
-          setTab('records')
-        } catch (e) {
-          onToast((e as Error).message)
-        } finally {
-          setBusy(false)
-        }
-        return
-      }
       if (mode === 'publish') {
         setConfirmOpen(true)
         return
       }
-      // 保存草稿
       setBusy(true)
       try {
-        const made = await createJobs({
-          deliverableId: active.id,
-          targets: selectedTargets.map((t) => ({ ...t, mode: 'draft' })),
-          config,
-        })
-        onToast(made.length ? `已提交 ${made.length} 个平台的草稿任务` : '任务已存在，未重复提交')
-        setTab('records')
-        await reloadJobs()
+        await submitIntent({ mode })
       } catch (e) {
         onToast((e as Error).message)
       } finally {
         setBusy(false)
       }
     },
-    [active, selectedTargets, config, onToast, reloadJobs],
+    [active, submitIntent, onToast],
   )
 
   const confirmPublish = useCallback(async () => {
@@ -353,20 +485,165 @@ export default function PublishBoard({
     setConfirmOpen(false)
     setBusy(true)
     try {
-      const made = await createJobs({
-        deliverableId: active.id,
-        targets: selectedTargets.map((t) => ({ ...t, mode: 'publish' })),
-        config,
-      })
-      onToast(made.length ? `已提交 ${made.length} 个平台的发布任务` : '任务已存在，未重复提交')
-      setTab('records')
-      await reloadJobs()
+      await submitIntent({ mode: 'publish' })
     } catch (e) {
       onToast((e as Error).message)
     } finally {
       setBusy(false)
     }
-  }, [active, selectedTargets, config, onToast, reloadJobs])
+  }, [active, submitIntent, onToast])
+
+  // ---- 待确认卡：确认 / 取消 / 重新生成 ----
+  const confirmIntent = useCallback(async () => {
+    if (!pendingIntent) return
+    setIntentSubmitting(true)
+    try {
+      await submitIntent({ mode: 'draft', intentId: pendingIntent.id })
+    } catch (e) {
+      onToast((e as Error).message)
+    } finally {
+      setIntentSubmitting(false)
+    }
+  }, [pendingIntent, submitIntent, onToast])
+
+  const dropIntent = useCallback(async () => {
+    if (!pendingIntent) return
+    try {
+      await cancelPublishIntent(pendingIntent.id)
+    } catch {
+      /* 取消失败也要清掉本地卡片 */
+    }
+    setPendingIntent(null)
+  }, [pendingIntent])
+
+  const regenerateIntent = useCallback(async () => {
+    if (!active || !pendingIntent) return
+    setIntentSubmitting(true)
+    try {
+      await cancelPublishIntent(pendingIntent.id)
+      const intent = await stagePublishIntent({
+        deliverableId: active.id,
+        targets: selectedTargets.map((t) => ({
+          platform: t.platform,
+          accountId: t.accountId,
+          mode: t.mode === 'publish' ? 'draft' : t.mode,
+        })),
+        config,
+        source: 'assistant',
+      })
+      setPendingIntent(intent)
+      onToast('已按最新配置重新生成待确认卡')
+    } catch (e) {
+      onToast((e as Error).message)
+    } finally {
+      setIntentSubmitting(false)
+    }
+  }, [active, pendingIntent, selectedTargets, config, onToast])
+
+  // ---- 助手宿主适配：读快照、写配置、暂存、连账号、撤销 ----
+  const chatAdapter = useMemo<PublishChatAdapter>(
+    () => ({
+      threadKey: { project: projectName, surface: 'publish', episode: epNo },
+      scope: () => (active ? `E${String(active.episode).padStart(2, '0')} · v${active.version}` : '未选成片'),
+      snapshot: () => ({
+        deliverable: active,
+        deliverables,
+        config: configRef.current,
+        platforms,
+        accounts,
+        preflight,
+        jobs,
+        health,
+      }),
+      beginRound: () => {
+        const roundId = `r${++roundSeq.current}`
+        undoStack.current = pushRound(undoStack.current, roundId, configRef.current)
+        return roundId
+      },
+      undoRound: (roundId: string) => {
+        const taken = takeRound(undoStack.current, roundId)
+        if (!taken) return false
+        // 撤销只回滚配置，不动任务与发布记录
+        undoStack.current = taken.stack
+        configRef.current = taken.config
+        setConfig(taken.config)
+        persist(taken.config)
+        return true
+      },
+      applyPatch: (patch: ConfigPatch) => {
+        try {
+          const roundId = undoStack.current[undoStack.current.length - 1]?.roundId || ''
+          const { next, changes } = applyConfigPatch(patch)
+          configRef.current = next
+          setConfig(next)
+          persist(next)
+          return { ok: true, roundId, changes }
+        } catch (e) {
+          return { ok: false, roundId: '', changes: [], error: (e as Error).message }
+        }
+      },
+      stage: async (input) => {
+        if (!active) return { ok: false, error: '还没有选中成片' }
+        try {
+          const intent = await stagePublishIntent({
+            deliverableId: active.id,
+            targets: input.targets,
+            config: configRef.current,
+            source: 'assistant',
+          })
+          setPendingIntent(intent)
+          // 待确认卡出现时必须让用户看见：这是唯一允许自动展开的场景
+          setChatOpen(true)
+          return { ok: true, intent }
+        } catch (e) {
+          const err = e as Error & { code?: string }
+          return { ok: false, error: err.message, code: err.code }
+        }
+      },
+      connectAccount: async (platform: string) => {
+        try {
+          const r = await connectAccount({ platform })
+          setAccounts(await listAccounts())
+          return {
+            ok: true,
+            platform,
+            status: r.login.status,
+            message: '已打开登录窗口，请在浏览器里完成扫码',
+            accountId: r.account?.id,
+          }
+        } catch (e) {
+          return { ok: false, platform, status: 'error', message: (e as Error).message }
+        }
+      },
+      onImportDeliverable: () => fileRef.current?.click(),
+      onGoExport: () => onToast('从「预览」视图导出成片后，回到发布台就能看到'),
+      onReadinessJump: (key) => {
+        const section: SectionKey = key === 'accounts' ? 'targets' : key === 'preflight' ? 'targets' : key
+        setCollapsed((c) => {
+          const n = new Set(c)
+          n.delete(section)
+          return n
+        })
+        window.setTimeout(() => {
+          document.querySelector(`[data-section="${section}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        }, 60)
+      },
+    }),
+    [
+      projectName,
+      epNo,
+      active,
+      deliverables,
+      platforms,
+      accounts,
+      preflight,
+      jobs,
+      health,
+      persist,
+      applyConfigPatch,
+      onToast,
+    ],
+  )
 
   // ---- 回执操作 ----
   const openDrawer = useCallback(async (job: PublishJob) => {
@@ -467,6 +744,11 @@ export default function PublishBoard({
             <button type="button" className="btn" onClick={() => fileRef.current?.click()} disabled={busy}>
               导入 MP4
             </button>
+            {!chatOpen ? (
+              <button type="button" className="btn" onClick={() => setChatOpen(true)}>
+                问问助手
+              </button>
+            ) : null}
           </div>
         </div>
       )
@@ -495,7 +777,7 @@ export default function PublishBoard({
                   const acc = accounts.find((a) => a.id === t?.accountId)
                   return (
                     <div className={`pb-target ${on ? '' : 'off'}`} key={p.id}>
-                      <PlatformBadge platform={p.id} label={p.short} />
+                      <PlatformBadge platform={p.id} badge={p.badge} />
                       <div className="pb-target-main">
                         <label className="pb-target-name">
                           <input
@@ -522,11 +804,13 @@ export default function PublishBoard({
                         className="pb-input"
                         aria-label={`${p.label}账号`}
                         value={t?.accountId || ''}
-                        disabled={!on}
+                        // 人工/仅发布包平台不需要账号：置灰并说明
+                        disabled={!on || p.manualOnly}
+                        title={p.manualOnly ? '该平台只能导出发布包，不需要账号' : undefined}
                         onChange={(e) => patchTarget(p.id, { accountId: e.target.value })}
                         style={{ maxWidth: 160 }}
                       >
-                        <option value="">选择账号</option>
+                        <option value="">{p.manualOnly ? '免账号' : '选择账号'}</option>
                         {accounts
                           .filter((a) => a.platform === p.id)
                           .map((a) => (
@@ -612,10 +896,10 @@ export default function PublishBoard({
                     return (
                       <div className="pb-field" key={platform} data-override={platform}>
                         <div className="pb-label">
-                          <PlatformBadge platform={platform} label={p?.short} />
+                          <PlatformBadge platform={platform} badge={p?.badge} />
                           {p?.label || platform}
-                          <span className={`pb-count ${effective.title.length > (p?.limits.title || 999) ? 'over' : ''}`}>
-                            {effective.title.length}/{p?.limits.title ?? '—'}
+                          <span className={`pb-count ${titleOver(p, effective.title) ? 'over' : ''}`}>
+                            {titleCountLabel(p, effective.title)}
                           </span>
                           {over ? (
                             <button
@@ -700,22 +984,23 @@ export default function PublishBoard({
                     const t = config.targets[platform]
                     return (
                       <div className="pb-target" key={platform}>
-                        <PlatformBadge platform={platform} label={p?.short} />
+                        <PlatformBadge platform={platform} badge={p?.badge} />
                         <div className="pb-target-main">
                           <div className="pb-target-name">{p?.label || platform}</div>
-                          <div className="pb-target-sub">
-                            {t?.mode === 'publish' && !p?.verified ? '适配器未验证，提交时会降级为草稿' : ''}
-                          </div>
+                          <div className="pb-target-sub">{targetHint(p, t?.mode)}</div>
                         </div>
                         <select
                           className="pb-input"
-                          value={t?.mode || 'draft'}
+                          value={t?.mode || defaultModeFor(p)}
                           onChange={(e) => patchTarget(platform, { mode: e.target.value as PublishMode })}
-                          style={{ maxWidth: 150 }}
+                          style={{ maxWidth: 160 }}
+                          aria-label={`${p?.label || platform} 发布方式`}
                         >
-                          <option value="draft">保存草稿</option>
-                          <option value="publish">立即发布</option>
-                          <option value="package">只导出发布包</option>
+                          {modeOptionsFor(p).map((m) => (
+                            <option key={m} value={m}>
+                              {modeLabel(m, p?.draftKind)}
+                            </option>
+                          ))}
                         </select>
                       </div>
                     )
@@ -787,6 +1072,21 @@ export default function PublishBoard({
                 自动发布不可用
               </span>
             ) : null}
+            {pendingIntent ? (
+              <span className="warn-chip" title="右栏有待确认的提交">
+                待确认
+              </span>
+            ) : null}
+            <AgentButton
+              open={chatOpen}
+              onToggle={() => setChatOpen((v) => !v)}
+              // 没有成片也允许打开助手：规格要求它说明缺什么并给导出/导入入口
+              disabled={!projectName || tab !== 'pending'}
+              disabledReason={!projectName ? '先选择项目' : '切回「待发布」才能用助手'}
+              running={chatRunning}
+              dirty={Boolean(pendingIntent)}
+              controlsId="publish-chat-dock"
+            />
             <input
               ref={fileRef}
               type="file"
@@ -845,16 +1145,73 @@ export default function PublishBoard({
 
         <main className="pb-main">{body()}</main>
 
-        {tab === 'pending' && active ? (
-          <aside className="pb-inspect" aria-label="发布检查">
-            <div className="pb-inspect-head">
-              发布检查
-              <span className="spacer" style={{ flex: 1 }} />
-              <button type="button" className="btn-mini" onClick={() => void runCheck()} disabled={checking}>
-                {checking ? '检查中…' : '重新预检'}
-              </button>
-            </div>
-            <div className="pb-inspect-body">
+        {/* 助手：没有成片也能打开（规格要求它说明缺什么），检查器仍需要成片才有意义 */}
+        {tab === 'pending' && chatOpen ? (
+          <>
+            <div className="pb-dock-scrim" aria-hidden="true" onClick={() => setChatOpen(false)} />
+            <PublishDock
+              mode="chat"
+              open
+              width={dockWidth}
+              onWidth={setDockWidth}
+              label="发布助手"
+            >
+              <div id="publish-chat-dock" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
+                <Suspense fallback={<div className="pb-hint" style={{ padding: 12 }}>正在加载助手…</div>}>
+                  <LazyPublishChat
+                    adapter={chatAdapter}
+                    settings={settings ?? null}
+                    stagePick={stagePick}
+                    onToast={onToast}
+                    onRunningChange={setChatRunning}
+                    onClose={() => setChatOpen(false)}
+                  />
+                </Suspense>
+                {pendingIntent ? (
+                  <PendingIntentCard
+                    intent={pendingIntent}
+                    platforms={platforms}
+                    accounts={accounts}
+                    currentConfig={config}
+                    submitting={intentSubmitting || busy}
+                    disabledReason={
+                      pendingIntent.state === 'confirmed'
+                        ? '已确认提交，可到发布记录查看进度'
+                        : pendingIntent.state === 'expired'
+                          ? pendingIntent.reason || '这份待确认已失效'
+                          : undefined
+                    }
+                    onConfirm={() => void confirmIntent()}
+                    onCancel={() => void dropIntent()}
+                    onRegenerate={() => void regenerateIntent()}
+                  />
+                ) : null}
+                {pendingIntent?.state === 'confirmed' && pendingIntent.jobIds.length ? (
+                  <JobProgressReceipt
+                    jobs={jobs.filter((j) => pendingIntent.jobIds.includes(j.id))}
+                    platformLabel={platformLabel}
+                  />
+                ) : null}
+              </div>
+            </PublishDock>
+          </>
+        ) : tab === 'pending' && active ? (
+          <PublishDock
+            mode="inspect"
+            open
+            width={dockWidth}
+            onWidth={setDockWidth}
+            label="发布检查"
+          >
+            <div className="pb-inspect" aria-label="发布检查">
+              <div className="pb-inspect-head">
+                发布检查
+                <span className="spacer" style={{ flex: 1 }} />
+                <button type="button" className="btn-mini" onClick={() => void runCheck()} disabled={checking}>
+                  {checking ? '检查中…' : '重新预检'}
+                </button>
+              </div>
+              <div className="pb-inspect-body">
               {blocking.length === 0 && warnings.length === 0 ? (
                 <div className="pb-ok-line">检查通过，可以提交</div>
               ) : null}
@@ -878,16 +1235,23 @@ export default function PublishBoard({
                 阻断项必须解决；警告可以确认后继续。平台「审核中」不等于已发布。
               </div>
             </div>
-          </aside>
+            </div>
+          </PublishDock>
         ) : null}
       </div>
 
       {tab === 'pending' && active ? (
         <div className="pb-foot">
           <span className="pb-foot-plan">
-            {selectedTargets.length} 个平台 · 草稿 {selectedTargets.filter((t) => t.mode === 'draft').length} · 立即{' '}
-            {selectedTargets.filter((t) => t.mode === 'publish').length} · 发布包{' '}
-            {selectedTargets.filter((t) => t.mode === 'package').length}
+            {pendingIntent && pendingIntent.state === 'staged' ? (
+              <>助手已备好 {pendingIntent.targets.length} 个平台 · 待你确认（右栏）</>
+            ) : (
+              <>
+                {selectedTargets.length} 个平台 · 草稿 {selectedTargets.filter((t) => t.mode === 'draft').length} · 立即{' '}
+                {selectedTargets.filter((t) => t.mode === 'publish').length} · 发布包{' '}
+                {selectedTargets.filter((t) => t.mode === 'package').length}
+              </>
+            )}
           </span>
           <span className="spacer" />
           <button type="button" className="btn" onClick={() => void submit('package')} disabled={!canSubmit}>
@@ -915,7 +1279,12 @@ export default function PublishBoard({
             <div className="pb-modal-body">
               {selectedTargets.map((t) => (
                 <div key={t.platform}>
-                  <PlatformBadge platform={t.platform} /> {platformLabel(t.platform)} · {modeLabel(t.mode)} ·{' '}
+                  <PlatformBadge
+                    platform={t.platform}
+                    badge={platforms.find((x) => x.id === t.platform)?.badge}
+                  />{' '}
+                  {platformLabel(t.platform)} ·{' '}
+                  {modeLabel(t.mode, platforms.find((x) => x.id === t.platform)?.draftKind)} ·{' '}
                   {accounts.find((a) => a.id === t.accountId)?.label || '未选账号'}
                 </div>
               ))}
@@ -941,6 +1310,7 @@ export default function PublishBoard({
       <PublishJobDrawer
         job={drawerJob}
         platformLabel={drawerJob ? platformLabel(drawerJob.platform) : ''}
+        platformBadge={drawerJob ? platforms.find((x) => x.id === drawerJob.platform)?.badge : undefined}
         onClose={() => setDrawerJob(null)}
         onRetry={async (j) => {
           try {
@@ -977,8 +1347,36 @@ export default function PublishBoard({
   )
 }
 
-function modeLabel(mode: PublishMode): string {
-  return mode === 'draft' ? '保存草稿' : mode === 'publish' ? '立即发布' : '发布包'
+/** 该平台支持哪些发布方式；人工平台只剩发布包 */
+function modeOptionsFor(p: PlatformCapability | undefined): PublishMode[] {
+  const modes = (p?.modes || ['package']).filter(
+    (m): m is PublishMode => m === 'draft' || m === 'publish' || m === 'package',
+  )
+  return modes.length ? modes : ['package']
+}
+
+function defaultModeFor(p: PlatformCapability | undefined): PublishMode {
+  const opts = modeOptionsFor(p)
+  return opts.includes('draft') ? 'draft' : opts[0]
+}
+
+/** 方式下拉的说明：草稿类型、适配器未验证、人工平台分别说清楚 */
+function targetHint(p: PlatformCapability | undefined, mode: string | undefined): string {
+  if (!p) return ''
+  if (p.manualOnly) return '表单结构未核实，只能打开后台人工发布或导出发布包'
+  if (mode === 'publish' && !p.verified) return '适配器未验证，提交时会降级为草稿'
+  if (mode === 'draft') {
+    if (p.draftKind === 'local') return '草稿只保存在本机浏览器，清空浏览器数据会丢失'
+    if (p.draftKind === 'none') return '该平台没有草稿，自动流程只把表单填好'
+  }
+  return ''
+}
+
+function modeLabel(mode: PublishMode, draftKind?: string): string {
+  if (mode === 'draft') {
+    return draftKind === 'local' ? '存到浏览器本地草稿' : draftKind === 'none' ? '填好表单（无草稿）' : '保存草稿'
+  }
+  return mode === 'publish' ? '立即发布' : '只导出发布包'
 }
 
 function jumpToIssue(issue: PreflightIssue, setOpen: (s: SectionKey) => void) {

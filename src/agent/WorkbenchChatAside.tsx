@@ -1,13 +1,12 @@
 import { useEffect, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
-import type { WorkbenchSurface } from './workbenchChat'
 
 const MIN_WIDTH = 340
 const MAX_WIDTH = 600
 const DEFAULT_WIDTH = 400
 
-const widthKey = (surface: WorkbenchSurface) => `workbench-chat:${surface}:width`
+const widthKey = (surface: string) => `workbench-chat:${surface}:width`
 
-function readWidth(surface: WorkbenchSurface): number {
+function readWidth(surface: string): number {
   try {
     const saved = Number(localStorage.getItem(widthKey(surface)))
     if (Number.isFinite(saved) && saved >= MIN_WIDTH && saved <= MAX_WIDTH) return saved
@@ -17,12 +16,14 @@ function readWidth(surface: WorkbenchSurface): number {
   return DEFAULT_WIDTH
 }
 
-const DATA_ATTRS: Record<WorkbenchSurface, Record<string, string>> = {
+const DATA_ATTRS: Record<string, Record<string, string>> = {
   script: { 'data-script-chat': '' },
   characters: { 'data-characters-chat': '' },
   assets: { 'data-assets-chat': '' },
   shots: { 'data-shots-chat': '' },
   prompts: { 'data-prompts-chat': '' },
+  // 发布台：断点由 publishChat.css 的 [data-publish-chat] 作用域覆盖为 1200px
+  publish: { 'data-publish-chat': '' },
 }
 
 /**
@@ -35,7 +36,8 @@ export function WorkbenchChatAside({
   onClose,
   children,
 }: {
-  surface: WorkbenchSurface
+  /** 工作台 surface；发布台用 'publish'，断点由 publishChat.css 覆盖为 1200px */
+  surface: string
   open: boolean
   onClose: () => void
   children: ReactNode

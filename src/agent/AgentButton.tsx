@@ -5,6 +5,7 @@ export function AgentButton({
   open,
   onToggle,
   disabled,
+  disabledReason,
   running,
   dirty,
   controlsId,
@@ -12,12 +13,14 @@ export function AgentButton({
   open: boolean
   onToggle: () => void
   disabled?: boolean
+  /** 禁用原因；缺省沿用工作台通用的「先选择项目」。发布台等原因不同，需要传自己的。 */
+  disabledReason?: string
   running?: boolean
   dirty?: boolean
   controlsId: string
 }) {
   const title = disabled
-    ? '先选择项目'
+    ? disabledReason || '先选择项目'
     : running
       ? '助手正在改，点击收起'
       : dirty

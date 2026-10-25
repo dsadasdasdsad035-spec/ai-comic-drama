@@ -115,6 +115,7 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'sceneCode', label: '3D 代码（生成/聊天）', hint: '参考内容 → Blender Python 代码；空则沿用文本默认' },
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
   { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
+  { stage: 'publish', label: '发布（发布助手）', hint: '发布台聊天助手；空则沿用文本默认' },
 ]
 
 type AddPreset = Omit<Provider, 'apiKey' | 'keyAvailable'> & { custom?: boolean }

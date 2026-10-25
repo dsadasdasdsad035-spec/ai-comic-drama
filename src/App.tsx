@@ -3014,6 +3014,8 @@ function Shell() {
             epNo={epNo}
             initialDeliverableId={publishTarget}
             onConsumeInitial={() => setPublishTarget(null)}
+            settings={appSettings}
+            stagePick={stagePick}
             onToast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3200)

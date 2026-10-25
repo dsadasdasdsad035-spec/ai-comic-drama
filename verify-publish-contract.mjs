@@ -18,6 +18,7 @@ const {
   PLATFORMS,
   getPlatform,
   platformSupports,
+  platformCanExecute,
   requiredCoverAspects,
 } = await import('./server/publish-platforms.mjs')
 const {
@@ -51,18 +52,43 @@ function ok(label, fn) {
 }
 
 // ---------- 平台能力表 ----------
-ok('三平台且上限不同', () => {
-  assert.equal(PLATFORMS.length, 3)
-  const titles = new Set(PLATFORMS.map((p) => p.limits.title))
+const KNOWN_IDS = [
+  'douyin', 'bilibili', 'toutiao', 'xigua', 'xiaohongshu', 'kuaishou',
+  'wechat-channels', 'zhihu', 'baijiahao', 'dayu',
+  'weibo', 'qiehao', 'netease-hao', 'sohu-hao',
+]
+ok('平台清单覆盖全部已声明平台', () => {
+  assert.deepEqual(PLATFORMS.map((p) => p.id).sort(), [...KNOWN_IDS].sort())
+  const titles = new Set(PLATFORMS.filter((p) => !p.limits.titleOptional).map((p) => p.limits.titleMax))
   assert.ok(titles.size >= 2, '各平台标题上限应有差异')
   for (const p of PLATFORMS) {
     assert.ok(p.id && p.label && Array.isArray(p.modes) && p.modes.length)
     assert.ok(p.coverAspects.length)
     assert.equal(typeof p.manualOnly, 'boolean')
+    assert.ok(['server', 'local', 'none'].includes(p.draftKind), `${p.id} 缺 draftKind`)
+    assert.ok(p.badge && p.badge.text && p.badge.color, `${p.id} 缺 badge`)
+  }
+})
+ok('草稿类型组合合法', () => {
+  for (const p of PLATFORMS) {
+    assert.ok(['server', 'local', 'none'].includes(p.draftKind), `${p.id} draftKind 非法`)
+    // 不能存草稿的平台不该出现在 draft 模式里；但 draft 模式 + none 是合法的：
+    // 表示「自动填好表单但不保存草稿，等人工点发布」
+    if (!p.modes.includes('draft')) assert.equal(p.draftKind, 'none', `${p.id} 不在草稿流程却声明了草稿`)
+    if (p.manualOnly) assert.equal(p.draftKind, 'none', `${p.id} 人工平台不应声明草稿`)
+  }
+  assert.equal(getPlatform('xiaohongshu').draftKind, 'local')
+  assert.equal(getPlatform('douyin').draftKind, 'server')
+  assert.equal(getPlatform('zhihu').draftKind, 'none')
+})
+ok('人工平台不进入自动执行', () => {
+  for (const p of PLATFORMS.filter((x) => x.manualOnly)) {
+    assert.deepEqual(p.modes, ['package'], `${p.id} 人工平台只能导出发布包`)
+    assert.equal(platformCanExecute(p.id), false)
   }
 })
 ok('未知平台被拒绝', () => {
-  assert.throws(() => getPlatform('weibo'), /未知平台/)
+  assert.throws(() => getPlatform('not-a-platform'), /未知平台/)
 })
 ok('发布方式判定', () => {
   assert.equal(platformSupports('douyin', 'draft'), true)

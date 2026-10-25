@@ -23,7 +23,9 @@ export const ISSUE_CODES = {
   accountMissing: 'account_missing',
   accountUnusable: 'account_unusable',
   titleOverLimit: 'title_over_limit',
+  titleTooShort: 'title_too_short',
   titleEmpty: 'title_empty',
+  draftUnavailable: 'draft_unavailable',
   descriptionOverLimit: 'description_over_limit',
   descriptionEmpty: 'description_empty',
   tagsOverLimit: 'tags_over_limit',
@@ -47,6 +49,7 @@ function aspectOf(width, height) {
   if (Math.abs(r - 9 / 16) < 0.02) return '9:16'
   if (Math.abs(r - 16 / 9) < 0.02) return '16:9'
   if (Math.abs(r - 3 / 4) < 0.02) return '3:4'
+  if (Math.abs(r - 4 / 3) < 0.02) return '4:3'
   return ''
 }
 
@@ -202,30 +205,55 @@ export function runPreflight(input) {
       }
     }
 
-    if (!title.trim()) {
+    // 没有独立标题的平台不校验标题；有下限的平台要区分「太短」与「超长」
+    const titleOptional = Boolean(platform.limits.titleOptional)
+    const titleMin = platform.limits.titleMin
+    const titleMax = platform.limits.titleMax
+    if (!titleOptional) {
+      if (!title.trim()) {
+        issues.push({
+          level: 'block',
+          code: ISSUE_CODES.titleEmpty,
+          target: platform.id,
+          field: 'copy.title',
+          message: `${platform.label}标题不能为空`,
+        })
+      } else if (titleMin && title.length < titleMin) {
+        issues.push({
+          level: 'block',
+          code: ISSUE_CODES.titleTooShort,
+          target: platform.id,
+          field: 'copy.title',
+          message: `${platform.label}标题 ${title.length}/${titleMin} 字，太短（至少 ${titleMin} 字）`,
+        })
+      } else if (titleMax && title.length > titleMax) {
+        issues.push({
+          level: 'block',
+          code: ISSUE_CODES.titleOverLimit,
+          target: platform.id,
+          field: 'copy.title',
+          message: `${platform.label}标题 ${title.length}/${titleMax} 字，已超限`,
+        })
+      }
+    }
+
+    // 声明可存草稿但实际没有草稿时，别让用户以为存进了平台
+    if (mode === 'draft' && (platform.draftKind || 'none') === 'none') {
       issues.push({
         level: 'block',
-        code: ISSUE_CODES.titleEmpty,
+        code: ISSUE_CODES.draftUnavailable,
         target: platform.id,
-        field: 'copy.title',
-        message: `${platform.label}标题不能为空`,
-      })
-    } else if (title.length > platform.limits.title) {
-      issues.push({
-        level: 'block',
-        code: ISSUE_CODES.titleOverLimit,
-        target: platform.id,
-        field: 'copy.title',
-        message: `${platform.label}标题 ${title.length}/${platform.limits.title} 字，已超限`,
+        field: 'publish.mode',
+        message: `${platform.label}没有可用的草稿，改为打开后台人工发布或导出发布包`,
       })
     }
-    if (description.length > platform.limits.description) {
+    if (description.length > (platform.limits.descriptionMax ?? 0)) {
       issues.push({
         level: 'block',
         code: ISSUE_CODES.descriptionOverLimit,
         target: platform.id,
         field: 'copy.description',
-        message: `${platform.label}简介 ${description.length}/${platform.limits.description} 字，已超限`,
+        message: `${platform.label}简介 ${description.length}/${platform.limits.descriptionMax} 字，已超限`,
       })
     } else if (!description.trim()) {
       issues.push({
@@ -236,13 +264,13 @@ export function runPreflight(input) {
         message: `${platform.label}简介为空`,
       })
     }
-    if (tags.length > platform.limits.tags) {
+    if (tags.length > (platform.limits.tagsMax ?? 0)) {
       issues.push({
         level: 'block',
         code: ISSUE_CODES.tagsOverLimit,
         target: platform.id,
         field: 'copy.tags',
-        message: `${platform.label}标签 ${tags.length}/${platform.limits.tags} 个，已超限`,
+        message: `${platform.label}标签 ${tags.length}/${platform.limits.tagsMax} 个，已超限`,
       })
     }
 

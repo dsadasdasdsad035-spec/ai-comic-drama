@@ -28,15 +28,25 @@ function step(kind, sel, label, extra = {}) {
  * 定位元素：需要文案匹配时用 locator(sel, { hasText })。
  * 不用 CSS 的 :has-text()——当前 playwright-core 的 waitForSelector 不解析它，
  * 会静默等到超时（实测踩到）。
+ *
+ * 步骤带 frame 时，定位范围换成该 iframe 的 frameLocator；
+ * 框架本身找不到会在 use 时抛错，由 runSteps 归为 selectors_changed。
  */
+function scopeOf(page, s) {
+  if (!s.frame) return page
+  return page.frameLocator(s.frame)
+}
+
 function locate(page, s) {
-  if (s.hasText) return page.locator(s.sel || 'button', { hasText: s.hasText }).first()
-  return page.locator(s.sel).first()
+  const scope = scopeOf(page, s)
+  if (s.hasText) return scope.locator(s.sel || 'button', { hasText: s.hasText }).first()
+  return scope.locator(s.sel).first()
 }
 
 /**
  * 通用执行器：按步骤表操作页面。
  * 每一步先等选择器；超时即判定页面结构变化，而不是继续点下一步。
+ * 步骤可选 `frame`：表单在内嵌框架里时只在该框架内定位，不在主文档盲找。
  */
 export async function runSteps(page, steps, ctx = {}) {
   const done = []
@@ -44,6 +54,12 @@ export async function runSteps(page, steps, ctx = {}) {
     try {
       if (s.kind === 'goto') {
         await page.goto(s.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      } else if (s.kind === 'waitFrame') {
+        // s.frame 是框架的 CSS 选择器（与后续步骤的 frame 值同形），直接用
+        await page.waitForSelector(s.frame, {
+          state: 'attached',
+          timeout: s.timeout ?? 20_000,
+        })
       } else if (s.kind === 'wait') {
         await locate(page, s).waitFor({ state: 'visible', timeout: s.timeout ?? 15_000 })
       } else if (s.kind === 'click') {
@@ -56,13 +72,29 @@ export async function runSteps(page, steps, ctx = {}) {
         const value = typeof s.value === 'function' ? s.value(ctx) : s.value
         await el.fill(String(value ?? ''))
       } else if (s.kind === 'setInputFiles') {
-        await page.waitForSelector(s.sel, { timeout: s.timeout ?? 15_000 })
+        const el = locate(page, s)
+        await el.waitFor({ state: 'attached', timeout: s.timeout ?? 15_000 })
         const value = typeof s.value === 'function' ? s.value(ctx) : s.value
-        await page.setInputFiles(s.sel, value)
+        await el.setInputFiles(value)
       } else if (s.kind === 'waitForFunction') {
-        await page.waitForFunction(s.script, ctx, { timeout: s.timeout ?? 120_000 })
+        // 保持原有语义：在主文档执行脚本；带 frame 时在该框架的 page 上执行
+        if (s.frame) {
+          const handle = await page.waitForSelector(`iframe[src*="${s.frame}"]`, {
+            state: 'attached',
+            timeout: s.timeout ?? 20_000,
+          })
+          const frame = await handle.contentFrame()
+          if (!frame) throw new Error('框架不可用')
+          await frame.waitForFunction(s.script, ctx, { timeout: s.timeout ?? 120_000 })
+        } else {
+          await page.waitForFunction(s.script, ctx, { timeout: s.timeout ?? 120_000 })
+        }
       } else if (s.kind === 'captchaCheck') {
-        const found = await page.$(s.sel).catch(() => null)
+        const found = await scopeOf(page, s)
+          .locator(s.sel)
+          .first()
+          .count()
+          .catch(() => 0)
         if (found) {
           const err = new Error('需要人工验证')
           err.code = 'awaiting_user'
@@ -76,7 +108,10 @@ export async function runSteps(page, steps, ctx = {}) {
     } catch (e) {
       if (e && e.code) throw e
       const err = new Error(`${s.label}失败`)
-      err.code = /Timeout|waiting for selector|strict mode/i.test(String(e?.message || ''))
+      // 等待类超时都算页面结构变化；含框架/元素不存在时的 selector 报错
+      err.code = /Timeout|waiting for selector|strict mode|No element|not found/i.test(
+        String(e?.message || ''),
+      )
         ? 'selectors_changed'
         : 'adapter_error'
       err.stage = s.label
@@ -188,6 +223,172 @@ export const TOUTIAO_ADAPTER = {
   readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
 }
 
+/** 西瓜视频：字节系，后台与头条同族，复用同一套表单结构 */
+export const XIGUA_ADAPTER = {
+  platform: 'xigua',
+  verified: false,
+  manualOnly: false,
+  openBackend: async (page) =>
+    runSteps(page, [step('goto', '', '打开西瓜创作平台', { url: 'https://studio.ixigua.com/upload' })]),
+  checkSession: async (page) => {
+    if (/login|passport|sso/i.test(page.url())) return { status: 'expired', message: '登录已失效' }
+    const upload = await page.$('input[type="file"]').catch(() => null)
+    return upload
+      ? { status: 'connected', message: '会话有效' }
+      : { status: 'unknown', message: '页面结构无法确认登录状态' }
+  },
+  uploadVideo: async (page, ctx) =>
+    runSteps(page, [
+      step('setInputFiles', 'input[type="file"]', '上传视频', { value: () => ctx.videoPath }),
+      step('wait', 'button', '等待上传完成', { hasText: '存草稿',
+        timeout: ctx.uploadTimeoutMs ?? 10 * 60_000,
+      }),
+    ]),
+  fillMetadata: async (page, ctx) =>
+    runSteps(page, [
+      step('fill', 'input[placeholder*="标题"]', '填写标题', { value: () => ctx.title }),
+      step('fill', 'textarea', '填写简介', { value: () => ctx.description }),
+    ]),
+  saveDraft: async (page) => runSteps(page, [step('click', 'button', '存草稿', { hasText: '存草稿' })]),
+  submitFinal: async (page) => runSteps(page, [step('click', 'button', '发布', { hasText: '发布' })]),
+  readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
+}
+
+/** 小红书：正文是富文本可编辑段落；草稿存在浏览器本地（draftKind: local） */
+export const XIAOHONGSHU_ADAPTER = {
+  platform: 'xiaohongshu',
+  verified: false,
+  manualOnly: false,
+  openBackend: async (page) =>
+    runSteps(page, [
+      step('goto', '', '打开发布页', {
+        url: 'https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video',
+      }),
+    ]),
+  checkSession: async (page) => {
+    if (/login|passport|signin/i.test(page.url())) return { status: 'expired', message: '登录已失效' }
+    const upload = await page.$('input.upload-input, input[type="file"]').catch(() => null)
+    return upload
+      ? { status: 'connected', message: '会话有效' }
+      : { status: 'unknown', message: '页面结构无法确认登录状态' }
+  },
+  uploadVideo: async (page, ctx) =>
+    runSteps(page, [
+      step('setInputFiles', 'input.upload-input', '上传视频', {
+        value: () => ctx.videoPath,
+        timeout: 30_000,
+      }),
+      step('wait', 'div[class*="publish"]', '等待上传完成', {
+        timeout: ctx.uploadTimeoutMs ?? 10 * 60_000,
+      }),
+    ]),
+  fillMetadata: async (page, ctx) =>
+    runSteps(page, [
+      step('fill', 'input[placeholder*="填写标题"]', '填写标题', { value: () => ctx.title }),
+      // 正文是 contenteditable 段落，不是 textarea
+      step('fill', 'p[data-placeholder*="输入正文描述"], div[contenteditable="true"]', '填写正文', {
+        value: () => ctx.description,
+      }),
+    ]),
+  saveDraft: async (page) =>
+    runSteps(page, [step('click', 'button', '暂存离开', { hasText: '暂存离开' })]),
+  submitFinal: async (page) => runSteps(page, [step('click', 'button', '发布', { hasText: '发布' })]),
+  readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
+}
+
+/** 快手：没有独立标题，标题并入描述；没有草稿入口（draftKind: none） */
+export const KUAISHOU_ADAPTER = {
+  platform: 'kuaishou',
+  verified: false,
+  manualOnly: false,
+  openBackend: async (page) =>
+    runSteps(page, [
+      step('goto', '', '打开快手创作者平台', { url: 'https://cp.kuaishou.com/article/publish/video' }),
+    ]),
+  checkSession: async (page) => {
+    if (/login|passport|signin/i.test(page.url())) return { status: 'expired', message: '登录已失效' }
+    const upload = await page.$('input[type="file"], [class*="upload-btn"]').catch(() => null)
+    return upload
+      ? { status: 'connected', message: '会话有效' }
+      : { status: 'unknown', message: '页面结构无法确认登录状态' }
+  },
+  uploadVideo: async (page, ctx) =>
+    runSteps(page, [
+      step('setInputFiles', 'div[class*="upload"] input[type="file"], input[type="file"]', '上传视频', {
+        value: () => ctx.videoPath,
+        timeout: 30_000,
+      }),
+      step('wait', 'div[contenteditable="true"]', '等待上传完成', {
+        timeout: ctx.uploadTimeoutMs ?? 10 * 60_000,
+      }),
+    ]),
+  fillMetadata: async (page, ctx) =>
+    runSteps(page, [
+      // 没有标题字段：把标题作为描述首行
+      step('fill', 'div[contenteditable="true"]', '填写描述', {
+        value: () => [ctx.title, ctx.description].filter(Boolean).join('\n'),
+      }),
+    ]),
+  // 没有草稿：表单填好即返回，由人工在窗口里点发布
+  saveDraft: async () => [],
+  submitFinal: async (page) => runSteps(page, [step('click', 'button', '发布', { hasText: '发布' })]),
+  readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
+}
+
+/** 微信视频号：表单在 micro/content/post/create 内嵌框架内；短标题 6–16 字 */
+export const WECHAT_CHANNELS_ADAPTER = {
+  platform: 'wechat-channels',
+  verified: false,
+  manualOnly: false,
+  openBackend: async (page) =>
+    runSteps(page, [
+      step('goto', '', '打开视频号发布页', { url: 'https://channels.weixin.qq.com/platform/post/create' }),
+      step('waitFrame', '', '等待发布表单框架', {
+        frame: 'iframe[src*="micro/content/post/create"]',
+        timeout: 30_000,
+      }),
+    ]),
+  checkSession: async (page) => {
+    if (/login|passport/i.test(page.url())) return { status: 'expired', message: '登录已失效' }
+    // 表单在 iframe 内，主文档看不到上传框；框架存在即认为可用
+    const frame = page.frames().find((f) => f.url().includes('micro/content/post/create'))
+    return frame
+      ? { status: 'connected', message: '会话有效' }
+      : { status: 'unknown', message: '没有找到发布表单框架' }
+  },
+  uploadVideo: async (page, ctx) =>
+    runSteps(page, [
+      step('setInputFiles', 'input[type="file"]', '上传视频', {
+        frame: 'iframe[src*="micro/content/post/create"]',
+        value: () => ctx.videoPath,
+        timeout: 30_000,
+      }),
+      // 上传完成会刷新表单：先等短标题输入可用，再填文案与封面
+      step('wait', 'input[placeholder*="短标题"]', '等待上传完成', {
+        frame: 'iframe[src*="micro/content/post/create"]',
+        timeout: ctx.uploadTimeoutMs ?? 10 * 60_000,
+      }),
+    ]),
+  fillMetadata: async (page, ctx) =>
+    runSteps(page, [
+      step('fill', 'input[placeholder*="短标题"]', '填写短标题', {
+        frame: 'iframe[src*="micro/content/post/create"]',
+        value: () => ctx.title,
+      }),
+      step('fill', 'div.input-editor', '填写描述', {
+        frame: 'iframe[src*="micro/content/post/create"]',
+        value: () => ctx.description,
+      }),
+    ]),
+  saveDraft: async (page) =>
+    runSteps(page, [
+      step('click', 'button', '保存草稿', { frame: 'iframe[src*="micro/content/post/create"]', hasText: '保存草稿' }),
+    ]),
+  submitFinal: async (page) =>
+    runSteps(page, [step('click', 'button', '发表', { frame: 'iframe[src*="micro/content/post/create"]', hasText: '发表' })]),
+  readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
+}
+
 const REGISTRY = new Map()
 
 /**
@@ -253,3 +454,7 @@ export function resetAdaptersForTest() {
 registerAdapter(DOUYIN_ADAPTER)
 registerAdapter(BILIBILI_ADAPTER)
 registerAdapter(TOUTIAO_ADAPTER)
+registerAdapter(XIGUA_ADAPTER)
+registerAdapter(XIAOHONGSHU_ADAPTER)
+registerAdapter(KUAISHOU_ADAPTER)
+registerAdapter(WECHAT_CHANNELS_ADAPTER)

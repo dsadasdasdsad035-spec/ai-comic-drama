@@ -122,6 +122,46 @@ ok('预检通过', () => {
   })
   assert.equal(r.ok, true, JSON.stringify(r.blocking))
 })
+/** 用给定的标题对某个平台跑一次预检，返回阻断码集合 */
+function preflightFor(platform, title, extra = {}) {
+  const acc2 = upsertAccount(root, { platform, label: `acc-${platform}`, status: 'connected' })
+  const cfg = normalizeDeliverableConfig({
+    master: { title, description: '简介简介简介', tags: ['a'], aiGenerated: true },
+    cover: { '9:16': '/exports/c9.png', '16:9': '/exports/c9.png', '3:4': '/exports/c9.png', '4:3': '/exports/c9.png' },
+    targets: { [platform]: { selected: true, accountId: acc2.id, mode: 'draft' } },
+    ...extra,
+  })
+  const r = runPreflight({
+    appRoot: root,
+    deliverable: { ...dl, url: '/exports/src.mp4' },
+    targets: [{ platform, accountId: acc2.id, mode: 'draft' }],
+    config: cfg,
+    accounts: new Map([[acc2.id, acc2]]),
+  })
+  return r
+}
+ok('知乎标题下限 5 字', () => {
+  assert.ok(preflightFor('zhihu', '一二三四').blocking.some((b) => b.code === 'title_too_short'))
+  assert.ok(!preflightFor('zhihu', '一二三四五').blocking.some((b) => b.code === 'title_too_short'))
+})
+ok('百家号标题下限 9 字', () => {
+  assert.ok(preflightFor('baijiahao', '一二三四五六七八').blocking.some((b) => b.code === 'title_too_short'))
+  assert.ok(!preflightFor('baijiahao', '一二三四五六七八九').blocking.some((b) => b.code === 'title_too_short'))
+})
+ok('大鱼号标题上限 60 字', () => {
+  const long = '长'.repeat(61)
+  assert.ok(preflightFor('dayu', long).blocking.some((b) => b.code === 'title_over_limit'))
+  assert.ok(!preflightFor('dayu', '长'.repeat(60)).blocking.some((b) => b.code === 'title_over_limit'))
+})
+ok('视频号短标题区间 6–16', () => {
+  assert.ok(preflightFor('wechat-channels', '一二三四五').blocking.some((b) => b.code === 'title_too_short'))
+  assert.ok(!preflightFor('wechat-channels', '一二三四五六七八九十').blocking.some((b) => b.code === 'title_too_short'))
+})
+ok('快手没有独立标题时不因标题为空阻断', () => {
+  const r = preflightFor('kuaishou', '')
+  assert.ok(!r.blocking.some((b) => b.code === 'title_empty' || b.code === 'title_too_short'))
+})
+
 ok('未验证适配器不允许立即发布', () => {
   const r = runPreflight({
     appRoot: root,
@@ -136,7 +176,7 @@ ok('未知平台阻断', () => {
   const r = runPreflight({
     appRoot: root,
     deliverable: { ...dl, url: '/exports/src.mp4' },
-    targets: [{ platform: 'weibo', accountId: acc.id, mode: 'draft' }],
+    targets: [{ platform: 'not-a-platform', accountId: acc.id, mode: 'draft' }],
     config: goodConfig,
     accounts: new Map([[acc.id, acc]]),
   })
@@ -317,35 +357,94 @@ const {
   DOUYIN_ADAPTER,
   BILIBILI_ADAPTER,
   TOUTIAO_ADAPTER,
+  XIGUA_ADAPTER,
+  XIAOHONGSHU_ADAPTER,
+  KUAISHOU_ADAPTER,
+  WECHAT_CHANNELS_ADAPTER,
 } = await import('./server/publish-adapters.mjs')
 const { chromium } = await import('playwright-core')
 const { resolveChrome } = await import('./server/publish-utils.mjs')
 
 function pageHtml(kind, opts = {}) {
-  const publishBtn = kind === 'bilibili' ? '立即投稿' : '发布'
-  return `<!doctype html><html><head><meta charset="utf-8"></head><body>
-    <input type="file" id="f">
-    ${opts.noTitle ? '' : '<input placeholder="请输入标题">'}
-    <textarea placeholder="简介"></textarea>
-    <div contenteditable="true"></div>
-    <button id="save">${kind === 'bilibili' ? '存草稿' : '保存草稿'}</button>
-    <button id="pub" onclick="window.__published=true">${publishBtn}</button>
+  // 每个平台只模拟「选择器形状」，用来验证步骤表；不模仿真实样式
+  const saveText =
+    kind === 'bilibili' ? '存草稿'
+    : kind === 'xiaohongshu' ? '暂存离开'
+    : kind === 'wechat-channels' ? '保存草稿'
+    : kind === 'kuaishou' ? ''
+    : kind === 'xigua' ? '存草稿'
+    : '保存草稿'
+  const pubText =
+    kind === 'bilibili' ? '立即投稿'
+    : kind === 'wechat-channels' ? '发表'
+    : '发布'
+  const titleInput =
+    kind === 'wechat-channels'
+      ? '<input placeholder="填写短标题有机会获得更多流量">'
+      : kind === 'kuaishou'
+        ? ''
+        : kind === 'xiaohongshu'
+          ? '<input placeholder="填写标题">'
+          : opts.noTitle
+            ? ''
+            : '<input placeholder="请输入标题">'
+  const bodyEditor =
+    kind === 'xiaohongshu'
+      ? '<p data-placeholder="输入正文描述" contenteditable="true"></p>'
+      : kind === 'wechat-channels'
+        ? '<div class="input-editor" contenteditable="true"></div>'
+        : kind === 'kuaishou'
+          ? '<div contenteditable="true"></div>'
+          : '<textarea placeholder="简介"></textarea><div contenteditable="true"></div>'
+  const uploadSel =
+    kind === 'xiaohongshu' ? 'class="upload-input"'
+    : kind === 'kuaishou' ? 'class="upload-btn-input"'
+    : ''
+  const form = `
+    <input type="file" id="f" ${uploadSel}>
+    ${titleInput}
+    ${bodyEditor}
+    ${saveText ? `<button id="save">${saveText}</button>` : ''}
+    <button id="pub" onclick="window.__published=true">${pubText}</button>
+    <div class="publish-ready" style="display:none">ready</div>
     <script>
       window.__published=false;
       document.getElementById('f').addEventListener('change',()=>{
-        document.getElementById('save').style.display='';
-        document.getElementById('pub').style.display='';
+        document.querySelector('.publish-ready').style.display='';
       });
-    </script>
-  </body></html>`
+    </script>`
+  // formOnly：框架内的表单页；否则视频号在外层套一个 iframe
+  if (opts.formOnly) return `<!doctype html><html><head><meta charset="utf-8"></head><body>${form}</body></html>`
+  if (kind === 'wechat-channels' && !opts.noFrame) {
+    return `<!doctype html><html><head><meta charset="utf-8"></head><body>
+      <iframe src="/micro/content/post/create" style="width:900px;height:600px;border:0"></iframe>
+    </body></html>`
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body>${form}</body></html>`
 }
 
+const KIND_BY_KEY = [
+  ['xiaohongshu', 'xiaohongshu'],
+  ['xigua', 'xigua'],
+  ['kuaishou', 'kuaishou'],
+  ['wechat', 'wechat-channels'],
+  ['bili', 'bilibili'],
+  ['toutiao', 'toutiao'],
+  ['douyin', 'douyin'],
+]
 const adapterServer = http.createServer((req, res) => {
   const u = req.url || ''
-  const kind = u.includes('bili') ? 'bilibili' : u.includes('toutiao') ? 'toutiao' : 'douyin'
-  const noTitle = u.includes('notitle')
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
-  res.end(pageHtml(kind, { noTitle }))
+  // 框架路由必须先判：它自身不含平台关键字（否则会匹配到外层分支）
+  if (u.includes('post/create')) {
+    res.end(pageHtml('wechat-channels', { formOnly: true }))
+    return
+  }
+  const hit = KIND_BY_KEY.find(([key]) => u.includes(key))
+  const kind = hit ? hit[1] : 'douyin'
+  const noTitle = u.includes('notitle')
+  const noFrame = u.includes('noframe')
+  res.end(pageHtml(kind, { noTitle, noFrame }))
 })
 await new Promise((r) => adapterServer.listen(0, '127.0.0.1', r))
 const aPort = adapterServer.address().port
@@ -399,6 +498,61 @@ await okAsync('头条缺选择器返回 selectors_changed 且不提交', async (
     assert.ok(err)
     assert.equal(err.code, 'selectors_changed')
     assert.equal(await page.evaluate(() => window.__published), false)
+  })
+})
+
+await okAsync('西瓜走同族步骤表且不点发布', async () => {
+  await withPage(`${aBase}/xigua`, async (page) => {
+    await XIGUA_ADAPTER.uploadVideo(page, { videoPath: videoForAdapter, uploadTimeoutMs: 8_000 })
+    await XIGUA_ADAPTER.fillMetadata(page, { title: '西瓜标题', description: '简介' })
+    await XIGUA_ADAPTER.saveDraft(page)
+    assert.equal(await page.evaluate(() => window.__published), false)
+    assert.equal(await page.inputValue('input[placeholder*="标题"]'), '西瓜标题')
+  })
+})
+await okAsync('小红书填标题与富文本正文且不点发布', async () => {
+  await withPage(`${aBase}/xiaohongshu`, async (page) => {
+    await XIAOHONGSHU_ADAPTER.uploadVideo(page, { videoPath: videoForAdapter, uploadTimeoutMs: 8_000 })
+    await XIAOHONGSHU_ADAPTER.fillMetadata(page, { title: '红书标题', description: '正文内容' })
+    await XIAOHONGSHU_ADAPTER.saveDraft(page)
+    assert.equal(await page.evaluate(() => window.__published), false)
+    assert.equal(await page.inputValue('input[placeholder*="填写标题"]'), '红书标题')
+    const body = await page.textContent('p[data-placeholder*="输入正文描述"]')
+    assert.equal(body, '正文内容')
+  })
+})
+await okAsync('快手只写描述（标题并入首行）且不点发布', async () => {
+  await withPage(`${aBase}/kuaishou`, async (page) => {
+    await KUAISHOU_ADAPTER.uploadVideo(page, { videoPath: videoForAdapter, uploadTimeoutMs: 8_000 })
+    await KUAISHOU_ADAPTER.fillMetadata(page, { title: '快手标题', description: '描述正文' })
+    // 没有草稿入口：saveDraft 是空操作
+    await KUAISHOU_ADAPTER.saveDraft(page)
+    assert.equal(await page.evaluate(() => window.__published), false)
+    const text = await page.textContent('div[contenteditable="true"]')
+    assert.ok(text.includes('快手标题') && text.includes('描述正文'), text)
+  })
+})
+await okAsync('视频号在 iframe 内完成上传与短标题', async () => {
+  await withPage(`${aBase}/wechat`, async (page) => {
+    await WECHAT_CHANNELS_ADAPTER.uploadVideo(page, { videoPath: videoForAdapter, uploadTimeoutMs: 8_000 })
+    await WECHAT_CHANNELS_ADAPTER.fillMetadata(page, { title: '短标题六字', description: '描述' })
+    await WECHAT_CHANNELS_ADAPTER.saveDraft(page)
+    const frame = page.frames().find((f) => f.url().includes('micro/content/post/create'))
+    assert.ok(frame, '应该找到表单框架')
+    assert.equal(await frame.evaluate(() => window.__published), false)
+    assert.equal(await frame.inputValue('input[placeholder*="短标题"]'), '短标题六字')
+  })
+})
+await okAsync('视频号缺框架时返回 selectors_changed', async () => {
+  await withPage(`${aBase}/wechat-noframe`, async (page) => {
+    let err = null
+    try {
+      await WECHAT_CHANNELS_ADAPTER.openBackend(page)
+    } catch (e) {
+      err = e
+    }
+    assert.ok(err, '缺框架应失败而不是继续')
+    assert.equal(err.code, 'selectors_changed')
   })
 })
 

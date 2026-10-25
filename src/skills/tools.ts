@@ -37,6 +37,22 @@ export const KNOWN_TOOL_IDS = new Set([
   'generate_image',
   'generate_video',
   'generate_voice',
+  // 发布助手：读当前事实、写发布配置、暂存提交意图
+  'read_publish_state',
+  'read_deliverables',
+  'read_config',
+  'read_accounts',
+  'read_platforms',
+  'read_preflight',
+  'read_jobs',
+  'set_targets',
+  'set_copy',
+  'set_mode',
+  'set_cover',
+  'stage_submit',
+  'stage_package',
+  'connect_account',
+  'ask_user',
 ])
 
 /** 只读工具：只读技能只能拿到这些。 */

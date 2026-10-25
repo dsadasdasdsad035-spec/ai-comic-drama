@@ -106,7 +106,7 @@ export default function CoverPicker({
       </div>
 
       <div className="pb-cover">
-        <div className={`pb-cover-frame ${aspect === '9:16' ? 'portrait' : 'landscape'}`}>
+        <div className="pb-cover-frame" data-aspect={aspect}>
           {current ? <img src={current} alt={`${aspect} 封面`} /> : <span>{aspect} 未设置</span>}
         </div>
         <div className="pb-cover-acts">
@@ -154,7 +154,9 @@ export default function CoverPicker({
         </div>
       )}
 
-      <div className="pb-hint">封面按比例复用：9:16 供抖音，16:9 供 B 站与头条。</div>
+      <div className="pb-hint">
+        封面按比例复用：同一比例只需准备一次，供所有需要它的平台共用。
+      </div>
     </div>
   )
 }

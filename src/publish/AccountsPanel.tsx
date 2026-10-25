@@ -132,7 +132,7 @@ export default function AccountList({
         const acc = accounts.find((a) => a.platform === p.id)
         return (
           <div className="pb-account" key={p.id}>
-            <PlatformBadge platform={p.id} />
+            <PlatformBadge platform={p.id} badge={p.badge} />
             <div className="pb-account-main">
               <div className="pb-account-name">
                 {p.label}
@@ -148,9 +148,21 @@ export default function AccountList({
               <div className="pb-account-meta">
                 <span>支持：{p.modes.map((m) => (m === 'draft' ? '草稿' : m === 'publish' ? '直接发布' : '发布包')).join(' / ')}</span>
                 <span>封面：{p.coverAspects.join(' / ')}</span>
-                <span>标题上限：{p.limits.title}</span>
+                <span>
+                  标题：
+                  {p.limits.titleOptional
+                    ? '无独立标题'
+                    : p.limits.titleMin
+                      ? `${p.limits.titleMin}–${p.limits.titleMax} 字`
+                      : `上限 ${p.limits.titleMax} 字`}
+                </span>
                 {acc?.lastCheckedAt ? <span>检查于 {acc.lastCheckedAt.slice(11, 16)}</span> : null}
-                {!p.verified ? <span className="pb-hint warn">适配器未验证，只能保存草稿</span> : null}
+                {!p.verified && !p.manualOnly ? (
+                  <span className="pb-hint warn">
+                    {p.draftKind === 'none' ? '适配器未验证，只能填好表单由人工发布' : '适配器未验证，只能保存草稿'}
+                  </span>
+                ) : null}
+                {p.manualOnly ? <span className="pb-hint warn">表单结构未核实，只能人工发布</span> : null}
               </div>
             </div>
             <div className="pb-account-acts">

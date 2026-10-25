@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import PlatformBadge from './PlatformBadge'
+import type { PlatformBadgeInfo } from './types'
 import {
   JOB_STATE_LABEL,
   jobStateTone,
@@ -66,6 +67,7 @@ export default function PublishRecords({
               >
                 <span className="dot" />
                 {labelOf(j.platform)} · {JOB_STATE_LABEL[j.state as JobState] || j.state}
+                {j.payload?.source === 'assistant' ? <span className="pb-chip-tag">助手提交</span> : null}
               </button>
             ))}
           </div>
@@ -78,6 +80,7 @@ export default function PublishRecords({
 export function PublishJobDrawer({
   job,
   platformLabel,
+  platformBadge,
   onClose,
   onRetry,
   onCancel,
@@ -85,6 +88,7 @@ export function PublishJobDrawer({
 }: {
   job: PublishJob | null
   platformLabel: string
+  platformBadge?: PlatformBadgeInfo
   onClose: () => void
   onRetry: (job: PublishJob) => void
   onCancel: (job: PublishJob) => void
@@ -100,7 +104,7 @@ export function PublishJobDrawer({
     <div className="pb-drawer-mask" role="dialog" aria-modal="true" aria-label="发布回执" onClick={onClose}>
       <div className="pb-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="pb-drawer-head">
-          <PlatformBadge platform={job.platform} />
+          <PlatformBadge platform={job.platform} badge={platformBadge} />
           <span>{platformLabel}</span>
           <span className="pb-status" style={{ marginLeft: 'auto' }}>
             {JOB_STATE_LABEL[state] || state}
@@ -110,6 +114,11 @@ export function PublishJobDrawer({
           </button>
         </div>
         <div className="pb-drawer-body">
+          {job.payload?.source === 'assistant' ? (
+            <div className="pb-hint" data-job-source="assistant">
+              由助手提交（经你确认后创建）
+            </div>
+          ) : null}
           {job.errorMessage ? <div className="pb-hint warn">{job.errorMessage}</div> : null}
 
           <div className="pb-timeline">
