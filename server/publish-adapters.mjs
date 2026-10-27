@@ -19,6 +19,19 @@ export const ADAPTER_METHODS = [
   'readStatus',
 ]
 
+/**
+ * 封面投递能力：
+ * - supported：实现了封面上传步骤，且选择器已在真实登录态验证过；
+ * - unverified：有实现或还没实现，但未在真实登录态验证 —— 不允许点未知选择器；
+ * - unsupported：平台没有自定义封面入口。
+ *
+ * 只有 supported 才执行封面动作；其余如实报告「未自动投递」。
+ */
+export const COVER_SUPPORT = ['supported', 'unverified', 'unsupported']
+
+/** 默认 unverified：没声明就当作不能自动投递，避免盲点 */
+export const DEFAULT_COVER_SUPPORT = 'unverified'
+
 /** 声明式步骤：sel 是选择器，missing 时按 selectors_changed 处理 */
 function step(kind, sel, label, extra = {}) {
   return { kind, sel, label, ...extra }
@@ -122,10 +135,18 @@ export async function runSteps(page, steps, ctx = {}) {
   return done
 }
 
-/** 抖音：上传页 → 标题/简介 → 封面 → 保存草稿；终发布不在自动路径里 */
+/**
+ * 抖音：上传页 → 标题/简介 → 保存草稿；终发布不在自动路径里。
+ *
+ * 封面：实测（2026-10-26，真实登录态）上传页不含「封面」字样，封面设置入口
+ * 只在上传视频完成后才渲染，无法在空页取得选择器。coverSupport 保持
+ * unverified：不点未知选择器，由任务记录如实报告「封面未自动投递」。
+ */
 export const DOUYIN_ADAPTER = {
   platform: 'douyin',
   verified: false,
+  // 封面入口需登录态核对；未核对前不点未知选择器
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [step('goto', '', '打开创作后台', { url: 'https://creator.douyin.com/creator-micro/content/upload' })]),
@@ -157,10 +178,14 @@ export const DOUYIN_ADAPTER = {
   readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
 }
 
-/** B站：上传页 → 分区/标签/封面 → 存草稿 */
+/**
+ * B站：上传页 → 标题/简介 → 存草稿。
+ * 分区、标签与封面的入口都未在真实登录态核对，coverSupport=unverified。
+ */
 export const BILIBILI_ADAPTER = {
   platform: 'bilibili',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [
@@ -194,6 +219,7 @@ export const BILIBILI_ADAPTER = {
 export const TOUTIAO_ADAPTER = {
   platform: 'toutiao',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [
@@ -227,6 +253,7 @@ export const TOUTIAO_ADAPTER = {
 export const XIGUA_ADAPTER = {
   platform: 'xigua',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [step('goto', '', '打开西瓜创作平台', { url: 'https://studio.ixigua.com/upload' })]),
@@ -258,6 +285,7 @@ export const XIGUA_ADAPTER = {
 export const XIAOHONGSHU_ADAPTER = {
   platform: 'xiaohongshu',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [
@@ -300,6 +328,7 @@ export const XIAOHONGSHU_ADAPTER = {
 export const KUAISHOU_ADAPTER = {
   platform: 'kuaishou',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [
@@ -335,10 +364,14 @@ export const KUAISHOU_ADAPTER = {
   readStatus: async (page) => ({ status: 'submitted', url: page.url() }),
 }
 
-/** 微信视频号：表单在 micro/content/post/create 内嵌框架内；短标题 6–16 字 */
+/**
+ * 微信视频号：表单在 micro/content/post/create 内嵌框架内；短标题 6–16 字。
+ * 上传完成会刷新表单，但封面入口未核对，coverSupport=unverified。
+ */
 export const WECHAT_CHANNELS_ADAPTER = {
   platform: 'wechat-channels',
   verified: false,
+  coverSupport: 'unverified',
   manualOnly: false,
   openBackend: async (page) =>
     runSteps(page, [
@@ -363,7 +396,7 @@ export const WECHAT_CHANNELS_ADAPTER = {
         value: () => ctx.videoPath,
         timeout: 30_000,
       }),
-      // 上传完成会刷新表单：先等短标题输入可用，再填文案与封面
+      // 上传完成会刷新表单：等短标题输入可用后再填文案
       step('wait', 'input[placeholder*="短标题"]', '等待上传完成', {
         frame: 'iframe[src*="micro/content/post/create"]',
         timeout: ctx.uploadTimeoutMs ?? 10 * 60_000,
@@ -401,14 +434,20 @@ export function registerAdapter(adapter) {
   for (const m of ADAPTER_METHODS) {
     if (typeof adapter[m] !== 'function') throw new Error(`适配器缺少方法：${m}`)
   }
+  const coverSupport = adapter.coverSupport == null ? DEFAULT_COVER_SUPPORT : String(adapter.coverSupport)
+  if (!COVER_SUPPORT.includes(coverSupport)) {
+    throw new Error(`适配器 coverSupport 非法：${coverSupport}（应为 ${COVER_SUPPORT.join(' / ')}）`)
+  }
   REGISTRY.set(adapter.platform, {
     platform: adapter.platform,
     verified: Boolean(adapter.verified),
     manualOnly: Boolean(adapter.manualOnly),
+    coverSupport,
     openBackend: adapter.openBackend,
     checkSession: adapter.checkSession,
     uploadVideo: adapter.uploadVideo,
     fillMetadata: adapter.fillMetadata,
+    uploadCover: typeof adapter.uploadCover === 'function' ? adapter.uploadCover : null,
     saveDraft: adapter.saveDraft,
     submitFinal: adapter.submitFinal,
     readStatus: adapter.readStatus,
@@ -420,11 +459,18 @@ export function getAdapter(platformId) {
   return REGISTRY.get(String(platformId || '')) || null
 }
 
+/** 该适配器能否真正把封面上传到平台：必须声明 supported 且实现了 uploadCover */
+export function adapterCanAttachCover(platformId) {
+  const a = getAdapter(platformId)
+  return Boolean(a && a.coverSupport === 'supported' && typeof a.uploadCover === 'function')
+}
+
 export function listAdapters() {
   return [...REGISTRY.values()].map((a) => ({
     platform: a.platform,
     verified: a.verified,
     manualOnly: a.manualOnly,
+    coverSupport: a.coverSupport,
   }))
 }
 

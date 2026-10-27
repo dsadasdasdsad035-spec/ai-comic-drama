@@ -26,13 +26,14 @@ import { listAdapters } from './server/publish-adapters.mjs'
 import {
   accountProfileDir,
   deleteAccount,
+  findAccountByPlatform,
   getAccount,
   getAccountInternal,
   listAccounts,
   setAccountStatus,
   upsertAccount,
 } from './server/publish-accounts.mjs'
-import { checkSession, getSession, startLogin } from './server/publish-browser.mjs'
+import { adapterLoginProbe, cancelLogin, checkSession, confirmLogin, getSession, startLogin } from './server/publish-browser.mjs'
 import { runPreflight } from './server/publish-preflight.mjs'
 import {
   createJob,
@@ -44,7 +45,7 @@ import {
   RETRYABLE_STATES,
   transitionJob,
 } from './server/publish-jobs.mjs'
-import { cancel, enqueue } from './server/publish-queue.mjs'
+import { cancel, closeKeptOpenWindows, enqueue, keptOpenWindowCount } from './server/publish-queue.mjs'
 import { buildPublishPackage } from './server/publish-package.mjs'
 import { autoDraftOnExport } from './server/publish-auto.mjs'
 import { chromeAvailable, profilesRoot, resolveChrome, sanitizeError } from './server/publish-utils.mjs'
@@ -4594,8 +4595,17 @@ function seedreamProxy(): Plugin {
                   adapterReady,
                   adapterUnverified: listAdapters().filter((a) => !a.verified).map((a) => a.platform),
                   profilesRoot: profilesRoot(pubRoot),
+                  // 草稿/人工验证场景留给用户的窗口数量
+                  keptOpenWindows: keptOpenWindowCount(),
                 }),
               )
+              return
+            }
+
+            // 关闭为人工确认留着的浏览器窗口
+            if (req.method === 'POST' && tail === 'windows/close') {
+              const closed = await closeKeptOpenWindows()
+              res.end(JSON.stringify({ ok: true, closed }))
               return
             }
 
@@ -4620,12 +4630,17 @@ function seedreamProxy(): Plugin {
               }
               const body = await readJson(req)
               const platform = getPlatform(body.platform)
-              // 先建/复用账号并准备 profile，登录成功后再把状态置为 connected
+              // 已绑定的平台复用同一个账号与 profile；否则每次连接都新建空目录，
+              // 上次的登录态就丢了（聊天里连接时尤其容易踩到）
+              const existing = body.accountId
+                ? getAccount(pubRoot, String(body.accountId))
+                : findAccountByPlatform(pubRoot, platform.id)
               const account = upsertAccount(pubRoot, {
-                id: body.accountId,
+                id: existing?.id,
                 platform: platform.id,
-                label: body.label || '',
+                label: body.label || existing?.label || platform.label,
                 status: 'unknown',
+                keepAutoDraft: existing?.autoDraft,
               })
               const job = startLogin({
                 platform: platform.id,
@@ -4633,6 +4648,17 @@ function seedreamProxy(): Plugin {
                 profileDir: accountProfileDir(pubRoot, account!.id),
                 url: body.url || platform.backendUrl,
                 timeoutMs: Number(body.timeoutMs) || undefined,
+                // 重新登录必须由用户点「我已完成登录」：已存在的 cookie 会让自动判定秒过
+                requireConfirm: Boolean(existing),
+                // 结果直接落库，不依赖谁在轮询——聊天发起的连接没人 GET 也要生效
+                onResult: (result: { status: string; message: string }) => {
+                  if (!account?.id) return
+                  if (result.status === 'done') {
+                    setAccountStatus(pubRoot, account.id, 'connected', result.message)
+                  } else if (result.status === 'cancelled') {
+                    setAccountStatus(pubRoot, account.id, 'unknown', '登录已取消')
+                  }
+                },
               })
               res.end(JSON.stringify({ ok: true, login: job, account }))
               return
@@ -4655,6 +4681,32 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            // 用户完成扫码后点「我已完成登录」：判定仍以平台会话为准
+            if (req.method === 'POST' && /^accounts\/connect\/[^/]+\/confirm$/.test(tail)) {
+              const id = tail.split('/')[2]
+              const job = confirmLogin(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '登录会话不存在或已过期' }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, login: job }))
+              return
+            }
+
+            // 取消登录：用户关掉弹窗时不能把浏览器窗口和一个活跃会话留在后台
+            if (req.method === 'DELETE' && tail.startsWith('accounts/connect/')) {
+              const id = tail.slice('accounts/connect/'.length)
+              const job = cancelLogin(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '登录会话不存在或已过期' }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, login: job }))
+              return
+            }
+
             if (req.method === 'POST' && /^accounts\/[^/]+\/check$/.test(tail)) {
               const id = tail.split('/')[1]
               const account = getAccountInternal(pubRoot, id)
@@ -4668,9 +4720,11 @@ function seedreamProxy(): Plugin {
                 return
               }
               const platform = getPlatform(account.platform)
+              // 先认会话 cookie 再退回 DOM 判定，避免「地址不含 login」被误判成已登录
               const result = await checkSession({
                 profileDir: account.profileDir,
                 url: platform.backendUrl,
+                isLoggedIn: adapterLoginProbe(account.platform),
               })
               const updated = setAccountStatus(pubRoot, id, result.status as any, result.message)
               res.end(JSON.stringify({ ok: true, status: result.status, message: result.message, account: updated.account }))
@@ -4900,7 +4954,9 @@ function seedreamProxy(): Plugin {
               if (req.method === 'POST' && sub === 'mark-published') {
                 const body = await readJson(req).catch(() => ({}))
                 const job = markPublished(pubRoot, id, String(body.workUrl || ''))
-                res.end(JSON.stringify({ ok: true, job }))
+                // 人工确认发布完成后，为人工操作留着的窗口就该收掉
+                const closed = await closeKeptOpenWindows()
+                res.end(JSON.stringify({ ok: true, job, windowsClosed: closed }))
                 return
               }
               if (req.method === 'POST' && sub === 'continue') {

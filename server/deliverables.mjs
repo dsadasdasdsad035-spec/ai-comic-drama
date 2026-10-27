@@ -11,8 +11,10 @@
  */
 import crypto from 'node:crypto'
 import { openDatabase, safeProjectName } from './db.mjs'
+import { COVER_ASPECTS } from './publish-platforms.mjs'
 
-const COVER_ASPECTS = ['9:16', '16:9']
+/** 转发一份，供旧引用继续从本模块取比例集合 */
+export { COVER_ASPECTS }
 
 let conn = null
 let connRoot = ''
@@ -88,7 +90,12 @@ export function normalizeDeliverableConfig(raw) {
   const cleanCover = {}
   for (const aspect of COVER_ASPECTS) {
     const v = cover[aspect]
-    if (typeof v === 'string' && v.trim()) cleanCover[aspect] = clampText(v.trim(), 500)
+    if (typeof v !== 'string') continue
+    const url = v.trim()
+    // 只接受站内绝对路径：data: 内联数据与历史截断残片都不是可投递的文件引用，
+    // 写进配置只会让预检/打包在更晚的环节失败。
+    if (!url.startsWith('/') || url.startsWith('//')) continue
+    cleanCover[aspect] = clampText(url, 500)
   }
 
   return {

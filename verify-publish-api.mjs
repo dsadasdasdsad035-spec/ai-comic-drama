@@ -319,8 +319,17 @@ await okAsync('checkSession 识别登录页为 expired', async () => {
   const r = await checkSession({ profileDir: path.join(root, '.publish-profiles', 'mock1'), url: `${base}/login` })
   assert.equal(r.status, 'expired')
 })
-await okAsync('checkSession 后台页为 connected', async () => {
+await okAsync('checkSession 没有判定函数时如实返回 unknown', async () => {
+  // 不能因为 URL 不是登录页就宣称已登录：mock 后台地址同样不含 login
   const r = await checkSession({ profileDir: path.join(root, '.publish-profiles', 'mock2'), url: `${base}/backend` })
+  assert.equal(r.status, 'unknown')
+})
+await okAsync('checkSession 带后台判定时为 connected', async () => {
+  const r = await checkSession({
+    profileDir: path.join(root, '.publish-profiles', 'mock2b'),
+    url: `${base}/backend`,
+    isLoggedIn: async (page) => Boolean(await page.$('input[type="file"]')),
+  })
   assert.equal(r.status, 'connected')
 })
 await okAsync('checkSession 404 为 unknown', async () => {
@@ -348,6 +357,95 @@ await okAsync('登录超时判定', async () => {
   assert.equal(r.ok, false)
   assert.equal(r.status, 'timeout')
   assert.ok(Date.now() - started >= 4_000)
+})
+
+// 后台地址不含 login、登录框是同页弹层时，不能在第一轮就判成功（否则窗口一闪而过）
+await okAsync('未登录不会因 URL 不像登录页就判成功', async () => {
+  const { adapterLoginProbe } = await import('./server/publish-browser.mjs')
+  const probeServer = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    // /creator-micro/content/upload 不含 login/passport，但没有上传框 = 还在登录页
+    res.end('<div id="login-modal">请扫码登录</div>')
+  })
+  await new Promise((r) => probeServer.listen(0, '127.0.0.1', r))
+  const pBase = `http://127.0.0.1:${probeServer.address().port}`
+  const { resetAdaptersForTest: resetA, registerAdapter: regA } = await import('./server/publish-adapters.mjs')
+  resetA()
+  regA({
+    platform: 'douyin',
+    verified: false,
+    manualOnly: false,
+    openBackend: async () => {},
+    checkSession: async (page) => {
+      const upload = await page.$('input[type="file"]').catch(() => null)
+      return upload
+        ? { status: 'connected', message: '会话有效' }
+        : { status: 'unknown', message: '页面结构无法确认登录状态' }
+    },
+    uploadVideo: async () => {},
+    fillMetadata: async () => {},
+    saveDraft: async () => {},
+    submitFinal: async () => {},
+    readStatus: async () => ({ status: 'submitted' }),
+  })
+  const started = Date.now()
+  const r = await openLoginWindow({
+    profileDir: path.join(root, '.publish-profiles', 'mock-nologin'),
+    url: `${pBase}/creator-micro/content/upload`,
+    timeoutMs: 4_000,
+    isLoggedIn: adapterLoginProbe('douyin', { requiredChecks: 2, gapMs: 300 }),
+  })
+  probeServer.close()
+  assert.equal(r.ok, false, '没有后台元素时必须判未登录')
+  assert.notEqual(r.status, 'done', '不得在第一轮就宣布登录成功')
+  assert.ok(Date.now() - started >= 3_000, '应真的等满超时，而不是立刻关窗')
+})
+
+// 已登录账号点「重新登录」：cookie 本来就在，自动判定会秒过，必须改成人工确认
+await okAsync('重新登录不会因已有 cookie 而自动完成', async () => {
+  const { startLogin, getSession, confirmLogin, resetSessionsForTest: resetSessions } = await import('./server/publish-browser.mjs')
+  resetSessions()
+  const probeServer = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.end('<h1>后台</h1>')
+  })
+  await new Promise((r) => probeServer.listen(0, '127.0.0.1', r))
+  const pBase = `http://127.0.0.1:${probeServer.address().port}`
+  const dir = path.join(root, '.publish-profiles', 'mock-relogin')
+  fs.mkdirSync(dir, { recursive: true })
+
+  // 预先放入「已登录」的证据：cookie 判定直接成立
+  const job = startLogin({
+    platform: 'douyin',
+    accountId: 'acc-relogin',
+    profileDir: dir,
+    url: `${pBase}/creator-micro/content/upload`,
+    timeoutMs: 20_000,
+    requireConfirm: true,
+    minDwellMs: 0,
+    isLoggedIn: async () => true,
+  })
+  assert.equal(job.requireConfirm, true, '重新登录必须是人工确认模式')
+
+  // 等它检测到登录态，但状态必须停在 awaiting 而不是 done
+  let st = null
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 300))
+    st = getSession(job.id)
+    if (st && st.detected) break
+  }
+  assert.equal(st?.detected, true, '应检测到登录态')
+  assert.equal(st?.status, 'awaiting', `有 cookie 也不能自己完成，实际 ${st?.status}`)
+
+  // 用户点「我已完成登录」才收尾
+  confirmLogin(job.id)
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 300))
+    st = getSession(job.id)
+    if (st?.status === 'done') break
+  }
+  assert.equal(st?.status, 'done')
+  probeServer.close()
 })
 
 server.close()
@@ -558,6 +656,152 @@ await okAsync('视频号缺框架时返回 selectors_changed', async () => {
 
 adapterServer.close()
 fs.rmSync(adapterTmp, { recursive: true, force: true })
+
+// ---------- 封面端到端（保存 → 回读 → 预检 → 任务上下文）----------
+const coverTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-cover-e2e-'))
+const coverApp = path.join(coverTmp, 'app')
+const coverPub = path.join(coverTmp, 'projects')
+fs.mkdirSync(path.join(coverApp, 'public', 'exports'), { recursive: true })
+fs.mkdirSync(coverPub, { recursive: true })
+const { patchDeliverableConfig: patchCfg, getDeliverable: getCoverDeliverable } = await import('./server/deliverables.mjs')
+const { stageIntent, confirmIntent } = await import('./server/publish-intents.mjs')
+const { registerAdapter, resetAdaptersForTest } = await import('./server/publish-adapters.mjs')
+const { enqueue, resetQueueForTest, setContextFactoryForTest, closeKeptOpenWindows } = await import('./server/publish-queue.mjs')
+
+// 四档封面文件都真实存在，才能验证「保存后回读 + 预检通过」
+for (const name of ['c916.jpg', 'c169.jpg', 'c34.jpg', 'c43.jpg']) {
+  fs.writeFileSync(path.join(coverApp, 'public', 'exports', name), 'img')
+}
+fs.writeFileSync(path.join(coverApp, 'public', 'exports', 'v.mp4'), 'fake-mp4')
+const coverDl = createDeliverable(coverPub, {
+  project: 'cov',
+  episode: 1,
+  title: '封面端到端',
+  url: '/exports/v.mp4',
+  width: 1080,
+  height: 1920,
+  duration: 8,
+  bytes: 8,
+  source: 'import',
+})
+const coverAcc = upsertAccount(coverPub, { platform: 'xiaohongshu', label: '红书号', status: 'connected' })
+const fourCovers = {
+  '9:16': '/exports/c916.jpg',
+  '16:9': '/exports/c169.jpg',
+  '3:4': '/exports/c34.jpg',
+  '4:3': '/exports/c43.jpg',
+}
+
+await okAsync('四档封面保存后回读仍在', async () => {
+  const saved = patchCfg(
+    coverPub,
+    coverDl.id,
+    normalizeDeliverableConfig({
+      master: { title: '封面端到端标题', description: '简介', tags: [], aiGenerated: true },
+      cover: fourCovers,
+    }),
+  )
+  assert.deepEqual(Object.keys(saved.config.cover).sort(), ['16:9', '3:4', '4:3', '9:16'].sort())
+  const reread = getCoverDeliverable(coverPub, coverDl.id)
+  assert.equal(reread.config.cover['3:4'], '/exports/c34.jpg', '3:4 不应在回读时消失')
+  assert.equal(reread.config.cover['4:3'], '/exports/c43.jpg', '4:3 不应在回读时消失')
+})
+
+await okAsync('小红书 3:4 封面已备时预检通过', async () => {
+  const reread = getCoverDeliverable(coverPub, coverDl.id)
+  const r = runPreflight({
+    appRoot: coverApp,
+    projectsRoot: coverPub,
+    deliverable: reread,
+    targets: [{ platform: 'xiaohongshu', accountId: coverAcc.id, mode: 'draft' }],
+    config: reread.config,
+    accounts: new Map([[coverAcc.id, coverAcc]]),
+  })
+  assert.equal(r.ok, true, JSON.stringify(r.blocking))
+  assert.ok(!r.blocking.some((b) => b.code === 'cover_missing'))
+})
+
+await okAsync('抽帧落盘地址即为可投递地址', async () => {
+  // 模拟抽帧落盘后写入配置的产物：站内路径 + 文件真实存在
+  const saved = patchCfg(
+    coverPub,
+    coverDl.id,
+    normalizeDeliverableConfig({
+      master: { title: '封面端到端标题', description: '简介', tags: [], aiGenerated: true },
+      cover: { '9:16': '/exports/c916.jpg' },
+    }),
+  )
+  const r = runPreflight({
+    appRoot: coverApp,
+    projectsRoot: coverPub,
+    deliverable: saved,
+    targets: [{ platform: 'douyin', accountId: coverAcc.id, mode: 'draft' }],
+    config: saved.config,
+    accounts: new Map([[coverAcc.id, { ...coverAcc, platform: 'douyin' }]]),
+  })
+  assert.ok(!r.blocking.some((b) => b.code === 'cover_missing'), JSON.stringify(r.blocking))
+})
+
+await okAsync('暂存确认后任务上下文含封面路径', async () => {
+  process.env.PUBLISH_CHROME_PATH = process.env.PUBLISH_CHROME_PATH || '/bin/sh'
+  // 小红书要 3:4：先准备好该比例，否则预检会（正确地）阻断
+  patchCfg(
+    coverPub,
+    coverDl.id,
+    normalizeDeliverableConfig({
+      master: { title: '封面端到端标题', description: '简介', tags: [], aiGenerated: true },
+      cover: fourCovers,
+    }),
+  )
+  const seen = []
+  resetAdaptersForTest()
+  registerAdapter({
+    platform: 'xiaohongshu',
+    verified: true,
+    manualOnly: false,
+    openBackend: async () => {},
+    checkSession: async () => ({ status: 'connected', message: '' }),
+    uploadVideo: async (_p, ctx) => { seen.push(ctx) },
+    fillMetadata: async () => {},
+    saveDraft: async () => {},
+    submitFinal: async () => {},
+    readStatus: async () => ({ status: 'draft' }),
+  })
+  // resetQueueForTest 会把注入的 contextFactory 清掉，必须先重置再注入
+  resetQueueForTest()
+  setContextFactoryForTest(async () => ({
+    pages: () => [{ url: () => 'https://example.test/backend', $: async () => ({}) }],
+    close: async () => {},
+    newPage: async () => ({ url: () => 'x', $: async () => ({}) }),
+  }))
+
+  const deliverable = getCoverDeliverable(coverPub, coverDl.id)
+  const intent = stageIntent(coverPub, {
+    deliverableId: coverDl.id,
+    targets: [{ platform: 'xiaohongshu', accountId: coverAcc.id, mode: 'draft' }],
+    config: deliverable.config,
+    source: 'manual',
+    appRoot: coverApp,
+  })
+  const confirmed = confirmIntent(coverPub, intent.id, { appRoot: coverApp })
+  const job = confirmed.jobs[0]
+  enqueue(job.id, { root: coverPub, appRoot: coverApp, projectsRoot: coverPub })
+  for (let i = 0; i < 100; i++) {
+    const st = getJob(coverPub, job.id)?.state
+    if (['awaiting_confirmation', 'failed', 'unknown'].includes(st)) break
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  assert.equal(getJob(coverPub, job.id).state, 'awaiting_confirmation', '任务应停在草稿')
+  assert.equal(seen.length, 1, '适配器应被调用一次')
+  assert.ok(seen[0].coverPath, '上下文应带封面绝对路径')
+  assert.equal(seen[0].coverPath, fs.realpathSync(path.join(coverApp, 'public', 'exports', 'c34.jpg')))
+  assert.deepEqual(Object.keys(seen[0].covers), ['3:4'], `小红书只应取 3:4：${Object.keys(seen[0].covers)}`)
+  // 草稿成功后窗口会留给用户，验证脚本要把假窗口收掉再重置队列
+  await closeKeptOpenWindows()
+  resetQueueForTest()
+})
+
+fs.rmSync(coverTmp, { recursive: true, force: true })
 fs.rmSync(root, { recursive: true, force: true })
 
 if (fail.length) {

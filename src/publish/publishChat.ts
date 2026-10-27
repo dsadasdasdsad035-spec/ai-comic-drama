@@ -175,7 +175,7 @@ export function computeReadiness(input: {
   for (const id of selectedIds) {
     for (const a of platformOf(id)?.coverAspects || []) required.add(a as CoverAspect)
   }
-  const missingCover = [...required].filter((a) => !input.config.cover?.[a])
+  const missingCover = [...required].filter((a) => !isCoverFileUrl(input.config.cover?.[a]))
   items.push({
     key: 'cover',
     label: '封面',
@@ -220,6 +220,11 @@ const MODE_TEXT: Record<PublishMode, string> = {
   draft: '保存草稿',
   publish: '立即发布',
   package: '发布包',
+}
+
+/** 封面地址是否可投递：服务端只接受站内绝对路径 */
+export function isCoverFileUrl(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')
 }
 
 /**
@@ -325,7 +330,9 @@ export function applyConfigPatch(input: {
     for (const [aspect, url] of Object.entries(patch.cover)) {
       const key = aspect as CoverAspect
       const before = next.cover[key]
-      const after = url === null ? undefined : url
+      // 只有站内文件路径算「已准备」；内联数据与远程地址写入后服务端会丢弃，
+      // 在这里就拦掉，避免界面先显示已备齐、预检随后报缺失。
+      const after = url === null || !isCoverFileUrl(url) ? undefined : url
       if (before === after) continue
       changes.push({
         field: `${key} 封面`,

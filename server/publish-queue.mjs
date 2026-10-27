@@ -4,18 +4,66 @@
  * 三条硬规则：
  * 1. 自动触发（auto=true）只能跑草稿，submitFinal 永远不会被调用。
  * 2. 一次只跑一个浏览器任务，失败可归因，也不并发轰平台。
- * 3. 任务结束一定关闭浏览器；超时/取消都落到明确状态。
+ * 3. 任务结束时，只有「不需要人再操作」的状态才关浏览器。草稿已存、表单已填好、
+ *    等待人工验证这些状态必须把窗口留给用户——否则用户刚看到窗口就没了，
+ *    「请到平台后台确认发布」也变成一句空话。
  */
-import { getJob, transitionJob, listJobs, ACTIVE_STATES } from './publish-jobs.mjs'
-import { getAdapter, adapterCanExecute, adapterCanPublishFinal } from './publish-adapters.mjs'
+import { getJob, transitionJob, updateStage, recordJobCover, appendEvent, listJobs, ACTIVE_STATES } from './publish-jobs.mjs'
+import {
+  getAdapter,
+  adapterCanExecute,
+  adapterCanAttachCover,
+  adapterCanPublishFinal,
+} from './publish-adapters.mjs'
 import { getAccountInternal, setAccountStatus } from './publish-accounts.mjs'
 import { getDeliverable } from './deliverables.mjs'
-import { getPlatform } from './publish-platforms.mjs'
+import { getPlatform, requiredCoverAspects } from './publish-platforms.mjs'
 import { resolvePublishFile, resolveChrome, sanitizeError } from './publish-utils.mjs'
 
 const queue = []
 let running = null
 const cancelled = new Set()
+/**
+ * 留给用户操作的浏览器窗口（草稿已存 / 等待人工验证），按 profile 目录登记。
+ *
+ * 两个原因必须登记：
+ * - 不登记就没人知道它们存在，进程退出时变成孤儿 Chrome；
+ * - 同一个 profile 不能被两个 Chromium 实例同时打开，用户连续发同平台任务时
+ *   必须先关掉旧的窗口，否则新任务会以 ProcessSingleton 失败。
+ */
+const keepOpenContexts = new Map()
+
+/** 关闭所有留给用户的窗口；服务停止或用户显式清理时调用 */
+export async function closeKeptOpenWindows() {
+  const list = [...keepOpenContexts.entries()]
+  keepOpenContexts.clear()
+  for (const [, ctx] of list) {
+    try {
+      await ctx.close()
+    } catch {
+      /* ignore */
+    }
+  }
+  return list.length
+}
+
+export function keptOpenWindowCount() {
+  return keepOpenContexts.size
+}
+
+/** 同一个 profile 之前留了窗口就先关掉，否则新的 launch 会撞单例锁 */
+async function releaseProfileWindow(profileDir) {
+  const key = String(profileDir || '')
+  const ctx = keepOpenContexts.get(key)
+  if (!ctx) return false
+  keepOpenContexts.delete(key)
+  try {
+    await ctx.close()
+  } catch {
+    /* 已经关了 */
+  }
+  return true
+}
 
 function nowMs() {
   return Date.now()
@@ -114,6 +162,33 @@ function copyFor(cfg, platform) {
   }
 }
 
+/**
+ * 把已准备的封面解析成绝对路径。
+ * 配置里只存站内 URL；解析失败（文件丢了、地址非法）时该比例缺席，
+ * 由调用方按「没有可用封面」处理，而不是把坏路径交给适配器。
+ */
+function resolveCovers(appRoot, projectsRoot, config, platform) {
+  const covers = {}
+  for (const aspect of requiredCoverAspects([platform.id])) {
+    const url = config?.cover?.[aspect]
+    if (!url) continue
+    try {
+      covers[aspect] = resolvePublishFile(appRoot, url, { projectsRoot }).path
+    } catch {
+      /* 预检已报缺失；这里跳过，不让失效路径进任务 */
+    }
+  }
+  return covers
+}
+
+/** 平台首选封面：按平台声明的比例顺序取第一个已解析的 */
+function preferredCover(platform, covers) {
+  for (const aspect of platform.coverAspects) {
+    if (covers[aspect]) return covers[aspect]
+  }
+  return ''
+}
+
 async function executeItem(item) {
   const { root, id } = item
   const job = getJob(root, id)
@@ -180,10 +255,24 @@ async function executeItem(item) {
   }
 
   const copy = copyFor(deliverable.config, job.platform)
-  const ctx = { videoPath, title: copy.title, description: copy.description, tags: copy.tags }
+  const appRoot = item.appRoot || root
+  const projectsRoot = item.projectsRoot || root
+  const covers = resolveCovers(appRoot, projectsRoot, deliverable.config, platform)
+  const coverPath = preferredCover(platform, covers)
+  const canAttachCover = adapterCanAttachCover(platform.id)
+  const ctx = {
+    videoPath,
+    title: copy.title,
+    description: copy.description,
+    tags: copy.tags,
+    coverPath,
+    covers,
+  }
 
   transitionJob(root, id, 'uploading', { stage: 'opening', message: '打开创作后台' })
   let browser = null
+  /** 需要用户继续在窗口里操作时置 true，finally 就不再关窗口 */
+  let keepWindowOpen = false
   const timeoutMs = Number(process.env.PUBLISH_JOB_TIMEOUT_MS) || 15 * 60 * 1000
   const deadline = nowMs() + timeoutMs
 
@@ -201,7 +290,13 @@ async function executeItem(item) {
   }
 
   try {
+    // 同一 profile 不能被两个 Chromium 同时打开。若上一轮草稿的窗口还留着，
+    // 这里会把它关掉（用户已经发起新任务，旧窗口的价值低于新任务能跑起来）。
+    const releasedOldWindow = await releaseProfileWindow(account.profileDir)
     browser = await openContext(account.profileDir)
+    if (releasedOldWindow) {
+      appendEvent(root, id, 'uploading', 'window_released', '已关闭同账号上一轮保留的窗口，以便开始本次任务')
+    }
     const page = browser.pages()[0] || (await browser.newPage())
 
     await adapter.openBackend(page)
@@ -230,7 +325,35 @@ async function executeItem(item) {
     await adapter.uploadVideo(page, ctx)
     await guard()
 
-    transitionJob(root, id, 'uploading', { stage: 'metadata', message: '填写文案与封面' })
+    // 封面只在适配器真正能投递时上传；否则只记录结论，不点未知选择器
+    let coverAttached = false
+    let coverNote = ''
+    if (!coverPath) {
+      coverNote = platform.coverAspects.length ? '没有已解析的封面文件' : '该平台不需要封面'
+    } else if (!canAttachCover) {
+      coverNote =
+        adapter.coverSupport === 'unsupported'
+          ? '该平台不支持自定义封面'
+          : '封面步骤尚未在真实登录态验证，需在平台后台手动设置'
+      updateStage(root, id, 'cover_skipped', coverNote)
+    } else {
+      transitionJob(root, id, 'uploading', { stage: 'cover', message: '上传封面' })
+      try {
+        await adapter.uploadCover(page, ctx)
+        coverAttached = true
+        coverNote = '封面已上传'
+      } catch (e) {
+        // 封面失败不改写任务结果：视频与文案已就绪，封面留给人工补
+        coverNote = `封面上传失败：${sanitizeError(e?.detail || e?.message || e)}`
+        updateStage(root, id, 'cover_failed', coverNote)
+      }
+      await guard()
+    }
+
+    transitionJob(root, id, 'uploading', {
+      stage: 'metadata',
+      message: coverAttached ? '填写文案（封面已上传）' : '填写文案',
+    })
     await adapter.fillMetadata(page, ctx)
     await guard()
 
@@ -241,6 +364,9 @@ async function executeItem(item) {
     })
     await adapter.saveDraft(page)
     await guard()
+
+    // 封面结论写进 payload：界面与后续排查都能看到「封面到底传没传」
+    recordJobCover(root, id, coverAttached, coverNote)
 
     // 自动模式到此为止；只有用户明确要求 publish 才继续点终发布
     if (canFinal && !running?.auto) {
@@ -256,6 +382,7 @@ async function executeItem(item) {
       } catch (e) {
         const code = e?.code || 'submit_failed'
         if (code === 'awaiting_user') {
+          keepWindowOpen = true
           transitionJob(root, id, 'awaiting_user', {
             stage: e.stage || 'verify',
             errorCode: code,
@@ -272,14 +399,16 @@ async function executeItem(item) {
       return
     }
 
+    // 草稿阶段的三种结果都需要人接着在窗口里操作，窗口必须留着
+    keepWindowOpen = true
     transitionJob(root, id, 'awaiting_confirmation', {
       stage: 'draft',
       message:
         draftKind === 'local'
-          ? '草稿存在本机浏览器内，清空浏览器数据会丢失；请到平台后台确认发布'
+          ? '草稿存在本机浏览器内，清空数据会丢失；请在已打开的窗口里确认发布'
           : draftKind === 'none'
             ? '表单已填好但该平台不保存草稿，请立即在已打开的窗口点击发布'
-            : '草稿已保存，请到平台后台确认发布',
+            : '草稿已保存，请在已打开的窗口或平台后台确认发布',
     })
   } catch (e) {
     const code = e?.code || 'adapter_error'
@@ -288,6 +417,7 @@ async function executeItem(item) {
         transitionJob(root, id, 'cancelled', { stage: 'cancelled', message: '用户取消' })
       } catch { /* ignore */ }
     } else if (code === 'awaiting_user') {
+      keepWindowOpen = true
       try {
         transitionJob(root, id, 'awaiting_user', {
           stage: e.stage || 'verify',
@@ -313,10 +443,26 @@ async function executeItem(item) {
       } catch { /* ignore */ }
     }
   } finally {
-    try {
-      await browser?.close()
-    } catch {
-      /* ignore */
+    if (keepWindowOpen && browser) {
+      // 草稿/验证场景：把窗口留给用户，并登记下来供后续关闭
+      const ctx = browser
+      const key = String(account.profileDir || '')
+      keepOpenContexts.set(key, ctx)
+      appendEvent(root, id, 'awaiting_confirmation', 'window_kept', '浏览器窗口保持打开，供人工确认发布')
+      // 用户亲自关掉窗口时把它从登记表里摘掉，避免泄漏
+      try {
+        ctx.on?.('close', () => {
+          if (keepOpenContexts.get(key) === ctx) keepOpenContexts.delete(key)
+        })
+      } catch {
+        /* 事件不可用就算了 */
+      }
+    } else {
+      try {
+        await browser?.close()
+      } catch {
+        /* ignore */
+      }
     }
   }
 }
@@ -344,7 +490,8 @@ async function pump() {
       /* 状态已变则忽略 */
     }
   } finally {
-    const id = running.id
+    // running 可能已被 resetQueueForTest 清空（验证脚本会在任务收尾时重置）
+    const id = running?.id || item.id
     running = null
     cancelled.delete(id)
     if (queue.length) void pump()
@@ -363,6 +510,7 @@ export function resetQueueForTest() {
   running = null
   cancelled.clear()
   contextFactory = null
+  keepOpenContexts.clear()
 }
 
 export function activeJobCount(root) {

@@ -21,6 +21,7 @@ import {
   listDeliverables,
   listJobs,
   markJobPublished,
+  pollLogin,
   retryJob,
   runPreflight,
   saveDeliverableConfig,
@@ -45,6 +46,7 @@ import {
 import {
   applyConfigPatch as applyPatchPure,
   computeReadiness,
+  isCoverFileUrl,
   pushRound,
   takeRound,
   type ConfigChange,
@@ -602,13 +604,38 @@ export default function PublishBoard({
       },
       connectAccount: async (platform: string) => {
         try {
-          const r = await connectAccount({ platform })
+          // 复用该平台已绑定的账号与 profile：否则每次连接都新建空目录，上次登录态就丢了
+          const existing = accounts.find((a) => a.platform === platform)
+          const r = await connectAccount({ platform, accountId: existing?.id, label: existing?.label })
           setAccounts(await listAccounts())
+          // 聊天里没有登录弹窗轮询；在后台跟到结束再刷新，否则扫码成功后界面一直显示未连接
+          void (async () => {
+            const id = r.login.id
+            for (let i = 0; i < 200; i++) {
+              await new Promise((res) => window.setTimeout(res, 1500))
+              try {
+                const s = await pollLogin(id)
+                if (s.login.status === 'done') {
+                  setAccounts(await listAccounts())
+                  onToast(`${platform}已连接`)
+                  return
+                }
+                if (['cancelled', 'timeout', 'error'].includes(s.login.status)) {
+                  setAccounts(await listAccounts())
+                  return
+                }
+              } catch {
+                return
+              }
+            }
+          })()
           return {
             ok: true,
             platform,
             status: r.login.status,
-            message: '已打开登录窗口，请在浏览器里完成扫码',
+            message: r.login.requireConfirm
+              ? '已打开登录窗口（复用现有账号）。完成扫码后请在发布台「平台账号」页点「我已完成登录」。'
+              : '已打开登录窗口，请在浏览器里完成扫码；登录成功后账号会自动变为已连接。',
             accountId: r.account?.id,
           }
         } catch (e) {
@@ -695,7 +722,7 @@ export default function PublishBoard({
       }
     }
     if (key === 'cover') {
-      const have = requiredAspects.filter((a) => config.cover[a])
+      const have = requiredAspects.filter((a) => isCoverFileUrl(config.cover[a]))
       return {
         done: requiredAspects.length > 0 && have.length === requiredAspects.length,
         issue: blocking.some((b) => b.field.startsWith('cover')),

@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import { getPlatform, platformSupports, requiredCoverAspects } from './publish-platforms.mjs'
 import { resolvePublishFile } from './publish-utils.mjs'
 import { accountUsable } from './publish-accounts.mjs'
-import { adapterCanPublishFinal } from './publish-adapters.mjs'
+import { adapterCanPublishFinal, adapterCanAttachCover, getAdapter } from './publish-adapters.mjs'
 
 export const ISSUE_CODES = {
   deliverableMissing: 'deliverable_missing',
@@ -30,6 +30,7 @@ export const ISSUE_CODES = {
   descriptionEmpty: 'description_empty',
   tagsOverLimit: 'tags_over_limit',
   coverMissing: 'cover_missing',
+  coverManual: 'cover_manual',
   aiUnconfirmed: 'ai_unconfirmed',
   fileTooLarge: 'file_too_large',
   durationTooLong: 'duration_too_long',
@@ -284,6 +285,21 @@ export function runPreflight(input) {
           message: `${platform.label}需要 ${aspect} 封面`,
         })
       }
+    }
+
+    // 封面已备好但适配器还不能自动投递：不阻断，但必须说清要人工设置
+    if (mode !== 'package' && platform.coverAspects.some((a) => cover[a]) && !adapterCanAttachCover(platform.id)) {
+      const adapter = getAdapter(platform.id)
+      issues.push({
+        level: 'warn',
+        code: ISSUE_CODES.coverManual,
+        target: platform.id,
+        field: 'cover',
+        message:
+          adapter?.coverSupport === 'unsupported'
+            ? `${platform.label}不支持自定义封面，草稿里的封面由平台自动生成`
+            : `${platform.label}封面不会自动上传，草稿保存后需在平台后台手动设置`,
+      })
     }
 
     if (deliverable?.bytes && platform.max?.bytes && deliverable.bytes > platform.max.bytes) {

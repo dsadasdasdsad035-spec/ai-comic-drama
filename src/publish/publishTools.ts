@@ -14,7 +14,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools'
 import type { StructuredToolInterface } from '@langchain/core/tools'
 import { z } from 'zod'
 import { boundJson } from '../agent/workbenchChat'
-import { loadVideoFrameAt } from './frames'
+import { captureCoverFromVideo, persistCoverImage } from './covers'
 import { readinessSummary, computeReadiness, type PublishChatAdapter } from './publishChat'
 import type { CoverAspect } from './types'
 
@@ -88,15 +88,20 @@ function shortJob(j: {
 }
 
 export type PublishToolOptions = {
-  /** 抽帧实现；测试可注入，生产走浏览器 canvas */
-  extractFrame?: (src: string, atPercent: number) => Promise<string>
+  /**
+   * 抽帧并落盘，返回站内文件地址。测试可注入；
+   * 生产走浏览器 canvas + /api/save-image，与手动封面同一路径。
+   */
+  captureFrame?: (src: string, aspect: CoverAspect, atPercent: number) => Promise<string>
 }
 
 export function createPublishToolSet(
   adapter: PublishChatAdapter,
   options: PublishToolOptions = {},
 ): Map<string, StructuredToolInterface> {
-  const extractFrame = options.extractFrame || loadVideoFrameAt
+  const captureFrame =
+    options.captureFrame ||
+    ((src: string, aspect: CoverAspect, atPercent: number) => captureCoverFromVideo(src, aspect, atPercent))
   const tools = new Map<string, StructuredToolInterface>()
   const add = (tool: StructuredToolInterface) => tools.set(tool.name, tool)
 
@@ -352,12 +357,28 @@ export function createPublishToolSet(
           const s = adapter.snapshot()
           if (!s.deliverable) return { ok: false, roundId: '', changes: [], error: '当前没有选中成片' }
           try {
-            value = await extractFrame(s.deliverable.url, atPercent ?? 0.5)
+            // 抽帧结果由 captureFrame 落盘，返回的必须是站内文件地址
+            value = await captureFrame(s.deliverable.url, aspect, atPercent ?? 0.5)
           } catch (e) {
             return { ok: false, roundId: '', changes: [], error: (e as Error).message || '抽帧失败' }
           }
+        } else if (!/^data:image\//.test(value) && !value.startsWith('/')) {
+          return {
+            ok: false,
+            roundId: '',
+            changes: [],
+            error: '封面地址必须是站内文件路径（以 / 开头），内联图片数据或远程地址不可用',
+          }
         }
         if (!value) return { ok: false, roundId: '', changes: [], error: '没有可用的封面地址' }
+        // source=url 但给的是 dataURL 时，同样先落盘；绝不让它进配置
+        if (value.startsWith('data:image/')) {
+          try {
+            value = await persistCoverImage(value, aspect)
+          } catch (e) {
+            return { ok: false, roundId: '', changes: [], error: (e as Error).message || '封面保存失败' }
+          }
+        }
         const roundId = adapter.beginRound()
         const r = adapter.applyPatch({ cover: { [aspect]: value } })
         return { ok: r.ok, roundId: r.roundId || roundId, changes: r.changes, ...(r.error ? { error: r.error } : {}) }

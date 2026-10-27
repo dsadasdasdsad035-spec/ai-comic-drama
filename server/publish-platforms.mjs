@@ -44,6 +44,7 @@ export const PUBLISH_MODES = ['draft', 'publish', 'package']
 export const PLATFORMS = [
   {
     id: 'douyin',
+    sessionCookies: ['sessionid', 'sessionid_ss', 'sid_tt'],
     label: '抖音',
     short: '抖',
     badge: { text: '抖', color: '#161823' },
@@ -61,6 +62,7 @@ export const PLATFORMS = [
   },
   {
     id: 'bilibili',
+    sessionCookies: ['SESSDATA', 'DedeUserID'],
     label: 'B 站',
     short: 'B',
     badge: { text: 'B', color: '#00a1d6' },
@@ -77,6 +79,7 @@ export const PLATFORMS = [
   },
   {
     id: 'toutiao',
+    sessionCookies: ['sessionid', 'sid_tt'],
     label: '头条',
     short: '头',
     badge: { text: '头', color: '#f04142' },
@@ -93,6 +96,7 @@ export const PLATFORMS = [
   },
   {
     id: 'xigua',
+    sessionCookies: ['sessionid', 'sid_tt'],
     label: '西瓜视频',
     short: '西',
     badge: { text: '西', color: '#f97316' },
@@ -109,6 +113,7 @@ export const PLATFORMS = [
   },
   {
     id: 'xiaohongshu',
+    sessionCookies: ['web_session'],
     label: '小红书',
     short: '红',
     badge: { text: '红', color: '#ff2442' },
@@ -125,6 +130,7 @@ export const PLATFORMS = [
   },
   {
     id: 'kuaishou',
+    sessionCookies: ['kuaishou.server.web_st', 'kuaishou.web.cp.api_st'],
     label: '快手',
     short: '快',
     badge: { text: '快', color: '#ff6a00' },
@@ -142,6 +148,7 @@ export const PLATFORMS = [
   },
   {
     id: 'wechat-channels',
+    sessionCookies: ['sessionid', 'wxuin'],
     label: '视频号',
     short: '视',
     badge: { text: '视', color: '#07c160' },
@@ -158,6 +165,7 @@ export const PLATFORMS = [
   },
   {
     id: 'zhihu',
+    sessionCookies: ['z_c0'],
     label: '知乎',
     short: '知',
     badge: { text: '知', color: '#0084ff' },
@@ -175,6 +183,7 @@ export const PLATFORMS = [
   },
   {
     id: 'baijiahao',
+    sessionCookies: ['BDUSS'],
     label: '百家号',
     short: '百',
     badge: { text: '百', color: '#2932e1' },
@@ -192,6 +201,7 @@ export const PLATFORMS = [
   },
   {
     id: 'dayu',
+    sessionCookies: ['PASSPORT'],
     label: '大鱼号',
     short: '鱼',
     badge: { text: '鱼', color: '#ff6a00' },
@@ -209,6 +219,7 @@ export const PLATFORMS = [
   },
   {
     id: 'weibo',
+    sessionCookies: ['SUB'],
     label: '微博',
     short: '微',
     badge: { text: '微', color: '#e6162d' },
@@ -225,6 +236,7 @@ export const PLATFORMS = [
   },
   {
     id: 'qiehao',
+    sessionCookies: ['p_skey', 'skey'],
     label: '企鹅号',
     short: '企',
     badge: { text: '企', color: '#12b7f5' },
@@ -241,6 +253,7 @@ export const PLATFORMS = [
   },
   {
     id: 'netease-hao',
+    sessionCookies: ['NTES_SESS'],
     label: '网易号',
     short: '网',
     badge: { text: '网', color: '#d8202c' },
@@ -257,6 +270,7 @@ export const PLATFORMS = [
   },
   {
     id: 'sohu-hao',
+    sessionCookies: ['ppinf', 'pprdig'],
     label: '搜狐号',
     short: '搜',
     badge: { text: '搜', color: '#f5a623' },
@@ -309,8 +323,11 @@ export function platformDraftKind(platformId) {
   return p.draftKind || 'none'
 }
 
-/** 封面比例：先竖版后横版；发布包文件名由 aspectSlug 转换，新增比例无需改这里 */
+/** 封面比例全集：先竖版后横版；配置规范化、封面选择器与发布包共用这一份 */
 export const COVER_ASPECT_ORDER = ['9:16', '3:4', '4:3', '16:9']
+
+/** 别名：配置白名单与前端枚举都以它为准，避免两份常量漂移 */
+export const COVER_ASPECTS = COVER_ASPECT_ORDER
 
 /** 多平台需要的封面比例并集，用于发布台提示与发布包打包 */
 export function requiredCoverAspects(platformIds = []) {

@@ -71,6 +71,27 @@ export function getAccount(root, id) {
   return publicAccount(row)
 }
 
+/**
+ * 按平台找已有账号。
+ * 聊天里的「连接账号」不传 accountId：不能因此每次新建一个空 profile，
+ * 否则上次扫码登录的会话就丢了，表现为「扫码没反应」。
+ *
+ * 优先已连接的账号，其次最近更新的：同一平台可能因为历史原因存在多条
+ * （其中一条才是真正登录过的），不能拿到最旧的那条去打开。
+ */
+export function findAccountByPlatform(root, platform) {
+  const d = open(root)
+  const row = d
+    .prepare(
+      `SELECT * FROM publish_accounts WHERE platform = ?
+       ORDER BY CASE status WHEN 'connected' THEN 0 WHEN 'unknown' THEN 1 ELSE 2 END,
+                updated_at DESC, created_at DESC
+       LIMIT 1`,
+    )
+    .get(String(platform || ''))
+  return publicAccount(row)
+}
+
 /** 内部用：执行适配器时才能拿到 profile 目录 */
 export function getAccountInternal(root, id) {
   const d = open(root)

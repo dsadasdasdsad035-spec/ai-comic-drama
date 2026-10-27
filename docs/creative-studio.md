@@ -132,4 +132,6 @@ cp deploy/.env.example .env
 ./scripts/deploy-up.sh
 ```
 
-详见 [`docs/deploy.md`](deploy.md)。容器里已验证：上传 → probe → 封面 → 切分 → 抽帧 → DTK 抖音抓取全链路。
+详见 [`docs/deploy.md`](deploy.md)。容器里已验证：上传 → probe → 源封面 → 切分 → 抽帧 → DTK 抖音抓取全链路。
+
+这里的「源封面」是创意摄取阶段从待拆解视频抽的参考图，与发布台的封面不是一回事。发布台的封面（抽帧或上传）统一经 `/api/save-image` 落成站内图片，发布配置里只存文件地址，详见根目录 `README.md` 的「发布流程」。

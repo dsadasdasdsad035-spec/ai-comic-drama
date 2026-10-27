@@ -22,7 +22,7 @@ export interface DeliverableConfig {
     tags: string[]
     aiGenerated: boolean
   }
-  cover: Partial<Record<'9:16' | '16:9', string>>
+  cover: Partial<Record<'9:16' | '16:9' | '3:4' | '4:3', string>>
   targets: Record<string, PublishTargetConfig>
 }
 

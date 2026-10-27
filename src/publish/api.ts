@@ -114,6 +114,22 @@ export async function pollLogin(id: string): Promise<{ login: LoginSession; acco
   return j
 }
 
+/** 取消登录：关掉浏览器窗口，别把它留到超时阻塞下一次连接 */
+export async function cancelLogin(id: string): Promise<LoginSession> {
+  const r = await fetch(`/api/publish/accounts/connect/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  const j = await readJson(r)
+  if (!j.ok) fail(j, '取消登录失败')
+  return j.login as LoginSession
+}
+
+/** 用户完成扫码后手动确认；服务端仍以真实会话为准确认登录 */
+export async function confirmLogin(id: string): Promise<LoginSession> {
+  const r = await fetch(`/api/publish/accounts/connect/${encodeURIComponent(id)}/confirm`, { method: 'POST' })
+  const j = await readJson(r)
+  if (!j.ok) fail(j, '确认登录失败')
+  return j.login as LoginSession
+}
+
 export async function checkAccount(id: string): Promise<{ status: string; message: string; account: PublishAccount }> {
   const r = await fetch(`/api/publish/accounts/${encodeURIComponent(id)}/check`, { method: 'POST' })
   const j = await readJson(r)

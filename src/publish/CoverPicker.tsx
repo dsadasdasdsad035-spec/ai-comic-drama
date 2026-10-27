@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CoverAspect, Deliverable, DeliverableConfig } from './types'
 import { loadVideoFrame } from './frames'
+import { persistCoverImage } from './covers'
 
 /**
  * 封面选择：按比例分组，同一比例只准备一次。
- * 抽帧用本地 video + canvas，不依赖服务端；上传走后端 save-image。
+ * 抽帧用本地 video + canvas，但产物一律先落盘再写配置——
+ * 配置里只存站内文件地址，dataURL 只在内存里存在一瞬。
  */
 export default function CoverPicker({
   deliverable,
@@ -31,7 +33,8 @@ export default function CoverPicker({
   const grabFrames = useCallback(async () => {
     setBusy(true)
     try {
-      const list = await loadVideoFrame(deliverable.url, 4)
+      // 按当前比例裁切，避免把成片原始画幅塞进另一种比例的封面框
+      const list = await loadVideoFrame(deliverable.url, 4, 720, aspect)
       setFrames(list)
       if (!list.length) onToast('没有取到可用帧，可直接上传封面')
     } catch (e) {
@@ -39,13 +42,21 @@ export default function CoverPicker({
     } finally {
       setBusy(false)
     }
-  }, [deliverable.url, onToast])
+  }, [deliverable.url, aspect, onToast])
 
   const pickFrame = useCallback(
-    (url: string) => {
-      onChange({ cover: { ...config.cover, [aspect]: url } })
+    async (dataUrl: string) => {
+      setBusy(true)
+      try {
+        const url = await persistCoverImage(dataUrl, aspect)
+        onChange({ cover: { ...config.cover, [aspect]: url } })
+      } catch (e) {
+        onToast((e as Error).message || '封面保存失败')
+      } finally {
+        setBusy(false)
+      }
     },
-    [aspect, config.cover, onChange],
+    [aspect, config.cover, onChange, onToast],
   )
 
   const upload = useCallback(
@@ -63,14 +74,8 @@ export default function CoverPicker({
           fr.onerror = () => reject(new Error('读取图片失败'))
           fr.readAsDataURL(file)
         })
-        const r = await fetch('/api/save-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataUrl, name: `cover-${aspect.replace(':', 'x')}` }),
-        })
-        const j = await r.json().catch(() => ({}))
-        if (!j.ok || !j.url) throw new Error(j.message || '保存封面失败')
-        onChange({ cover: { ...config.cover, [aspect]: String(j.url) } })
+        const url = await persistCoverImage(dataUrl, aspect)
+        onChange({ cover: { ...config.cover, [aspect]: url } })
       } catch (e) {
         onToast((e as Error).message || '上传封面失败')
       } finally {
@@ -97,7 +102,10 @@ export default function CoverPicker({
             role="tab"
             aria-selected={a === aspect}
             className={`pb-radio ${a === aspect ? 'on' : ''}`}
-            onClick={() => setAspect(a)}
+            onClick={() => {
+              setAspect(a)
+              setFrames([])
+            }}
           >
             {a}
             {config.cover[a] ? ' · 已准备' : ' · 待准备'}
@@ -146,7 +154,8 @@ export default function CoverPicker({
               type="button"
               className="pb-frame"
               title={`用作 ${aspect} 封面`}
-              onClick={() => pickFrame(f)}
+              disabled={busy}
+              onClick={() => void pickFrame(f)}
             >
               <img src={f} alt={`帧 ${i + 1}`} />
             </button>
@@ -155,7 +164,7 @@ export default function CoverPicker({
       )}
 
       <div className="pb-hint">
-        封面按比例复用：同一比例只需准备一次，供所有需要它的平台共用。
+        封面按比例复用：同一比例只需准备一次，供所有需要它的平台共用。抽帧会按当前比例裁切并保存为站内图片。
       </div>
     </div>
   )

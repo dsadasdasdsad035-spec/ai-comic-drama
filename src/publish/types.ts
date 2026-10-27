@@ -20,7 +20,7 @@ export type JobState =
 
 export type CoverAspect = '9:16' | '16:9' | '3:4' | '4:3'
 
-/** 封面比例的展示顺序：先竖版后横版 */
+/** 封面比例的展示顺序：先竖版后横版。必须与 server/publish-platforms.mjs 的 COVER_ASPECTS 同序同集。 */
 export const COVER_ASPECTS: CoverAspect[] = ['9:16', '3:4', '4:3', '16:9']
 
 export type PlatformLimits = {
@@ -204,6 +204,10 @@ export type LoginSession = {
   message: string
   startedAt: number
   endedAt?: number
+  /** 重新登录时必须用户点「我已完成登录」，窗口不会自己关 */
+  requireConfirm?: boolean
+  /** 是否已检测到平台会话（cookie 或后台元素） */
+  detected?: boolean
 }
 
 export const JOB_STATE_LABEL: Record<JobState, string> = {

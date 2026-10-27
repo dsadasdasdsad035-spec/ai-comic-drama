@@ -260,6 +260,26 @@ export function updateStage(root, id, stage, message = '') {
   return getJob(root, id)
 }
 
+/**
+ * 记录封面投递结论：写进 payload 与一条事件。
+ * 封面是否真的上传过必须以执行结果为准，不能靠阶段文案推测。
+ */
+export function recordJobCover(root, id, attached, note = '') {
+  const d = open(root)
+  const cur = getJob(root, id)
+  if (!cur) throw new Error('任务不存在')
+  const payload = { ...(cur.payload || {}), coverAttached: Boolean(attached), coverNote: sanitizeError(note) }
+  d.prepare('UPDATE publish_jobs SET payload = ? WHERE id = ?').run(JSON.stringify(payload), String(id))
+  appendEvent(
+    root,
+    id,
+    cur.state,
+    attached ? 'cover' : 'cover_skipped',
+    payload.coverNote || (attached ? '封面已上传' : '封面未上传'),
+  )
+  return getJob(root, id)
+}
+
 /** 迁移状态；非法迁移直接抛错，避免把 published 悄悄改回 uploading */
 export function transitionJob(root, id, next, opts = {}) {
   const d = open(root)

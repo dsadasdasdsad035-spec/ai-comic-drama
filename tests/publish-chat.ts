@@ -7,14 +7,17 @@ import {
   readinessSummary,
   takeRound,
   type ConfigPatch,
+  type PublishChatAdapter,
   type RoundSnapshot,
 } from '../src/publish/publishChat'
+import { createPublishToolSet } from '../src/publish/publishTools'
 import type {
   DeliverableConfig,
   PlatformCapability,
   PreflightResult,
   PublishAccount,
 } from '../src/publish/types'
+import { aspectRatioOf, coverCropRect } from '../src/publish/frames'
 
 let bad = 0
 function check(name: string, fn: () => void) {
@@ -210,6 +213,40 @@ check('清除封面从配置里删键', () => {
   assert.equal('9:16' in next.cover, false)
 })
 
+check('内联图片数据不算已准备封面', () => {
+  const config = emptyConfig()
+  const { next, changes } = applyConfigPatch({
+    config,
+    patch: { cover: { '9:16': `data:image/jpeg;base64,${'A'.repeat(500)}` } },
+    accounts: [ACCOUNT],
+    platformLabel: labels,
+  })
+  assert.equal('9:16' in next.cover, false)
+  assert.equal(changes.length, 0, '坏地址不应产生「已准备」的变更行')
+})
+
+check('站内文件路径才算已准备封面', () => {
+  const { next, changes } = applyConfigPatch({
+    config: emptyConfig(),
+    patch: { cover: { '3:4': '/generated/cover-3x4-1.jpg' } },
+    accounts: [ACCOUNT],
+    platformLabel: labels,
+  })
+  assert.equal(next.cover['3:4'], '/generated/cover-3x4-1.jpg')
+  assert.equal(changes[0].to, '已准备')
+})
+
+check('准备度不把坏地址算作已备齐', () => {
+  const r = computeReadiness({
+    config: emptyConfig({ cover: { '9:16': 'data:image/jpeg;base64,AAA' } }),
+    platforms: [PLATFORM],
+    accounts: [ACCOUNT],
+    preflight: { ok: true, blocking: [], warnings: [], issues: [] } as unknown as PreflightResult,
+  })
+  const cover = r.items.find((i) => i.key === 'cover')
+  assert.equal(cover?.state, 'warn')
+})
+
 check('配置 patch 不改变原对象', () => {
   const config = emptyConfig({ master: { title: '旧', description: '', tags: [], aiGenerated: true } })
   const before = JSON.stringify(config)
@@ -285,6 +322,145 @@ check('未知字段不被写入，也不产生变更行', () => {
   })
   assert.equal(changes.length, 0)
   assert.equal(JSON.stringify(next), before)
+})
+
+// ---------------- 助手 set_cover 落盘 ----------------
+
+/** 最小宿主适配器：只记录 applyPatch 收到的 patch */
+function coverAdapter(applyPatch: (patch: ConfigPatch) => { ok: boolean; changes: unknown[] }) {
+  const snapshot = {
+    deliverable: { id: 'dl-1', url: '/exports/v.mp4', episode: 1, version: 1, width: 1080, height: 1920, duration: 10, createdAt: '' },
+    deliverables: [],
+    config: emptyConfig(),
+    platforms: [PLATFORM],
+    accounts: [ACCOUNT],
+    preflight: null,
+    jobs: [],
+    health: null,
+  }
+  return {
+    threadKey: { project: 'p', surface: 'publish', episode: 1 },
+    scope: () => 'E01',
+    snapshot: () => snapshot as unknown as ReturnType<PublishChatAdapter['snapshot']>,
+    beginRound: () => 'r1',
+    undoRound: () => true,
+    applyPatch: (patch: ConfigPatch) => ({ roundId: 'r1', ...applyPatch(patch) }) as never,
+    stage: async () => ({ ok: false, error: 'not needed' }),
+    connectAccount: async () => ({ ok: false, platform: 'douyin', status: 'error', message: '' }),
+  } as unknown as PublishChatAdapter
+}
+
+check('助手抽帧写入的是落盘后的文件地址', async () => {
+  const patches: ConfigPatch[] = []
+  const tools = createPublishToolSet(
+    coverAdapter((patch) => {
+      patches.push(patch)
+      return { ok: true, changes: [] }
+    }),
+    { captureFrame: async () => '/generated/cover-9x16-1.jpg' },
+  )
+  const r = (await tools.get('set_cover')!.invoke({
+    aspect: '9:16',
+    source: 'frame',
+    atPercent: 0.3,
+  })) as { ok: boolean }
+  assert.equal(r.ok, true)
+  assert.equal(patches[0].cover?.['9:16'], '/generated/cover-9x16-1.jpg')
+})
+
+check('助手抽帧落盘失败时不写入配置', async () => {
+  const patches: ConfigPatch[] = []
+  const tools = createPublishToolSet(
+    coverAdapter((patch) => {
+      patches.push(patch)
+      return { ok: true, changes: [] }
+    }),
+    {
+      captureFrame: async () => {
+        throw new Error('保存封面失败：服务端没有返回文件地址')
+      },
+    },
+  )
+  const r = (await tools.get('set_cover')!.invoke({ aspect: '9:16', source: 'frame' })) as {
+    ok: boolean
+    error?: string
+  }
+  assert.equal(r.ok, false, '落盘失败必须返回未成功')
+  assert.match(String(r.error), /保存封面失败/)
+  assert.equal(patches.length, 0, '失败时不应写入配置，更不能声称已准备')
+})
+
+check('助手拒绝把内联图片数据当封面写入', async () => {
+  const patches: ConfigPatch[] = []
+  const tools = createPublishToolSet(
+    coverAdapter((patch) => {
+      patches.push(patch)
+      return { ok: true, changes: [] }
+    }),
+  )
+  const r = (await tools.get('set_cover')!.invoke({
+    aspect: '9:16',
+    source: 'url',
+    url: 'https://remote.test/a.jpg',
+  })) as { ok: boolean; error?: string }
+  assert.equal(r.ok, false)
+  assert.match(String(r.error), /站内文件路径/)
+  assert.equal(patches.length, 0)
+})
+
+// ---------------- 封面裁切几何 ----------------
+
+check('比例解析支持四档并拒绝非法输入', () => {
+  assert.equal(aspectRatioOf('9:16'), 9 / 16)
+  assert.equal(aspectRatioOf('16:9'), 16 / 9)
+  assert.equal(aspectRatioOf('3:4'), 3 / 4)
+  assert.equal(aspectRatioOf('4:3'), 4 / 3)
+  assert.equal(aspectRatioOf(''), 0)
+  assert.equal(aspectRatioOf('9x16'), 0)
+  assert.equal(aspectRatioOf('0:16'), 0)
+})
+
+check('竖屏成片要横版封面：保留宽度裁上下', () => {
+  // 1080×1920 → 16:9 应是 1080×608，垂直居中
+  const c = coverCropRect(1080, 1920, '16:9')
+  assert.equal(c.sw, 1080)
+  assert.equal(c.sh, Math.round(1080 / (16 / 9)))
+  assert.equal(c.sx, 0)
+  assert.equal(c.sy, Math.round((1920 - c.sh) / 2))
+  assert.ok(Math.abs(c.sw / c.sh - 16 / 9) < 0.01)
+})
+
+check('横屏成片要竖版封面：保留高度裁两侧', () => {
+  // 1920×1080 → 9:16 应是 608×1080，水平居中
+  const c = coverCropRect(1920, 1080, '9:16')
+  assert.equal(c.sh, 1080)
+  assert.equal(c.sw, Math.round(1080 * (9 / 16)))
+  assert.equal(c.sy, 0)
+  assert.equal(c.sx, Math.round((1920 - c.sw) / 2))
+  assert.ok(Math.abs(c.sw / c.sh - 9 / 16) < 0.01)
+})
+
+check('四档裁切输出都符合目标比例', () => {
+  for (const aspect of ['9:16', '16:9', '3:4', '4:3']) {
+    for (const [w, h] of [
+      [1080, 1920],
+      [1920, 1080],
+      [1080, 1080],
+      [720, 1280],
+    ]) {
+      const c = coverCropRect(w, h, aspect)
+      const got = c.sw / c.sh
+      assert.ok(Math.abs(got - aspectRatioOf(aspect)) < 0.01, `${w}x${h} → ${aspect} 得到 ${c.sw}x${c.sh}`)
+      // 裁切矩形必须落在源图内，不能取到画外
+      assert.ok(c.sx >= 0 && c.sy >= 0)
+      assert.ok(c.sx + c.sw <= w && c.sy + c.sh <= h, `${w}x${h} → ${aspect} 越界`)
+    }
+  }
+})
+
+check('不成比例或未知尺寸时退回原始画幅', () => {
+  assert.deepEqual(coverCropRect(1080, 1920, ''), { sx: 0, sy: 0, sw: 1080, sh: 1920 })
+  assert.deepEqual(coverCropRect(0, 0, '9:16'), { sx: 0, sy: 0, sw: 0, sh: 0 })
 })
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 发布助手纯函数全部通过')

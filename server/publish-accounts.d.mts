@@ -22,6 +22,8 @@ export declare const ACCOUNT_STATUS: AccountStatus[]
 export declare function newAccountId(): string
 export declare function listAccounts(root: string, opts?: { platform?: string }): PublishAccount[]
 export declare function getAccount(root: string, id: string): PublishAccount | null
+/** 按平台找已有账号：聊天发起的连接应复用它，而不是每次新建空 profile */
+export declare function findAccountByPlatform(root: string, platform: string): PublishAccount | null
 export declare function getAccountInternal(root: string, id: string): PublishAccountInternal | null
 export declare function accountProfileDir(appRoot: string, accountId: string): string
 export declare function upsertAccount(
@@ -32,6 +34,8 @@ export declare function upsertAccount(
     label?: string
     status?: AccountStatus
     autoDraft?: boolean
+    /** 更新已有账号时保留它原来的自动草稿开关 */
+    keepAutoDraft?: boolean
   },
 ): PublishAccount | null
 export declare function setAccountStatus(

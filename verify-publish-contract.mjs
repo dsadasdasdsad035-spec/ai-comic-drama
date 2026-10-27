@@ -20,6 +20,7 @@ const {
   platformSupports,
   platformCanExecute,
   requiredCoverAspects,
+  COVER_ASPECTS,
 } = await import('./server/publish-platforms.mjs')
 const {
   canTransition,
@@ -38,7 +39,16 @@ const { upsertAccount, listAccounts, deleteAccount, getAccountInternal } = await
 const { runPreflight } = await import('./server/publish-preflight.mjs')
 const { buildPublishPackage } = await import('./server/publish-package.mjs')
 const { createDeliverable, normalizeDeliverableConfig } = await import('./server/deliverables.mjs')
-const { registerAdapter, getAdapter, resetAdaptersForTest, adapterCanExecute, adapterCanPublishFinal } = await import('./server/publish-adapters.mjs')
+const {
+  registerAdapter,
+  getAdapter,
+  resetAdaptersForTest,
+  adapterCanExecute,
+  adapterCanAttachCover,
+  adapterCanPublishFinal,
+  DOUYIN_ADAPTER,
+  BILIBILI_ADAPTER,
+} = await import('./server/publish-adapters.mjs')
 
 let checks = 0
 function ok(label, fn) {
@@ -117,6 +127,19 @@ ok('未知状态被拒绝', () => {
 // ---------- 幂等 ----------
 ok('幂等键格式', () => {
   assert.equal(idempotencyKey('d1', 'douyin', 'a1'), 'd1|douyin|a1')
+})
+
+// ---------- 登录态 cookie ----------
+ok('每个平台都声明了会话 cookie', () => {
+  for (const p of PLATFORMS) {
+    assert.ok(
+      Array.isArray(p.sessionCookies) && p.sessionCookies.length > 0,
+      `${p.id} 没有声明 sessionCookies，登录判定只能靠 DOM，扫码后可能一直没反应`,
+    )
+  }
+  // 抖音的会话 cookie 是 sessionid 家族：扫码成功后立即写入，与页面是否重渲染无关
+  assert.ok(getPlatform('douyin').sessionCookies.includes('sessionid'))
+  assert.ok(getPlatform('bilibili').sessionCookies.includes('SESSDATA'))
 })
 
 const dl = createDeliverable(root, {
@@ -269,6 +292,73 @@ ok('未验证只允许草稿', () => {
   assert.equal(adapterCanPublishFinal('y'), false)
 })
 
+ok('适配器 coverSupport 默认 unverified', () => {
+  resetAdaptersForTest()
+  registerAdapter({
+    platform: 'cov-default',
+    verified: false,
+    manualOnly: false,
+    openBackend: async () => {},
+    checkSession: async () => ({ status: 'connected', message: '' }),
+    uploadVideo: async () => {},
+    fillMetadata: async () => {},
+    saveDraft: async () => {},
+    submitFinal: async () => {},
+    readStatus: async () => ({ status: 'submitted' }),
+  })
+  assert.equal(getAdapter('cov-default').coverSupport, 'unverified')
+  assert.equal(adapterCanAttachCover('cov-default'), false, '未声明 supported 不得自动投递封面')
+})
+
+ok('适配器 coverSupport 非法值被拒绝', () => {
+  resetAdaptersForTest()
+  assert.throws(
+    () =>
+      registerAdapter({
+        platform: 'cov-bad',
+        verified: false,
+        manualOnly: false,
+        coverSupport: 'maybe',
+        openBackend: async () => {},
+        checkSession: async () => ({ status: 'connected', message: '' }),
+        uploadVideo: async () => {},
+        fillMetadata: async () => {},
+        saveDraft: async () => {},
+        submitFinal: async () => {},
+        readStatus: async () => ({ status: 'submitted' }),
+      }),
+    /coverSupport 非法/,
+  )
+})
+
+ok('声明 supported 但缺 uploadCover 仍不能投递', () => {
+  resetAdaptersForTest()
+  registerAdapter({
+    platform: 'cov-claim',
+    verified: true,
+    manualOnly: false,
+    coverSupport: 'supported',
+    openBackend: async () => {},
+    checkSession: async () => ({ status: 'connected', message: '' }),
+    uploadVideo: async () => {},
+    fillMetadata: async () => {},
+    saveDraft: async () => {},
+    submitFinal: async () => {},
+    readStatus: async () => ({ status: 'submitted' }),
+  })
+  assert.equal(adapterCanAttachCover('cov-claim'), false, '只有声明没有实现不算能投递')
+})
+
+ok('内置适配器全部显式未验证封面', () => {
+  resetAdaptersForTest()
+  registerAdapter(DOUYIN_ADAPTER)
+  registerAdapter(BILIBILI_ADAPTER)
+  for (const id of ['douyin', 'bilibili']) {
+    assert.equal(getAdapter(id).coverSupport, 'unverified', `${id} 不应谎称能投递封面`)
+    assert.equal(adapterCanAttachCover(id), false)
+  }
+})
+
 // ---------- 预检 ----------
 const account = upsertAccount(root, { platform: 'douyin', label: '预检号', status: 'connected' })
 const coverPath = path.join(publicDir, 'exports', 'c.jpg')
@@ -315,6 +405,22 @@ ok('缺封面阻断', () => {
     accounts: new Map([[account.id, account]]),
   })
   assert.ok(r.blocking.some((b) => b.code === 'cover_missing'))
+})
+ok('封面不能自动投递时只警告不阻断', () => {
+  resetAdaptersForTest()
+  registerAdapter(DOUYIN_ADAPTER)
+  const r = runPreflight({
+    appRoot: root,
+    deliverable: getDeliverableLite(),
+    targets: [{ platform: 'douyin', accountId: account.id, mode: 'draft' }],
+    config: baseConfig,
+    accounts: new Map([[account.id, account]]),
+  })
+  const warn = r.warnings.find((w) => w.code === 'cover_manual')
+  assert.ok(warn, `应提示封面需人工设置：${JSON.stringify(r.warnings)}`)
+  assert.match(warn.message, /不会自动上传|手动设置/)
+  assert.equal(r.blocking.some((b) => b.code === 'cover_manual'), false, '这条只应是警告')
+  assert.equal(r.ok, true, '有封面文件时不应因这条警告被阻断')
 })
 ok('未确认 AI 阻断', () => {
   const cfg = normalizeDeliverableConfig({
@@ -404,6 +510,47 @@ ok('配置长度上限与未知字段', () => {
   assert.equal('junk' in cfg, false)
   assert.ok(cfg.targets.douyin)
   assert.equal(cfg.targets['bad id'], undefined)
+})
+
+// ---------- 封面比例持久化 ----------
+ok('封面四档全部保留', () => {
+  const cfg = normalizeDeliverableConfig({
+    cover: { '9:16': '/exports/a.jpg', '16:9': '/exports/b.jpg', '3:4': '/exports/c.jpg', '4:3': '/exports/d.jpg' },
+  })
+  assert.deepEqual(Object.keys(cfg.cover).sort(), ['16:9', '3:4', '4:3', '9:16'].sort())
+  assert.equal(cfg.cover['3:4'], '/exports/c.jpg')
+  assert.equal(cfg.cover['4:3'], '/exports/d.jpg')
+})
+
+ok('每个平台声明的每个比例都能被规范化保留', () => {
+  for (const p of PLATFORMS) {
+    for (const aspect of p.coverAspects) {
+      const cfg = normalizeDeliverableConfig({ cover: { [aspect]: `/exports/${aspect.replace(':', 'x')}.jpg` } })
+      assert.ok(cfg.cover[aspect], `${p.id} 的 ${aspect} 被封面的白名单丢掉了`)
+    }
+  }
+  assert.deepEqual(COVER_ASPECTS, ['9:16', '3:4', '4:3', '16:9'])
+})
+
+ok('内联图片数据不进入配置', () => {
+  const dataUrl = `data:image/jpeg;base64,${'A'.repeat(2000)}`
+  const cfg = normalizeDeliverableConfig({
+    cover: { '9:16': dataUrl, '16:9': '/exports/ok.jpg', '3:4': 'relative/x.jpg', '4:3': '//evil.test/x.jpg' },
+  })
+  // 只有站内绝对路径保留；data:/相对路径/协议相对地址一律丢弃
+  assert.ok(cfg.cover['16:9'])
+  assert.equal(cfg.cover['9:16'], undefined)
+  assert.equal(cfg.cover['3:4'], undefined)
+  assert.equal(cfg.cover['4:3'], undefined)
+})
+
+ok('前端比例常量与服务端同序同集', () => {
+  // 两份常量分处服务端与浏览器包，无法互相 import；用源码断言把漂移变成测试失败
+  const src = fs.readFileSync(path.join(process.cwd(), 'src/publish/types.ts'), 'utf8')
+  const m = src.match(/COVER_ASPECTS[^=]*=\s*\[([^\]]+)\]/)
+  assert.ok(m, '没找到前端 COVER_ASPECTS')
+  const front = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
+  assert.deepEqual(front, COVER_ASPECTS)
 })
 
 fs.rmSync(root, { recursive: true, force: true })

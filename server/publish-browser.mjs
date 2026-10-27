@@ -12,11 +12,78 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { sanitizeError, resolveChrome } from './publish-utils.mjs'
 import { getPlatform } from './publish-platforms.mjs'
+import { getAdapter } from './publish-adapters.mjs'
 
 /** 登录态判定：默认看 URL 是否落在登录页，以及页面是否出现后台标志 */
 export const DEFAULT_LOGIN_HEURISTIC = {
   loginUrlHints: ['login', 'passport', 'signin', 'auth'],
   loggedInSelector: '',
+}
+
+/**
+ * 用平台适配器的 checkSession 作为登录判定。
+ *
+ * 为什么不能用「URL 不含 login 就算登录成功」：抖音、B 站、小红书的后台地址本身
+ * 就不含 login/passport，而登录框常常是同一 URL 上的弹层。那种兜底会让窗口在
+ * 第一轮轮询就判定成功并立刻关闭，用户根本没机会扫码。
+ *
+ * 为什么也不能只看 DOM：抖音扫码成功后页面未必立刻出现上传框，等它出现会让
+ * 已经成功的登录一直停在「等待扫码」。登录态的权威信号是平台会话 cookie。
+ *
+ * 所以判定顺序是：先认 cookie（权威、与页面渲染无关），再退回适配器的 DOM 判定。
+ * DOM 判定仍保留连续两次确认，滤掉页面切换过程中的瞬态结构。
+ */
+export function adapterLoginProbe(platformId, opts = {}) {
+  const platform = (() => {
+    try {
+      return getPlatform(platformId)
+    } catch {
+      return null
+    }
+  })()
+  const adapter = getAdapter(platformId)
+  const sessionCookies = Array.isArray(platform?.sessionCookies) ? platform.sessionCookies : []
+  const requiredChecks = Math.max(1, Math.floor(Number(opts.requiredChecks) || 2))
+  const gapMs = Math.max(0, Number(opts.gapMs) || 1_200)
+  let hits = 0
+  let lastHitAt = 0
+
+  const hasSessionCookie = async (page) => {
+    if (!sessionCookies.length) return false
+    try {
+      const ctx = typeof page.context === 'function' ? page.context() : null
+      const cookies = ctx ? await ctx.cookies() : []
+      return cookies.some((c) => sessionCookies.includes(c.name) && (c.value || '').length > 0)
+    } catch {
+      return false
+    }
+  }
+
+  return async (page) => {
+    // 1) 会话 cookie：扫码成功后立刻成立，不依赖页面是否刷新出上传框
+    if (await hasSessionCookie(page)) return true
+
+    // 2) 退回适配器的真实后台元素判定（连续两次）
+    if (!adapter || typeof adapter.checkSession !== 'function') {
+      hits = 0
+      return false
+    }
+    let connected = false
+    try {
+      connected = (await adapter.checkSession(page))?.status === 'connected'
+    } catch {
+      connected = false
+    }
+    if (!connected) {
+      hits = 0
+      return false
+    }
+    const now = Date.now()
+    if (hits > 0 && now - lastHitAt < gapMs) return false
+    hits += 1
+    lastHitAt = now
+    return hits >= requiredChecks
+  }
 }
 
 /**
@@ -54,6 +121,22 @@ export function looksLikeLoginUrl(url, heuristic = DEFAULT_LOGIN_HEURISTIC) {
   return heuristic.loginUrlHints.some((hint) => u.includes(hint))
 }
 
+/**
+ * 清掉上次异常退出的 Chromium 单例锁。
+ * 浏览器进程被 kill -9 或崩溃时，SingletonLock 会留在 profile 目录里，
+ * 之后每次 launchPersistentContext 都报 ProcessSingleton 失败，永久打不开登录窗口。
+ */
+export function clearStaleSingletonLocks(profileDir) {
+  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    const p = path.join(profileDir, name)
+    try {
+      fs.rmSync(p, { force: true })
+    } catch {
+      /* 删不掉就让 launch 自己报错 */
+    }
+  }
+}
+
 async function loadChromium() {
   const mod = await import('playwright-core')
   return mod.chromium
@@ -80,11 +163,24 @@ export async function openLoginWindow(opts) {
   else launchOpts.channel = 'chrome'
 
   fs.mkdirSync(opts.profileDir, { recursive: true, mode: 0o700 })
+  // 上次异常退出（进程被杀）会留下 Singleton 锁，导致永久无法再打开同一 profile
+  clearStaleSingletonLocks(opts.profileDir)
   const ctx = await chromium.launchPersistentContext(opts.profileDir, launchOpts)
   const page = ctx.pages()[0] || (await ctx.newPage())
+  // 浏览器被外力关闭（kill、崩溃）时也必须让等待循环退出，否则会话永远卡住
+  let closed = false
+  ctx.on?.('close', () => {
+    closed = true
+  })
   await page.goto(opts.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  try {
+    opts.onOpened?.({ url: page.url() })
+  } catch {
+    /* 回调失败不影响登录等待 */
+  }
 
-  const deadline = Date.now() + Math.max(5_000, Number(opts.timeoutMs) || 180_000)
+  // 登录是人的事：扫码 + 可能的短信验证，默认给 5 分钟
+  const deadline = Date.now() + Math.max(5_000, Number(opts.timeoutMs) || 300_000)
   let result = { ok: false, status: 'timeout', message: '等待登录超时' }
   try {
     for (;;) {
@@ -93,6 +189,10 @@ export async function openLoginWindow(opts) {
         break
       }
       if (Date.now() > deadline) break
+      if (closed) {
+        result = { ok: false, status: 'cancelled', message: '登录窗口已关闭' }
+        break
+      }
       let loggedIn = false
       if (typeof opts.isLoggedIn === 'function') {
         try {
@@ -100,10 +200,15 @@ export async function openLoginWindow(opts) {
         } catch {
           loggedIn = false
         }
-      } else {
-        // 默认判定：离开登录页且页面可交互即认为已登录；真实适配器会覆盖
-        loggedIn = !looksLikeLoginUrl(page.url())
+      } else if (DEFAULT_LOGIN_HEURISTIC.loggedInSelector) {
+        loggedIn = await page
+          .locator(DEFAULT_LOGIN_HEURISTIC.loggedInSelector)
+          .first()
+          .isVisible()
+          .catch(() => false)
       }
+      // 没有明确判定时一律视为「还没登录」，等到超时或用户取消；
+      // 绝不能因为 URL 不像登录页就替用户宣布登录成功。
       if (loggedIn) {
         result = { ok: true, status: 'done', message: '登录成功', url: page.url() }
         break
@@ -111,7 +216,11 @@ export async function openLoginWindow(opts) {
       await page.waitForTimeout(1_000)
     }
   } catch (e) {
-    result = { ok: false, status: 'error', message: sanitizeError(e) }
+    const msg = String(e?.message || e)
+    // 用户手动关掉窗口是正常操作，不该报成错误
+    result = /closed|Target page, context or browser/i.test(msg)
+      ? { ok: false, status: 'cancelled', message: '登录窗口已关闭' }
+      : { ok: false, status: 'error', message: sanitizeError(e) }
   } finally {
     try {
       await ctx.close()
@@ -148,7 +257,8 @@ export async function checkSession(opts) {
         ? { status: 'connected', message: '会话有效' }
         : { status: 'unknown', message: '页面结构无法确认登录状态' }
     }
-    return { status: 'connected', message: '会话有效' }
+    // 没有明确判定时不能假装已登录：宁可报「未知」让用户复查
+    return { status: 'unknown', message: '无法确认登录状态' }
   } catch (e) {
     return { status: 'unknown', message: sanitizeError(e) }
   } finally {
@@ -165,36 +275,78 @@ export async function checkSession(opts) {
 /**
  * 启动一个后台登录流程；调用方轮询 getSession 获取状态。
  * 这里保持 sessions 的内存态：登录是一次性交互，不需要跨重启恢复。
+ *
+ * 完成方式有两种：
+ * - requireConfirm=false（默认，首次连接）：检测到登录态且窗口已停留 minDwellMs 就完成。
+ *   用 cookie 判定，扫码成功即可，不依赖页面重新渲染出上传框。
+ * - requireConfirm=true（重新登录）：窗口不会自己关，必须用户点「我已完成登录」。
+ *   否则已登录账号的 cookie 会让窗口在 1 秒内自判成功并关闭，用户根本没机会扫码。
+ *
+ * onResult 让状态落库不依赖谁在轮询：聊天里发起的连接没人 GET 也能变成 connected。
  */
 export function startLogin(opts = {}) {
   if (activeSession) {
-    throw new Error('已有登录窗口在进行中，请先完成或取消')
+    const stuck = sessions.get(activeSession)
+    // 会话还活着就老实拒绝；已经结束或消失的残留不能挡住用户
+    if (stuck && (stuck.status === 'opening' || stuck.status === 'awaiting')) {
+      throw new Error('已有登录窗口在进行中，请先完成或取消')
+    }
+    sessions.delete(String(activeSession))
+    activeSession = null
   }
   const platform = getPlatform(opts.platform)
   const id = newLoginId()
+  const requireConfirm = opts.requireConfirm === true
+  const minDwellMs = Math.max(0, Number(opts.minDwellMs) || 4000)
+  const startedAt = Date.now()
+  const verify = typeof opts.isLoggedIn === 'function' ? opts.isLoggedIn : adapterLoginProbe(platform.id)
   const job = {
     id,
     platform: platform.id,
     accountId: String(opts.accountId || ''),
     status: 'opening',
     message: '正在打开浏览器',
-    startedAt: Date.now(),
+    startedAt,
+    requireConfirm,
+    detected: false,
   }
   sessions.set(id, job)
   activeSession = id
 
-  const stop = () => {
+  const isLoggedIn = async (page) => {
     const cur = sessions.get(id)
-    if (cur && (cur.status === 'opening' || cur.status === 'awaiting')) cur.cancelRequested = true
+    if (!cur) return true
+    const detected = await verify(page).catch(() => false)
+    cur.detected = detected
+
+    if (cur.confirmRequested) {
+      if (detected) return true
+      // 用户点了完成但确实没测到登录：退回等待，并明确告诉他
+      cur.confirmRequested = false
+      cur.message = '还没检测到登录状态：请先完成扫码，再点「我已完成登录」'
+      return false
+    }
+
+    if (requireConfirm) {
+      cur.message = detected
+        ? '已检测到登录状态，请点「我已完成登录」完成连接'
+        : '等待扫码或窗口内登录'
+      return false
+    }
+
+    // 自动模式也要让窗口露个脸，别一闪而过
+    return detected && Date.now() - startedAt >= minDwellMs
   }
 
   ;(async () => {
+    let result = { ok: false, status: 'error', message: '登录流程异常结束' }
     try {
-      const result = await openLoginWindow({
+      result = await openLoginWindow({
         profileDir: opts.profileDir,
         url: opts.url || platform.backendUrl,
         timeoutMs: opts.timeoutMs,
-        isLoggedIn: opts.isLoggedIn,
+        isLoggedIn,
+        onOpened: () => markSessionAwaiting(id, '等待扫码或窗口内登录'),
         shouldStop: () => Boolean(sessions.get(id)?.cancelRequested),
       })
       const cur = sessions.get(id)
@@ -203,17 +355,33 @@ export function startLogin(opts = {}) {
       cur.message = result.message
       cur.endedAt = Date.now()
     } catch (e) {
+      result = { ok: false, status: 'error', message: sanitizeError(e) }
       const cur = sessions.get(id)
       if (cur) {
         cur.status = 'error'
-        cur.message = sanitizeError(e)
+        cur.message = result.message
         cur.endedAt = Date.now()
       }
     } finally {
       if (activeSession === id) activeSession = null
+      try {
+        opts.onResult?.(result, { id, platform: platform.id, accountId: job.accountId })
+      } catch {
+        /* 回调失败不影响登录结果 */
+      }
     }
   })()
 
+  return { ...job }
+}
+
+/** 用户在窗口里完成扫码后，点「我已完成登录」触发；真正判定仍由平台会话决定 */
+export function confirmLogin(id) {
+  const job = sessions.get(id)
+  if (!job) return null
+  if (job.status !== 'opening' && job.status !== 'awaiting') return { ...job }
+  job.confirmRequested = true
+  job.message = '正在确认登录状态…'
   return { ...job }
 }
 

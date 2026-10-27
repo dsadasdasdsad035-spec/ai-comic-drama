@@ -11,3 +11,7 @@ export declare function startQueue(root: string): string
 export declare function resetQueueForTest(): void
 export declare function setContextFactoryForTest(fn: ((profileDir: string) => Promise<unknown>) | null): void
 export declare function activeJobCount(root: string): number
+/** 草稿/人工验证场景留给用户的窗口数量 */
+export declare function keptOpenWindowCount(): number
+/** 关闭所有留给用户的窗口，返回关闭数量 */
+export declare function closeKeptOpenWindows(): Promise<number>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import PlatformBadge from './PlatformBadge'
-import { connectAccount, deleteAccount, pollLogin, setAutoDraft } from './api'
+import { cancelLogin, confirmLogin, connectAccount, deleteAccount, pollLogin, setAutoDraft } from './api'
 import type { PlatformCapability, PublishAccount } from './types'
 
 function statusLabel(s: PublishAccount['status']): string {
@@ -28,6 +28,8 @@ export function ConnectDialog({
   const [message, setMessage] = useState('正在打开浏览器…')
   const [loginId, setLoginId] = useState('')
   const [accountId, setAccountId] = useState(account?.id || '')
+  const [requireConfirm, setRequireConfirm] = useState(false)
+  const [detected, setDetected] = useState(false)
   const timer = useRef<number | null>(null)
 
   const begin = useCallback(async () => {
@@ -41,8 +43,14 @@ export function ConnectDialog({
       })
       setLoginId(r.login.id)
       setAccountId(r.account.id)
+      setRequireConfirm(Boolean(r.login.requireConfirm))
+      setDetected(Boolean(r.login.detected))
       setState('awaiting')
-      setMessage('请在弹出的浏览器窗口中完成登录（扫码或账号密码）')
+      setMessage(
+        r.login.requireConfirm
+          ? '已复用现有登录目录。在窗口中完成登录后，点下方「我已完成登录」。'
+          : '请在弹出的浏览器窗口中完成登录（扫码或账号密码）',
+      )
     } catch (e) {
       setState('error')
       setMessage((e as Error).message)
@@ -63,6 +71,8 @@ export function ConnectDialog({
         const r = await pollLogin(loginId)
         setState(r.login.status)
         setMessage(r.login.message || '')
+        setRequireConfirm(Boolean(r.login.requireConfirm))
+        setDetected(Boolean(r.login.detected))
         if (r.login.status === 'done') {
           if (timer.current) window.clearInterval(timer.current)
           onToast(`${platform.label}已连接`)
@@ -81,10 +91,41 @@ export function ConnectDialog({
 
   const busy = state === 'opening' || state === 'awaiting'
 
+  /** 关闭时若登录还没结束，先取消，避免浏览器窗口留到超时 */
+  const close = useCallback(async () => {
+    if (loginId && busy) {
+      try {
+        await cancelLogin(loginId)
+      } catch {
+        /* 取消失败也要关闭弹窗 */
+      }
+    }
+    if (timer.current) window.clearInterval(timer.current)
+    onClose()
+  }, [loginId, busy, onClose])
+
+  /** 重新登录时由用户点这里结束等待；判定仍由服务端按真实会话确认 */
+  const confirmDone = useCallback(async () => {
+    if (!loginId) return
+    setMessage('正在确认登录状态…')
+    try {
+      const login = await confirmLogin(loginId)
+      if (login.status === 'done') {
+        if (timer.current) window.clearInterval(timer.current)
+        onToast(`${platform.label}已连接`)
+        onDone()
+      } else {
+        setMessage(login.message || '还没检测到登录状态，请先完成扫码')
+      }
+    } catch (e) {
+      setMessage((e as Error).message)
+    }
+  }, [loginId, platform.label, onToast, onDone])
+
   return (
     <div className="pb-modal-mask" role="dialog" aria-modal="true" aria-label={`连接${platform.label}`}>
       <div className="pb-modal">
-        <div className="pb-modal-head">连接 {platform.label}</div>
+        <div className="pb-modal-head">{account ? `重新登录 ${platform.label}` : `连接 ${platform.label}`}</div>
         <div className="pb-modal-body">
           <div className="pb-login-qr">
             {busy ? '请在弹出的浏览器窗口中完成登录' : state === 'done' ? '登录成功' : '未完成登录'}
@@ -102,8 +143,13 @@ export function ConnectDialog({
               重新获取
             </button>
           )}
-          <button type="button" className="btn primary" onClick={onClose} disabled={state === 'opening'}>
-            {state === 'done' ? '完成' : '关闭'}
+          {busy && requireConfirm && (
+            <button type="button" className="btn primary" onClick={() => void confirmDone()}>
+              我已完成登录
+            </button>
+          )}
+          <button type="button" className={`btn ${busy && requireConfirm ? '' : 'primary'}`} onClick={() => void close()}>
+            {state === 'done' ? '完成' : busy ? '取消登录' : '关闭'}
           </button>
         </div>
       </div>

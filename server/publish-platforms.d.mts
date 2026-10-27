@@ -24,6 +24,8 @@ export interface PlatformCapability {
 export declare const PUBLISH_MODES: string[]
 export declare const PLATFORMS: PlatformCapability[]
 export declare const COVER_ASPECT_ORDER: string[]
+/** 封面比例全集；配置规范化与前端枚举共用同一份 */
+export declare const COVER_ASPECTS: string[]
 
 export declare function listPlatforms(): PlatformCapability[]
 export declare function getPlatform(id: string): PlatformCapability

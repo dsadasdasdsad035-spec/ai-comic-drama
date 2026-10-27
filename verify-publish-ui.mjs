@@ -183,6 +183,41 @@ await check('封面比例框有四档样式', async () => {
   for (const r of ratios) assert.notEqual(r, 'auto')
 })
 
+await check('抽帧封面先落盘再写配置', async () => {
+  // 拦截落盘接口，避免测试真的往 public/generated 写文件；
+  // 断言页面展示的是返回的文件地址，而不是 dataURL。
+  const savedUrl = '/generated/cover-9x16-test.jpg'
+  let saveCalls = 0
+  let sentPrefix = ''
+  await page.route('**/api/save-image', async (route) => {
+    saveCalls++
+    try {
+      sentPrefix = String(JSON.parse(route.request().postData() || '{}').prefix || '')
+    } catch {
+      sentPrefix = ''
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, url: savedUrl }) })
+  })
+
+  const frame = page.locator('.pb-cover-frame[data-aspect="9:16"]')
+  await frame.scrollIntoViewIfNeeded()
+  // 找到封面区里的抽帧按钮并点击
+  await page.locator('.pb-cover-acts button', { hasText: '从成片抽帧' }).first().click()
+  await page.waitForSelector('.pb-frame img', { timeout: 20_000 })
+  await page.locator('.pb-frame').first().click()
+  await page.waitForFunction(
+    (expected) => Boolean(document.querySelector(`.pb-cover-frame[data-aspect="9:16"] img[src="${expected}"]`)),
+    savedUrl,
+    { timeout: 10_000 },
+  )
+  const src = await page.getAttribute('.pb-cover-frame[data-aspect="9:16"] img', 'src')
+  assert.equal(src, savedUrl, `封面应指向落盘后的文件地址，实际 ${src}`)
+  assert.ok(!String(src).startsWith('data:'), '配置里不得出现 dataURL')
+  assert.ok(saveCalls >= 1, '抽帧选中后应调用落盘接口')
+  assert.equal(sentPrefix, 'cover-9x16', `落盘 prefix 应为 cover-9x16，实际 ${sentPrefix}`)
+  await page.unroute('**/api/save-image')
+})
+
 await check('标题太短与超长给出不同提示', async () => {
   // 视频号下限 6 字：在待发布页勾上它，再填 3 字
   await page.click('.wb-bar .viewtabs button:has-text("待发布")')
