@@ -18,7 +18,7 @@ import { resolveStageModel } from '../ModelSelect'
 import { resolveToolProtocol } from './toolCapabilities'
 import type { SceneCodeCheck } from '../sceneCodeSanitize'
 import type { PreparedCodeContext } from '../sceneCodePrepare'
-import { runSceneAgent } from './sceneAgentGraph'
+import { runSceneAgent, resolveSceneAgentEngine } from './sceneAgentGraph'
 import { manifestSummary, manifestText, type ContextManifest } from '../contextManifest'
 import { AgentBlenderSession } from './agentSandbox'
 import { applyAgentEvent } from './agentMessageReducer'
@@ -324,6 +324,15 @@ export default function SceneAgentChat({
       : protocol.reason === 'auto-json'
         ? 'JSON action（模型未声明支持，自动回退）'
         : 'JSON action'
+  // 引擎只做展示；实际选择在 runSceneAgent 里用同一套判断。
+  const engineLabel = (() => {
+    try {
+      const pick = resolveSceneAgentEngine({ settings, stagePick })
+      return pick.fallbackReason ? `${pick.engine}（已回退）` : pick.engine
+    } catch {
+      return 'langgraph（配置不可用）'
+    }
+  })()
   const [threadLoaded, setThreadLoaded] = useState(false)
   const [sceneSkillMeta, setSceneSkillMeta] = useState<{
     id: string
@@ -907,6 +916,9 @@ export default function SceneAgentChat({
           )}
           <div className="scene-skill-chip" data-tool-protocol>
             工具协议：{protocolLabel}
+          </div>
+          <div className="scene-skill-chip" data-agent-engine>
+            引擎：{engineLabel}
           </div>
           <ChatContextTray
             manifest={manifest}

@@ -41,6 +41,11 @@ import {
 } from '../creative/settings'
 import { listCreativeAdapters, type AdapterInfo } from '../creative/mediaApi'
 import { findToolCapability, normalizeToolProtocol, type ToolProtocol } from '../agent/toolCapabilities'
+import {
+  DEFAULT_SCENE_AGENT_ENGINE,
+  normalizeSceneAgentEngine,
+  type SceneAgentEngine,
+} from '../agent/sceneAgentEngine'
 import { resolveStageModel, stageModelEntries, textModelEntries } from '../ModelSelect'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from '../pricing'
 import CatalogDialog, { type CatalogEntry } from './CatalogDialog'
@@ -245,6 +250,7 @@ function cleanHash(input: {
   pricing: Pricing
   agentLimits: Required<AgentLimitSettings>
   agentToolProtocol: ToolProtocol
+  agentEngine: SceneAgentEngine
   creative?: CreativeSettings
   lipSync: LipSyncSettings
   customVoices: CustomVoice[]
@@ -275,6 +281,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
   const [agentToolProtocol, setAgentToolProtocol] = useState<ToolProtocol>('auto')
+  const [agentEngine, setAgentEngine] = useState<SceneAgentEngine>(() => normalizeSceneAgentEngine(undefined))
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   const [adapterError, setAdapterError] = useState('')
@@ -313,6 +320,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
     pricing,
     agentLimits,
     agentToolProtocol,
+    agentEngine,
     creative,
     lipSync,
     customVoices,
@@ -352,6 +360,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         setPricing(normalizePricing(s.pricing))
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
         setAgentToolProtocol(normalizeToolProtocol(s.agentToolProtocol))
+        setAgentEngine(normalizeSceneAgentEngine(s.agentEngine))
         setCreative(normalizeCreativeSettings(s.creative))
         setLipSync(normalizeLipSyncSettings(s.lipSync))
         setCustomVoices(Array.isArray(s.customVoices) ? s.customVoices : [])
@@ -368,6 +377,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
             pricing: normalizePricing(s.pricing),
             agentLimits: normalizeAgentLimits(s.agentLimits),
             agentToolProtocol: normalizeToolProtocol(s.agentToolProtocol),
+            agentEngine: normalizeSceneAgentEngine(s.agentEngine),
             creative: normalizeCreativeSettings(s.creative),
             lipSync: normalizeLipSyncSettings(s.lipSync),
             customVoices: Array.isArray(s.customVoices) ? s.customVoices : [],
@@ -459,6 +469,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         pricing,
         agentLimits,
         agentToolProtocol,
+        agentEngine,
         creative,
         lipSync,
         customVoices,
@@ -473,6 +484,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         pricing: normalizePricing(saved.pricing),
         agentLimits: normalizeAgentLimits(saved.agentLimits),
         agentToolProtocol: normalizeToolProtocol(saved.agentToolProtocol),
+        agentEngine: normalizeSceneAgentEngine(saved.agentEngine),
         creative: normalizeCreativeSettings(saved.creative),
         lipSync: normalizeLipSyncSettings(saved.lipSync),
         customVoices: Array.isArray(saved.customVoices) ? saved.customVoices : customVoices,
@@ -486,6 +498,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
       setPricing(next.pricing)
       setAgentLimits(next.agentLimits)
       setAgentToolProtocol(next.agentToolProtocol)
+      setAgentEngine(next.agentEngine)
       setCreative(next.creative as CreativeSettings)
       setLipSync(next.lipSync)
       setCustomVoices(next.customVoices)
@@ -695,6 +708,15 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         sceneResolution.entry.model,
       )
     : undefined
+  const sceneEngineText = !sceneResolution.entry
+    ? '未配置 3D 代码模型，运行时无法选择引擎'
+    : sceneCapability?.nativeTools
+      ? agentEngine === 'pi'
+        ? '当前模型支持原生工具调用，将使用 pi 引擎'
+        : '当前模型支持原生工具调用，但已选择 LangGraph 引擎'
+      : agentEngine === 'pi'
+        ? '当前模型未声明原生工具调用，运行时会自动回退 LangGraph'
+        : '当前模型未声明原生工具调用，将与 LangGraph 的 JSON action 回退配合'
   const sceneCapabilityText = !sceneResolution.entry
     ? '未配置 3D 代码模型'
     : sceneCapability?.nativeTools
@@ -1169,6 +1191,19 @@ export default function SettingsPage({ toast, onSaved }: Props) {
             onBlur={() => setAgentLimits(normalizeAgentLimits(agentLimits))}
           />
           <em>默认 {AGENT_LIMIT_DEFAULTS.totalSeconds} 秒；范围 {AGENT_LIMIT_RANGES.totalSeconds.min}–{AGENT_LIMIT_RANGES.totalSeconds.max}</em>
+        </label>
+        <label className="st-field">
+          <span>执行引擎</span>
+          <select
+            value={agentEngine}
+            onChange={(e) => setAgentEngine(normalizeSceneAgentEngine(e.target.value))}
+          >
+            <option value="pi">pi（默认）：能力表内模型自动启用</option>
+            <option value="langgraph">LangGraph：含 JSON action 回退</option>
+          </select>
+          <em>
+            默认 {DEFAULT_SCENE_AGENT_ENGINE}；{sceneEngineText}
+          </em>
         </label>
         <label className="st-field">
           <span>工具协议</span>

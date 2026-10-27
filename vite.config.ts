@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import type { DialogueDelivery } from './src/types'
 import tailwindcss from '@tailwindcss/vite'
 import { normalizeAgentLimits, type AgentLimitSettings } from './src/agent/agentLimits'
+import { normalizeSceneAgentEngine, type SceneAgentEngine } from './src/agent/sceneAgentEngine'
 import {
   entryOf,
   mergeCustomVoices,
@@ -343,6 +344,8 @@ type AppSettings = {
   agentLimits?: AgentLimitSettings
   /** 3D agent 的工具协议；缺省 auto */
   agentToolProtocol?: 'auto' | 'native' | 'json'
+  /** 3D agent 执行引擎；缺省 pi，模型不支持原生工具时回退 langgraph */
+  agentEngine?: SceneAgentEngine
   /** 设置库里的自定义音色条目 */
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
@@ -789,6 +792,7 @@ function normalizeSettings(raw: any): AppSettings {
         pricing: raw.pricing || {},
         agentLimits: normalizeAgentLimits(raw.agentLimits),
         agentToolProtocol: normalizeToolProtocol(raw.agentToolProtocol),
+        agentEngine: normalizeSceneAgentEngine(raw.agentEngine),
         lipSync: normalizeLipSyncSettings(raw.lipSync),
         customVoices: normalizeCustomVoices(raw.customVoices),
         creative: normalizeCreativeSettings(raw.creative),
@@ -819,6 +823,7 @@ function normalizeSettings(raw: any): AppSettings {
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
     agentToolProtocol: 'auto',
+    agentEngine: normalizeSceneAgentEngine(undefined),
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),
@@ -888,6 +893,7 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
     agentToolProtocol: normalizeToolProtocol(patch.agentToolProtocol ?? cur.agentToolProtocol),
+    agentEngine: normalizeSceneAgentEngine(patch.agentEngine ?? cur.agentEngine),
     lipSync: patch.lipSync !== undefined ? normalizeLipSyncSettings(patch.lipSync) : normalizeLipSyncSettings(cur.lipSync),
     customVoices: patch.customVoices !== undefined ? normalizeCustomVoices(patch.customVoices) : normalizeCustomVoices(cur.customVoices),
     // 创意配置：请求里带了就以请求为准（可整体覆盖），没带就保留原值。

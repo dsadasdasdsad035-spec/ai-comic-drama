@@ -66,6 +66,7 @@ const settings = {
   models: [{ key: 'agent-model', label: 'Agent', cap: 'text', provider: 'p', model: 'm' }],
   defaults: { text: 'agent-model' },
   stageModels: { sceneCode: 'agent-model' },
+  agentEngine: 'langgraph',
   apiKey: '',
   rules: {},
 }
@@ -206,6 +207,7 @@ const nativeSettings = {
   defaults: { text: 'native-model' },
   stageModels: { sceneCode: 'native-model' },
   agentToolProtocol: 'auto',
+  agentEngine: 'langgraph',
   apiKey: '',
   rules: {},
 }

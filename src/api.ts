@@ -1132,6 +1132,8 @@ export type AppSettings = {
    * 缺省 auto；不支持 tools 的模型在 auto 下继续走 JSON。
    */
   agentToolProtocol?: 'auto' | 'native' | 'json'
+  /** 3D agent 执行引擎；缺省 pi，模型不支持原生工具时回退 langgraph */
+  agentEngine?: 'langgraph' | 'pi'
   /** 口型 provider；默认关闭，Key 只存设置库 */
   lipSync?: LipSyncSettings
   /** 设置库里的自定义音色条目 */

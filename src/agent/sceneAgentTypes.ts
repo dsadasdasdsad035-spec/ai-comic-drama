@@ -257,6 +257,10 @@ export type SceneAgentResult = {
   reviewAttempts: number
   /** 本轮实际使用的工具协议 */
   toolProtocol?: 'native' | 'json'
+  /** 本轮实际使用的执行引擎；由门面填写 */
+  engine?: 'langgraph' | 'pi'
+  /** 回退到实际引擎的原因；正常选择时缺省 */
+  engineFallbackReason?: string
   events: AgentEvent[]
 }
 
