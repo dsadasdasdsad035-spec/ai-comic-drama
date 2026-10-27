@@ -1,14 +1,16 @@
 import type { MediaBundle, ProjectAssetItem } from './api'
 import type { AssetKind } from './data'
 
-export type PickSource = 'asset' | 'project-image' | 'generated-image' | 'video' | 'manual'
+export type PickSource = 'asset' | 'project-image' | 'generated-image' | 'video' | 'stock' | 'manual'
+
+export type MediaType = 'image' | 'video' | 'audio'
 
 export type PickItem = {
   /** 去重键，通常就是 url */
   key: string
   source: PickSource
   kind: AssetKind
-  mediaType: 'image' | 'video'
+  mediaType: MediaType
   title: string
   url: string
   name?: string
@@ -23,6 +25,7 @@ export const SOURCE_LABEL: Record<PickSource, string> = {
   'project-image': '项目图片',
   'generated-image': '生成图片',
   video: '视频',
+  stock: '在线素材',
   manual: '当前来源',
 }
 
@@ -31,13 +34,29 @@ export const KIND_LABEL: Record<AssetKind, string> = {
   prop: '道具',
   image: '图片',
   video: '视频',
+  audio: '音频',
   'expression-sheet': '表情总图',
 }
 
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)(?:[?#].*)?$/i
+const AUDIO_EXT = /\.(mp3|wav|ogg|opus|m4a|aac|flac)(?:[?#].*)?$/i
 
 export function isVideoUrl(url: string): boolean {
   return VIDEO_EXT.test(String(url || ''))
+}
+
+export function isAudioUrl(url: string): boolean {
+  return AUDIO_EXT.test(String(url || ''))
+}
+
+/**
+ * 素材的媒体类型：kind 优先，其次按扩展名。
+ * 所有「非视频即图片」的判断都应改为调用它，音频才不会漏进画面参考。
+ */
+export function assetMediaType(kind: AssetKind, url: string): MediaType {
+  if (kind === 'audio' || isAudioUrl(url)) return 'audio'
+  if (kind === 'video' || isVideoUrl(url)) return 'video'
+  return 'image'
 }
 
 function fileOf(url: string): string {
@@ -75,24 +94,31 @@ function readableTitle(
       ? '生成图'
       : source === 'video'
         ? '视频'
-        : source === 'project-image'
-          ? '项目图'
-          : KIND_LABEL[kind]
+        : source === 'stock'
+          ? '在线素材'
+          : source === 'project-image'
+            ? '项目图'
+            : KIND_LABEL[kind]
   const stamp = when(mtime)
   if (stamp) return `${label} · ${stamp}`
   const name = withoutExt(fileOf(url))
   return name ? `${label} · ${name}` : label
 }
 
-function mediaTypeOf(kind: AssetKind, url: string): 'image' | 'video' {
-  return kind === 'video' || isVideoUrl(url) ? 'video' : 'image'
+function mediaTypeOf(kind: AssetKind, url: string): MediaType {
+  return assetMediaType(kind, url)
 }
 
 function assetItem(a: ProjectAssetItem): PickItem | null {
   const url = String(a.url || '').trim()
   if (!url) return null
   const kind: AssetKind =
-    a.kind === 'scene' || a.kind === 'prop' || a.kind === 'video' || a.kind === 'image' || a.kind === 'expression-sheet'
+    a.kind === 'scene' ||
+    a.kind === 'prop' ||
+    a.kind === 'video' ||
+    a.kind === 'audio' ||
+    a.kind === 'image' ||
+    a.kind === 'expression-sheet'
       ? a.kind
       : 'image'
   return {
@@ -199,6 +225,7 @@ export function buildPickItems(
 /** 选择媒体后应写入的素材类型 */
 export function pickKind(item: PickItem, currentKind: AssetKind): AssetKind {
   if (item.mediaType === 'video') return 'video'
+  if (item.mediaType === 'audio') return 'audio'
   if (item.source === 'asset') return item.kind
   if (currentKind === 'scene' || currentKind === 'prop') return currentKind
   return 'image'
@@ -211,8 +238,9 @@ export function pickTitle(item: PickItem, currentTitle: string): string {
   return item.title
 }
 
-/** 给 UI 分组用：视频按媒体类型单独归类 */
-export function pickerTabOf(item: PickItem): 'project' | 'generated' | 'video' | 'manual' {
+/** 给 UI 分组用：视频和音频各自单独归类 */
+export function pickerTabOf(item: PickItem): 'project' | 'generated' | 'video' | 'audio' | 'manual' {
+  if (item.mediaType === 'audio') return 'audio'
   if (item.mediaType === 'video') return 'video'
   if (item.source === 'generated-image') return 'generated'
   if (item.source === 'asset' || item.source === 'project-image') return 'project'

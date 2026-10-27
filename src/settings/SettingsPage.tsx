@@ -49,10 +49,23 @@ import {
 import { resolveStageModel, stageModelEntries, textModelEntries } from '../ModelSelect'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from '../pricing'
 import CatalogDialog, { type CatalogEntry } from './CatalogDialog'
+import { fetchStockProviders } from '../stock/api'
+import type { StockProviderId, StockSettings } from '../stock/types'
 import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
 
 type Props = { toast: (m: string) => void; onSaved?: () => void }
-type Section = 'providers' | 'models' | 'routing' | 'agent' | 'creative' | 'pricing' | 'lipsync' | 'voices' | 'skills' | 'data'
+type Section =
+  | 'providers'
+  | 'models'
+  | 'routing'
+  | 'agent'
+  | 'creative'
+  | 'stock'
+  | 'pricing'
+  | 'lipsync'
+  | 'voices'
+  | 'skills'
+  | 'data'
 
 const DEFAULT_LIP_SYNC: LipSyncSettings = {
   provider: 'off',
@@ -210,6 +223,7 @@ const SECTION_META: { id: Section; label: string }[] = [
 const ADVANCED_META: { id: Section; label: string }[] = [
   { id: 'agent', label: 'Agent' },
   { id: 'creative', label: '创意' },
+  { id: 'stock', label: '素材库' },
   { id: 'pricing', label: '计价' },
   { id: 'lipsync', label: '口型' },
   { id: 'voices', label: '音色' },
@@ -252,6 +266,7 @@ function cleanHash(input: {
   agentToolProtocol: ToolProtocol
   agentEngine: SceneAgentEngine
   creative?: CreativeSettings
+  stock?: StockSettings
   lipSync: LipSyncSettings
   customVoices: CustomVoice[]
   apiKey: string
@@ -283,6 +298,9 @@ export default function SettingsPage({ toast, onSaved }: Props) {
   const [agentToolProtocol, setAgentToolProtocol] = useState<ToolProtocol>('auto')
   const [agentEngine, setAgentEngine] = useState<SceneAgentEngine>(() => normalizeSceneAgentEngine(undefined))
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
+  const [stock, setStock] = useState<StockSettings>({ providers: {} })
+  const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
+  const [stockTesting, setStockTesting] = useState(false)
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   const [adapterError, setAdapterError] = useState('')
   const [lipSync, setLipSync] = useState<LipSyncSettings>(DEFAULT_LIP_SYNC)
@@ -322,6 +340,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
     agentToolProtocol,
     agentEngine,
     creative,
+    stock,
     lipSync,
     customVoices,
     apiKey,
@@ -362,6 +381,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         setAgentToolProtocol(normalizeToolProtocol(s.agentToolProtocol))
         setAgentEngine(normalizeSceneAgentEngine(s.agentEngine))
         setCreative(normalizeCreativeSettings(s.creative))
+        setStock({ providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } })
         setLipSync(normalizeLipSyncSettings(s.lipSync))
         setCustomVoices(Array.isArray(s.customVoices) ? s.customVoices : [])
         setVoiceModelKey(s.defaults?.audio || '')
@@ -379,6 +399,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
             agentToolProtocol: normalizeToolProtocol(s.agentToolProtocol),
             agentEngine: normalizeSceneAgentEngine(s.agentEngine),
             creative: normalizeCreativeSettings(s.creative),
+            stock: { providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } },
             lipSync: normalizeLipSyncSettings(s.lipSync),
             customVoices: Array.isArray(s.customVoices) ? s.customVoices : [],
             apiKey: s.apiKey || '',
@@ -471,6 +492,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         agentToolProtocol,
         agentEngine,
         creative,
+        stock,
         lipSync,
         customVoices,
         apiKey,
@@ -486,6 +508,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         agentToolProtocol: normalizeToolProtocol(saved.agentToolProtocol),
         agentEngine: normalizeSceneAgentEngine(saved.agentEngine),
         creative: normalizeCreativeSettings(saved.creative),
+        stock: { providers: { ...((saved.stock?.providers || {}) as StockSettings['providers']) } },
         lipSync: normalizeLipSyncSettings(saved.lipSync),
         customVoices: Array.isArray(saved.customVoices) ? saved.customVoices : customVoices,
         apiKey: saved.apiKey || apiKey,
@@ -500,6 +523,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
       setAgentToolProtocol(next.agentToolProtocol)
       setAgentEngine(next.agentEngine)
       setCreative(next.creative as CreativeSettings)
+      setStock(next.stock)
       setLipSync(next.lipSync)
       setCustomVoices(next.customVoices)
       setApiKey(next.apiKey)
@@ -1256,6 +1280,36 @@ export default function SettingsPage({ toast, onSaved }: Props) {
     }))
   }
 
+  const STOCK_PROVIDERS: Array<{ id: StockProviderId; label: string; hint: string; requiresKey: boolean; envKey: string }> = [
+    { id: 'pexels', label: 'Pexels', hint: '图片 + 视频', requiresKey: true, envKey: 'PEXELS_API_KEY' },
+    { id: 'pixabay', label: 'Pixabay', hint: '图片 + 视频，中文检索更友好', requiresKey: true, envKey: 'PIXABAY_API_KEY' },
+    { id: 'openverse', label: 'Openverse', hint: '图片 + 音频，CC 许可', requiresKey: false, envKey: 'OPENVERSE_API_KEY' },
+  ]
+
+  const patchStock = (id: StockProviderId, patch: Partial<NonNullable<StockSettings['providers'][StockProviderId]>>) =>
+    setStock((prev) => ({
+      providers: {
+        ...prev.providers,
+        [id]: { enabled: false, baseUrl: '', hasApiKey: false, ...(prev.providers[id] || {}), ...patch },
+      },
+    }))
+
+  const testStock = async () => {
+    setStockTesting(true)
+    try {
+      // 先保存，否则服务端读到的还是旧配置
+      await saveSettings({ stock } as Partial<AppSettings>)
+      const list = await fetchStockProviders()
+      setStockStatus(Object.fromEntries(list.map((p) => [p.id, { ok: p.ok, reason: p.reason, keyFromEnv: p.keyFromEnv }])))
+      const bad = list.filter((p) => !p.ok)
+      toast(bad.length ? `${bad.length} 个来源不可用` : '全部来源可用')
+    } catch (e) {
+      toast((e as Error).message || '检测失败')
+    } finally {
+      setStockTesting(false)
+    }
+  }
+
   const CAP_BINDINGS: Array<{ cap: Cap; label: string; hint: string }> = [
     { cap: 'vision', label: '视觉理解', hint: '逐镜看证据帧' },
     { cap: 'videoVision', label: '视频理解', hint: '公网视频直读（可选）' },
@@ -1268,6 +1322,81 @@ export default function SettingsPage({ toast, onSaved }: Props) {
 
   const modelOptionsFor = (cap: Cap) =>
     models.filter((m) => (m.caps?.length ? m.caps.includes(cap) : m.cap === cap) && m.runtime !== 'catalog-only')
+
+  const renderStock = () => (
+    <section className="st-sec" data-settings-stock>
+      <header className="st-sec-head">
+        <h3>素材库</h3>
+        <span className="st-hint">
+          在线素材来自公开图库：检索在服务端完成，渲染出的结果会下载到当前项目。Key 只存本地设置库或环境变量，读取时不回传原文。
+        </span>
+        <span className="spacer" />
+        <button type="button" className="btn" data-stock-test disabled={stockTesting} onClick={() => void testStock()}>
+          {stockTesting ? '检测中…' : '检测可用性'}
+        </button>
+      </header>
+
+      <div className="st-grid">
+        {STOCK_PROVIDERS.map((p) => {
+          const cfg = stock.providers[p.id] || { enabled: false, baseUrl: '', hasApiKey: false }
+          const status = stockStatus[p.id]
+          return (
+            <div key={p.id} className="st-field st-stock-card" data-stock-provider-card={p.id}>
+              <span>
+                {p.label}
+                <em>{p.hint}</em>
+              </span>
+              <label className="st-stock-row">
+                <span>启用</span>
+                <select
+                  data-stock-enabled={p.id}
+                  value={cfg.enabled ? 'on' : 'off'}
+                  onChange={(e) => patchStock(p.id, { enabled: e.target.value === 'on' })}
+                >
+                  <option value="off">关闭</option>
+                  <option value="on">启用</option>
+                </select>
+              </label>
+              <label className="st-stock-row">
+                <span>API Key</span>
+                <input
+                  type="password"
+                  data-stock-key={p.id}
+                  value={cfg.hasApiKey ? '' : ''}
+                  placeholder={cfg.hasApiKey ? '已保存（留空保持不变）' : p.requiresKey ? `可留空沿用 ${p.envKey}` : `可选；留空沿用 ${p.envKey}`}
+                  onChange={(e) => patchStock(p.id, { apiKey: e.target.value, hasApiKey: false })}
+                />
+              </label>
+              <label className="st-stock-row">
+                <span>Base URL</span>
+                <input
+                  data-stock-base={p.id}
+                  value={cfg.baseUrl || ''}
+                  placeholder={
+                    p.id === 'pexels'
+                      ? 'https://api.pexels.com'
+                      : p.id === 'pixabay'
+                        ? 'https://pixabay.com'
+                        : 'https://api.openverse.org'
+                  }
+                  onChange={(e) => patchStock(p.id, { baseUrl: e.target.value })}
+                />
+              </label>
+              <div className="st-status-row">
+                {cfg.hasApiKey ? <span className="st-status-chip ok">已保存 Key</span> : null}
+                {cfg.keyFromEnv ? <span className="st-status-chip ok">来自环境变量</span> : null}
+                {status ? (
+                  <span className={`st-status-chip ${status.ok ? 'ok' : 'warn'}`} title={status.reason || '可用'}>
+                    {status.ok ? '可用' : `不可用：${status.reason || '未配置'}`}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
 
   const renderCreative = () => (
     <section className="st-sec" data-settings-creative>
@@ -1970,6 +2099,7 @@ export default function SettingsPage({ toast, onSaved }: Props) {
           {section === 'routing' && renderRouting()}
           {section === 'agent' && renderAgent()}
           {section === 'creative' && renderCreative()}
+          {section === 'stock' && renderStock()}
           {section === 'pricing' && renderPricing()}
           {section === 'lipsync' && renderLipSync()}
           {section === 'voices' && renderVoices()}

@@ -111,6 +111,8 @@ ffmpeg -filters | grep xfade
 **安全提醒**：一旦部署成公开链接，任何拿到链接的人都能消耗你的方舟额度。
 发布前至少要加一道口令或访问限制，或者只发给自己人。
 
+在线素材库的来源 Key 用 `PEXELS_API_KEY` / `PIXABAY_API_KEY` / `OPENVERSE_API_KEY`（都可选，Openverse 匿名也能用但额度很低）。来源检索与导入只在服务端发起，容器需要能访问对应图库域名；导入文件落在 `projects/<项目>/assets/`，与项目数据同生命周期。设置页填写的 Key 同样只存本地 SQLite，生产环境建议改用环境变量。
+
 APIMart 渠道使用独立的 `APIB_API_KEY` / `APIMART_API_KEY`，不会回退方舟 Key。设置库里的 Key 存在 SQLite `settings` 表，部署时应改用环境变量，避免把 Key 写进镜像或仓库。余额不足时网关对所有请求（包括 `/v1/models`）返回 402；部署后的渠道测试与状态条会把 402 显示为「余额不足」。APIMart 的图像/视频任务需要服务端能访问外网并下载结果到本地；参考视频只接受公网 URL（没有文档化的视频上传接口）。详见 `docs/apimart.md`。
 
 口型 provider 默认关闭；启用后需要 `SYNC_LABS_API_KEY` 或设置页 Key，以及服务端能访问 `api.sync.so` 并上传本地视频/音频。每次 provider 生成仍需人工确认；多说话人镜头不支持。口型验收只使用本地 ffmpeg 抽帧，不依赖云端。

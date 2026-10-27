@@ -2,6 +2,7 @@ import { extractFrames, type ModelEntry } from './api'
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import type { TransitionBoundary, TransitionGenerated } from './types'
+import { assetMediaType } from './mediaPick'
 import { collectShotReferences, currentShotImage } from './shotReferences'
 import { normalizeGenerated } from './transition'
 
@@ -115,7 +116,8 @@ export function transitionRefCandidates(
     const type = (n as unknown as { type?: string }).type
     if (type !== 'asset') continue
     const d = n.data as unknown as { kind?: string; title?: string; url?: string }
-    if (!d.url || d.kind === 'video') continue
+    if (!d.url) continue
+    if (assetMediaType((d.kind || 'image') as never, d.url) !== 'image') continue
     if (out.has(d.url)) continue
     const tag = { scene: '场景', prop: '道具', image: '图片' }[d.kind as string] ?? '参考'
     out.set(d.url, { token: n.id, label: `${tag}「${d.title || '未命名'}」`, url: d.url, source: 'asset' })

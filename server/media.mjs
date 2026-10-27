@@ -81,6 +81,79 @@ export function saveProjectImage(appRoot, name, bytes, ext = 'png', prefix = 'me
   return { file, url: projectMediaUrl(safeName, file) }
 }
 
+/**
+ * 写任意类型的项目媒体（图片 / 视频 / 音频），先落 .part 再重命名，
+ * 避免下载中断留下能被当成素材读到的半截文件。
+ * 传入 file 时用固定文件名：在线素材按「来源 + 条目」命名，重复导入即覆盖同一文件。
+ */
+export function saveProjectMedia(appRoot, name, bytes, { ext = 'bin', prefix = 'stock', file = '' } = {}) {
+  const safeName = safeProjectName(name)
+  const cleanExt = String(ext || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const cleanPrefix = String(prefix || 'stock').replace(/[^a-z0-9-]/gi, '') || 'stock'
+  const explicit = file ? safeMediaFile(file) : ''
+  if (file && !explicit) throw new Error(`非法的媒体文件名：${file}`)
+  const target = explicit || `${cleanPrefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${cleanExt}`
+  const dir = projectMediaDir(appRoot, safeName)
+  fs.mkdirSync(dir, { recursive: true })
+  const part = path.join(dir, `${target}.part`)
+  try {
+    fs.writeFileSync(part, bytes)
+    fs.renameSync(part, path.join(dir, target))
+  } catch (e) {
+    try {
+      fs.rmSync(part, { force: true })
+    } catch {
+      /* 清理失败不掩盖原始错误 */
+    }
+    throw e
+  }
+  return { file: target, url: projectMediaUrl(safeName, target) }
+}
+
+/**
+ * 流式写入项目媒体：下载过程中就落盘并累计大小，超限立即中止并删除临时文件。
+ * 返回最终文件名与字节数。
+ */
+export async function saveProjectMediaStream(appRoot, name, stream, { ext = 'bin', prefix = 'stock', file = '', maxBytes = 30 * 1024 * 1024 } = {}) {
+  const safeName = safeProjectName(name)
+  const cleanExt = String(ext || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const cleanPrefix = String(prefix || 'stock').replace(/[^a-z0-9-]/gi, '') || 'stock'
+  const explicit = file ? safeMediaFile(file) : ''
+  if (file && !explicit) throw new Error(`非法的媒体文件名：${file}`)
+  const target = explicit || `${cleanPrefix}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${cleanExt}`
+  const dir = projectMediaDir(appRoot, safeName)
+  fs.mkdirSync(dir, { recursive: true })
+  const part = path.join(dir, `${target}.part`)
+  let written = 0
+  const fd = fs.openSync(part, 'w')
+  try {
+    const reader = stream.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      written += value.length
+      if (written > maxBytes) throw new Error('文件超过大小上限')
+      fs.writeSync(fd, Buffer.from(value))
+    }
+    fs.closeSync(fd)
+    if (written === 0) throw new Error('下载内容为空')
+    fs.renameSync(part, path.join(dir, target))
+  } catch (e) {
+    try {
+      fs.closeSync(fd)
+    } catch {
+      /* 可能已关闭 */
+    }
+    try {
+      fs.rmSync(part, { force: true })
+    } catch {
+      /* 清理失败不掩盖原始错误 */
+    }
+    throw e
+  }
+  return { file: target, url: projectMediaUrl(safeName, target), bytes: written }
+}
+
 /** 把已有的公共产物复制进项目目录；目标已存在时不重复复制 */
 export function copyIntoProjectMedia(appRoot, name, sourceFile, file = '') {
   const safeName = safeProjectName(name)

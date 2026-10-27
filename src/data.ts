@@ -18,8 +18,11 @@ export type CharNodeType = Node<
   'char'
 >
 
-/** 素材类型：场景图 / 道具图 / 普通参考图 / 视频 / 角色表情总图 */
-export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'expression-sheet'
+/**
+ * 素材类型：场景图 / 道具图 / 普通参考图 / 视频 / 音频 / 角色表情总图。
+ * 音频只做素材管理与预览，不参与画面参考与成片音轨。
+ */
+export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'expression-sheet'
 
 /** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
 export type AssetNodeType = Node<

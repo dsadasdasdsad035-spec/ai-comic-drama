@@ -2,19 +2,24 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { listMedia, type MediaBundle } from './api'
 import type { AssetKind } from './data'
 import {
+  assetMediaType,
   buildPickItems,
   KIND_LABEL,
   pickerTabOf,
   SOURCE_LABEL,
   type PickItem,
 } from './mediaPick'
+import StockBrowser from './stock/StockBrowser'
+import type { StockImportResult, StockItem } from './stock/types'
 
-type Tab = 'project' | 'generated' | 'video' | 'manual'
+type Tab = 'project' | 'generated' | 'video' | 'audio' | 'stock' | 'manual'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'project', label: '项目素材' },
   { key: 'generated', label: '生成图片' },
   { key: 'video', label: '视频' },
+  { key: 'audio', label: '音频' },
+  { key: 'stock', label: '在线素材' },
   { key: 'manual', label: '手填地址' },
 ]
 
@@ -63,13 +68,14 @@ function MediaThumb({
   onBroken: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const [duration, setDuration] = useState(0)
 
   useEffect(() => {
-    const v = videoRef.current
-    if (!v || item.mediaType !== 'video') return
-    if (playing) v.play().catch(() => {})
-    else v.pause()
+    const el = item.mediaType === 'audio' ? audioRef.current : videoRef.current
+    if (!el || (item.mediaType !== 'video' && item.mediaType !== 'audio')) return
+    if (playing) el.play().catch(() => {})
+    else el.pause()
   }, [playing, item.mediaType])
 
   if (broken) {
@@ -77,6 +83,27 @@ function MediaThumb({
       <div className="mp-thumb-error">
         <span>预览失败</span>
       </div>
+    )
+  }
+
+  if (item.mediaType === 'audio') {
+    return (
+      <>
+        <audio
+          ref={audioRef}
+          className="mp-thumb-audio"
+          src={item.url}
+          muted
+          loop
+          preload="metadata"
+          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+          onError={onBroken}
+        />
+        <span className="mp-audio-badge" aria-hidden="true">
+          {playing ? '❚❚' : '♪'}
+        </span>
+        {duration > 0 && <span className="mp-duration">{fmtDuration(duration)}</span>}
+      </>
     )
   }
 
@@ -216,7 +243,7 @@ export default function MediaPicker({
   useEffect(() => {
     setDetailDims(null)
     setDetailDuration(0)
-    if (selected?.mediaType !== 'video') return
+    if (selected?.mediaType !== 'video' && selected?.mediaType !== 'audio') return
     const v = detailVideoRef.current
     if (!v) return
     const done = () => setDetailDuration(v.duration)
@@ -230,12 +257,12 @@ export default function MediaPicker({
   )
 
   const countFor = (key: Tab) => {
-    if (key === 'manual') return 0
+    if (key === 'manual' || key === 'stock') return 0
     return items.filter((i) => pickerTabOf(i) === key).length
   }
 
   const tabItems = useMemo(() => {
-    if (tab === 'manual') return []
+    if (tab === 'manual' || tab === 'stock') return []
     const q = query.trim().toLowerCase()
     return items.filter((i) => {
       if (pickerTabOf(i) !== tab) return false
@@ -258,6 +285,10 @@ export default function MediaPicker({
           )[0]
         : null
       setSelected(manual ?? null)
+      return
+    }
+    if (next === 'stock') {
+      setSelected(null)
       return
     }
     const list = items.filter((i) => pickerTabOf(i) === next)
@@ -327,6 +358,22 @@ export default function MediaPicker({
     }
   }
 
+  /** 在线素材：先下载进项目，再把站内地址交给父组件的确认流程 */
+  const onStockPicked = (result: StockImportResult, item: StockItem) => {
+    const kind = item.mediaType === 'audio' ? 'audio' : item.mediaType === 'video' ? 'video' : 'image'
+    const picked: PickItem = {
+      key: result.url,
+      source: 'stock',
+      kind,
+      mediaType: item.mediaType,
+      title: item.title,
+      url: result.url,
+      name: result.url.split('/').pop(),
+      mtime: Date.now(),
+    }
+    onConfirm(picked)
+  }
+
   const detailBroken = selected ? broken[selected.key] : false
 
   return (
@@ -372,7 +419,7 @@ export default function MediaPicker({
               </button>
             ))}
           </div>
-          {tab !== 'manual' && (
+          {tab !== 'manual' && tab !== 'stock' && (
             <input
               ref={searchRef}
               className="mp-search"
@@ -384,6 +431,11 @@ export default function MediaPicker({
           )}
         </div>
 
+        {tab === 'stock' ? (
+          <div className="mp-stock-body">
+            <StockBrowser projectName={projectName} mode="picker" onPicked={onStockPicked} />
+          </div>
+        ) : (
         <div className="mp-body">
           <div
             className="mp-list"
@@ -474,11 +526,23 @@ export default function MediaPicker({
                       {selected.current ? ' · 当前来源' : ''}
                     </span>
                   </div>
-                  <span className="mp-detail-kind">{selected.mediaType === 'video' ? '视频' : '图片'}</span>
+                  <span className="mp-detail-kind">
+                    {selected.mediaType === 'video' ? '视频' : selected.mediaType === 'audio' ? '音频' : '图片'}
+                  </span>
                 </div>
                 <div className={`mp-detail-preview ${detailBroken ? 'bad' : ''}`}>
                   {detailBroken ? (
                     <div className="mp-detail-error">素材无法加载，换一个或检查地址</div>
+                  ) : selected.mediaType === 'audio' ? (
+                    <audio
+                      key={selected.key}
+                      className="mp-detail-audio"
+                      src={selected.url}
+                      controls
+                      preload="metadata"
+                      onLoadedMetadata={(e) => setDetailDuration(e.currentTarget.duration)}
+                      onError={() => markBroken(selected)}
+                    />
                   ) : selected.mediaType === 'video' ? (
                     <video
                       ref={detailVideoRef}
@@ -515,7 +579,7 @@ export default function MediaPicker({
                   )}
                 </div>
                 <dl className="mp-meta">
-                  {selected.mediaType === 'video' ? (
+                  {selected.mediaType === 'video' || selected.mediaType === 'audio' ? (
                     <div>
                       <dt>时长</dt>
                       <dd>{fmtDuration(detailDuration) || '—'}</dd>
@@ -539,30 +603,35 @@ export default function MediaPicker({
                 </div>
               </>
             ) : (
-              <div className="mp-empty">选一个素材查看大图 / 视频</div>
+              <div className="mp-empty">选一个素材查看大图 / 视频 / 音频</div>
             )}
           </aside>
         </div>
+        )}
 
         <footer className="mp-foot">
           <span className="mp-foot-hint">
-            {manualUrl && tab === 'manual' && selected
-              ? selected.title
-              : '双击条目也可以直接使用'}
+            {tab === 'stock'
+              ? '下载到项目后会自动选用；也可以先选中预览'
+              : manualUrl && tab === 'manual' && selected
+                ? selected.title
+                : '双击条目也可以直接使用'}
           </span>
           <button type="button" className="mp-btn" onClick={onClose}>
             取消
           </button>
-          <button
-            type="button"
-            className="mp-btn primary"
-            disabled={!canConfirm}
-            onClick={() => {
-              if (selected && canConfirm) onConfirm(selected)
-            }}
-          >
-            使用这张
-          </button>
+          {tab !== 'stock' && (
+            <button
+              type="button"
+              className="mp-btn primary"
+              disabled={!canConfirm}
+              onClick={() => {
+                if (selected && canConfirm) onConfirm(selected)
+              }}
+            >
+              使用这个
+            </button>
+          )}
         </footer>
       </div>
     </div>

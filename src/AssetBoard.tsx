@@ -26,6 +26,8 @@ import {
   type WorkbenchChatAdapter,
 } from './agent/workbenchChat'
 import { AgentButton } from './agent/AgentButton'
+import StockBrowser from './stock/StockBrowser'
+import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
 import WorkbenchBar from './WorkbenchBar'
@@ -45,6 +47,8 @@ type Props = {
   /** 已在当前项目画布上的设定 id */
   onCanvasDesignIds: Set<string>
   onPush: (designs: DesignSheet[]) => void
+  /** 在线素材导入后直接建一张画布素材卡 */
+  onAddAssetCard?: (input: { title: string; kind: string; url: string }) => void
   toast: (m: string) => void
   price?: Pricing
   /** 服务端报告的缺失图片引用 */
@@ -69,6 +73,7 @@ export default function AssetBoard({
   onPickImageModel,
   onCanvasDesignIds,
   onPush,
+  onAddAssetCard,
   toast,
   price,
   missing,
@@ -78,6 +83,7 @@ export default function AssetBoard({
   const [designs, setDesigns] = useState<DesignSheet[]>([])
   const [tab, setTab] = useState<DesignKind>('scene')
   const [loading, setLoading] = useState(false)
+  const [stockOpen, setStockOpen] = useState(false)
   const [ready, setReady] = useState('')
   const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
   const [running, setRunning] = useState<Record<string, boolean>>({})
@@ -431,6 +437,42 @@ export default function AssetBoard({
     onPush(designs)
   }
 
+  /**
+   * 在线素材导入落点：
+   * - 素材卡：直接建卡（视频/音频只能走这里）
+   * - 场景/道具：建一张没有英文锚点的设定卡，提示补锚点后再生成设定图
+   */
+  const onStockImported = (result: StockImportResult, item: StockItem, target: StockImportTarget) => {
+    const mediaKind = item.mediaType === 'audio' ? 'audio' : item.mediaType === 'video' ? 'video' : 'image'
+    if (target === 'scene' || target === 'prop') {
+      if (item.mediaType !== 'image') {
+        onAddAssetCard?.({ title: item.title, kind: mediaKind, url: result.url })
+        return
+      }
+      const id = `design-stock-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+      const sheet: DesignSheet = {
+        id,
+        kind: target === 'scene' ? 'scene' : 'prop',
+        name: item.title || '在线素材',
+        refs: [],
+        summaryCn: item.author ? `来自 ${item.provider} · ${item.author}` : `来自 ${item.provider}`,
+        promptEn: '',
+        keywords: [],
+        image: result.url,
+        candidates: [result.url],
+        activeIdx: 0,
+      }
+      const next = [...designsRef.current, sheet]
+      designsRef.current = next
+      setDesigns(next)
+      patchProject(projectName, { designs: next }).catch(() => {})
+      setTab(sheet.kind)
+      toast('已作为设定卡导入，补英文锚点后即可生成设定图')
+      return
+    }
+    onAddAssetCard?.({ title: item.title, kind: mediaKind, url: result.url })
+  }
+
   const shown = useMemo(() => designs.filter((d) => d.kind === tab), [designs, tab])
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -486,6 +528,14 @@ export default function AssetBoard({
               title="用当前项目的原著、分集场次和全部分镜拆场景/道具"
             >
               {extracting === 'script' ? '拆解中…' : '从全剧拆'}
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={!projectName || ready !== projectName}
+              onClick={() => setStockOpen(true)}
+              title="检索公开图库，把图片 / 视频 / 音频下载进项目"
+            >
+              在线素材库
             </button>
             <button
               className={withImage === 0 ? 'btn primary' : 'btn-ghost'}
@@ -559,6 +609,29 @@ export default function AssetBoard({
         )}
       </div>
       </div>
+      {stockOpen && (
+        <div className="mp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setStockOpen(false)}>
+          <div className="mp-dialog stock-dialog" role="dialog" aria-modal="true" aria-label="在线素材库">
+            <header className="mp-head">
+              <div>
+                <b>在线素材库</b>
+                <span>检索公开图库，下载到当前项目</span>
+              </div>
+              <button type="button" className="mp-close" aria-label="关闭" onClick={() => setStockOpen(false)}>
+                ×
+              </button>
+            </header>
+            <div className="mp-stock-body">
+              <StockBrowser
+                projectName={projectName}
+                mode="library"
+                onImported={onStockImported}
+                toast={toast}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <WorkbenchChatAside
         surface="assets"
         open={chatVisible}

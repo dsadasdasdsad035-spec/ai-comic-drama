@@ -316,6 +316,29 @@ CREATE TABLE IF NOT EXISTS publish_intents (
   expires_at     TEXT,
   confirmed_at   TEXT
 );
+-- 在线素材来源留档：不放 assets 表，因为画布同步会整表替换 assets
+CREATE TABLE IF NOT EXISTS stock_imports (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id  INTEGER NOT NULL,
+  provider    TEXT NOT NULL,
+  item_id     TEXT NOT NULL,
+  asset_url   TEXT NOT NULL,
+  media_type  TEXT DEFAULT '',
+  title       TEXT DEFAULT '',
+  author      TEXT DEFAULT '',
+  author_url  TEXT DEFAULT '',
+  source_url  TEXT DEFAULT '',
+  license     TEXT DEFAULT '',
+  license_url TEXT DEFAULT '',
+  attribution TEXT DEFAULT '',
+  width       INTEGER,
+  height      INTEGER,
+  duration    REAL,
+  bytes       INTEGER,
+  created_at  TEXT,
+  UNIQUE(project_id, provider, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_imports_url ON stock_imports(project_id, asset_url);
 CREATE INDEX IF NOT EXISTS idx_deliverables_project ON deliverables(project, episode);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_key ON publish_jobs(idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_project ON publish_jobs(project, episode);
@@ -551,6 +574,107 @@ export function setSkillOverride(id, body, baseVersion = 1) {
 export function deleteSkillOverride(id) {
   if (!db) throw new Error('DB 未打开')
   db.prepare('DELETE FROM skill_overrides WHERE skill_id = ?').run(String(id))
+}
+
+// ---------------------------------------------------------------- 在线素材来源
+
+/** 项目名 → projects.id；项目不存在时抛错，避免把来源记录挂到不存在的项目上 */
+function stockProjectId(d, name) {
+  const n = safeProjectName(name)
+  const row = d.prepare('SELECT id FROM projects WHERE name = ?').get(n)
+  if (!row) throw new Error(`项目不存在：${n}`)
+  return row.id
+}
+
+function rowToStockImport(r) {
+  if (!r) return undefined
+  return {
+    provider: r.provider,
+    itemId: r.item_id,
+    url: r.asset_url,
+    mediaType: r.media_type || '',
+    title: r.title || '',
+    author: r.author || '',
+    authorUrl: r.author_url || '',
+    sourceUrl: r.source_url || '',
+    license: r.license || '',
+    licenseUrl: r.license_url || '',
+    attribution: r.attribution || '',
+    ...(r.width == null ? {} : { width: Number(r.width) }),
+    ...(r.height == null ? {} : { height: Number(r.height) }),
+    ...(r.duration == null ? {} : { duration: Number(r.duration) }),
+    ...(r.bytes == null ? {} : { bytes: Number(r.bytes) }),
+    createdAt: r.created_at || '',
+  }
+}
+
+/** 导入成功后写来源记录；同一项目 + 来源 + 条目只保留一条 */
+export function upsertStockImport(root, project, entry = {}) {
+  open(root)
+  const pid = stockProjectId(db, project)
+  const provider = String(entry.provider || '').trim()
+  const itemId = String(entry.itemId || '').trim()
+  if (!provider || !itemId) throw new Error('来源记录缺少 provider 或 itemId')
+  const created = String(entry.createdAt || new Date().toISOString())
+  db.prepare(
+    `INSERT INTO stock_imports
+       (project_id,provider,item_id,asset_url,media_type,title,author,author_url,source_url,
+        license,license_url,attribution,width,height,duration,bytes,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(project_id,provider,item_id) DO UPDATE SET
+       asset_url=excluded.asset_url, media_type=excluded.media_type, title=excluded.title,
+       author=excluded.author, author_url=excluded.author_url, source_url=excluded.source_url,
+       license=excluded.license, license_url=excluded.license_url, attribution=excluded.attribution,
+       width=excluded.width, height=excluded.height, duration=excluded.duration, bytes=excluded.bytes,
+       created_at=excluded.created_at`,
+  ).run(
+    pid,
+    provider,
+    itemId,
+    String(entry.url || ''),
+    String(entry.mediaType || ''),
+    String(entry.title || ''),
+    String(entry.author || ''),
+    String(entry.authorUrl || ''),
+    String(entry.sourceUrl || ''),
+    String(entry.license || ''),
+    String(entry.licenseUrl || ''),
+    String(entry.attribution || ''),
+    entry.width == null ? null : Math.round(Number(entry.width)),
+    entry.height == null ? null : Math.round(Number(entry.height)),
+    entry.duration == null ? null : Number(entry.duration),
+    entry.bytes == null ? null : Math.round(Number(entry.bytes)),
+    created,
+  )
+  return getStockImportByItem(root, project, provider, itemId)
+}
+
+export function getStockImportByItem(root, project, provider, itemId) {
+  open(root)
+  const pid = stockProjectId(db, project)
+  const row = db
+    .prepare('SELECT * FROM stock_imports WHERE project_id=? AND provider=? AND item_id=?')
+    .get(pid, String(provider), String(itemId))
+  return rowToStockImport(row)
+}
+
+/** 按站内地址反查来源，供素材卡详情显示；普通素材返回 undefined */
+export function findStockImportByUrl(root, project, url) {
+  open(root)
+  const pid = stockProjectId(db, project)
+  const row = db
+    .prepare('SELECT * FROM stock_imports WHERE project_id=? AND asset_url=?')
+    .get(pid, String(url || ''))
+  return rowToStockImport(row)
+}
+
+export function listStockImports(root, project, limit = 200) {
+  open(root)
+  const pid = stockProjectId(db, project)
+  return db
+    .prepare('SELECT * FROM stock_imports WHERE project_id=? ORDER BY id DESC LIMIT ?')
+    .all(pid, Math.max(1, Math.min(1000, Number(limit) || 200)))
+    .map(rowToStockImport)
 }
 
 // ---------------------------------------------------------------- 聊天线程

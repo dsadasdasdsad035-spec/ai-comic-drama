@@ -51,6 +51,7 @@ import { defaultCharacters, identityFingerprint, markExpressionSheetStale, markE
 import { isSheetUsable } from './expressionSheet'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
+import { assetMediaType } from './mediaPick'
 import { cardWidth, effectiveSeconds, isRenderableSceneCode, migrateMarks, uid, type Relation, type ScheduleMeta, type SceneCodeMeta, type SceneLayout, type ShotData, type Tool, type TransitionOut } from './types'
 import {
   callText,
@@ -1440,7 +1441,9 @@ function Shell() {
     }
     for (const a of assetNodes) {
       const d = a.data as unknown as { title?: string; kind?: string; url?: string }
-      if (d.kind === 'video' || !d.url) continue
+      if (!d.url) continue
+      // 只有图片类素材能当画面参考；视频与音频各有自己的链路
+      if (assetMediaType((d.kind || 'image') as never, d.url) !== 'image') continue
       const tag = { scene: '场景', prop: '道具', image: '图片', 'expression-sheet': '表情' }[d.kind ?? 'image'] ?? '图片'
       out.push({ id: a.id, title: d.title || '未命名素材', tag, img: d.url })
     }
@@ -1855,6 +1858,28 @@ function Shell() {
       window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.5, duration: 400 }), 80)
     },
     [setNodes, fitView, missingMedia],
+  )
+
+  /** 在线素材导入 → 直接生成一张素材卡（不建连线，不覆盖已手改内容） */
+  const addAssetCardFromStock = useCallback(
+    (input: { title: string; kind: string; url: string }) => {
+      const base = nodesRef.current.filter((n) => (n as unknown as AssetNodeType).type === 'asset').length
+      setNodes((prev) => [
+        ...prev,
+        {
+          id: `asset-${uid()}`,
+          type: 'asset',
+          position: {
+            x: 80 + (base % 4) * 250,
+            y: -560 - Math.floor(base / 4) * 180,
+          },
+          data: { title: input.title, kind: input.kind, url: input.url },
+        } as unknown as ShotNodeType,
+      ])
+      setToast(`已导入素材：${input.title}`)
+      window.setTimeout(() => setToast(''), 2400)
+    },
+    [setNodes],
   )
 
   /** 角色表情总图 → 画布：每个角色只有一张卡，重复发布只更新图片/标题。 */
@@ -3040,6 +3065,7 @@ function Shell() {
             onPickImageModel={(key) => pickModelKey('image', key)}
             onCanvasDesignIds={onCanvasDesignIds}
             onPush={pushDesigns}
+            onAddAssetCard={addAssetCardFromStock}
             price={price}
             missing={missingMedia}
             onImageMissing={markMissing}

@@ -69,6 +69,18 @@ import {
   saveProjectImage,
 } from './server/media.mjs'
 import {
+  mergeStockSettings,
+  normalizeStockSettings,
+  redactStockSettings,
+} from './server/stock-settings.mjs'
+import {
+  StockError,
+  describeProviders as describeStockProviders,
+  importStockItem,
+  searchStock as searchStockItems,
+  stockMetaForUrl,
+} from './server/stock.mjs'
+import {
   VideoParamError,
   buildVideoPayload,
   downloadVideoArtifacts,
@@ -351,6 +363,8 @@ type AppSettings = {
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
   creative?: CreativeSettings
+  /** 在线素材来源：每个来源的启用、Key 与可选 Base URL；缺省全部关闭 */
+  stock?: ReturnType<typeof normalizeStockSettings>
   /** 口型 provider；默认关闭 */
   lipSync?: {
     provider: 'off' | 'sync-labs'
@@ -797,6 +811,7 @@ function normalizeSettings(raw: any): AppSettings {
         lipSync: normalizeLipSyncSettings(raw.lipSync),
         customVoices: normalizeCustomVoices(raw.customVoices),
         creative: normalizeCreativeSettings(raw.creative),
+        stock: normalizeStockSettings(raw.stock),
         apiKey,
         rules,
         skillsMigrated: Boolean(raw.skillsMigrated),
@@ -828,6 +843,7 @@ function normalizeSettings(raw: any): AppSettings {
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),
+    stock: normalizeStockSettings(raw?.stock),
     apiKey,
     rules,
     skillsMigrated: Boolean(raw?.skillsMigrated),
@@ -875,6 +891,8 @@ function withKeyStatus(s: AppSettings): AppSettings {
     providers: s.providers.map((p) => ({ ...p, keyAvailable: Boolean(providerKey(p)) })),
     // 创意配置里的 DTK Key 同样只回「有没有」
     creative: redactCreativeSettings(normalizeCreativeSettings(s.creative)) as AppSettings['creative'],
+    // 在线素材来源的 Key 也不回传原文
+    stock: redactStockSettings(s.stock) as AppSettings['stock'],
   }
 }
 
@@ -914,6 +932,11 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
             },
           })
         : normalizeCreativeSettings(cur.creative),
+    // 在线素材：请求里没带就保留原值；Key 回读被脱敏成空串，合并时保留旧 Key
+    stock:
+      patch.stock !== undefined
+        ? mergeStockSettings(cur.stock, patch.stock)
+        : normalizeStockSettings(cur.stock),
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
     skillsMigrated:
@@ -1240,12 +1263,15 @@ function mimeOf(ext: string): string {
   const e = ext.toLowerCase()
   if (e === 'jpg' || e === 'jpeg') return 'image/jpeg'
   if (e === 'webp') return 'image/webp'
+  if (e === 'gif') return 'image/gif'
   if (e === 'mp4') return 'video/mp4'
   if (e === 'mov') return 'video/quicktime'
   if (e === 'm4a') return 'audio/mp4'
   if (e === 'aac') return 'audio/aac'
   if (e === 'mp3') return 'audio/mpeg'
   if (e === 'wav') return 'audio/wav'
+  if (e === 'ogg' || e === 'opus') return 'audio/ogg'
+  if (e === 'flac') return 'audio/flac'
   return 'image/png'
 }
 
@@ -4216,6 +4242,92 @@ function seedreamProxy(): Plugin {
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e), urls: [] }))
+          }
+          return
+        }
+
+        // ---- 在线素材库：来源、检索、导入与来源元数据 ----
+        if (url.startsWith('/api/stock/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const stockSettings = getAppSettings().stock
+          // 与其它渠道一致：设置库没填时读 .env / 环境变量
+          const stockEnv = {
+            PEXELS_API_KEY: readEnvKey('PEXELS_API_KEY') || '',
+            PIXABAY_API_KEY: readEnvKey('PIXABAY_API_KEY') || '',
+            OPENVERSE_API_KEY: readEnvKey('OPENVERSE_API_KEY') || '',
+          }
+          const fail = (e: any, fallbackStatus = 502) => {
+            const isStock = e instanceof StockError
+            const kind = isStock ? e.kind : 'provider'
+            const status =
+              kind === 'bad-request' || kind === 'expired'
+                ? 400
+                : kind === 'auth'
+                  ? 401
+                  : kind === 'too-large' || kind === 'unsupported-type'
+                    ? 400
+                    : kind === 'not-found'
+                      ? 404
+                      : fallbackStatus
+            res.statusCode = status
+            res.end(JSON.stringify({ ok: false, kind, message: sanitizeError(e) }))
+          }
+
+          try {
+            if (url === '/api/stock/providers' && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, providers: describeStockProviders(stockSettings, stockEnv) }))
+              return
+            }
+
+            if (url === '/api/stock/search' && req.method === 'GET') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const result = await searchStockItems({
+                provider: q.get('provider') || '',
+                mediaType: q.get('type') || '',
+                query: q.get('q') || '',
+                page: q.get('page') ? Number(q.get('page')) : undefined,
+                perPage: q.get('perPage') ? Number(q.get('perPage')) : undefined,
+                orientation: q.get('orientation') || '',
+                settings: stockSettings,
+                env: stockEnv,
+              })
+              res.end(JSON.stringify({ ok: true, ...result }))
+              return
+            }
+
+            if (url === '/api/stock/import' && req.method === 'POST') {
+              const body = await readJson(req)
+              // 只接受令牌；显式拒绝客户端提交的地址类参数，避免变成开放代理
+              if (body?.url || body?.path || body?.downloadUrl || body?.sourceUrl) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, kind: 'bad-request', message: '导入只接受检索令牌，不接受下载地址' }))
+                return
+              }
+              const project = safeProjectName(String(body?.project || '').trim())
+              const dbRoot = resolveRoot(root)
+              const result = await importStockItem({
+                token: String(body?.token || ''),
+                project,
+                root: dbRoot,
+                settings: stockSettings,
+                env: stockEnv,
+              })
+              res.end(JSON.stringify({ ok: true, ...result }))
+              return
+            }
+
+            if (url === '/api/stock/meta' && req.method === 'GET') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const project = safeProjectName(String(q.get('project') || '').trim())
+              const meta = stockMetaForUrl(resolveRoot(root), project, String(q.get('url') || ''))
+              res.end(JSON.stringify({ ok: true, meta }))
+              return
+            }
+
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, kind: 'not-found', message: '未知的在线素材接口' }))
+          } catch (e: any) {
+            fail(e)
           }
           return
         }

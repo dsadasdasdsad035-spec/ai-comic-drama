@@ -20,6 +20,7 @@ const TESTS = [
   'tests/creative-contract.ts',
   'tests/creative-tools.ts',
   'tests/publish-chat.ts',
+  'tests/stock.ts',
 ]
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-unit-'))
 let failed = 0

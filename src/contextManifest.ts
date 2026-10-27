@@ -1,3 +1,4 @@
+import { assetMediaType } from './mediaPick'
 import type { Shot3DContext } from './types'
 import {
   allCatalogItems,
@@ -91,7 +92,9 @@ export function selectedImageItems(
   const seen = new Set<string>()
   const out: Shot3DContextItem[] = []
   for (const item of allCatalogItems(catalog)) {
+    // 只收图片：视频走单独的视频清单，音频不参与任何画面参考
     if (!item.url || item.category === 'video') continue
+    if (assetMediaType((item.kind === 'video' ? 'video' : 'image') as never, item.url) !== 'image') continue
     if (!itemIsSelected(context, item) || seen.has(item.url)) continue
     seen.add(item.url)
     out.push(item)

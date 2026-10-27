@@ -40,6 +40,18 @@ export declare function saveProjectImage(
   ext?: string,
   prefix?: string,
 ): SavedMedia
+export declare function saveProjectMedia(
+  appRoot: string,
+  name: string,
+  bytes: Buffer | Uint8Array,
+  options?: { ext?: string; prefix?: string; file?: string },
+): SavedMedia
+export declare function saveProjectMediaStream(
+  appRoot: string,
+  name: string,
+  stream: ReadableStream<Uint8Array>,
+  options?: { ext?: string; prefix?: string; file?: string; maxBytes?: number },
+): Promise<SavedMedia & { bytes: number }>
 export declare function copyIntoProjectMedia(
   appRoot: string,
   name: string,

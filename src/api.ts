@@ -2,6 +2,7 @@ import { endTask, startTask } from './tasks'
 import { SseEventParser } from './textStream'
 import type { AgentLimitSettings } from './agent/agentLimits'
 import type { CreativeSettings } from './creative/settings'
+import type { StockSettings } from './stock/types'
 import type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
 export type { CustomVoice, VoiceCapabilities, VoiceEntry, VoiceSource } from './voiceCatalog'
 import type {
@@ -1140,6 +1141,8 @@ export type AppSettings = {
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
   creative?: CreativeSettings
+  /** 在线素材来源：启用、Key（只回 hasApiKey）与可选 Base URL；缺省全部关闭 */
+  stock?: StockSettings
   apiKey: string
   rules: Record<string, RulePack>
   /** 旧规则包已迁移为技能覆盖；避免重复迁移 */

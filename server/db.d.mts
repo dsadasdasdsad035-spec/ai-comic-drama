@@ -57,3 +57,43 @@ export declare function saveChatThread(
   activeSkills?: unknown[],
 ): ReturnType<typeof getChatThread>
 export declare function deleteChatThread(key: ChatThreadKey): void
+
+export declare type StockImportRecord = {
+  provider: string
+  itemId: string
+  url: string
+  mediaType: string
+  title: string
+  author: string
+  authorUrl: string
+  sourceUrl: string
+  license: string
+  licenseUrl: string
+  attribution: string
+  width?: number
+  height?: number
+  duration?: number
+  bytes?: number
+  createdAt: string
+}
+export declare function upsertStockImport(
+  root: string,
+  project: string,
+  entry: Partial<StockImportRecord> & { provider: string; itemId: string },
+): StockImportRecord | undefined
+export declare function getStockImportByItem(
+  root: string,
+  project: string,
+  provider: string,
+  itemId: string,
+): StockImportRecord | undefined
+export declare function findStockImportByUrl(
+  root: string,
+  project: string,
+  url: string,
+): StockImportRecord | undefined
+export declare function listStockImports(
+  root: string,
+  project: string,
+  limit?: number,
+): StockImportRecord[]

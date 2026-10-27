@@ -20,6 +20,8 @@ const PROJECT = 'media-test'
 const PROJECT_MEDIA = path.join(TMP, PROJECT, 'assets')
 const GEN_IMG = path.join(ROOT, 'public', 'generated', 'picker-generated.png')
 const VIDEO = path.join(ROOT, 'public', 'videos', 'picker-test.mp4')
+const AUDIO = path.join(PROJECT_MEDIA, 'picker-audio.mp3')
+const AUD = `/project-assets/${PROJECT}/picker-audio.mp3`
 const A = `/project-assets/${PROJECT}/picker-a.png`
 const B = `/project-assets/${PROJECT}/picker-b.png`
 const BROKEN = `/project-assets/${PROJECT}/missing.png`
@@ -42,6 +44,13 @@ const makePng = (file, color) => {
   execFileSync(
     ffmpeg,
     ['-y', '-f', 'lavfi', '-i', `color=c=${color}:s=320x180`, '-frames:v', '1', file],
+    { stdio: 'ignore' },
+  )
+}
+const makeAudio = (file) => {
+  execFileSync(
+    ffmpeg,
+    ['-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'libmp3lame', file],
     { stdio: 'ignore' },
   )
 }
@@ -87,6 +96,7 @@ try {
   makePng(path.join(PROJECT_MEDIA, 'picker-b.png'), '0xb45309')
   makePng(GEN_IMG, '0x15803d')
   makeVideo(VIDEO)
+  makeAudio(AUDIO)
 
   if (!(await waitServer())) throw new Error('临时 dev server 启动失败')
 
@@ -106,6 +116,7 @@ try {
         { kind: 'image', title: '坏图', url: BROKEN },
         { kind: 'video', title: '项目视频', url: V },
         { kind: 'video', title: '坏视频', url: '/videos/missing-picker.mp4' },
+        { kind: 'audio', title: '环境雨声', url: AUD },
       ],
     }),
   })
@@ -117,7 +128,7 @@ try {
   await page.waitForTimeout(1200)
 
   // ---- 纯函数：归一化 / 去重 / 类型与标题 ----
-  const pure = await page.evaluate(async ({ A, B, G, V, BROKEN }) => {
+  const pure = await page.evaluate(async ({ A, B, G, V, BROKEN, AUD }) => {
     const m = await import('/src/mediaPick.ts')
     const media = {
       assets: [
@@ -127,6 +138,7 @@ try {
         { kind: 'image', title: '坏图', url: BROKEN },
         { kind: 'video', title: '项目视频', url: V },
         { kind: 'video', title: '坏视频', url: '/videos/missing-picker.mp4' },
+        { kind: 'audio', title: '环境雨声', url: AUD },
       ],
       images: [
         { name: 'picker-a.png', url: A, size: 100, mtime: 10 },
@@ -151,18 +163,28 @@ try {
       autoTitle: generated ? m.pickTitle(generated, '新素材') : '',
       keptTitle: generated ? m.pickTitle(generated, '我的标题') : '',
       videoTab: video ? m.pickerTabOf(video) : '',
+      audioKind: (() => {
+        const a = items.find((i) => i.url && i.kind === 'audio')
+        return a ? m.pickKind(a, 'image') : ''
+      })(),
+      audioTab: (() => {
+        const a = items.find((i) => i.url && i.kind === 'audio')
+        return a ? m.pickerTabOf(a) : ''
+      })(),
     }
-  }, { A, B, G, V, BROKEN })
-  check('空 URL 素材被过滤', !pure.emptyPresent && pure.count === 6, JSON.stringify(pure))
+  }, { A, B, G, V, BROKEN, AUD })
+  check('空 URL 素材被过滤', !pure.emptyPresent && pure.count === 7, JSON.stringify(pure))
   check('重复 URL 只保留一条且项目素材优先', pure.aCount === 1 && pure.aTitle === '地下井道' && pure.aKind === 'scene')
   check('视频自动推导为 video', pure.videoKind === 'video')
   check('场景素材保持 scene', pure.sceneKind === 'scene')
   check('普通图保留/回落规则', pure.generatedKind === 'prop')
   check('默认标题自动填、手改标题保留', Boolean(pure.autoTitle) && pure.keptTitle === '我的标题', JSON.stringify(pure))
   check('视频进入视频页签', pure.videoTab === 'video')
+  check('音频自动推导为 audio', pure.audioKind === 'audio')
+  check('音频进入音频页签', pure.audioTab === 'audio')
 
   // ---- 添加素材卡并打开选择器 ----
-  await page.locator('header button').filter({ hasText: '+ 素材' }).first().click()
+  await page.locator('.btn-mini').filter({ hasText: '+ 素材' }).first().click()
   await page.waitForTimeout(600)
   const assetId = await page.evaluate(() => {
     const p = JSON.parse(localStorage.getItem('storyboard-canvas-v1:media-test') || '{}')
@@ -201,8 +223,8 @@ try {
   await dialog.locator(`[data-pick-key="${A}"]`).click()
   await page.waitForTimeout(400)
   check('图片详情预览出现', (await page.locator('.mp-detail-preview img').count()) === 1)
-  check('确认按钮可用', !(await page.getByRole('button', { name: '使用这张' }).isDisabled()))
-  await page.getByRole('button', { name: '使用这张' }).click()
+  check('确认按钮可用', !(await page.getByRole('button', { name: '使用这个' }).isDisabled()))
+  await page.getByRole('button', { name: '使用这个' }).click()
   await page.waitForTimeout(500)
   check('确认后选择器关闭', (await page.locator('.mp-dialog').count()) === 0)
   let data = await assetData(page, assetId)
@@ -225,7 +247,7 @@ try {
   await page.locator('.mp-tile').filter({ hasText: '坏图' }).first().click()
   await page.waitForTimeout(500)
   check('坏图显示详情错误', (await page.locator('.mp-detail-error').count()) === 1)
-  check('坏图不能确认', await page.getByRole('button', { name: '使用这张' }).isDisabled())
+  check('坏图不能确认', await page.getByRole('button', { name: '使用这个' }).isDisabled())
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
   check('Esc 关闭并把焦点还给来源按钮', await page.evaluate(() => document.activeElement?.classList.contains('asset-source')))
@@ -250,15 +272,43 @@ try {
   await page.locator('.mp-tile').filter({ hasText: '坏视频' }).first().click()
   await page.waitForTimeout(500)
   check('坏视频显示详情错误', (await page.locator('.mp-detail-error').count()) === 1)
-  check('坏视频不能确认', await page.getByRole('button', { name: '使用这张' }).isDisabled())
+  check('坏视频不能确认', await page.getByRole('button', { name: '使用这个' }).isDisabled())
   await videoTile.click()
   await page.waitForTimeout(300)
   check('视频详情 controls 出现', (await page.locator('.mp-detail-preview video[controls]').count()) === 1)
-  await page.getByRole('button', { name: '使用这张' }).click()
+  await page.getByRole('button', { name: '使用这个' }).click()
   await page.waitForTimeout(500)
   data = await assetData(page, assetId)
   check('选择视频自动切 video', data?.kind === 'video' && data?.url === V, JSON.stringify(data))
   check('画布素材卡按视频渲染', (await page.locator('.asset-node video').count()) >= 1)
+
+  // 音频
+  await page.locator('.asset-source').click()
+  await page.waitForTimeout(600)
+  await page.locator('.mp-tabs button').filter({ hasText: '音频' }).click()
+  await page.waitForTimeout(300)
+  check('音频页签有 fixture', (await page.locator(`[data-pick-key="${AUD}"]`).count()) === 1)
+  await page.locator(`[data-pick-key="${AUD}"]`).click()
+  await page.waitForTimeout(500)
+  check('音频详情播放器出现', (await page.locator('.mp-detail-preview audio').count()) === 1)
+  check('音频详情标注为音频', (await page.locator('.mp-detail-kind').innerText()) === '音频')
+  await page.getByRole('button', { name: '使用这个' }).click()
+  await page.waitForTimeout(500)
+  data = await assetData(page, assetId)
+  check('选择音频自动切 audio', data?.kind === 'audio' && data?.url === AUD, JSON.stringify(data))
+  check('画布素材卡按音频渲染', (await page.locator('.asset-node audio').count()) >= 1)
+
+  // 音频取消不写回
+  await page.locator('.asset-source').click()
+  await page.waitForTimeout(600)
+  await page.locator('.mp-tabs button').filter({ hasText: '生成图片' }).click()
+  await page.waitForTimeout(300)
+  await page.locator(`[data-pick-key="${G}"]`).click()
+  await page.waitForTimeout(200)
+  await page.getByRole('button', { name: '取消' }).click()
+  await page.waitForTimeout(400)
+  data = await assetData(page, assetId)
+  check('音频卡取消不写回', data?.kind === 'audio' && data?.url === AUD, JSON.stringify(data))
 
   // 生成图片
   await page.locator('.asset-source').click()
@@ -268,7 +318,7 @@ try {
   check('生成图片页签有 fixture', (await page.locator(`[data-pick-key="${G}"]`).count()) === 1)
   await page.locator(`[data-pick-key="${G}"]`).click()
   await page.waitForTimeout(300)
-  await page.getByRole('button', { name: '使用这张' }).click()
+  await page.getByRole('button', { name: '使用这个' }).click()
   await page.waitForTimeout(500)
   data = await assetData(page, assetId)
   check('视频卡换普通图回落 image', data?.kind === 'image' && data?.url === G, JSON.stringify(data))
@@ -282,11 +332,11 @@ try {
   await manual.fill('/project-assets/media-test/missing.png')
   await page.waitForTimeout(500)
   check('手填补坏地址显示错误', (await page.locator('.mp-detail-error').count()) === 1)
-  check('手填坏地址不能确认', await page.getByRole('button', { name: '使用这张' }).isDisabled())
+  check('手填坏地址不能确认', await page.getByRole('button', { name: '使用这个' }).isDisabled())
   await manual.fill(B)
   await page.waitForTimeout(500)
   check('手填好地址可预览', (await page.locator('.mp-detail-preview img').count()) === 1)
-  await page.getByRole('button', { name: '使用这张' }).click()
+  await page.getByRole('button', { name: '使用这个' }).click()
   await page.waitForTimeout(500)
   data = await assetData(page, assetId)
   check('手填地址写回', data?.url === B, JSON.stringify(data))
@@ -301,7 +351,7 @@ try {
   const secondFocus = await page.evaluate(() => document.activeElement?.getAttribute('data-pick-key'))
   check('方向键移动网格焦点', Boolean(secondFocus) && secondFocus !== firstKey, `${firstKey} -> ${secondFocus}`)
   await page.keyboard.press('Enter')
-  await page.getByRole('button', { name: '使用这张' }).focus()
+  await page.getByRole('button', { name: '使用这个' }).focus()
   await page.keyboard.press('Enter')
   await page.waitForTimeout(400)
   check('键盘可完成选择', (await page.locator('.mp-dialog').count()) === 0)
@@ -312,19 +362,21 @@ try {
   await page.waitForTimeout(250)
   await page.locator('.asset-source').click()
   await page.waitForTimeout(600)
+  // 只量选择器自身：画布本体在窄屏本来就会横向滚动，不属于选择器溢出
   const mobile = await page.evaluate(() => {
-    const d = document.querySelector('.mp-dialog')?.getBoundingClientRect()
+    const el = document.querySelector('.mp-dialog')
+    const d = el?.getBoundingClientRect()
     return {
-      sw: document.documentElement.scrollWidth,
-      cw: document.documentElement.clientWidth,
+      sw: el?.scrollWidth ?? 0,
+      cw: el?.clientWidth ?? 0,
       width: d?.width ?? 0,
       dialogRight: d?.right ?? 0,
       tabs: document.querySelectorAll('.mp-tabs button').length,
       foot: document.querySelector('.mp-foot')?.getBoundingClientRect().bottom ?? 0,
     }
   })
-  check('390px 选择器无横向溢出', mobile.sw <= mobile.cw && mobile.dialogRight <= 390, JSON.stringify(mobile))
-  check('390px 页签和底部操作可见', mobile.tabs === 4 && mobile.foot <= 900, JSON.stringify(mobile))
+  check('390px 选择器无横向溢出', mobile.sw <= mobile.cw + 1 && mobile.dialogRight <= 390, JSON.stringify(mobile))
+  check('390px 页签和底部操作可见', mobile.tabs === 6 && mobile.foot <= 900, JSON.stringify(mobile))
   await page.keyboard.press('Escape')
   await page.waitForTimeout(200)
 

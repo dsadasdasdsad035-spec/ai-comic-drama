@@ -2,6 +2,7 @@ import type { MediaBundle, ProjectAsset, ProjectData, ProjectShot } from './api'
 import type { CharacterSheet } from './characters'
 import type { Shot3DContext } from './types'
 import type { ShotData } from './types'
+import { assetMediaType } from './mediaPick'
 import { dialogueHashOf, parseDialogueLines } from './shot3dContext'
 import { stableAssetKey } from './sceneCodeFingerprint'
 import { linkedAssetsFor, sceneDesignFor } from './scheduleContext'
@@ -169,7 +170,7 @@ export function buildShot3DContextCatalog(input: BuildShot3DContextCatalogInput)
   }
 
   const manualAssets: Shot3DContextItem[] = assets
-    .filter((a) => Boolean(a.url) && a.kind !== 'video')
+    .filter((a) => Boolean(a.url) && assetMediaType((a.kind || 'image') as never, String(a.url)) === 'image')
     .filter((a) => !(a.designId && designs.some((d) => d.id === a.designId)))
     .map((a: ProjectAsset) => ({
       key: imageKey(a.url, 'asset'),

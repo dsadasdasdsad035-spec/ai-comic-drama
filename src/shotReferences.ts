@@ -1,4 +1,5 @@
 import { type CharacterSheet } from './characters'
+import { assetMediaType } from './mediaPick'
 import { selectExpressionReference } from './expressionSheet'
 import { PERFORMANCE_EMOTION_LABELS, type ShotData } from './types'
 import type { ShotNodeType } from './data'
@@ -239,12 +240,13 @@ export function collectShotReferences(input: {
     })
   }
 
-  // 3. 素材：asset- 节点；视频素材不参与图片参考。
+  // 3. 素材：asset- 节点；视频与音频不参与图片参考。
   for (const rid of refIds) {
     if (!rid.startsWith('asset-')) continue
     const asset = input.nodes.find((n) => n.id === rid)
     const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-    if (!d || d.kind === 'video' || d.kind === 'expression-sheet' || !d.url) continue
+    if (!d || d.kind === 'expression-sheet' || !d.url) continue
+    if (assetMediaType((d.kind || 'image') as never, d.url) !== 'image') continue
     if (missingMedia.has(d.url)) {
       addMissing(missing, rid, `素材「${d.title || rid}」`, '素材图片文件缺失')
       continue
@@ -300,7 +302,7 @@ export function collectVideoReferences(input: {
       addMissing(missing, rid, `素材「${rid}」`, '素材节点不存在')
       continue
     }
-    if (d.kind !== 'video') continue
+    if (assetMediaType((d.kind || 'image') as never, String(d.url || '')) !== 'video') continue
     const title = d.title || '未命名'
     if (!d.url) {
       addMissing(missing, rid, `视频素材「${title}」`, '视频素材没有地址')

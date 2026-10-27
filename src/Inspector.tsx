@@ -10,6 +10,8 @@ import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import type { CharacterSheet } from './characters'
 import { CapModelSelect } from './ModelSelect'
 import MediaPicker from './MediaPicker'
+import { fetchStockMeta } from './stock/api'
+import type { StockImportMeta } from './stock/types'
 import { pickKind, pickTitle, type PickItem } from './mediaPick'
 import PerformanceEditor from './PerformanceEditor'
 import LipSyncPanel from './LipSyncPanel'
@@ -45,6 +47,8 @@ function AssetPanel({
 }) {
   const d = node.data
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [stockMeta, setStockMeta] = useState<StockImportMeta | null>(null)
+  const [metaMissing, setMetaMissing] = useState(false)
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
   const confirmPick = (item: PickItem) => {
     set({
@@ -54,6 +58,25 @@ function AssetPanel({
     })
     setPickerOpen(false)
   }
+  // 来源元数据在侧表里：只有在线导入过的素材才有，普通素材保持无该区块
+  useEffect(() => {
+    let alive = true
+    const url = String(d.url || '')
+    setStockMeta(null)
+    setMetaMissing(false)
+    if (!url.startsWith('/project-assets/') || !projectName) return () => { alive = false }
+    fetchStockMeta(projectName, url)
+      .then((meta) => {
+        if (alive) setStockMeta(meta)
+      })
+      .catch(() => {
+        if (alive) setMetaMissing(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [d.url, projectName])
+
   const sourceName = (url?: string) => {
     if (!url) return ''
     const part = url.split(/[?#]/)[0].split('/').pop() || url
@@ -68,6 +91,7 @@ function AssetPanel({
     { v: 'prop', label: '道具图' },
     { v: 'image', label: '参考图' },
     { v: 'video', label: '视频' },
+    { v: 'audio', label: '音频' },
     { v: 'expression-sheet', label: '表情总图' },
   ]
   return (
@@ -95,7 +119,7 @@ function AssetPanel({
         <input value={d.title} onChange={(e) => set({ title: e.target.value })} />
       </label>
       <div className="field">
-        <span>{d.kind === 'video' ? '视频来源' : '图片来源'}</span>
+        <span>{d.kind === 'video' ? '视频来源' : d.kind === 'audio' ? '音频来源' : '图片来源'}</span>
         <button
           type="button"
           className="asset-source"
@@ -106,6 +130,8 @@ function AssetPanel({
             {d.url ? (
               d.kind === 'video' ? (
                 <video src={d.url} muted playsInline preload="metadata" />
+              ) : d.kind === 'audio' ? (
+                <span className="asset-source-audio">♪</span>
               ) : (
                 <img src={d.url} alt="" />
               )
@@ -115,16 +141,46 @@ function AssetPanel({
           </span>
           <span className="asset-source-copy">
             <b>{d.url ? d.title || '已选素材' : '选择素材'}</b>
-            <small>{d.url ? sourceName(d.url) : '缩略图预览 · 场景 / 道具 / 图片 / 视频'}</small>
+            <small>{d.url ? sourceName(d.url) : '缩略图预览 · 场景 / 道具 / 图片 / 视频 / 音频'}</small>
           </span>
           <span className="asset-source-action">选择素材</span>
         </button>
       </div>
+      {stockMeta ? (
+        <div className="field" data-stock-meta>
+          <span>在线来源</span>
+          <div className="asset-stock-meta">
+            <div className="asset-stock-row">
+              <b>{stockMeta.provider}</b>
+              <span>{stockMeta.author || '未署名'}</span>
+            </div>
+            <div className="asset-stock-row">
+              <span>{stockMeta.license || '未标注许可'}</span>
+              {stockMeta.sourceUrl ? (
+                <a href={stockMeta.sourceUrl} target="_blank" rel="noreferrer">
+                  来源页面
+                </a>
+              ) : null}
+            </div>
+            {stockMeta.attribution ? <code>{stockMeta.attribution}</code> : null}
+          </div>
+        </div>
+      ) : metaMissing ? (
+        <div className="field">
+          <span>在线来源</span>
+          <p className="st-hint">来源信息读取失败；素材本身不受影响</p>
+        </div>
+      ) : null}
       <div className="field">
         <span>预览</span>
         {d.url ? (
           d.kind === 'video' ? (
             <video src={d.url} muted loop autoPlay playsInline className="asset-preview" />
+          ) : d.kind === 'audio' ? (
+            <div className="asset-preview asset-preview-audio">
+              <audio src={d.url} controls preload="metadata" />
+              <span className="st-hint">音频素材只用于预览与管理，暂不参与出片音轨</span>
+            </div>
           ) : (
             <img src={d.url} alt={d.title} className="asset-preview" />
           )
