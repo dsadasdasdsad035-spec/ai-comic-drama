@@ -1,9 +1,12 @@
 import assetSkillText from '../../skills/asset/SKILL.md?raw'
 import characterSkillText from '../../skills/character/SKILL.md?raw'
 import promptSkillText from '../../skills/prompt/SKILL.md?raw'
+import promptIntakeSkillText from '../../skills/prompt-intake/SKILL.md?raw'
 import scene3dSkillText from '../../skills/scene3d/SKILL.md?raw'
 import scriptSkillText from '../../skills/script/SKILL.md?raw'
+import scriptIntakeSkillText from '../../skills/script-intake/SKILL.md?raw'
 import shotlistSkillText from '../../skills/shotlist/SKILL.md?raw'
+import shotlistIntakeSkillText from '../../skills/shotlist-intake/SKILL.md?raw'
 import { listSkillTexts } from './api'
 import { buildSkillPrompt } from './render'
 import type { Skill, SkillInputs, SkillPrompt, SkillRenderMode, SkillTextRecord } from './types'
@@ -13,9 +16,12 @@ const BUILTIN_TEXTS: Record<string, string> = {
   asset: assetSkillText,
   character: characterSkillText,
   prompt: promptSkillText,
+  'prompt-intake': promptIntakeSkillText,
   scene3d: scene3dSkillText,
   script: scriptSkillText,
+  'script-intake': scriptIntakeSkillText,
   shotlist: shotlistSkillText,
+  'shotlist-intake': shotlistIntakeSkillText,
 }
 
 let cache: SkillLoadResult | null = null

@@ -155,6 +155,52 @@ export function mergeShots(existing = [], incoming = []) {
   return out
 }
 
+/**
+ * 显式删除镜头：只删传入的 id。
+ *
+ * 与 mergeShots 的 orphan 语义分开：缺席是「保护性保留」（模型少给一行时
+ * 不能静默删数据），只有明确点名才是删除意图。
+ */
+export function deleteShots(existing = [], ids = []) {
+  if (!Array.isArray(ids) || ids.length === 0) return { shots: existing, removed: 0 }
+  const drop = new Set(ids.map((x) => String(x)))
+  const shots = existing.filter((s) => !s || !s.id || !drop.has(String(s.id)))
+  return { shots, removed: existing.length - shots.length }
+}
+
+/**
+ * 兜底清理悬空转场：transition_out.to 指向已不存在的镜头时清除，
+ * 避免导入/手改 JSON 等路径留下指向空处的转场配置。
+ */
+export function pruneDanglingTransitions(shots = []) {
+  const ids = new Set(shots.filter((s) => s && s.id).map((s) => String(s.id)))
+  let cleared = 0
+  const out = shots.map((s) => {
+    const to = s?.transition_out?.to
+    if (!s || !to) return s
+    // to 可能是 shotId 或画布节点 id；只在它明显是个 shotId 且查不到时清
+    if (!String(to).startsWith('E') || ids.has(String(to))) return s
+    cleared++
+    return { ...s, transition_out: null }
+  })
+  return { shots: out, cleared }
+}
+
+/** 集内镜号唯一性：重复会让 E{集}-{镜号} 的 id 碰撞，是数据损坏级隐患 */
+export function findDuplicateShotNos(shots = []) {
+  const seen = new Map()
+  const dups = []
+  for (const s of shots) {
+    if (!s || !s.id || s.orphan) continue
+    const no = String(s.no ?? '').trim()
+    if (!no) continue
+    const key = `${Number(s.episode) || 1}:${no}`
+    if (seen.has(key)) dups.push({ episode: Number(s.episode) || 1, no, ids: [seen.get(key), String(s.id)] })
+    else seen.set(key, String(s.id))
+  }
+  return dups
+}
+
 /** 新建项目：目录 + 空 project.json 骨架。已存在则报错（不覆盖） */
 export function createProject(root, name, init = {}) {
   const n = safeProjectName(name)

@@ -23,6 +23,9 @@ export declare function createProject(
   init?: Record<string, any>,
 ): { name: string; created: boolean }
 export declare function mergeShots(existing: any[] | undefined, incoming: any[]): any[]
+export declare function deleteShots(existing: any[] | undefined, ids: string[]): { shots: any[]; removed: number }
+export declare function pruneDanglingTransitions(shots: any[]): { shots: any[]; cleared: number }
+export declare function findDuplicateShotNos(shots: any[]): { episode: number; no: string; ids: string[] }[]
 export declare function getSetting(key: string): any
 export declare function setSetting(key: string, value: unknown): void
 export declare function listSkillOverrides(): Record<
