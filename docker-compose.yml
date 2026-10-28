@@ -39,8 +39,10 @@ services:
       DTK_API_KEY: ${DTK_API_KEY:-}
       YTDLP_BIN: /usr/local/bin/yt-dlp
       YTDLP_COOKIES_FROM_BROWSER: ${YTDLP_COOKIES_FROM_BROWSER:-}
-      # 可选：Blender 只在本机装了才可用；容器里默认关闭 3D 渲染
-      BLENDER_BIN: ${BLENDER_BIN:-}
+      # Blender 随镜像安装；容器里没有 GPU，EEVEE 的 GPU 后端在后台模式不可用，
+      # 因此默认引擎为 cycles（纯 CPU）。本机装了 GPU 时可覆盖 BLENDER_ENGINE=eevee。
+      BLENDER_BIN: ${BLENDER_BIN:-/usr/local/bin/blender}
+      BLENDER_ENGINE: ${BLENDER_ENGINE:-cycles}
       # 出图/出片超时（秒级任务用不到，但慢渠道可调）
       SEEDREAM_TIMEOUT_MS: ${SEEDREAM_TIMEOUT_MS:-180000}
     volumes:
@@ -51,6 +53,8 @@ services:
       - ./data/media/videos:/app/public/videos
       - ./data/media/voices:/app/public/voices
       - ./data/media/exports:/app/public/exports
+      # 发布包：不挂卷的话容器一重建就全丢（导出包是交付物，必须持久化）
+      - ./data/media/publish-packages:/app/public/publish-packages
     # 让容器能用 host.docker.internal 访问宿主机上跑的 DTK
     extra_hosts:
       - "host.docker.internal:host-gateway"

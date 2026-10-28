@@ -52,8 +52,14 @@ import CatalogDialog, { type CatalogEntry } from './CatalogDialog'
 import { fetchStockProviders } from '../stock/api'
 import type { StockProviderId, StockSettings } from '../stock/types'
 import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
+import ProjectManagerDialog from '../project/ProjectManagerDialog'
 
-type Props = { toast: (m: string) => void; onSaved?: () => void }
+type Props = {
+  toast: (m: string) => void
+  onSaved?: () => void
+  /** 项目删除成功：父级刷新项目列表与全局上下文 */
+  onProjectsDeleted?: (names: string[]) => void | Promise<void>
+}
 type Section =
   | 'providers'
   | 'models'
@@ -288,7 +294,7 @@ function providerKeyPlaceholder(kind: ProviderKind): string {
   return '留空 = 沿用 .env 的 OPENAI_API_KEY'
 }
 
-export default function SettingsPage({ toast, onSaved }: Props) {
+export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
@@ -2026,7 +2032,25 @@ export default function SettingsPage({ toast, onSaved }: Props) {
         <code>{dbFile || '（首次访问项目数据时创建）'}</code>
         <br />
         原各项目目录下的 project.json 保留作为迁移前备份，之后不再回读。
+        <br />
+        删除项目会先写数据库快照到项目根下的 <code>.deleted/</code>；成片导出、发布包、
+        生成图与配音在共享产物目录，不随项目删除。
       </p>
+
+      <header className="st-sec-head">
+        <h3>项目管理</h3>
+      </header>
+      <p className="st-hint">
+        新建项目在顶栏项目选择器旁；这里用于清理不再需要的项目。删除会级联清理镜头、角色、
+        素材、设定、聊天线程、成片与发布记录。
+      </p>
+      <ProjectManagerDialog
+        variant="inline"
+        onDeleted={async (names) => {
+          await onProjectsDeleted?.(names)
+          toast(names.length === 1 ? `已删除项目 ${names[0]}` : `已删除 ${names.length} 个项目`)
+        }}
+      />
     </section>
   )
 

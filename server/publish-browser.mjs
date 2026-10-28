@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { sanitizeError, resolveChrome } from './publish-utils.mjs'
+import { sanitizeError, resolveChrome, hasDisplay, NO_DISPLAY_HINT, chromiumSandboxArgs } from './publish-utils.mjs'
 import { getPlatform } from './publish-platforms.mjs'
 import { getAdapter } from './publish-adapters.mjs'
 
@@ -152,12 +152,16 @@ async function loadChromium() {
  * @param {()=>boolean} [opts.shouldStop] 取消信号
  */
 export async function openLoginWindow(opts) {
+  // 扫码登录必须有真实屏幕；无头浏览器里没有人能扫码，早点给明确原因而不是等超时
+  if (!hasDisplay()) {
+    return { ok: false, status: 'no-display', message: NO_DISPLAY_HINT }
+  }
   const chromium = await loadChromium()
   const exe = resolveChrome()
   const launchOpts = {
     headless: false,
     viewport: null,
-    args: ['--no-first-run', '--no-default-browser-check'],
+    args: ['--no-first-run', '--no-default-browser-check', ...chromiumSandboxArgs()],
   }
   if (exe) launchOpts.executablePath = exe
   else launchOpts.channel = 'chrome'
@@ -238,7 +242,7 @@ export async function openLoginWindow(opts) {
 export async function checkSession(opts) {
   const chromium = await loadChromium()
   const exe = resolveChrome()
-  const launchOpts = { headless: true, args: ['--no-first-run'] }
+  const launchOpts = { headless: true, args: ['--no-first-run', ...chromiumSandboxArgs()] }
   if (exe) launchOpts.executablePath = exe
   else launchOpts.channel = 'chrome'
 

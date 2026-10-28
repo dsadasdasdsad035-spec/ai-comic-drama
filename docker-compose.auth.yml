@@ -1,0 +1,36 @@
+# 公网入口覆盖层：带口令的 nginx 反向代理（HTTP + HTTPS）
+#
+# 应用本身没有登录，且 GET /api/settings 会明文返回渠道 Key，所以公网只暴露这一层。
+# 用法（在 .env 里先设 APP_BIND_ADDR=127.0.0.1、APP_PORT=5274）：
+#   docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d --build app proxy
+#
+# 不进仓库的本机文件：deploy/proxy/.htpasswd（口令）、deploy/ssl/*（证书）。
+
+name: storyboard
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "${PUBLIC_BIND_ADDR:-0.0.0.0}:${PUBLIC_PORT:-80}:80"
+      - "${PUBLIC_BIND_ADDR:-0.0.0.0}:${PUBLIC_TLS_PORT:-443}:443"
+    volumes:
+      - ./deploy/proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 勿挂到 conf.d/，否则会被当顶层配置加载导致 location 报错
+      - ./deploy/proxy/app-locations.conf:/etc/nginx/includes/app-locations.conf:ro
+      - ./deploy/proxy/.htpasswd:/etc/nginx/auth/.htpasswd:ro
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

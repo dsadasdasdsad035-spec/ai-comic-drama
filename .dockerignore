@@ -8,7 +8,9 @@ dist
 
 # 业务数据与产物（挂卷，不进镜像）
 projects/
+data/
 creatives/
+out/
 public/generated/
 public/videos/
 public/voices/
@@ -25,11 +27,16 @@ keys.json
 # 本机工具与临时目录
 .zcode
 .video_agent
+.dtk
 .blender-jobs
 .scene-drafts
+.publish-profiles
 .verify-*
 bench*.mjs
 *.log
+
+# 反向代理口令文件（只在目标机生成）
+deploy/proxy/.htpasswd
 
 # 验证脚本与证据（不是运行时依赖）
 verify-*.mjs
@@ -39,3 +46,6 @@ shot-inspector.mjs
 openspec/changes/**/evidence/
 fixtures/
 tests/
+
+# 证书只挂进代理容器，不进应用镜像
+deploy/ssl/

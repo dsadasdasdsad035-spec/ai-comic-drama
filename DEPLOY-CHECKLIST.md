@@ -123,8 +123,9 @@ Seedance 2.5 原生音频使用单个 `audio_url` 字符串（公网 URL 或 dat
 
 ### 项目数据要落到持久存储
 
-`project.json` 现在写在 `manga-pipeline/projects/`（本地磁盘）。沙箱重启后文件系统可能重置。
-**改法**：换成 SQLite（沙箱支持）或对象存储；或者明确接受「演示用、重启丢数据」并写清楚。
+项目库已切到 SQLite：`<SB_PROJECTS_DIR>/storyboard.sqlite`（容器内 `/data/projects`，compose 已把 `./data/projects` 挂成卷）。沙箱重启后非卷目录仍会重置，所以 `SB_PROJECTS_DIR` 必须指向持久卷。
+
+删除项目时会先在同一目录写数据库快照到 `SB_PROJECTS_DIR/.deleted/`。该目录与 `storyboard.sqlite` 同生命周期：备份或迁移数据卷时要一起处理，否则删掉的项目没法手工恢复。快照只含数据库行，不含 `projects/<项目>/assets/` 里的媒体文件。
 
 ### 视频/图片产物不进仓库
 

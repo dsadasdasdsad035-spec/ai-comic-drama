@@ -17,6 +17,39 @@ const CHROME_CANDIDATES = [
   '/usr/bin/chromium-browser',
 ]
 
+/**
+ * Playwright 自带的 Chromium（镜像里由 `playwright install chromium` 安装）。
+ * 它的版本与 playwright-core 严格配套，比系统 Chromium 更适合无头跑。
+ * 目录名带版本号（chromium-1248/chrome-linux64/chrome），只能扫目录找。
+ */
+function playwrightChromium() {
+  const roots = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH || '',
+    '/ms-playwright',
+    path.join(process.env.HOME || '', '.cache', 'ms-playwright'),
+  ].filter(Boolean)
+  for (const root of roots) {
+    let names
+    try {
+      names = fs.readdirSync(root)
+    } catch {
+      continue
+    }
+    const dirs = names.filter((n) => /^chromium-\d+$/.test(n)).sort().reverse()
+    for (const dir of dirs) {
+      for (const sub of ['chrome-linux64/chrome', 'chrome-linux/chrome', 'chrome-mac/Chromium.app/Contents/MacOS/Chromium']) {
+        const full = path.join(root, dir, sub)
+        try {
+          if (fs.existsSync(full) && fs.statSync(full).isFile()) return full
+        } catch {
+          /* continue */
+        }
+      }
+    }
+  }
+  return ''
+}
+
 export function resolveChrome() {
   for (const p of CHROME_CANDIDATES) {
     if (!p) continue
@@ -26,11 +59,36 @@ export function resolveChrome() {
       /* continue */
     }
   }
-  return ''
+  return playwrightChromium()
 }
 
 export function chromeAvailable() {
   return Boolean(resolveChrome())
+}
+
+/**
+ * 有没有可用的图形显示。Linux 容器没有 DISPLAY，Chromium 只能无头运行。
+ * 这决定两件事：能否弹出扫码窗口（需要屏幕），以及发布任务能不能跑（无头即可）。
+ */
+export function hasDisplay() {
+  if (process.platform === 'darwin' || process.platform === 'win32') return true
+  return Boolean(String(process.env.DISPLAY || '').trim())
+}
+
+export const NO_DISPLAY_HINT =
+  '服务器没有桌面环境，无法弹出扫码窗口。请在装有桌面的机器上完成一次登录，' +
+  '再把该账号的 profile 目录拷到服务器的 .publish-profiles/<账号>/ 后重试；' +
+  '之后的无头任务会直接复用这份登录态。'
+
+/**
+ * 容器里以 root 运行 Chromium 必须关沙箱，否则进程直接拒绝启动
+ * （"Running as root without --no-sandbox is not supported"）。
+ * 容器本身已是隔离边界，这里再叠一层 Chromium 沙箱既没必要也跑不通。
+ */
+export function chromiumSandboxArgs() {
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
+  const linux = process.platform !== 'darwin' && process.platform !== 'win32'
+  return linux && isRoot ? ['--no-sandbox', '--disable-dev-shm-usage'] : []
 }
 
 /**

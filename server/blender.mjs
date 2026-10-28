@@ -271,15 +271,17 @@ async function materializeAssets(appRoot, dir, assets) {
 // ---------------------------------------------------------------- 编码
 
 const FFMPEG_CANDIDATES = [
+  process.env.FFMPEG_PATH,
   '/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg',
   '/opt/homebrew/bin/ffmpeg',
   '/usr/local/bin/ffmpeg',
-]
+  '/usr/bin/ffmpeg',
+].filter(Boolean)
 
 export function resolveFfmpeg() {
   for (const p of FFMPEG_CANDIDATES) {
     try {
-      if (fs.existsSync(p)) return p
+      if (p && fs.existsSync(p)) return p
     } catch {
       /* ignore */
     }

@@ -18,7 +18,7 @@ import {
 import { getAccountInternal, setAccountStatus } from './publish-accounts.mjs'
 import { getDeliverable } from './deliverables.mjs'
 import { getPlatform, requiredCoverAspects } from './publish-platforms.mjs'
-import { resolvePublishFile, resolveChrome, sanitizeError } from './publish-utils.mjs'
+import { resolvePublishFile, resolveChrome, sanitizeError, hasDisplay, chromiumSandboxArgs } from './publish-utils.mjs'
 
 const queue = []
 let running = null
@@ -135,7 +135,13 @@ async function openContext(profileDir) {
   if (contextFactory) return contextFactory(profileDir)
   const chromium = await loadChromium()
   const exe = resolveChrome()
-  const opts = { headless: false, viewport: null, args: ['--no-first-run', '--no-default-browser-check'] }
+  // 上传草稿是纯后台动作，服务器上没有屏幕时无头跑就行；
+  // 本机有桌面时保持有头，便于观察与人工接管。
+  const opts = {
+    headless: !hasDisplay(),
+    viewport: null,
+    args: ['--no-first-run', '--no-default-browser-check', ...chromiumSandboxArgs()],
+  }
   if (exe) opts.executablePath = exe
   else opts.channel = 'chrome'
   return chromium.launchPersistentContext(profileDir, opts)
