@@ -41,21 +41,28 @@ const scriptV1 = passthrough({
     .min(1),
 })
 
-const charactersV1 = passthrough({
-  characters: z
-    .array(
-      passthrough({
-        name: z.string().min(1),
-        role: z.string().optional(),
-        age: z.string().optional(),
-        look_cn: z.string().optional(),
-        look_en: z.string().optional(),
-        palette: z.string().optional(),
-        keywords: z.array(z.string()).optional(),
-      }),
-    )
-    .min(1),
+const characterItem = passthrough({
+  name: z.string().min(1),
+  role: z.string().optional(),
+  age: z.string().optional(),
+  look_cn: z.string().optional(),
+  look_en: z.string().optional(),
+  palette: z.string().optional(),
+  keywords: z.array(z.string()).optional(),
 })
+
+/**
+ * 角色锚点。允许「一个都没找到」这种合法结果：
+ * 内容里本来就没有具名角色时，模型返回空数组是正确的，不该报成契约违规。
+ * 调用方拿到空列表后给「没给出角色，换个范围再试」这种可执行提示。
+ *
+ * 同时接受顶层数组（部分模型会省掉 characters 外壳），
+ * pickExtracted 两种形状都能读，契约不该比消费方更严。
+ */
+const charactersV1 = z.union([
+  passthrough({ characters: z.array(characterItem) }),
+  z.array(characterItem),
+])
 
 const designItem = passthrough({
   name: z.string().min(1),
@@ -65,13 +72,13 @@ const designItem = passthrough({
   keywords: z.array(z.string()).optional(),
 })
 
+/**
+ * 场景/道具设定。与角色锚点同理：内容里确实没有可拆的素材时，
+ * 空结果是合法的，由调用方给「没给出场景或道具，换个范围再试」的提示。
+ */
 const designsV1 = passthrough({
   scenes: z.array(designItem).optional().default([]),
   props: z.array(designItem).optional().default([]),
-}).superRefine((v, ctx) => {
-  if ((v.scenes?.length ?? 0) + (v.props?.length ?? 0) === 0) {
-    ctx.addIssue({ code: 'custom', message: 'scenes 与 props 至少有一项', path: [] })
-  }
 })
 
 const emotionEnum = z.enum([

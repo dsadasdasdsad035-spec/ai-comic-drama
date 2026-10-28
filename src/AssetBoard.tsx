@@ -335,7 +335,13 @@ export default function AssetBoard({
         })
         assertSkillOutput('designs-v1', r.json)
         const incoming = pickExtractedDesigns(r.json)
-        if (incoming.length === 0) throw new Error('模型没给出场景或道具，换个范围再试')
+        if (incoming.length === 0) {
+          throw new Error(
+            scope === 'script'
+              ? '模型没找到场景或道具：全剧素材里没有可识别的地点与道具。先在「剧本」页补充分集场次的 beats，或改用「从本集拆」。'
+              : '模型没找到场景或道具：本集场次与分镜里没有可识别的地点与道具。先补分镜的画面描述，再拆一次。',
+          )
+        }
         if (signal?.aborted) return fail('已取消', true)
         const { next, added, updated } = mergeDesigns(designsRef.current, incoming)
         setDesigns(next)

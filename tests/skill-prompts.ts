@@ -206,14 +206,32 @@ check('契约校验：缺 episodes 拒绝', () => {
   assert.equal(r.ok, false)
 })
 
-check('契约校验：空素材拒绝', () => {
+// 空结果不是契约违规：内容里确实没有可拆的素材时，模型返回空列表是对的。
+// 原实现要求「至少一项」，导致调用方写好的「没给出场景或道具，换个范围再试」
+// 永远走不到，用户只能看到「模型输出不符合技能契约」这种无法行动的报错。
+check('契约校验：空素材是合法结果', () => {
   const r = validateContract('designs-v1', { scenes: [], props: [] })
+  assert.equal(r.ok, true)
+})
+
+check('契约校验：形状不对仍拒绝（缺 name）', () => {
+  const r = validateContract('designs-v1', { scenes: [{ prompt_en: 'x' }], props: [] })
   assert.equal(r.ok, false)
 })
 
 check('契约校验：提示词缺 video_prompt 拒绝', () => {
   const r = validateContract('prompts-v1', { shots: [{ no: 'S01', keyframe_prompt: 'K' }] })
   assert.equal(r.ok, false)
+})
+
+check('契约校验：空角色列表是合法结果', () => {
+  const r = validateContract('characters-v1', { characters: [] })
+  assert.equal(r.ok, true)
+})
+
+check('契约校验：角色顶层数组也接受', () => {
+  const r = validateContract('characters-v1', [{ name: '陈默', look_en: 'x' }])
+  assert.equal(r.ok, true)
 })
 
 check('契约校验：合法角色', () => {

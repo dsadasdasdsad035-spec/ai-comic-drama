@@ -1043,7 +1043,13 @@ function Shell() {
         })
         assertSkillOutput('characters-v1', r.json)
         const list = pickExtracted(r.json)
-        if (list.length === 0) throw new Error('模型没给出角色，换个范围再试')
+        if (list.length === 0) {
+          throw new Error(
+            scope === 'script'
+              ? '模型没找到具名角色：全剧素材里没有可识别的角色。先在「剧本」页补充分集场次的 beats 与在场人物，或改用「从本集拆」。'
+              : '模型没找到具名角色：本集场次与分镜里没有可识别的角色名。先补分镜的 cast 或台词，再拆一次。',
+          )
+        }
         if (signal?.aborted) return fail('已取消', true)
         const { next, added, filled, skipped } = mergeCharacters(charactersRef.current, list)
         setCharacters(next)
