@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { generateImage, generateVoice, saveImageDataUrl, type VoiceOption } from './api'
+import { generateImage, generateVoice, type VoiceOption } from './api'
+import { ACCEPT_ATTR, pickImageFile, uploadImageFile } from './mediaUpload'
 import {
   DEFAULT_VOICE_SAMPLE_TEXT,
   TURNAROUND_SUFFIX,
@@ -45,6 +46,9 @@ type Props = {
 
 type Tab = 'turnaround' | 'sheet' | 'voice'
 
+/** 参考图上限：三视图生成时 refImage 已占一张，参考图过多会让模型在「多个人」之间摇摆 */
+const REFERENCE_LIMIT = 4
+
 function splitKeywords(value: string): string[] {
   return value
     .split(/[、,，]/)
@@ -77,6 +81,9 @@ export default function CharacterCard({
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const exprFileRef = useRef<HTMLInputElement>(null)
+  const refFileRef = useRef<HTMLInputElement>(null)
+  const [refBusy, setRefBusy] = useState(false)
+  const [refError, setRefError] = useState('')
   const [tab, setTab] = useState<Tab>('turnaround')
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState({
@@ -230,6 +237,7 @@ export default function CharacterCard({
       cost: price ? imageCost(price, 2) : undefined,
     })
     try {
+      const refs = c.referenceImages ?? []
       const res = await generateImage({
         prompt: `${c.lookEn}, ${TURNAROUND_SUFFIX}`,
         ratio: '16:9',
@@ -237,6 +245,8 @@ export default function CharacterCard({
         cap: 'view',
         modelKey: viewModel,
         project: projectName,
+        // 参考图作为身份输入；没有就不传，保持与旧行为一致
+        ...(refs.length ? { refImages: refs } : {}),
       })
       const urls = res.urls?.length ? res.urls : [res.url]
       const next = patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
@@ -264,14 +274,19 @@ export default function CharacterCard({
       cost: price ? imageCost(price, 1) : undefined,
     })
     try {
+      const refs = c.referenceImages ?? []
+      const refNote = refs.length
+        ? '图 1 是当前三视图，其余是同一角色的其他参考；不要把它们当成不同人物。'
+        : ''
       const res = await generateImage({
-        prompt: expressionSheetPrompt(c.lookEn),
+        prompt: `${expressionSheetPrompt(c.lookEn)}${refNote ? ` ${refNote}` : ''}`,
         ratio: '16:9',
         n: 1,
         cap: 'view',
         modelKey: viewModel,
         project: projectName,
         ...(c.image ? { refImage: c.image } : {}),
+        ...(refs.length ? { refImages: refs } : {}),
       })
       const image = res.urls?.[0] || res.url
       const base: CharacterExpressionSheet = {
@@ -315,8 +330,7 @@ export default function CharacterCard({
     }
     patch(c.id, { state: 'running', error: undefined })
     try {
-      const dataUrl = await readFile(file)
-      const url = await saveImageDataUrl(dataUrl, { project: projectName, prefix: 'char' })
+      const url = await uploadImageFile(file, { project: projectName, prefix: 'char' })
       const next = patch(c.id, {
         image: url,
         candidates: undefined,
@@ -330,21 +344,54 @@ export default function CharacterCard({
     }
   }
 
+  /** 上传参考图：保存成功才写状态；不依赖英文锚点 */
+  const uploadReference = async (file: File) => {
+    if (!projectName) {
+      setRefError('先选择项目再上传参考图')
+      return
+    }
+    setRefError('')
+    setRefBusy(true)
+    try {
+      const url = await uploadImageFile(file, { project: projectName, prefix: 'char-ref' })
+      const refs = [...(c.referenceImages ?? []), url].slice(0, REFERENCE_LIMIT)
+      onPersist(patch(c.id, { referenceImages: refs }))
+    } catch (e) {
+      setRefError((e as Error).message || '上传失败')
+    } finally {
+      setRefBusy(false)
+    }
+  }
+
+  /** 设为三视图：该图成为当前 image 并进入候选；参考图列表保留它作为输入记录 */
+  const promoteReference = (url: string) => {
+    const candidates = [...new Set([...(c.candidates ?? []), url])]
+    onPersist(
+      patch(c.id, {
+        image: url,
+        candidates,
+        activeIdx: candidates.indexOf(url),
+        state: 'idle',
+        error: undefined,
+      }),
+    )
+  }
+
   const uploadSheet = async (file: File) => {
     if (!projectName) {
       setSheetError('先选择项目再上传表情总图')
       return
     }
-    if (!file.type.startsWith('image/')) {
-      setSheetError('请选择图片文件')
+    const check = pickImageFile(file)
+    if (!check.ok) {
+      setSheetError(check.reason)
       return
     }
     setSheetError('')
     setSheetErrors([])
     setSheetBusy(true)
     try {
-      const dataUrl = await readFile(file)
-      const image = await saveImageDataUrl(dataUrl, { project: projectName, prefix: 'char-expr-sheet' })
+      const image = await uploadImageFile(file, { project: projectName, prefix: 'char-expr-sheet' })
       const base: CharacterExpressionSheet = {
         image,
         columns: 4,
@@ -464,6 +511,82 @@ export default function CharacterCard({
     ))
   })()
 
+  /**
+   * 参考图区：只作为生成三视图/表情总图的身份输入，不进入分镜参考预算。
+   * 要让它参与分镜，必须显式「设为三视图」。
+   */
+  const renderReferenceImages = () => {
+    const refs = c.referenceImages ?? []
+    const full = refs.length >= REFERENCE_LIMIT
+    return (
+      <div className="char-refs" data-char-refs>
+        <div className="char-refs-head">
+          <span className="char-label">参考图</span>
+          <span className="char-refs-count">
+            {refs.length}/{REFERENCE_LIMIT}
+          </span>
+          <span className="char-refs-hint">只用于生成三视图与表情总图，不进分镜参考</span>
+        </div>
+        {refs.length > 0 ? (
+          <div className="char-refs-grid">
+            {refs.map((url) => {
+              const inCandidates = (c.candidates ?? []).includes(url) || c.image === url
+              return (
+                <figure className="char-ref" key={url}>
+                  <img src={url} alt="角色参考图" onError={() => onImageMissing(url)} />
+                  <figcaption>
+                    {inCandidates ? (
+                      <span className="char-ref-flag">已在候选</span>
+                    ) : (
+                      <button
+                        className="btn-mini"
+                        onClick={() => promoteReference(url)}
+                        title="把这张设成当前三视图，此后它才会进入分镜参考"
+                      >
+                        设为三视图
+                      </button>
+                    )}
+                    <button
+                      className="btn-mini danger"
+                      onClick={() => onPersist(patch(c.id, { referenceImages: refs.filter((r) => r !== url) }))}
+                      title="只从参考图列表移除，不删文件"
+                    >
+                      移除
+                    </button>
+                  </figcaption>
+                </figure>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="char-refs-empty">还没有参考图。上传同一角色、同一画风的照片可帮助锁定长相。</p>
+        )}
+        <div className="char-refs-actions">
+          <button
+            className="btn-mini ghost"
+            disabled={full || refBusy}
+            onClick={() => refFileRef.current?.click()}
+            title={full ? `最多 ${REFERENCE_LIMIT} 张` : '上传本地图片作为参考图'}
+          >
+            {refBusy ? '上传中…' : full ? `已达 ${REFERENCE_LIMIT} 张上限` : '上传参考图'}
+          </button>
+        </div>
+        {refError ? <div className="gen-error">{refError}</div> : null}
+        <input
+          ref={refFileRef}
+          type="file"
+          accept={ACCEPT_ATTR}
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void uploadReference(file)
+            e.target.value = ''
+          }}
+        />
+      </div>
+    )
+  }
+
   const renderTurnaround = () => (
     <>
       <div className="char-sheet">
@@ -513,6 +636,7 @@ export default function CharacterCard({
           <span key={k} className="char-tag">{k}</span>
         ))}
       </div>
+      {renderReferenceImages()}
     </>
   )
 
@@ -611,7 +735,7 @@ export default function CharacterCard({
       <input
         ref={exprFileRef}
         type="file"
-        accept="image/*"
+        accept={ACCEPT_ATTR}
         hidden
         onChange={(e) => {
           const file = e.target.files?.[0]
@@ -768,7 +892,7 @@ export default function CharacterCard({
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
+            accept={ACCEPT_ATTR}
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0]
@@ -837,11 +961,3 @@ export default function CharacterCard({
   )
 }
 
-function readFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(new Error('读取图片失败'))
-    reader.readAsDataURL(file)
-  })
-}

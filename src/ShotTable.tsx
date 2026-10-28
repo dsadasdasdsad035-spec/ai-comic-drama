@@ -2,8 +2,8 @@ import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useS
 import { MOVES, SHOT_SIZES } from './types'
 import {
   callText,
-  createProject,
   getProject,
+  patchProject,
   listProjects,
   mergeProjectShots,
   type AppSettings,
@@ -30,6 +30,8 @@ import {
 import { AgentButton } from './agent/AgentButton'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
+import IntakeDialog from './intake/IntakeDialog'
+import { blankShot, findDuplicateNos, insertAfter, nextShotNo, removeRow } from './shotRows'
 
 const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
@@ -67,7 +69,6 @@ export default function ShotTable({
   onPickStage,
   onSaved,
 }: Props) {
-  const [root, setRoot] = useState('')
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [style, setStyle] = useState('')
   const [aspect, setAspect] = useState('16:9')
@@ -79,11 +80,8 @@ export default function ShotTable({
   const [genning, setGenning] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [dirty, setDirty] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newTitle, setNewTitle] = useState('')
-  const [making, setMaking] = useState(false)
   const [chatRunning, setChatRunning] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const [perfEdit, setPerfEdit] = useState<string | null>(null)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('shots')
   const chatVisible = chatOpen && Boolean(projectName)
@@ -186,8 +184,7 @@ export default function ShotTable({
 
   useEffect(() => {
     listProjects()
-      .then(({ root: r, projects: ps }) => {
-        setRoot(r)
+      .then(({ projects: ps }) => {
         if (!projectName && ps[0]) setProjectName(ps[0].name)
       })
       .catch((e) => toast(e.message || '读不到项目列表'))
@@ -221,28 +218,6 @@ export default function ShotTable({
     [visible],
   )
   const pushed = useMemo(() => visible.filter((s) => onCanvas.has(s.id)).length, [visible, onCanvas])
-
-  const doCreate = async () => {
-    const name = newName.trim()
-    if (!/^[a-zA-Z0-9_-]{1,40}$/.test(name)) {
-      toast('项目名只能用字母/数字/下划线/短横，最长 40 字（会作为目录名）')
-      return
-    }
-    setMaking(true)
-    try {
-      await createProject(name, { title: newTitle.trim() || name })
-      await onProjectsChanged?.()
-      setProjectName(name)
-      setCreating(false)
-      setNewName('')
-      setNewTitle('')
-      toast(`已新建项目 ${name}`)
-    } catch (e: any) {
-      toast(e.message || '新建失败')
-    } finally {
-      setMaking(false)
-    }
-  }
 
   /**
    * 按 shot.id 定位，不能用行下标：
@@ -377,13 +352,61 @@ export default function ShotTable({
     toast(r.summary)
   }
 
+  /** 待删除的镜头 id：显式删除意图，保存时随 deleteShotIds 提交 */
+  const [pendingDelete, setPendingDelete] = useState<string[]>([])
+  const [orphanOpen, setOrphanOpen] = useState(false)
+  const orphanShots = useMemo(() => visible.filter((s) => s.orphan), [visible])
+  const orphanCount = orphanShots.length
+
+  /** 新增一镜：追加到本集末尾，镜号取集内最大+1 */
+  const addShotRow = () => {
+    const no = nextShotNo(shots, epNo)
+    setShots((prev) => [...prev, blankShot(epNo, no)])
+    setDirty(true)
+  }
+
+  /** 在指定镜之后插入 */
+  const insertShotRow = (afterId: string) => {
+    const no = nextShotNo(shots, epNo)
+    setShots((prev) => insertAfter(prev, afterId, blankShot(epNo, no)))
+    setDirty(true)
+  }
+
+  /**
+   * 删除一镜：显式动作 + 确认。前端顺手清掉指向它的转场，
+   * 服务端还会再兜底扫一次悬空引用。
+   */
+  const deleteShotRow = (s: ProjectShot) => {
+    const hasOutput = [s.keyframe, s.clip, s.voice_meta ? 'x' : ''].filter(Boolean).length
+    const detail = hasOutput
+      ? '该镜已有画面/成片/配音产物；删除只移除项目数据，媒体文件保留'
+      : '该镜没有产物'
+    if (!window.confirm(`删除 ${s.no || s.id}？\n${detail}\n删除不可撤销；需要找回请用项目目录里的 project.json.bak。`)) return
+    setShots((prev) => {
+      const next = removeRow(prev, s.id)
+      return next.map((x) =>
+        x.transition_out?.to === s.id ? { ...x, transition_out: null } : x,
+      )
+    })
+    setPendingDelete((prev) => [...new Set([...prev, s.id])])
+    setDirty(true)
+    toast(`已标记删除 ${s.no || s.id}（保存后生效）`)
+  }
+
   const save = async () => {
     if (!projectName) return
+    // 保存前校验镜号唯一：重复会生成相同 id
+    const dups = findDuplicateNos(shots, epNo)
+    if (dups.length) {
+      toast(`保存被阻止：第 ${epNo} 集镜号「${dups[0].no}」重复。镜头 id 由集号+镜号生成，重复会互相覆盖。`)
+      return
+    }
     setSaving(true)
     try {
-      const r = await mergeProjectShots(projectName, shots)
+      const r = await mergeProjectShots(projectName, shots, pendingDelete)
       // 服务端做了字段级合并，拿回真正落盘的结果
       setShots(r.shots as ProjectShot[])
+      setPendingDelete([])
       setDirty(false)
       onSaved?.()
       toast(`已写回 project.json · ${r.shots.length} 镜`)
@@ -428,15 +451,6 @@ export default function ShotTable({
               onChange={onPickStage}
               compact
             />
-
-            <div className="wb-field wb-bar-optional">
-              <button className="btn-mini" onClick={() => setCreating((v) => !v)} title="新建一个空项目">
-                {creating ? '取消' : '+ 新建项目'}
-              </button>
-              <span className="wb-root" title={root}>
-                {root || '…'}
-              </span>
-            </div>
           </>
         }
         actions={
@@ -449,39 +463,20 @@ export default function ShotTable({
               dirty={dirty}
               controlsId="workbench-chat-shots"
             />
+            <button
+              className="btn btn-ghost"
+              disabled={!projectName}
+              onClick={() => setIntakeOpen(true)}
+              title="导入镜头表：表格按表头映射，默认只改文件里出现的镜号"
+            >
+              导入
+            </button>
             <button className="btn" onClick={() => load(projectName)} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
           </>
         }
       />
-
-      {creating && (
-        <div className="wb-new">
-          <div className="wb-field">
-            <span className="label">目录名</span>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="如 my-drama"
-              style={{ width: 150 }}
-            />
-          </div>
-          <div className="wb-field">
-            <span className="label">标题</span>
-            <input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="如 回收人（可空）"
-              style={{ width: 190 }}
-            />
-          </div>
-          <button className="btn primary" onClick={doCreate} disabled={making || !newName.trim()}>
-            {making ? '创建中…' : '创建'}
-          </button>
-          <span className="wb-note">目录名同时是仓库里的文件夹名，只在本地创建，不会自动提交</span>
-        </div>
-      )}
 
       <div className="wb-gen">
         <textarea
@@ -498,6 +493,22 @@ export default function ShotTable({
           {genning ? `拆镜中 ${elapsed}s` : '拆镜'}
         </button>
       </div>
+
+      {visible.length > 0 ? (
+        <div className="wb-row-tools">
+          <button className="btn-mini" onClick={addShotRow} data-add-shot>
+            新增镜头
+          </button>
+          {orphanCount > 0 ? (
+            <button className="btn-mini ghost" onClick={() => setOrphanOpen(true)} data-orphan-open>
+              清理孤儿 {orphanCount}
+            </button>
+          ) : null}
+          {pendingDelete.length > 0 ? (
+            <span className="wb-row-hint">待删除 {pendingDelete.length} 镜（保存后生效）</span>
+          ) : null}
+        </div>
+      ) : null}
 
       {visible.length === 0 ? (
         <div className="wb-empty">
@@ -600,6 +611,24 @@ export default function ShotTable({
                       {/* 默认什么都不显示：整表都是「在画布」时逐行标注是纯噪音 */}
                       {s.orphan && <em className="tag orphan">孤儿</em>}
                       {!isPushed && !s.orphan && <i className="wb-dot" title="还没推到画布" />}
+                      <span className="wb-row-acts">
+                        <button
+                          className="btn-mini ghost"
+                          onClick={() => insertShotRow(s.id)}
+                          title="在这一镜之后插入一镜"
+                          data-insert-after={s.id}
+                        >
+                          +
+                        </button>
+                        <button
+                          className="btn-mini ghost danger"
+                          onClick={() => deleteShotRow(s)}
+                          title="删除这一镜（保存后生效）"
+                          data-delete-shot={s.id}
+                        >
+                          ✕
+                        </button>
+                      </span>
                     </td>
                   </tr>
                   {perfEdit === s.id && (
@@ -658,6 +687,54 @@ export default function ShotTable({
         </div>
       )}
 
+      {orphanOpen ? (
+        <div className="wb-orphan-panel" role="dialog" aria-label="清理孤儿镜头">
+          <div className="wb-orphan-head">
+            <b>孤儿镜头 {orphanCount} 个</b>
+            <span>这些镜头在项目里有记录，但已不在最近一次生成的列表里。逐条勾选后删除，不提供全选删除。</span>
+          </div>
+          <div className="wb-orphan-list">
+            {orphanShots.map((s) => (
+              <label key={s.id} className="wb-orphan-row">
+                <input
+                  type="checkbox"
+                  checked={pendingDelete.includes(s.id)}
+                  onChange={(e) =>
+                    setPendingDelete((prev) =>
+                      e.target.checked ? [...new Set([...prev, s.id])] : prev.filter((x) => x !== s.id),
+                    )
+                  }
+                />
+                <code>{s.no || s.id}</code>
+                <span>{s.seconds ?? 0}s</span>
+                <em>{String(s.desc ?? '').slice(0, 40)}</em>
+                <span className="st-hint">
+                  {[s.keyframe ? '有首帧' : '', s.clip ? '有成片' : '', s.voice_meta ? '有配音' : '']
+                    .filter(Boolean)
+                    .join(' · ') || '无产物'}
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="wb-orphan-foot">
+            <button className="btn-mini ghost" onClick={() => setOrphanOpen(false)}>
+              关闭
+            </button>
+            <button
+              className="btn-mini"
+              disabled={!orphanShots.some((s) => pendingDelete.includes(s.id))}
+              onClick={() => {
+                toast(`已标记删除 ${pendingDelete.filter((id) => orphanShots.some((s) => s.id === id)).length} 个孤儿（保存后生效）`)
+                setOrphanOpen(false)
+                setDirty(true)
+              }}
+            >
+              标记删除所选
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="wb-foot">
         <span className="wb-sum">
           {visible.length} 镜 · 总时长{' '}
@@ -681,6 +758,33 @@ export default function ShotTable({
           生成到画布
         </button>
       </div>
+      {intakeOpen ? (
+        <IntakeDialog
+          target="shots"
+          projectName={projectName}
+          epNo={epNo}
+          settings={settings}
+          stagePick={stagePick}
+          shots={shots}
+          episodes={episodes as ProjectEpisode[]}
+          chars={[]}
+          toast={toast}
+          onClose={() => setIntakeOpen(false)}
+          onApply={(r) => {
+            if (r.shots) {
+              setShots(r.shots)
+              setDirty(true)
+            }
+            // 资料包可能带来角色；镜头表不持有完整角色卡，直接落项目
+            if (r.characters && projectName) {
+              patchProject(projectName, { characters: r.characters } as never)
+                .then(() => toast(`角色已写入项目 · ${r.characters!.length} 个`))
+                .catch((e) => toast((e as Error).message || '角色写入失败'))
+            }
+            toast(`已导入镜头草稿：${r.summary}（记得保存）`)
+          }}
+        />
+      ) : null}
     </main>
       <WorkbenchChatAside
         surface="shots"

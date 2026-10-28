@@ -383,26 +383,48 @@ export function openDatabase(root) {
   return d
 }
 
-/** 老库补列：SCHEMA 只在新建时生效，已有库缺列就走 ALTER */
+/**
+ * 老库补列：SCHEMA 只在新建时生效，已有库缺列就走 ALTER。
+ *
+ * 早先这里是一张手写的「旧库缺哪些列」清单，漏了 deliverables.auto_draft_note，
+ * 结果发布台在老库上直接报 no such column。改成从 SCHEMA 自动推导：
+ * 以后往建表语句里加列，老库启动时就会自动补上，不用再维护第二份清单。
+ */
 function ensureColumns() {
-  const ensure = (table, need) => {
+  for (const [table, defs] of Object.entries(schemaColumns())) {
     const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name))
-    for (const [name, def] of need) {
-      if (!cols.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`)
+    for (const [name, def] of defs) {
+      if (cols.has(name)) continue
+      try {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`)
+      } catch {
+        /* 加不上的列（例如 NOT NULL 且无默认值）留给建表语句，不阻塞启动 */
+      }
     }
   }
-  ensure('characters', [
-    ['image', "TEXT DEFAULT ''"],
-    ['candidates', "TEXT DEFAULT '[]'"],
-    ['active_idx', 'INTEGER'],
-    ['expressions', "TEXT DEFAULT ''"],
-    ['expression_sheet', "TEXT DEFAULT ''"],
-    ['voice', "TEXT DEFAULT ''"],
-    ['voice_provider', "TEXT DEFAULT ''"],
-    ['voice_model_key', "TEXT DEFAULT ''"],
-    ['voice_sample', "TEXT DEFAULT ''"],
-  ])
-  ensure('assets', [['design_id', "TEXT DEFAULT ''"]])
+}
+
+/** 从 SCHEMA 文本解析出 { 表名: [[列名, 列定义], ...] }，跳过表级约束 */
+function schemaColumns() {
+  const out = {}
+  const tableRe = /CREATE TABLE IF NOT EXISTS (\w+) \(([\s\S]*?)\n\);/g
+  let t
+  while ((t = tableRe.exec(SCHEMA))) {
+    const table = t[1]
+    const defs = []
+    for (const rawLine of t[2].split('\n')) {
+      const line = rawLine.trim().replace(/,$/, '')
+      if (!line || line.startsWith('--')) continue
+      if (/^(UNIQUE|PRIMARY|FOREIGN|CHECK|CONSTRAINT)\b/i.test(line)) continue
+      const m = line.match(/^(\w+)\s+(.+)$/)
+      if (!m) continue
+      // 主键列不能后来补；其余按原定义 ADD COLUMN
+      if (/PRIMARY KEY/i.test(m[2])) continue
+      defs.push([m[1], m[2]])
+    }
+    out[table] = defs
+  }
+  return out
 }
 
 export function dbPath(root) {
@@ -753,7 +775,7 @@ export function listProjects(root) {
   open(root)
   const rows = db
     .prepare(
-      `SELECT p.name, p.title, p.style, p.aspect,
+      `SELECT p.name, p.title, p.style, p.aspect, p.updated_at,
               (SELECT COUNT(*) FROM episodes e WHERE e.project_id=p.id) AS episodes,
               (SELECT COUNT(*) FROM shots s WHERE s.project_id=p.id) AS shots,
               (SELECT SUM(s.seconds) FROM shots s WHERE s.project_id=p.id) AS seconds
@@ -768,6 +790,7 @@ export function listProjects(root) {
     episodes: Number(r.episodes) || 0,
     shots: Number(r.shots) || 0,
     seconds: Math.round((Number(r.seconds) || 0) * 10) / 10,
+    updated_at: r.updated_at || '',
   }))
 }
 
@@ -1167,4 +1190,44 @@ export function mergeShots(existing = [], incoming = []) {
     out.push({ ...s, orphan: true })
   }
   return out
+}
+
+/**
+ * 显式删除镜头：只删传入的 id。
+ * 与 mergeShots 的 orphan 语义分开——缺席是保护性保留，只有点名才是删除意图。
+ */
+export function deleteShots(existing = [], ids = []) {
+  if (!Array.isArray(ids) || ids.length === 0) return { shots: existing, removed: 0 }
+  const drop = new Set(ids.map((x) => String(x)))
+  const shots = existing.filter((s) => !s || !s.id || !drop.has(String(s.id)))
+  return { shots, removed: existing.length - shots.length }
+}
+
+/** 兜底清理悬空转场：transition_out.to 指向已不存在的 shotId 时清除 */
+export function pruneDanglingTransitions(shots = []) {
+  const ids = new Set(shots.filter((s) => s && s.id).map((s) => String(s.id)))
+  let cleared = 0
+  const out = shots.map((s) => {
+    const to = s?.transition_out?.to
+    if (!s || !to) return s
+    if (!String(to).startsWith('E') || ids.has(String(to))) return s
+    cleared++
+    return { ...s, transition_out: null }
+  })
+  return { shots: out, cleared }
+}
+
+/** 集内镜号唯一性：重复会让 E{集}-{镜号} 的 id 碰撞 */
+export function findDuplicateShotNos(shots = []) {
+  const seen = new Map()
+  const dups = []
+  for (const s of shots) {
+    if (!s || !s.id || s.orphan) continue
+    const no = String(s.no ?? '').trim()
+    if (!no) continue
+    const key = `${Number(s.episode) || 1}:${no}`
+    if (seen.has(key)) dups.push({ episode: Number(s.episode) || 1, no, ids: [seen.get(key), String(s.id)] })
+    else seen.set(key, String(s.id))
+  }
+  return dups
 }

@@ -18,6 +18,7 @@ import {
   pickExtractedDesigns,
 } from './designExtract'
 import { CapModelSelect, hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
+import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
 import {
   builtinFailure,
@@ -250,6 +251,36 @@ export default function AssetBoard({
     setDesigns((ds) => ds.map((d) => (d.id === id ? { ...d, ...p } : d)))
   }, [])
 
+  /** 手工新建一张设定卡：只有名称与类型，其余为空，与拆解得到的卡完全等价 */
+  const addDesign = useCallback(
+    (kind: DesignKind) => {
+      const base = KIND_LABEL[kind]
+      let i = 1
+      const names = new Set(designsRef.current.map((d) => d.name))
+      while (names.has(`新${base}${i}`)) i += 1
+      const name = `新${base}${i}`
+      const sheet: DesignSheet = {
+        id: `design-manual-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        kind,
+        name,
+        refs: [],
+        summaryCn: '',
+        promptEn: '',
+        keywords: [],
+      }
+      const dupName = designsRef.current.find(
+        (d) => d.kind === kind && d.name.trim().toLowerCase() === name.trim().toLowerCase(),
+      )
+      if (dupName) toast(`已存在同名${base}卡，后续拆解会合并到同一张`)
+      const next = [...designsRef.current, sheet]
+      designsRef.current = next
+      setDesigns(next)
+      setTab(kind)
+      toast(`已新建${base}卡：补英文锚点或上传图片后即可使用`)
+    },
+    [toast],
+  )
+
   const removeDesign = useCallback(
     (d: DesignSheet) => {
       if (!window.confirm(`删除${KIND_LABEL[d.kind]}「${d.name}」？画布上已发布的素材卡不会自动删除。`)) return
@@ -416,6 +447,46 @@ export default function AssetBoard({
     if (url) updateDesign(d.id, { activeIdx: idx, image: url })
   }
 
+  /**
+   * 上传设定图：立即成为当前图，并入候选列表。
+   * 不依赖英文锚点 —— 手上已经有参考图的人不该被迫先生成一张。
+   * 只有保存成功才写状态；失败时卡片保持原样，不留空图占位。
+   */
+  const uploadDesignImage = async (d: DesignSheet, file: File) => {
+    if (!projectName) {
+      setErrors((x) => ({ ...x, [d.id]: '先选择项目再上传图片' }))
+      return
+    }
+    setErrors((x) => {
+      const next = { ...x }
+      delete next[d.id]
+      return next
+    })
+    try {
+      const url = await uploadImageFile(file, { project: projectName, prefix: `design-${d.kind}` })
+      const prev = designsRef.current.find((x) => x.id === d.id)
+      if (!prev) return
+      // 生成图仍留在候选里可切回；上传图并入末尾并成为当前图
+      const candidates = [...new Set([...(prev.candidates ?? []), url])]
+      const next = designsRef.current.map((x) =>
+        x.id === d.id ? { ...x, candidates, activeIdx: candidates.indexOf(url), image: url } : x,
+      )
+      designsRef.current = next
+      setDesigns(next)
+      const sig = JSON.stringify(next)
+      patchProject(projectName, { designs: next })
+        .then(() => {
+          savedSigRef.current = sig
+        })
+        .catch((e) => {
+          setErrors((x) => ({ ...x, [d.id]: (e as Error).message || '保存设定图失败' }))
+        })
+      toast(`已上传${KIND_LABEL[d.kind]}图：${d.name}`)
+    } catch (e) {
+      setErrors((x) => ({ ...x, [d.id]: (e as Error).message || '上传失败' }))
+    }
+  }
+
   const pushOne = (d: DesignSheet) => {
     if (!d.image) {
       toast('先生成或上传这张设定图，再加入画布')
@@ -538,6 +609,24 @@ export default function AssetBoard({
               在线素材库
             </button>
             <button
+              className="btn-ghost"
+              disabled={!projectName || ready !== projectName}
+              onClick={() => addDesign('scene')}
+              title="手工新建一张场景卡（不依赖拆解）"
+              data-add-design="scene"
+            >
+              + 场景卡
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={!projectName || ready !== projectName}
+              onClick={() => addDesign('prop')}
+              title="手工新建一张道具卡（不依赖拆解）"
+              data-add-design="prop"
+            >
+              + 道具卡
+            </button>
+            <button
               className={withImage === 0 ? 'btn primary' : 'btn-ghost'}
               disabled={!projectName || ready !== projectName || !!extracting}
               onClick={() => void extract('episode')}
@@ -600,6 +689,7 @@ export default function AssetBoard({
               onUpdate={updateDesign}
               onDelete={() => removeDesign(d)}
               onGenerate={() => void generate(d)}
+              onUpload={(file) => void uploadDesignImage(d, file)}
               onChoose={(idx) => chooseCandidate(d, idx)}
               onPush={() => pushOne(d)}
               missing={missing}
@@ -666,6 +756,7 @@ function DesignCard({
   onUpdate,
   onDelete,
   onGenerate,
+  onUpload,
   onChoose,
   onPush,
   missing,
@@ -680,6 +771,7 @@ function DesignCard({
   onUpdate: (id: string, p: Partial<DesignSheet>) => void
   onDelete: () => void
   onGenerate: () => void
+  onUpload: (file: File) => void
   onChoose: (idx: number) => void
   onPush: () => void
   missing: Set<string>
@@ -687,6 +779,7 @@ function DesignCard({
 }) {
   const [editing, setEditing] = useState(false)
   const [kw, setKw] = useState(d.keywords.join('、'))
+  const uploadRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (!editing) setKw(d.keywords.join('、'))
@@ -817,10 +910,29 @@ function DesignCard({
           {d.image ? '重出设定图' : '生成设定图'}
           {price ? ` · ¥${money(imageCost(price, 2))}` : ''}
         </button>
+        <button
+          className="btn-ghost"
+          disabled={running}
+          onClick={() => uploadRef.current?.click()}
+          title="上传本地图片作为当前设定图；不需要先填英文锚点"
+        >
+          上传设定图
+        </button>
         <button className="btn-ghost" disabled={!d.image || imageMissing} onClick={onPush}>
           {onCanvas ? '更新画布' : '加入画布'}
         </button>
       </div>
+      <input
+        ref={uploadRef}
+        type="file"
+        accept={ACCEPT_ATTR}
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onUpload(file)
+          e.target.value = ''
+        }}
+      />
     </div>
   )
 }

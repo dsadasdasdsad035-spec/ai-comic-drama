@@ -20,6 +20,7 @@ import { mergeScriptDraft } from './agent/drafts'
 import { AgentButton } from './agent/AgentButton'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
+import IntakeDialog from './intake/IntakeDialog'
 
 const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
@@ -71,6 +72,7 @@ export default function ScriptBoard({
   const [dirty, setDirty] = useState(false)
   const [elapsed, setElapsed] = useState<number | null>(null)
   const [chatRunning, setChatRunning] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('script')
   const chatVisible = chatOpen && Boolean(projectName)
 
@@ -115,7 +117,7 @@ export default function ScriptBoard({
       applyDraft: (payload) => {
         const data = (payload || {}) as { logline?: unknown; episodes?: unknown }
         const incoming = Array.isArray(data.episodes) ? (data.episodes as ProjectEpisode[]) : []
-        const merged = mergeScriptDraft(liveRef.current.episodes, incoming)
+        const merged = mergeScriptDraft(liveRef.current.episodes, incoming, 'replace')
         if (typeof data.logline === 'string') {
           liveRef.current.logline = data.logline
           setLogline(data.logline)
@@ -271,6 +273,43 @@ export default function ScriptBoard({
     toast(`已删除第 ${n} 集（记得保存）`)
   }
 
+  /** 新增一场：场次号取集内最大+1，字段为空 */
+  const addScene = (epIdx: number) => {
+    const ep = episodes[epIdx]
+    if (!ep) return
+    const scenes = [...(ep.scenes ?? [])]
+    const max = scenes.reduce((m, sc, i) => Math.max(m, Number(sc?.no) || i + 1), 0)
+    scenes.push({ no: max + 1, slug: '', place: '', time: '', beats: '', characters: [] })
+    patchEp(epIdx, { scenes })
+  }
+
+  /** 删除一场：确认框说明该场下有多少镜头会失去场次归属，镜头本身不删 */
+  const removeScene = async (epIdx: number, scIdx: number) => {
+    const ep = episodes[epIdx]
+    const sc = ep?.scenes?.[scIdx]
+    if (!ep || !sc) return
+    const no = Number(sc.no) || scIdx + 1
+    const epNoOfScene = Number(ep.no) || epIdx + 1
+    // 剧本页不持有镜头数据，删除前按需读一次项目来数受影响镜头
+    let linked = 0
+    if (projectName) {
+      try {
+        const p = await getProject(projectName)
+        linked = (p.shots ?? []).filter(
+          (s) => (Number(s.episode) || 1) === epNoOfScene && Number(s.scene_no) === no,
+        ).length
+      } catch {
+        linked = 0
+      }
+    }
+    const note = linked
+      ? `该场下有 ${linked} 个镜头，删除后它们会失去场次归属（镜头本身不删）。`
+      : '没有镜头归属该场。'
+    if (!window.confirm(`删除第 ${no} 场「${sc.slug || '未命名'}」？\n${note}`)) return
+    patchEp(epIdx, { scenes: (ep.scenes ?? []).filter((_, i) => i !== scIdx) })
+    toast(`已删除第 ${no} 场（记得保存）`)
+  }
+
   const patchEp = (idx: number, p: Partial<ProjectEpisode>) => {
     setEpisodes((prev) => prev.map((e, i) => (i === idx ? { ...e, ...p } : e)))
     setDirty(true)
@@ -350,6 +389,9 @@ export default function ScriptBoard({
               dirty={dirty}
               controlsId="workbench-chat-script"
             />
+            <button className="btn btn-ghost" disabled={!projectName} onClick={() => setIntakeOpen(true)} title="导入已写好的剧本：JSON 直通、表格映射，或粘贴原文让模型整理">
+              导入
+            </button>
             <button className="btn" onClick={load} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
@@ -458,6 +500,14 @@ export default function ScriptBoard({
                       <li key={si}>
                         <div className="sb-scene-meta">
                           <span className="sb-slug">{sc.slug || `场景 ${si + 1}`}</span>
+                          <button
+                            className="btn-mini ghost sb-scene-del"
+                            onClick={() => void removeScene(i, si)}
+                            title="删除这一场（镜头不删）"
+                            data-remove-scene={`${i}-${si}`}
+                          >
+                            ✕
+                          </button>
                           <span className="sb-dim">{sc.place}</span>
                           <span className="sb-dim">{sc.time}</span>
                           {!!sc.characters?.length && <span className="sb-cast">{sc.characters.join('、')}</span>}
@@ -510,12 +560,43 @@ export default function ScriptBoard({
                       </li>
                     ))}
                   </ol>
+                  <div className="sb-scene-add">
+                    <button className="btn-mini" onClick={() => addScene(i)} data-add-scene={i}>
+                      + 新增场次
+                    </button>
+                  </div>
                 </section>
               )
             })}
           </div>
         )}
       </div>
+      {intakeOpen ? (
+        <IntakeDialog
+          target="script"
+          projectName={projectName}
+          epNo={epNo}
+          settings={settings}
+          stagePick={stagePick}
+          shots={[]}
+          episodes={episodes}
+          chars={[]}
+          toast={toast}
+          onClose={() => setIntakeOpen(false)}
+          onApply={(r) => {
+            if (r.episodes) {
+              setEpisodes(r.episodes)
+              setDirty(true)
+            }
+            if (r.characters && projectName) {
+              patchProject(projectName, { characters: r.characters } as never)
+                .then(() => toast(`角色已写入项目 · ${r.characters!.length} 个`))
+                .catch((e) => toast((e as Error).message || '角色写入失败'))
+            }
+            toast(`已导入剧本草稿：${r.summary}（记得保存）`)
+          }}
+        />
+      ) : null}
       <WorkbenchChatAside
         surface="script"
         open={chatVisible}

@@ -201,6 +201,20 @@ try {
     })
   })
 
+  // 上传段：saveFail 打开时让 /api/save-image 返回失败，用来验证「不写回设定卡」
+  let saveFail = false
+  await page.route('**/api/save-image', async (route) => {
+    if (saveFail) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: false, message: '模拟保存失败' }),
+      })
+      return
+    }
+    await route.continue()
+  })
+
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1600)
   const projectSel = page.locator('.topbar-project select')
@@ -234,12 +248,13 @@ try {
   // ---- 素材页：本集拆解 ----
   await page.getByRole('button', { name: '素材', exact: true }).click()
   await page.waitForTimeout(700)
-  check('素材页标题存在', (await page.getByRole('heading', { name: '素材设定板' }).count()) === 1)
+  // 上下文带的标题就是「素材」；「素材设定板」是旧标题，已随外壳改版移除
+  check('素材页标题存在', (await page.locator('.wb-bar-title').first().innerText()).trim() === '素材')
   check('素材页有场景/道具页签', (await page.getByRole('button', { name: /场景/ }).count()) >= 1)
   check('素材页没有布局页签', (await page.getByRole('button', { name: '布局', exact: true }).count()) === 0)
 
   textCalls.length = 0
-  await page.getByRole('button', { name: '从本集拆' }).click()
+  await page.locator('.wb-bar-actions').getByRole('button', { name: '从本集拆' }).click()
   await waitFor(() => textCalls.length > 0, 5000)
   check('本集拆解调用模型', textCalls.length === 1, String(textCalls.length))
   const extractPrompt = String(textCalls[0]?.prompt || '')
@@ -252,7 +267,7 @@ try {
   check('场景 refs 合并了多个镜头', (sceneDesign?.refs || []).length === 2, JSON.stringify(sceneDesign?.refs))
 
   // 再次拆解：不重复、refs 取并集
-  await page.getByRole('button', { name: '从本集拆' }).click()
+  await page.locator('.wb-bar-actions').getByRole('button', { name: '从本集拆' }).click()
   await waitFor(() => textCalls.length >= 2, 5000)
   await page.waitForTimeout(900)
   a = await api('/api/project?name=A')
@@ -269,7 +284,7 @@ try {
     '手改英文锚点已保存',
     (a.project?.designs || []).find((d) => d.kind === 'scene')?.promptEn === 'EDITED-SCENE-ANCHOR, underground shaft',
   )
-  await page.getByRole('button', { name: '从本集拆' }).click()
+  await page.locator('.wb-bar-actions').getByRole('button', { name: '从本集拆' }).click()
   await waitFor(() => textCalls.length >= 3, 5000)
   await page.waitForTimeout(900)
   a = await api('/api/project?name=A')
@@ -281,15 +296,63 @@ try {
   // 空锚点：明确报错且不发请求
   seedCalls.length = 0
   await promptArea.fill('')
-  await sceneCard.getByRole('button', { name: /生成设定图/ }).click()
+  await sceneCard.getByRole('button', { name: /生成设定图|重出设定图/ }).click()
   await page.waitForTimeout(400)
   const emptyAnchorError = await sceneCard.locator('.gen-error').innerText().catch(() => '')
   check('空锚点给出错误且不发请求', /先补英文锚点/.test(emptyAnchorError) && seedCalls.length === 0, emptyAnchorError)
+
+  // ---- 上传设定图（锚点仍为空，验证不依赖英文锚点） ----
+  const cardFileInput = sceneCard.locator('input[type=file]')
+  check('设定卡有上传入口', (await cardFileInput.count()) === 1, String(await cardFileInput.count()))
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  await cardFileInput.setInputFiles({ name: 'uploaded-scene.png', mimeType: 'image/png', buffer: pngBytes })
+  await page.waitForTimeout(1400)
+  a = await api('/api/project?name=A')
+  const uploadedScene = (a.project?.designs || []).find((d) => d.kind === 'scene')
+  check(
+    '空锚点也能上传且成为当前图',
+    Boolean(uploadedScene?.image) && String(uploadedScene.image).startsWith('/project-assets/A/'),
+    JSON.stringify({ image: uploadedScene?.image, promptEn: uploadedScene?.promptEn }),
+  )
+  check('上传图进入候选', (uploadedScene?.candidates || []).includes(uploadedScene?.image), JSON.stringify(uploadedScene?.candidates))
+  check(
+    '上传不改英文锚点',
+    (uploadedScene?.promptEn || '') === '',
+    JSON.stringify(uploadedScene?.promptEn),
+  )
+  check('上传后卡片可加入画布', await sceneCard.getByRole('button', { name: /加入画布|更新画布/ }).isEnabled())
+
+  // 不支持的格式：报错且不改设定卡
+  const beforeBadFormat = JSON.stringify((await api('/api/project?name=A')).project?.designs)
+  await cardFileInput.setInputFiles({
+    name: 'IMG_0001.HEIC',
+    mimeType: 'image/heic',
+    buffer: Buffer.from('not-a-real-heic'),
+  })
+  await page.waitForTimeout(700)
+  const heicError = await sceneCard.locator('.gen-error').innerText().catch(() => '')
+  check('HEIC 被拒并说明支持的格式', /png \/ jpeg \/ webp/.test(heicError), heicError)
+  check('HEIC 拒绝后设定卡不变', JSON.stringify((await api('/api/project?name=A')).project?.designs) === beforeBadFormat)
+
+  // 保存失败：只报错，不把地址写进设定卡
+  const beforeFail = JSON.stringify((await api('/api/project?name=A')).project?.designs)
+  saveFail = true
+  await cardFileInput.setInputFiles({ name: 'fail.png', mimeType: 'image/png', buffer: pngBytes })
+  await page.waitForTimeout(1400)
+  const saveError = await sceneCard.locator('.gen-error').innerText().catch(() => '')
+  saveFail = false
+  check('保存失败显示错误', /模拟保存失败|保存失败/.test(saveError), saveError)
+  check('保存失败后设定卡不变', JSON.stringify((await api('/api/project?name=A')).project?.designs) === beforeFail)
+
   await promptArea.fill('EDITED-SCENE-ANCHOR, underground shaft')
+  await page.waitForTimeout(500)
 
   // ---- 生成场景空镜 ----
   seedCalls.length = 0
-  await sceneCard.getByRole('button', { name: /生成设定图/ }).click()
+  await sceneCard.getByRole('button', { name: /生成设定图|重出设定图/ }).click()
   await waitFor(() => seedCalls.length > 0, 5000)
   const sceneReq = seedCalls[0] || {}
   check('场景请求 16:9 / 2 张', sceneReq.ratio === '16:9' && sceneReq.n === 2, JSON.stringify({ ratio: sceneReq.ratio, n: sceneReq.n }))
@@ -317,10 +380,10 @@ try {
   // ---- 生成道具并单卡发布 ----
   await page.getByRole('button', { name: '素材', exact: true }).click()
   await page.waitForTimeout(400)
-  await page.getByRole('button', { name: /道具/ }).first().click()
+  await page.locator('.asset-tabs').getByRole('button', { name: /道具/ }).first().click()
   const propCard = page.locator('.design-card').filter({ hasText: 'A 机械义体手臂' }).first()
   seedCalls.length = 0
-  await propCard.getByRole('button', { name: /生成设定图/ }).click()
+  await propCard.getByRole('button', { name: /生成设定图|重出设定图/ }).click()
   await waitFor(() => seedCalls.length > 0, 5000)
   const propReq = seedCalls[0] || {}
   check('道具请求 1:1 / 2 张', propReq.ratio === '1:1' && propReq.n === 2, JSON.stringify({ ratio: propReq.ratio, n: propReq.n }))
@@ -362,7 +425,7 @@ try {
   check('刷新后设定数据仍是两张', (a.project?.designs || []).length === 2)
   check('刷新后场景页签恢复一张', (await page.locator('.design-card').count()) === 1)
   check('刷新后场景卡显示已在画布', (await page.getByRole('button', { name: '更新画布', exact: true }).count()) === 1)
-  await page.getByRole('button', { name: /道具/ }).first().click()
+  await page.locator('.asset-tabs').getByRole('button', { name: /道具/ }).first().click()
   await page.waitForTimeout(300)
   check('刷新后道具页签恢复一张', (await page.locator('.design-card').count()) === 1)
   check('刷新后道具卡显示已在画布', (await page.getByRole('button', { name: '更新画布', exact: true }).count()) === 1)
@@ -429,7 +492,7 @@ try {
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '素材', exact: true }).click()
   await page.waitForTimeout(600)
-  await page.getByRole('button', { name: /场景/ }).first().click()
+  await page.locator('.asset-tabs').getByRole('button', { name: /场景/ }).first().click()
   await page.waitForTimeout(300)
   check(
     '删除画布卡后场景回到未发布',
@@ -447,7 +510,7 @@ try {
   await page.getByRole('button', { name: '素材', exact: true }).click()
   await page.waitForTimeout(700)
   check('B 初始没有 A 的设定', (await page.locator('.design-card').count()) === 0)
-  await page.getByRole('button', { name: '从本集拆' }).click()
+  await page.locator('.wb-bar-actions').getByRole('button', { name: '从本集拆' }).click()
   await waitFor(() => textCalls.some((c) => /B-source|B 井道|B 项目/.test(String(c.prompt))), 5000)
   await page.waitForTimeout(900)
   const b = await api('/api/project?name=B')

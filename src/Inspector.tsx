@@ -13,6 +13,7 @@ import MediaPicker from './MediaPicker'
 import { fetchStockMeta } from './stock/api'
 import type { StockImportMeta } from './stock/types'
 import { pickKind, pickTitle, type PickItem } from './mediaPick'
+import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import PerformanceEditor from './PerformanceEditor'
 import LipSyncPanel from './LipSyncPanel'
 import NativeAudioPanel from './NativeAudioPanel'
@@ -49,12 +50,44 @@ function AssetPanel({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [stockMeta, setStockMeta] = useState<StockImportMeta | null>(null)
   const [metaMissing, setMetaMissing] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const uploadRef = useRef<HTMLInputElement>(null)
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
+
+  /**
+   * 本地上传：保存成功才写地址。素材卡会落库，所以不能像参考图那样先塞 dataURL。
+   * 类型沿用既有规则（pickKind）：场景/道具卡保持原类型，其余回落图片。
+   */
+  const uploadFromDisk = async (file: File) => {
+    setUploadError('')
+    setUploading(true)
+    try {
+      const url = await uploadImageFile(file, { project: projectName, prefix: `asset-${d.kind || 'image'}` })
+      const kind = pickKind(
+        { key: url, source: 'project-image', kind: 'image', mediaType: 'image', title: '', url },
+        d.kind,
+      )
+      set({ url, kind })
+    } catch (e) {
+      setUploadError((e as Error).message || '上传失败')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  /**
+   * 选择确认必须读「打开时的最新值」：选择器是条件渲染，闭包会拿到
+   * 打开那一刻的 d；否则「先改标题再选素材」会被旧标题判空而覆盖用户输入。
+   */
+  const latestRef = useRef(d)
+  latestRef.current = d
   const confirmPick = (item: PickItem) => {
+    const cur = latestRef.current
     set({
       url: item.url,
-      kind: pickKind(item, d.kind),
-      title: pickTitle(item, d.title),
+      kind: pickKind(item, cur.kind),
+      title: pickTitle(item, cur.title),
     })
     setPickerOpen(false)
   }
@@ -145,6 +178,29 @@ function AssetPanel({
           </span>
           <span className="asset-source-action">选择素材</span>
         </button>
+        <div className="asset-upload-row">
+          <button
+            type="button"
+            className="btn-mini ghost"
+            disabled={uploading}
+            onClick={() => uploadRef.current?.click()}
+            title="上传本地图片（png / jpeg / webp）作为本文素材"
+          >
+            {uploading ? '上传中…' : '上传图片'}
+          </button>
+          {uploadError ? <span className="asset-upload-error">{uploadError}</span> : null}
+        </div>
+        <input
+          ref={uploadRef}
+          type="file"
+          accept={ACCEPT_ATTR}
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void uploadFromDisk(file)
+            e.target.value = ''
+          }}
+        />
       </div>
       {stockMeta ? (
         <div className="field" data-stock-meta>
@@ -741,8 +797,8 @@ function InspectorBody({
     promptStale: activeVideoPrompt?.stale ?? false,
     nativeAudio: d.audioMode === 'native',
   })
-  const imageReason = !d.prompt.trim() ? '先填写画面提示词' : ''
-  const voiceReason = !d.dialogue.trim()
+  const imageReason = !String(d.prompt ?? '').trim() ? '先填写画面提示词' : ''
+  const voiceReason = !String(d.dialogue ?? '').trim()
     ? '先填写台词'
     : voices.length === 0
       ? '没有可用音色'
@@ -1375,7 +1431,7 @@ function InspectorBody({
           <>
             <button
               className="btn primary block"
-              disabled={d.genState !== 'running' && !d.prompt.trim()}
+              disabled={d.genState !== 'running' && !String(d.prompt ?? '').trim()}
               onClick={() =>
                 d.genState === 'running' ? onCancelGenerate(node.id) : onGenerate(node.id)
               }

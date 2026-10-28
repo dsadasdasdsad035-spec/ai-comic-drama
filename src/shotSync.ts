@@ -40,6 +40,86 @@ export function clearHandEdited(s: ProjectShot, fields: string[]): ProjectShot {
   return { ...s, handEdited: next.length ? next : undefined }
 }
 
+export type ShotMergeMode = 'merge' | 'replace'
+
+/**
+ * 导入用的镜头合并。
+ *
+ * 为什么不能直接用 mergeGenerated：它按 generated.map 返回，
+ * 文件里没出现的镜头会被整条丢掉——20 镜的集导入 3 行会剩 3 镜。
+ *
+ * - replace：保持 mergeGenerated 的行为（聊天/生成用；技能被要求输出全集）
+ * - merge：以镜号为准，只改文件出现的行，其余行原样保留；
+ *          且只写文件给了值的字段（partial 语义），不给的列不覆盖。
+ */
+export function mergeShotsDraft(
+  current: ProjectShot[],
+  generated: ProjectShot[],
+  epNo: number,
+  mode: ShotMergeMode = 'merge',
+): { shots: ProjectShot[]; added: number; updated: number; kept: number } {
+  const visibleNow = current.filter((s) => (Number(s.episode) || 1) === epNo)
+  const others = current.filter((s) => (Number(s.episode) || 1) !== epNo)
+
+  if (mode === 'replace') {
+    const merged = mergeGenerated(visibleNow, generated)
+    const beforeIds = new Set(visibleNow.map((s) => s.id))
+    const added = merged.filter((s) => !beforeIds.has(s.id)).length
+    return { shots: [...others, ...merged], added, updated: merged.length - added, kept: 0 }
+  }
+
+  const byNo = new Map(visibleNow.map((s) => [String(s.no ?? '').trim(), s]))
+  const byId = new Map(visibleNow.map((s) => [s.id, s]))
+  const nextVisible = [...visibleNow]
+  /** id → 在 nextVisible 里的下标；替换后仍指向新对象，避免重复行 push 出两份 */
+  const idxOf = new Map(visibleNow.map((s, i) => [s.id, i]))
+  let added = 0
+  let updated = 0
+  const done = new Set<string>()
+
+  for (const g of generated) {
+    const key = String(g.no ?? '').trim()
+    const old = byId.get(g.id) ?? byNo.get(key)
+    if (!old) {
+      const dup = nextVisible.find((s) => String(s.no ?? '').trim() === key)
+      if (dup) continue
+      nextVisible.push(g)
+      idxOf.set(g.id, nextVisible.length - 1)
+      added++
+      continue
+    }
+    // 文件里同镜号出现两次：后一条不覆盖前一条，交给预览去报重复
+    if (done.has(old.id)) continue
+    done.add(old.id)
+    // 只写导入行里真正给了值的字段；镜像数据（生成时是全新对象）不覆盖
+    const next: ProjectShot = { ...old }
+    const setIf = <K extends keyof ProjectShot>(k: K, v: ProjectShot[K] | undefined) => {
+      if (v === undefined) return
+      next[k] = v
+    }
+    setIf('no', g.no)
+    setIf('seconds', g.seconds)
+    setIf('size', g.size)
+    setIf('move', g.move)
+    setIf('desc', g.desc)
+    setIf('dialogue', g.dialogue)
+    setIf('keyframe_prompt', g.keyframe_prompt)
+    setIf('video_prompt', g.video_prompt)
+    setIf('scene_no', g.scene_no)
+    setIf('scene_slug', g.scene_slug)
+    // 手改保护：被锁定的字段回填旧值
+    for (const k of old.handEdited ?? []) {
+      ;(next as Record<string, unknown>)[k] = (old as Record<string, unknown>)[k]
+    }
+    const idx = idxOf.get(old.id)
+    if (idx !== undefined) nextVisible[idx] = next
+    else nextVisible.push(next)
+    updated++
+  }
+
+  return { shots: [...others, ...nextVisible], added, updated, kept: visibleNow.length - updated }
+}
+
 /** 只认本地相对路径：dataURL / 外链（如方舟临时 TOS 地址）不能写进项目文件 */
 export function localPath(u?: string): string | undefined {
   if (!u) return undefined

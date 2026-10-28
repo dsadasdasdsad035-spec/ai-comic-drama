@@ -34,6 +34,8 @@ __pycache__/
 projects/*/project.json.bak
 projects/*/assets/
 projects/*/*-backup-*.json
+# 删除项目前的数据库快照：本地可手工恢复，不随仓库分发
+.deleted/
 
 # 临时基准脚本
 bench*.mjs
@@ -60,3 +62,11 @@ public/publish-packages/
 # 部署：本机数据目录、DTK 源码与运行期密钥
 data/
 .dtk/
+deploy/proxy/.htpasswd
+
+# 部署证书（只放目标机）
+deploy/ssl/
+
+# 压缩包验收夹具：7.4MB 的第三方素材，不入库。
+# verify-bundle-import.mjs 在缺夹具时会自动从 /tmp/cat-probe 现场打包。
+fixtures/*.zip

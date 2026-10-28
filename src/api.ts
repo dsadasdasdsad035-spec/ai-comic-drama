@@ -532,6 +532,8 @@ export type ProjectSummary = {
   episodes: number
   shots: number
   seconds: number
+  /** 最后写入时间；用于项目管理列表排序与展示 */
+  updated_at?: string
   broken?: boolean
 }
 
@@ -703,8 +705,80 @@ export async function createProject(
   if (!j.ok) throw new Error(j.message || '新建项目失败')
 }
 
+/** 删除预览：不存在的项目返回 exists:false，不抛错 */
+export type ProjectDeletePreview = {
+  ok: true
+  name: string
+  exists: boolean
+  counts: Record<string, number>
+  mediaBytes: number
+  activeJobs: ProjectDeleteJob[]
+}
+
+export type ProjectDeleteJob = {
+  id: string
+  platform: string
+  state: string
+  deliverableId: string
+  createdAt: string
+}
+
+export type ProjectDeleteResult = {
+  name: string
+  ok: boolean
+  code?: 'not_found' | 'active_jobs' | 'snapshot_failed' | 'delete_failed' | 'error'
+  message?: string
+  jobs?: ProjectDeleteJob[]
+  snapshot?: string
+  filesRemoved?: boolean
+  sharedFilesKept?: boolean
+  warnings?: string[]
+}
+
+export async function previewProjectDelete(name: string): Promise<ProjectDeletePreview> {
+  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}&preview=delete`)
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '读取删除预览失败')
+  return j as ProjectDeletePreview
+}
+
+/** 批量预览：一次请求算完所有选中项，避免几百个并发请求 */
+export async function previewProjectDeletes(names: string[]): Promise<ProjectDeletePreview[]> {
+  if (!names.length) return []
+  const r = await fetch('/api/project?preview=delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '读取删除预览失败')
+  return (j.items ?? []) as ProjectDeletePreview[]
+}
+
+/**
+ * 删除一批项目。批量接口即使部分失败也返回 200，调用方按 results 逐项处理。
+ * 名字走请求体而不是查询串：没有数量上限，几百个项目名放 URL 会被长度限制截断。
+ */
+export async function deleteProjects(names: string[]): Promise<{
+  ok: true
+  results: ProjectDeleteResult[]
+  deleted: string[]
+  sharedFilesKept: true
+}> {
+  const r = await fetch('/api/project', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '删除项目失败')
+  return j
+}
+
 export type ProjectPatch = {
   shots?: ProjectShot[]
+  /** 显式删除这些镜头 id（缺席不等于删除：缺席只标 orphan） */
+  deleteShotIds?: string[]
   characters?: unknown[]
   designs?: DesignSheet[]
   sceneLayouts?: SceneLayout[]
@@ -734,8 +808,12 @@ export async function patchProject(
 export async function mergeProjectShots(
   name: string,
   shots: ProjectShot[],
+  deleteShotIds?: string[],
 ): Promise<{ shots: ProjectShot[]; savedAt: string }> {
-  const r = await patchProject(name, { shots })
+  const r = await patchProject(name, {
+    shots,
+    ...(deleteShotIds?.length ? { deleteShotIds } : {}),
+  })
   return { shots: r.shots, savedAt: r.savedAt }
 }
 

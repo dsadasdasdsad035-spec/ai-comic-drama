@@ -19,7 +19,9 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { createProject, listProjects, readProject, writeProject, mergeShots, resolveRoot, getSetting, setSetting, dbPath, safeProjectName, listSkillOverrides, getSkillOverride, setSkillOverride, deleteSkillOverride, getChatThread, saveChatThread, deleteChatThread } from './server/db.mjs'
+import { openBundle, getBundle, readBundleFile, cleanupBundle, cleanupAllBundles } from './server/bundle.mjs'
+import { createProject, listProjects, readProject, writeProject, mergeShots, deleteShots, pruneDanglingTransitions, findDuplicateShotNos, resolveRoot, getSetting, setSetting, dbPath, safeProjectName, listSkillOverrides, getSkillOverride, setSkillOverride, deleteSkillOverride, getChatThread, saveChatThread, deleteChatThread } from './server/db.mjs'
+import { deleteProjects, previewProjectDelete, previewProjectDeletes } from './server/project-lifecycle.mjs'
 import { createDeliverable, deleteDeliverable, getDeliverable, listDeliverables, normalizeDeliverableConfig, patchDeliverableConfig } from './server/deliverables.mjs'
 import { getPlatform, listPlatforms } from './server/publish-platforms.mjs'
 import { listAdapters } from './server/publish-adapters.mjs'
@@ -48,7 +50,7 @@ import {
 import { cancel, closeKeptOpenWindows, enqueue, keptOpenWindowCount } from './server/publish-queue.mjs'
 import { buildPublishPackage } from './server/publish-package.mjs'
 import { autoDraftOnExport } from './server/publish-auto.mjs'
-import { chromeAvailable, profilesRoot, resolveChrome, sanitizeError } from './server/publish-utils.mjs'
+import { chromeAvailable, hasDisplay, NO_DISPLAY_HINT, profilesRoot, resolveChrome, sanitizeError } from './server/publish-utils.mjs'
 import { recoverInterruptedJobs } from './server/publish-jobs.mjs'
 import {
   cancelIntent,
@@ -59,11 +61,15 @@ import {
   sweepIntents,
 } from './server/publish-intents.mjs'
 import { MAX_SKILL_BYTES, listSkillFiles, readSkillFile, safeSkillId, splitSkillText, withBuiltinFrontmatter } from './server/skills.mjs'
+/** 压缩包上传上限：7.4MB 的真实资料包留足余量，同时挡住误传大文件 */
+const MAX_BUNDLE_BYTES = 200 * 1024 * 1024
+
 import {
   MAX_REF_BYTES,
   copyIntoProjectMedia,
   listProjectImages,
   migrateProjectMedia,
+  parseProjectMediaUrl,
   resolveProjectMediaPath,
   resolveRef,
   saveProjectImage,
@@ -563,10 +569,11 @@ const DEFAULT_MODELS: ModelEntry[] = [
     key: 'apimart-text-gemini-3-5-flash',
     label: 'Gemini 3.5 Flash（APIMart）',
     cap: 'text',
-    caps: ['text', 'textPro'],
+    caps: ['text', 'textPro', 'vision'],
     provider: 'apimart',
     model: 'gemini-3.5-flash',
     source: 'preset',
+    features: { vision: true },
   },
   {
     key: 'apimart-text-deepseek-v4-flash',
@@ -650,6 +657,8 @@ const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
   video: 'ark-video',
   videoRef: 'ark-video-ref',
   audio: 'minimax-tts',
+  // Agent Plan 网关不解析 image_url，视觉默认走 APIMart 的多模态模型
+  vision: 'apimart-text-gemini-3-5-flash',
 }
 
 /** 老渠道没有 caps 字段时按协议推一个默认用途 */
@@ -664,7 +673,7 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
 }
 
 /** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
-const CURRENT_PRESETS_VERSION = 9
+const CURRENT_PRESETS_VERSION = 10
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
@@ -675,6 +684,13 @@ const V3_PRESET_MODEL_KEYS = new Set(['ark-video-2-0', 'ark-video-2-5'])
 const V4_PRESET_MODEL_KEYS = new Set(['ark-plan-text-deepseek-flash'])
 /** v5：DeepSeek Flash 视觉模型；没有其它视觉模型时成为默认视觉候选 */
 const V5_PRESET_MODEL_KEYS = new Set(['ark-plan-vision-deepseek-flash'])
+/**
+ * v10：Agent Plan 的 /api/plan/v3 网关不解析 image_url —— 它把 dataURL 当普通文本
+ * 塞进 prompt（模型回答「图片数据被截断」）。该条目因此只剩文本能力，
+ * 视觉默认改绑 APIMart 的多模态模型（实测能真正读到图）。
+ */
+const V10_BROKEN_VISION_KEY = 'ark-plan-vision-deepseek-flash'
+const V10_VISION_FALLBACK_KEY = 'apimart-text-gemini-3-5-flash'
 
 /** v6-v8：APIMart 渠道与已接入运行时的预置模型；不改变任何默认模型 */
 function mergeApimartPresets(providers: Provider[], models: ModelEntry[]) {
@@ -692,6 +708,8 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
   if (version >= CURRENT_PRESETS_VERSION) return { ...cur, presetsVersion: version }
   let providers = cur.providers
   let models = cur.models
+  let defaults = cur.defaults
+  let stageModels: Partial<Record<Stage, string>> = { ...cur.stageModels }
   if (version < 2) {
     const providerIds = new Set(providers.map((p) => p.id))
     const modelKeys = new Set(models.map((m) => m.key))
@@ -730,7 +748,61 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
     providers = merged.providers
     models = merged.models
   }
-  return { ...cur, providers, models, presetsVersion: CURRENT_PRESETS_VERSION }
+  if (version < 10) {
+    // 该条目仍是可用的文本模型，但不能再当视觉模型用。
+    // 注意必须同时改写 cap：caps 为空数组时 modelHasCap 会回退到 cap，
+    // 只删 vision 会让它继续被当成视觉模型。
+    models = models.map((m) =>
+      m.key === V10_BROKEN_VISION_KEY
+        ? { ...m, cap: 'text' as const, caps: ['text' as Cap] }
+        : m,
+    )
+  }
+  return { ...cur, providers, models, defaults, stageModels, presetsVersion: CURRENT_PRESETS_VERSION }
+}
+
+/**
+ * 视觉绑定自愈：历史数据里可能绑着已经不能读图的模型
+ * （Agent Plan 的 /api/plan/v3 不解析 image_url，实测把 dataURL 当文本喂给模型）。
+ * 在每次读取设置时兜一次，不依赖预设版本号——否则已经写坏一次的库永远修不回来。
+ * 同时把坏条目本身降级成文本模型，避免它继续出现在视觉候选里。
+ */
+function repairVisionBinding(s: AppSettings): AppSettings {
+  let changed = false
+  const models = s.models.map((m) => {
+    if (m.key !== V10_BROKEN_VISION_KEY) return m
+    if (!modelHasCap(m, 'vision')) return m
+    changed = true
+    return { ...m, cap: 'text' as const, caps: ['text' as Cap] }
+  })
+  const usable = (key: string | undefined) => {
+    if (!key) return false
+    const m = models.find((x) => x.key === key)
+    return Boolean(m && modelHasCap(m, 'vision') && isRunnableModel(m))
+  }
+  let defaults = s.defaults
+  let stageModels = { ...s.stageModels }
+  if (!usable(defaults.vision)) {
+    defaults = { ...defaults }
+    if (usable(V10_VISION_FALLBACK_KEY)) {
+      defaults.vision = V10_VISION_FALLBACK_KEY
+      changed = true
+    } else if (defaults.vision) {
+      delete defaults.vision
+      changed = true
+    }
+  }
+  for (const stage of ['vision', 'videoVision'] as const) {
+    if (stageModels[stage] && !usable(stageModels[stage])) {
+      delete stageModels[stage]
+      changed = true
+    }
+  }
+  if (!stageModels.vision && defaults.vision && usable(defaults.vision)) {
+    stageModels.vision = defaults.vision
+    changed = true
+  }
+  return changed ? { ...s, models, defaults, stageModels } : s
 }
 
 /** 目录/手工条目可能带未知能力值；只保留已知能力并去重 */
@@ -862,9 +934,12 @@ function getAppSettings(): AppSettings {
       settingsReady = true
     }
     const raw = getSetting('app')
-    const normalized = normalizeSettings(raw)
-    // 预设迁移只落盘一次；之后用户删掉的预设不会被反复加回来
-    if ((Number(raw?.presetsVersion) || 1) < CURRENT_PRESETS_VERSION) {
+    const base = normalizeSettings(raw)
+    const normalized = repairVisionBinding(base)
+    // 预设迁移只落盘一次；之后用户删掉的预设不会被反复加回来。
+    // 自愈修掉坏绑定时也顺手落盘，避免每次启动都重算。
+    const migrated = (Number(raw?.presetsVersion) || 1) < CURRENT_PRESETS_VERSION
+    if (migrated || normalized !== base) {
       try {
         setSetting('app', normalized)
       } catch {
@@ -873,7 +948,7 @@ function getAppSettings(): AppSettings {
     }
     return normalized
   } catch {
-    return normalizeSettings(null)
+    return repairVisionBinding(normalizeSettings(null))
   }
 }
 
@@ -1490,12 +1565,17 @@ async function findCjkFont(): Promise<string> {
   return new Promise((resolve) => {
     execFile('fc-list', [':lang=zh', 'family'], { timeout: 5000 }, (err, stdout) => {
       if (err) return resolve('')
-      const first = String(stdout)
+      const families = String(stdout)
         .split('\n')
         .map((s) => s.trim())
-        .filter(Boolean)[0]
-      const family = first ? first.split(':')[0].split(',')[0].trim() : ''
-      resolve(family || '')
+        .filter(Boolean)
+        .map((s) => s.split(':')[0].split(',')[0].trim())
+        .filter(Boolean)
+      // fc-list 默认把 Noto CJK 的 JP 字面排前面；简体中文用 JP 字面会出现
+      // 异体字（直/骨/关 等），所以优先挑 SC 字面，且 Sans 比 Serif/Mono 更清楚。
+      const sc = families.find((f) => /\bSC\b/.test(f) && !/Mono/i.test(f) && /Sans/i.test(f))
+      const anySc = families.find((f) => /\bSC\b/.test(f) && !/Mono/i.test(f))
+      resolve(sc || anySc || families[0] || '')
     })
   })
 }
@@ -1577,6 +1657,16 @@ function materialize(ref: string, root: string, tmpDir: string, tag: string): st
     const file = path.join(tmpDir, `${tag}.${ext}`)
     fs.writeFileSync(file, Buffer.from(b64, 'base64'))
     return file
+  }
+  // 项目媒体在 <projects>/<项目>/assets/，不在 public 下；
+  // 少了这一支，从素材库选的图会在导出时被当成不存在而静默丢镜。
+  const pm = parseProjectMediaUrl(ref)
+  if (pm) {
+    try {
+      return resolveProjectMediaPath(root, pm.name, pm.file)
+    } catch {
+      return path.join(tmpDir, `${tag}-missing`)
+    }
   }
   return path.join(root, 'public', ref.replace(/^\//, '').split('?')[0])
 }
@@ -2520,9 +2610,18 @@ function seedreamProxy(): Plugin {
 
         if (url === '/api/health') {
           const ff = await ensureFf()
-          const videoReady = [pickModel('video'), pickModel('videoRef')].some(({ provider }) =>
-            provider ? provider.kind === 'ark' && Boolean(providerKey(provider)) : Boolean(readApiKey()),
+          // 视频可用性按当前绑定的视频渠道判断：早先只认 kind==='ark'，
+          // 换成 APIMart 后即使 Key 正常也会误报 videoReady:false。
+          const videoPick = pickModel('video')
+          const videoRefPick = pickModel('videoRef')
+          const videoReady = [videoPick, videoRefPick].some(({ provider }) =>
+            provider ? Boolean(providerKey(provider)) : Boolean(readApiKey()),
           )
+          // 配音可用性看当前绑定的音频渠道，不再只看 macOS say：
+          // Linux 容器里没有 say，但 MiniMax/火山/APIMart 仍能正常出声。
+          const audioPick = pickModel('audio')
+          const audioKeyReady = audioPick.provider ? Boolean(providerKey(audioPick.provider)) : false
+          const sayReady = fs.existsSync(SAY)
           res.setHeader('Content-Type', 'application/json')
           res.end(
             JSON.stringify({
@@ -2535,8 +2634,12 @@ function seedreamProxy(): Plugin {
               videoRefModel: effVideoRefModel(),
               videoReady,
               ffmpegReady: fs.existsSync(FFMPEG),
-              ttsReady: fs.existsSync(SAY),
-              ttsProvider: readEnvKey('ELEVENLABS_API_KEY') ? 'elevenlabs' : 'macos-say',
+              ttsReady: audioKeyReady || sayReady,
+              ttsProvider: audioKeyReady
+                ? `${audioPick.provider?.kind}:${audioPick.entry?.model || ''}`
+                : sayReady
+                  ? 'macos-say'
+                  : '',
             }),
           )
           return
@@ -3470,6 +3573,65 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            // 删除预览：只读，不存在的项目返回 exists:false 而不是报错
+            // ?names= 或请求体 {names:[...]} 走批量，一次算完，避免几百个选中项各发一次
+            if (req.method === 'GET' && q.searchParams.get('preview') === 'delete') {
+              const rawNames = q.searchParams.get('names')
+              if (rawNames) {
+                const list = rawNames.split(',').map((s) => s.trim()).filter(Boolean)
+                res.end(JSON.stringify(previewProjectDeletes(rootDir, list)))
+                return
+              }
+              const preview = previewProjectDelete(rootDir, name)
+              res.end(JSON.stringify(preview))
+              return
+            }
+
+            // 批量预览（POST + preview）：名字可能上百个，用请求体承载
+            if (req.method === 'POST' && q.searchParams.get('preview') === 'delete') {
+              const body = await readJson(req)
+              const list = Array.isArray(body?.names) ? body.names : []
+              if (!list.length) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '缺少项目名' }))
+                return
+              }
+              res.end(JSON.stringify(previewProjectDeletes(rootDir, list)))
+              return
+            }
+
+            // 删除项目：?name= 单个，?names=a,b,c 或请求体 {names:[...]} 批量。
+            // 批量不设数量上限，所以客户端优先用请求体——几百个项目名放查询串会顶到 URL 长度限制。
+            if (req.method === 'DELETE') {
+              const raw = q.searchParams.get('names')
+              const body = raw ? null : await readJson(req).catch(() => ({}))
+              const fromBody = Array.isArray(body?.names) ? body.names : []
+              const names = raw
+                ? raw.split(',').map((s) => s.trim()).filter(Boolean)
+                : fromBody.length
+                  ? fromBody
+                  : name
+                    ? [name]
+                    : []
+              if (!names.length) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '缺少项目名' }))
+                return
+              }
+              if (raw || fromBody.length) {
+                const result = deleteProjects(rootDir, names, { appRoot: root })
+                res.end(JSON.stringify(result))
+                return
+              }
+              const one = deleteProjects(rootDir, names, { appRoot: root })
+              const first = one.results[0]
+              if (!first.ok && first.code === 'active_jobs') res.statusCode = 409
+              else if (!first.ok && first.code === 'not_found') res.statusCode = 404
+              else if (!first.ok) res.statusCode = 500
+              res.end(JSON.stringify({ ...first, sharedFilesKept: true }))
+              return
+            }
+
             if (req.method === 'GET') {
               const cur = readProject(rootDir, name)
               // 旧 /generated 引用幂等迁移：复制进项目目录并改写；缺失项只标记不猜
@@ -3511,7 +3673,25 @@ function seedreamProxy(): Plugin {
             if (req.method === 'POST') {
               const cur = readProject(rootDir, name)
               const patch: Record<string, unknown> = {}
+              // 显式删除：必须是字符串数组；先 merge 再删，同一 id 两处出现时以删除为准
+              const deleteIds = body.deleteShotIds
+              if (deleteIds !== undefined && !Array.isArray(deleteIds)) {
+                throw new Error('deleteShotIds 必须是字符串数组')
+              }
               if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
+              if (Array.isArray(deleteIds) && deleteIds.length) {
+                const ids = deleteIds.map((x: unknown) => String(x))
+                if (ids.some((x: string) => !x)) throw new Error('deleteShotIds 不能含空值')
+                const base = Array.isArray(patch.shots) ? (patch.shots as any[]) : cur.shots
+                const after = deleteShots(base, ids)
+                const pruned = pruneDanglingTransitions(after.shots)
+                patch.shots = pruned.shots
+                ;(patch as Record<string, unknown>).__removedShots = after.removed
+              } else if (Array.isArray(body.shots)) {
+                // 没删镜头也要兜底清一次悬空转场
+                const pruned = pruneDanglingTransitions(patch.shots as any[])
+                if (pruned.cleared) patch.shots = pruned.shots
+              }
               // 角色 / 场景道具设定 / 集 / 素材整体替换（都是人改的结果，不是 LLM 增量）
               for (const k of ['characters', 'designs', 'sceneLayouts', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
@@ -3526,12 +3706,25 @@ function seedreamProxy(): Plugin {
               if (Object.keys(patch).length === 0) {
                 throw new Error('POST 需要 shots / characters / designs / sceneLayouts / episodes / source 等字段之一')
               }
+              // 集内镜号唯一：重复会让 E{集}-{镜号} 的 id 碰撞
+              if (Array.isArray(patch.shots)) {
+                const dups = findDuplicateShotNos(patch.shots as any[])
+                if (dups.length) {
+                  const first = dups[0]
+                  throw new Error(
+                    `第 ${first.episode} 集镜号「${first.no}」重复（共 ${dups.length} 处）；镜头 id 由集号+镜号生成，重复会互相覆盖`,
+                  )
+                }
+              }
+              const removedShots = Number((patch as Record<string, unknown>).__removedShots) || 0
+              delete (patch as Record<string, unknown>).__removedShots
               const saved = writeProject(rootDir, name, patch)
               res.end(
                 JSON.stringify({
                   ok: true,
                   shots: saved.shots ?? [],
                   characters: saved.characters ?? [],
+                  ...(removedShots ? { removedShots } : {}),
                   savedAt: saved.updated_at,
                 }),
               )
@@ -3545,7 +3738,7 @@ function seedreamProxy(): Plugin {
             }
 
             res.statusCode = 405
-            res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT' }))
+            res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT / DELETE' }))
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
@@ -4246,6 +4439,77 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 压缩包导入：解包到系统临时目录，返回清单 ----
+        if (url.startsWith('/api/import/bundle')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            // GET /api/import/bundle/:id/file/:fileId —— 读临时目录内的图片
+            const tail = url.slice('/api/import/bundle'.length).replace(/^\/+/, '')
+            if (req.method === 'GET' && tail) {
+              const parts = tail.split('/').filter(Boolean)
+              if (parts.length !== 3 || parts[1] !== 'file') {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '没有这个接口' }))
+                return
+              }
+              const got = readBundleFile(decodeURIComponent(parts[0]), decodeURIComponent(parts[2]))
+              if (!got) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: '文件不存在或已过期' }))
+                return
+              }
+              const ct = /\.png$/i.test(got.file.name)
+                ? 'image/png'
+                : /\.webp$/i.test(got.file.name)
+                  ? 'image/webp'
+                  : /\.gif$/i.test(got.file.name)
+                    ? 'image/gif'
+                    : 'image/jpeg'
+              res.setHeader('Content-Type', ct)
+              res.setHeader('Cache-Control', 'no-store')
+              res.end(got.bytes)
+              return
+            }
+
+            if (req.method === 'DELETE' && tail) {
+              const removed = cleanupBundle(decodeURIComponent(tail.split('/')[0]))
+              res.end(JSON.stringify({ ok: true, removed }))
+              return
+            }
+
+            if (req.method === 'POST' && !tail) {
+              // 二进制直传：与 /api/deliverables/import 一致，避免 base64 膨胀
+              const chunks: Buffer[] = []
+              let size = 0
+              await new Promise<void>((resolve, reject) => {
+                req.on('data', (c: Buffer) => {
+                  size += c.length
+                  if (size > MAX_BUNDLE_BYTES) {
+                    reject(new Error(`压缩包超过 ${Math.round(MAX_BUNDLE_BYTES / 1024 / 1024)}MB 上限`))
+                    req.destroy()
+                    return
+                  }
+                  chunks.push(c)
+                })
+                req.on('end', () => resolve())
+                req.on('error', reject)
+              })
+              const bytes = Buffer.concat(chunks)
+              if (!bytes.length) throw new Error('上传内容为空')
+              const result = openBundle(bytes)
+              res.end(JSON.stringify({ ok: true, ...result }))
+              return
+            }
+
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST 上传、GET 取文件、DELETE 清理' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         // ---- 在线素材库：来源、检索、导入与来源元数据 ----
         if (url.startsWith('/api/stock/')) {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -4702,6 +4966,9 @@ function seedreamProxy(): Plugin {
                   ok: true,
                   browserAvailable: Boolean(chromePath),
                   chromePath,
+                  // 无桌面时浏览器只能无头跑：能校验会话、能上传草稿，但不能扫码登录
+                  desktopAvailable: hasDisplay(),
+                  loginHint: hasDisplay() ? '' : NO_DISPLAY_HINT,
                   ffmpegAvailable: Boolean(ff && fs.existsSync(ff.bin)),
                   ffmpegPath: ff?.bin || '',
                   adapterReady,
@@ -5842,9 +6109,19 @@ function seedreamProxy(): Plugin {
                   taskId,
                 })
               } catch (e) {
+                const raw = String((e as Error)?.message || e)
+                // 方舟的 Key 会过期/被删，但设置页里仍显示「已配置」。
+                // 直接把上游原话抛给用户，他看不出该怎么处理，所以补一句可操作的出路。
+                const hint =
+                  /API key doesn't exist|AuthenticationError|InvalidApiKey|401/i.test(raw) &&
+                  provider?.kind === 'ark'
+                    ? '\n\n方舟这个 Key 已失效（服务端返回认证失败）。两条出路：' +
+                      '① 到设置页「字节 · 火山方舟」换上有效的 ARK Key；' +
+                      '② 把「视频」和「视频参考」默认模型改成 APIMart 的 Seedance 条目（已实测可出片）。'
+                    : ''
                 videoJobs.set(id, {
                   status: 'failed',
-                  message: (e as Error).message,
+                  message: raw + hint,
                   startedAt,
                   elapsed: Date.now() - startedAt,
                   ...(taskId ? { taskId } : {}),

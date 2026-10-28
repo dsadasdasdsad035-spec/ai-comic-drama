@@ -28,6 +28,8 @@ export type ProjectChar = {
   expression_sheet?: CharacterExpressionSheet
   /** 可选角色音色样本；不改变 voiceId */
   voice_sample?: VoiceSample
+  /** 参考图：生成三视图/表情总图的身份输入；不进入分镜参考 */
+  reference_images?: string[]
 }
 
 /**
@@ -53,6 +55,7 @@ export function toSheet(c: ProjectChar): CharacterSheet {
     expressions: c.expressions,
     expressionSheet: c.expression_sheet,
     voiceSample: c.voice_sample,
+    referenceImages: Array.isArray(c.reference_images) ? c.reference_images.filter(Boolean) : undefined,
   }
 }
 
@@ -131,6 +134,9 @@ export function toProject(s: CharacterSheet): ProjectChar {
       }
     }
   }
+  // 参考图只写站内路径；dataURL 会撑爆 project.json
+  const refs = (s.referenceImages ?? []).map(local).filter(Boolean) as string[]
+  if (refs.length) out.reference_images = refs
   return out
 }
 

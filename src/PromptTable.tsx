@@ -38,6 +38,7 @@ import {
 import { AgentButton } from './agent/AgentButton'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
+import IntakeDialog from './intake/IntakeDialog'
 import { endTask, startTask } from './tasks'
 
 const LazySkillChat = lazy(() => import('./agent/SkillChat'))
@@ -205,6 +206,7 @@ export default function PromptTable({
   const [batchSize, setBatchSize] = useState(5)
   const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null)
   const [chatRunning, setChatRunning] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('prompts')
   const chatVisible = chatOpen && Boolean(projectName)
 
@@ -405,8 +407,18 @@ export default function PromptTable({
   }
 
   /** 同上：按 id 定位，行下标只对「当前集」子集有效 */
+  /**
+   * 手改提示词要留痕：标 handEdited 后，后续「生成提示词」不会再静默覆盖
+   * （合并走 mergeGenerated 的保护分支）。不标的话手写/导入的内容会被一次生成抹掉。
+   */
   const edit = (id: string, field: 'keyframe_prompt' | 'video_prompt', value: string) => {
-    setShots((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)))
+    setShots((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s
+        const hand = new Set([...(s.handEdited ?? []), field])
+        return { ...s, [field]: value, handEdited: [...hand] }
+      }),
+    )
     setDirty(true)
   }
 
@@ -694,6 +706,14 @@ export default function PromptTable({
               dirty={dirty}
               controlsId="workbench-chat-prompts"
             />
+            <button
+              className="btn btn-ghost"
+              disabled={!projectName}
+              onClick={() => setIntakeOpen(true)}
+              title="导入已写好的提示词：按镜号归位，只写文件里给了值的列"
+            >
+              导入
+            </button>
             <button className="btn" onClick={load} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
@@ -864,6 +884,33 @@ export default function PromptTable({
         </Suspense>
       )}
 
+      {intakeOpen ? (
+        <IntakeDialog
+          target="prompts"
+          projectName={projectName}
+          epNo={epNo}
+          settings={settings}
+          stagePick={stagePick}
+          shots={shots}
+          episodes={[]}
+          chars={chars}
+          toast={toast}
+          onClose={() => setIntakeOpen(false)}
+          onApply={(r) => {
+            if (r.shots) {
+              setShots(r.shots)
+              setDirty(true)
+            }
+            // 资料包可能带来角色；提示词页不持有完整角色卡，直接落项目
+            if (r.characters && projectName) {
+              patchProject(projectName, { characters: r.characters } as never)
+                .then(() => toast(`角色已写入项目 · ${r.characters!.length} 个`))
+                .catch((e) => toast((e as Error).message || '角色写入失败'))
+            }
+            toast(`已导入提示词草稿：${r.summary}（记得保存）`)
+          }}
+        />
+      ) : null}
       <WorkbenchChatAside
         surface="prompts"
         open={chatVisible}

@@ -20,8 +20,33 @@ const check = (name, cond, extra = '') => {
 }
 
 // ---- 1. 项目数据从 SQLite 读出（迁移正确性） ----
+// 这条断言要验证「intensity/tone 能被存进库再读出来」，必须有已知数据。
+// 以前依赖库里恰好存在带这两个字段的历史项目，现在回收项目是各测试自建的，
+// 所以这里自己种一个专用项目，让断言始终有可验证的目标。
+await p.evaluate(async () => {
+  await fetch('/api/project?name=settings-db-probe&create=1', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '设置库读写探针' }),
+  }).catch(() => ({}))
+  await fetch('/api/project?name=settings-db-probe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      shots: [{ id: 'E01-S01', episode: 1, no: 'S01', seconds: 3, desc: '探针镜头', dialogue: [], cast: [] }],
+      episodes: [
+        {
+          no: 1,
+          title: '探针集',
+          scenes: [{ no: 1, slug: '探针场', place: '室内', time: '夜', beats: '验证 intensity/tone 往返', intensity: 7, tone: '紧张' }],
+        },
+      ],
+    }),
+  })
+})
 const projectList = await p.evaluate(() => fetch('/api/project').then((r) => r.json()))
 const target =
+  projectList.projects?.find((x) => x.name === 'settings-db-probe') ||
   projectList.projects?.find((x) => x.name === 'recycle') ||
   projectList.projects?.find((x) => x.shots > 0)
 check('项目列表可读', Boolean(target), JSON.stringify(projectList.projects?.slice(0, 3)))

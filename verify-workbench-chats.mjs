@@ -203,9 +203,18 @@ try {
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
     await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
     await page.locator('.topbar-project select').selectOption(NAME)
+    // 等项目真正加载完：集选择器出现说明 readyProject 已对上
+    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
+    await page.waitForFunction((n) => {
+      const sel = document.querySelector('.topbar-project select')
+      return sel && sel.value === n
+    }, NAME, { timeout: 15000 })
     await page.getByRole('button', { name: nav, exact: true }).click()
     await page.locator(`[data-${attr}-chat]`).waitFor({ timeout: 15000 })
     await page.getByLabel(`${attr} 技能聊天输入`).waitFor({ timeout: 15000 })
+    // 空态要等技能加载完才渲染；批量跑时前序脚本拖慢加载，必须显式等它出现，
+    // 否则 innerText() 会读到「正在加载助手…」
+    await page.locator(`[data-${attr}-chat] [data-chat-empty]`).waitFor({ timeout: 20000 })
   }
   const send = async (attr, text) => {
     const chat = page.locator(`[data-${attr}-chat]`)

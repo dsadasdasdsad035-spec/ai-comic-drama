@@ -37,6 +37,7 @@ import PromptTable from './PromptTable'
 import EpPicker from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
 import ProjectSelect from './ProjectSelect'
+import ProjectMenu from './project/ProjectMenu'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
@@ -459,6 +460,60 @@ function Shell() {
       setProjectName(next)
     },
     [projectName, scriptDirty, promptEditorDirty],
+  )
+
+  /**
+   * 项目删除后的上下文回退。顺序不能改：
+   * 先把 readyProject 脱钩，画布防抖才不会再往被删项目写一次；
+   * 再清浏览器画布状态，最后才重载列表并决定新的当前项目。
+   */
+  const applyProjectDeletion = useCallback(
+    async (names: string[]) => {
+      const gone = new Set(names.filter(Boolean))
+      if (!gone.size) return
+      setReadyProject('')
+      for (const name of gone) {
+        try {
+          localStorage.removeItem(projectCanvasKey(name))
+        } catch {
+          /* 存储不可用时忽略 */
+        }
+      }
+      const ps = await reloadProjects()
+      if (gone.has(projectName)) {
+        setScriptDirty(false)
+        setPromptEditorDirty(false)
+        setEpNo(1)
+        setNodes([])
+        setEdges([])
+        setCharacters([])
+        setAssets([])
+        setSceneLayouts([])
+        setSelId(null)
+        setSelEdgeId(null)
+        setMissingMedia(new Set())
+        setProjectName(ps[0]?.name || '')
+      }
+      setEpVersion((v) => v + 1)
+      setToast(names.length === 1 ? `已删除项目 ${names[0]}` : `已删除 ${names.length} 个项目`)
+      window.setTimeout(() => setToast(''), 3000)
+    },
+    [projectName, reloadProjects],
+  )
+
+  /**
+   * 新建项目：全局带入口用。刷新列表后挂到新项目上，
+   * 不能只 setProjectName——顶栏下拉的数据源是 projects。
+   */
+  const applyProjectCreated = useCallback(
+    async (name: string) => {
+      await reloadProjects()
+      setReadyProject('')
+      setProjectName(name)
+      setToast(`已新建项目 ${name}`)
+      window.setTimeout(() => setToast(''), 2800)
+    },
+    [reloadProjects],
   )
 
   /** 离开剧本页也保护未保存分集；确认后才允许卸载剧本组件 */
@@ -2053,7 +2108,8 @@ function Shell() {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
       if (activeImgRef.current.has(id)) return
-      const prompt = node.data.prompt.trim()
+      // prompt 可能缺失（旧项目镜头没有 keyframe_prompt 且 desc 为空时 shotToData 会给出 undefined）
+      const prompt = String(node.data.prompt ?? '').trim()
       if (!prompt) {
         patch(id, { genState: 'error', genError: '请先填写画面提示词' })
         return
@@ -2876,6 +2932,7 @@ function Shell() {
             {...(view === 'creative' ? { inert: '' as unknown as boolean } : {})}
           >
             <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
+            <ProjectMenu onCreated={applyProjectCreated} onDeleted={applyProjectDeletion} />
             <EpPicker
               projectName={projectName}
               epNo={epNo}
@@ -3049,6 +3106,7 @@ function Shell() {
         ) : view === 'settings' ? (
           <Settings
             onSaved={reloadSettings}
+            onProjectsDeleted={applyProjectDeletion}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2800)

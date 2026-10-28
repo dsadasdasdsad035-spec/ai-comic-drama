@@ -125,6 +125,11 @@ export type CharacterSheet = {
   expressionSheet?: CharacterExpressionSheet
   /** 可选角色音色样本；用于 Seedance 原生音频的参考，不改变 voiceId */
   voiceSample?: VoiceSample
+  /**
+   * 参考图：作为「生成三视图/表情总图」的身份输入，不进入分镜参考预算。
+   * 要让它进分镜，必须先「设为三视图」变成 image。
+   */
+  referenceImages?: string[]
 }
 
 export const EXPRESSION_SUFFIX =

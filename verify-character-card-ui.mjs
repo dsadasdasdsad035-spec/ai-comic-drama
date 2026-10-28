@@ -123,6 +123,44 @@ try {
 
   const primaryBox = await ready.locator('.char-primary').boundingBox()
   check('900px 高主操作首屏可见', Boolean(primaryBox && primaryBox.y + primaryBox.height <= 900), JSON.stringify(primaryBox))
+  // ---- 参考图区 ----
+  const readyCard = page.locator('.char-card', { hasText: '就绪角色' })
+  // 参考图区在三视图页；前面测表情格时切过页签，这里切回来
+  await readyCard.locator('.char-tabs button').first().click()
+  await page.waitForTimeout(400)
+  check('角色卡有参考图区', (await readyCard.locator('[data-char-refs]').count()) === 1)
+  check('初始没有参考图时显示空提示', (await readyCard.locator('.char-refs-empty').count()) === 1)
+
+  const PNG1x1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const savedRefs = []
+  await page.route('**/api/save-image', async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}')
+    const url = `/project-assets/card/uploaded-ref-${savedRefs.length + 1}.png`
+    savedRefs.push({ prefix: body.prefix, url })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, url }) })
+  })
+
+  await readyCard.locator('[data-char-refs] input[type=file]').setInputFiles({
+    name: 'ref.png',
+    mimeType: 'image/png',
+    buffer: PNG1x1,
+  })
+  await page.waitForTimeout(1000)
+  check('上传后参考图出现', (await readyCard.locator('.char-ref').count()) === 1, String(await readyCard.locator('.char-ref').count()))
+  check('上传用 char-ref 前缀', savedRefs[0]?.prefix === 'char-ref', JSON.stringify(savedRefs[0]))
+  check('参考图计数显示 1/4', /1\/4/.test(await readyCard.locator('.char-refs-count').innerText()), await readyCard.locator('.char-refs-count').innerText())
+  check('有「设为三视图」按钮', (await readyCard.getByRole('button', { name: '设为三视图' }).count()) === 1)
+
+  await readyCard.getByRole('button', { name: '设为三视图' }).click()
+  await page.waitForTimeout(1000)
+  const readyChar = project.characters.find((c) => c.name === '就绪角色')
+  check('设为三视图后 image 更新', String(readyChar?.image || '').includes('uploaded-ref-1'), JSON.stringify(readyChar?.image))
+  check('设为三视图后进入候选', (readyChar?.candidates || []).includes(readyChar?.image), JSON.stringify(readyChar?.candidates))
+  check('参考图列表标「已在候选」', (await readyCard.locator('.char-ref-flag').count()) >= 1)
+
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
   await page.screenshot({ path: path.join(EVIDENCE, 'character-card-ui.png') })
 } finally {

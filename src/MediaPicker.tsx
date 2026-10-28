@@ -11,6 +11,7 @@ import {
 } from './mediaPick'
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockItem } from './stock/types'
+import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 
 type Tab = 'project' | 'generated' | 'video' | 'audio' | 'stock' | 'manual'
 
@@ -164,10 +165,15 @@ export default function MediaPicker({
   const [playingKey, setPlayingKey] = useState<string | null>(null)
   const [detailDims, setDetailDims] = useState<{ w: number; h: number } | null>(null)
   const [detailDuration, setDetailDuration] = useState(0)
+  /** 本次选择器里刚上传的条目：先于列表展示，仍需确认才写回 */
+  const [uploaded, setUploaded] = useState<PickItem[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const manualRef = useRef<HTMLInputElement>(null)
+  const uploadRef = useRef<HTMLInputElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const detailVideoRef = useRef<HTMLVideoElement>(null)
 
@@ -228,6 +234,22 @@ export default function MediaPicker({
     else searchRef.current?.focus()
   }, [tab])
 
+  /**
+   * Esc 必须在焦点不在对话框内时也生效：选过文件后焦点可能落到 body，
+   * 而 App 在 window 上监听 Escape 会清空画布选中（对话框关掉、选中也没了）。
+   * 挂在 document 上比 App 的 window 监听更早拿到事件，拦下即可。
+   */
+  useEffect(() => {
+    const onDocKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', onDocKey)
+    return () => document.removeEventListener('keydown', onDocKey)
+  }, [onClose])
+
   useEffect(() => {
     if (tab === 'manual') {
       const manual = manualUrl.trim()
@@ -251,10 +273,13 @@ export default function MediaPicker({
     return () => v.removeEventListener('loadedmetadata', done)
   }, [selected])
 
-  const items = useMemo(
-    () => buildPickItems(media, { url: currentUrl, kind: currentKind }),
-    [media, currentUrl, currentKind],
-  )
+  const items = useMemo(() => {
+    const base = buildPickItems(media, { url: currentUrl, kind: currentKind })
+    // 刚上传的排在同类最前：用户刚选完文件，最想看到的就是它
+    if (!uploaded.length) return base
+    const seen = new Set(uploaded.map((u) => u.url))
+    return [...uploaded, ...base.filter((b) => !seen.has(b.url))]
+  }, [media, currentUrl, currentKind, uploaded])
 
   const countFor = (key: Tab) => {
     if (key === 'manual' || key === 'stock') return 0
@@ -374,6 +399,40 @@ export default function MediaPicker({
     onConfirm(picked)
   }
 
+  /**
+   * 本地上传：先落成项目媒体文件，再作为一条「项目图片」条目插入并选中。
+   * 与既有语义一致——点选只预览，仍需点「使用这张」才写回素材卡。
+   */
+  const uploadFromDisk = async (file: File) => {
+    setUploadError('')
+    setUploading(true)
+    try {
+      const url = await uploadImageFile(file, { project: projectName, prefix: 'asset-upload' })
+      const item: PickItem = {
+        key: url,
+        source: 'project-image',
+        kind: currentKind === 'scene' || currentKind === 'prop' ? currentKind : 'image',
+        mediaType: 'image',
+        title: `上传 · ${file.name}`,
+        url,
+        name: url.split('/').pop(),
+        mtime: Date.now(),
+      }
+      setUploaded((prev) => [item, ...prev.filter((x) => x.url !== item.url)])
+      setTab('project')
+      setBroken((b) => {
+        const next = { ...b }
+        delete next[item.key]
+        return next
+      })
+      setSelected(item)
+    } catch (e) {
+      setUploadError((e as Error).message || '上传失败')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const detailBroken = selected ? broken[selected.key] : false
 
   return (
@@ -429,7 +488,33 @@ export default function MediaPicker({
               aria-label="搜索素材"
             />
           )}
+          {tab !== 'manual' && tab !== 'stock' && (
+            <>
+              <button
+                type="button"
+                className="mp-upload"
+                data-mp-upload
+                disabled={uploading}
+                onClick={() => uploadRef.current?.click()}
+                title="上传本地图片（png / jpeg / webp）；上传后仍需点「使用这张」才写回素材卡"
+              >
+                {uploading ? '上传中…' : '+ 上传图片'}
+              </button>
+              <input
+                ref={uploadRef}
+                type="file"
+                accept={ACCEPT_ATTR}
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) void uploadFromDisk(file)
+                  e.target.value = ''
+                }}
+              />
+            </>
+          )}
         </div>
+        {uploadError ? <div className="mp-upload-error">{uploadError}</div> : null}
 
         {tab === 'stock' ? (
           <div className="mp-stock-body">

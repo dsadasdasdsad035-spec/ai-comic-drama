@@ -27,6 +27,8 @@ const B = `/project-assets/${PROJECT}/picker-b.png`
 const BROKEN = `/project-assets/${PROJECT}/missing.png`
 const G = '/generated/picker-generated.png'
 const V = '/videos/picker-test.mp4'
+const VIDEO2 = path.join(ROOT, 'public', 'videos', 'picker-test-2.mp4')
+const V2 = '/videos/picker-test-2.mp4'
 
 let bad = 0
 const check = (name, cond, extra = '') => {
@@ -96,6 +98,7 @@ try {
   makePng(path.join(PROJECT_MEDIA, 'picker-b.png'), '0xb45309')
   makePng(GEN_IMG, '0x15803d')
   makeVideo(VIDEO)
+  makeVideo(VIDEO2)
   makeAudio(AUDIO)
 
   if (!(await waitServer())) throw new Error('临时 dev server 启动失败')
@@ -115,6 +118,7 @@ try {
         { kind: 'image', title: '空素材', url: '' },
         { kind: 'image', title: '坏图', url: BROKEN },
         { kind: 'video', title: '项目视频', url: V },
+        { kind: 'video', title: '项目视频二', url: V2 },
         { kind: 'video', title: '坏视频', url: '/videos/missing-picker.mp4' },
         { kind: 'audio', title: '环境雨声', url: AUD },
       ],
@@ -128,7 +132,7 @@ try {
   await page.waitForTimeout(1200)
 
   // ---- 纯函数：归一化 / 去重 / 类型与标题 ----
-  const pure = await page.evaluate(async ({ A, B, G, V, BROKEN, AUD }) => {
+  const pure = await page.evaluate(async ({ A, B, G, V, V2, BROKEN, AUD }) => {
     const m = await import('/src/mediaPick.ts')
     const media = {
       assets: [
@@ -137,6 +141,7 @@ try {
         { kind: 'image', title: '空素材', url: '' },
         { kind: 'image', title: '坏图', url: BROKEN },
         { kind: 'video', title: '项目视频', url: V },
+        { kind: 'video', title: '项目视频二', url: V2 },
         { kind: 'video', title: '坏视频', url: '/videos/missing-picker.mp4' },
         { kind: 'audio', title: '环境雨声', url: AUD },
       ],
@@ -172,8 +177,8 @@ try {
         return a ? m.pickerTabOf(a) : ''
       })(),
     }
-  }, { A, B, G, V, BROKEN, AUD })
-  check('空 URL 素材被过滤', !pure.emptyPresent && pure.count === 7, JSON.stringify(pure))
+  }, { A, B, G, V, V2, BROKEN, AUD })
+  check('空 URL 素材被过滤', !pure.emptyPresent && pure.count === 8, JSON.stringify(pure))
   check('重复 URL 只保留一条且项目素材优先', pure.aCount === 1 && pure.aTitle === '地下井道' && pure.aKind === 'scene')
   check('视频自动推导为 video', pure.videoKind === 'video')
   check('场景素材保持 scene', pure.sceneKind === 'scene')
@@ -258,17 +263,22 @@ try {
   await page.locator('.mp-tabs button').filter({ hasText: '视频' }).click()
   await page.waitForTimeout(300)
   check('视频页签包含项目视频', (await page.locator(`[data-pick-key="${V}"]`).count()) === 1)
-  const videoTiles = page.locator('.mp-tile:has(video)')
+  // 坏视频加载失败后渲染成错误占位、不再有 <video>，所以按 key 定位两条可播放视频
   const videoTile = page.locator(`[data-pick-key="${V}"]`)
-  await videoTiles.nth(0).locator('video').hover()
+  const videoTile2 = page.locator(`[data-pick-key="${V2}"]`)
+  await videoTile.locator('video').hover()
   await page.waitForTimeout(300)
-  check('hover 视频进入播放状态', (await videoTiles.nth(0).locator('.mp-play-badge').innerText()).includes('❚'))
-  await videoTiles.nth(1).locator('video').hover()
+  check('hover 视频进入播放状态', (await videoTile.locator('.mp-play-badge').innerText()).includes('❚'))
+  await videoTile2.locator('video').hover()
   await page.waitForTimeout(300)
-  check('同时只播放一条视频', (await videoTiles.nth(0).locator('.mp-play-badge').innerText()).includes('▶') && (await videoTiles.nth(1).locator('.mp-play-badge').innerText()).includes('❚'))
+  check(
+    '同时只播放一条视频',
+    (await videoTile.locator('.mp-play-badge').innerText()).includes('▶') &&
+      (await videoTile2.locator('.mp-play-badge').innerText()).includes('❚'),
+  )
   await page.getByLabel('搜索素材').hover()
   await page.waitForTimeout(200)
-  check('移开后视频暂停', (await videoTiles.nth(1).locator('.mp-play-badge').innerText()).includes('▶'))
+  check('移开后视频暂停', (await videoTile2.locator('.mp-play-badge').innerText()).includes('▶'))
   await page.locator('.mp-tile').filter({ hasText: '坏视频' }).first().click()
   await page.waitForTimeout(500)
   check('坏视频显示详情错误', (await page.locator('.mp-detail-error').count()) === 1)
@@ -356,6 +366,68 @@ try {
   await page.waitForTimeout(400)
   check('键盘可完成选择', (await page.locator('.mp-dialog').count()) === 0)
   check('确认后焦点回到来源按钮', await page.evaluate(() => document.activeElement?.classList.contains('asset-source')))
+
+  // ---- 本地上传：先落盘成条目，仍需确认才写回 ----
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const beforeUpload = await assetData(page, assetId)
+  await page.locator('.asset-source').click()
+  await page.waitForTimeout(600)
+  check('选择器有上传入口', (await page.locator('[data-mp-upload]').count()) === 1)
+  await page.locator('[data-mp-upload]').click()
+  await page.locator('.mp-dialog input[type=file]').setInputFiles({
+    name: 'picker-upload.png',
+    mimeType: 'image/png',
+    buffer: pngBytes,
+  })
+  await page.waitForTimeout(1400)
+  const uploadedKey = await page.evaluate(() => {
+    const tile = document.querySelector('.mp-tile')
+    return tile?.getAttribute('data-pick-key') || ''
+  })
+  check('上传后条目排在最前', String(uploadedKey).startsWith('/project-assets/media-test/'), uploadedKey)
+  check('上传后自动选中', (await page.locator('.mp-detail-preview img').count()) === 1)
+  check('上传后尚未写回素材卡', JSON.stringify(await assetData(page, assetId)) === JSON.stringify(beforeUpload))
+  await page.getByRole('button', { name: '使用这个' }).click()
+  await page.waitForTimeout(600)
+  const afterUpload = await assetData(page, assetId)
+  check('确认后写回上传地址', afterUpload?.url === uploadedKey, JSON.stringify({ url: afterUpload?.url, key: uploadedKey }))
+  check('上传图按图片渲染', (await page.locator('.asset-node img').count()) >= 1)
+
+  // 上传取消：素材卡不变
+  const beforeCancel = await assetData(page, assetId)
+  await page.locator('.asset-source').click()
+  await page.waitForTimeout(600)
+  await page.locator('[data-mp-upload]').click()
+  await page.locator('.mp-dialog input[type=file]').setInputFiles({
+    name: 'picker-upload-2.png',
+    mimeType: 'image/png',
+    buffer: pngBytes,
+  })
+  await page.waitForTimeout(1400)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  check('上传后取消不写回', JSON.stringify(await assetData(page, assetId)) === JSON.stringify(beforeCancel))
+  check('Esc 关掉选择器但保留画布选中', (await page.locator('.asset-source').count()) === 1)
+
+  // 不支持的格式：报错且不生成条目
+  await page.locator('.asset-source').click()
+  await page.waitForTimeout(600)
+  const tilesBeforeBad = await page.locator('.mp-tile').count()
+  await page.locator('[data-mp-upload]').click()
+  await page.locator('.mp-dialog input[type=file]').setInputFiles({
+    name: 'IMG_0001.HEIC',
+    mimeType: 'image/heic',
+    buffer: Buffer.from('not-a-real-heic'),
+  })
+  await page.waitForTimeout(700)
+  const pickerUploadError = await page.locator('.mp-upload-error').innerText().catch(() => '')
+  check('选择器拒绝 HEIC 并说明格式', /png \/ jpeg \/ webp/.test(pickerUploadError), pickerUploadError)
+  check('拒绝后不新增条目', (await page.locator('.mp-tile').count()) === tilesBeforeBad, String(await page.locator('.mp-tile').count()))
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
 
   // 390px
   await page.setViewportSize({ width: 390, height: 900 })

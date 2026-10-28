@@ -187,7 +187,8 @@ try {
 
   // ---- 2. 上传：落盘 + 立刻刷新 ----
   const card2 = page.locator('.char-card').filter({ hasText: '甲' }).first()
-  await card2.locator('input[type=file]').setInputFiles(path.join(TMP, 'upload.png'))
+  // 角色卡现在有两个 file input（三视图 + 参考图）；这里要的是三视图那个，它在「更多」里
+  await card2.locator('details.char-more input[type=file]').setInputFiles(path.join(TMP, 'upload.png'))
   await page.waitForFunction(
     (prev) => {
       const img = document.querySelector('.char-card .char-sheet img')

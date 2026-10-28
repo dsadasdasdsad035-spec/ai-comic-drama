@@ -137,3 +137,59 @@ export function buildShotsFromModel(
   }
   return { shots, sceneFallback, fallbackSceneNo }
 }
+
+/**
+ * 导入用的镜头构建：复用 buildShotsFromModel 的字段映射，
+ * 但对「有台词角色缺表演条目」放宽为自动补默认表演。
+ *
+ * 为什么聊天要抛错而导入不抛：模型应该产出表演，缺了是它的失职；
+ * 而手写表格几乎不会带表演列，硬失败会让这条路径完全不可用。
+ * 补了什么必须回报给预览，不能让人以为表演是文件里写的。
+ *
+ * 注意补丁必须在调用 buildShotsFromModel 之前打好：它的校验会在
+ * 有任何 performance 数组时检查说话角色是否齐全，空数组同样会触发。
+ */
+export function buildShotsFromImport(
+  got: unknown[],
+  episodes: ProjectEpisode[],
+  epNo: number,
+): { shots: ProjectShot[]; sceneFallback: number; fallbackSceneNo: number; filledPerformance: number } {
+  let filledPerformance = 0
+  const patched = got.map((raw) => {
+    const s = (raw || {}) as Record<string, unknown>
+    const existing = Array.isArray(s.performance)
+      ? (s.performance as { character?: unknown }[]).filter((x) => x && typeof x === 'object')
+      : []
+    const speakers = Array.from(
+      new Set(
+        (Array.isArray(s.dialogue) ? s.dialogue : [])
+          .map((d) => {
+            const line = (d || {}) as { speaker?: unknown; text?: unknown }
+            const name = String(line.speaker ?? '').trim()
+            return name && String(line.text ?? '').trim() ? name : ''
+          })
+          .filter(Boolean),
+      ),
+    )
+    const missing = speakers.filter((name) => !existing.some((p) => String(p.character ?? '') === name))
+    if (missing.length === 0) {
+      // 没有表演需求就把字段去掉，避免留下空数组让下游误判
+      if (Array.isArray(s.performance) && existing.length === 0) {
+        const next = { ...s }
+        delete next.performance
+        return next
+      }
+      return raw
+    }
+    filledPerformance += missing.length
+    return {
+      ...s,
+      performance: [
+        ...existing,
+        ...missing.map((name) => ({ character: name, emotion: 'neutral', intensity: 3, speaks: true })),
+      ],
+    }
+  })
+
+  return { ...buildShotsFromModel(patched, episodes, epNo), filledPerformance }
+}
