@@ -1,0 +1,21 @@
+{
+  "project": "verify-3d-render-1793183115063",
+  "sourceProject": "a",
+  "shot": "E01-S01",
+  "originalVideo": "/videos/blender-1792809194988-c02fb1.mp4",
+  "videoUrl": "/videos/blender-1793183198957-bda57d.mp4",
+  "renderSeconds": 80,
+  "mediaVideos": [
+    "/videos/blender-1793183198957-bda57d.mp4",
+    "/videos/blender-1793183152618-3ca7a6.mp4",
+    "/videos/picker-test-2.mp4",
+    "/videos/blender-1793178702746-053c35.mp4",
+    "/videos/blender-1793178701785-7386ee.mp4",
+    "/videos/blender-1793178701783-29496b.mp4",
+    "/videos/shot-vid-1793178619324-65d220.mp4",
+    "/videos/blender-1793178386163-2f0825.mp4",
+    "/videos/blender-1793178341895-bfe526.mp4",
+    "/videos/blender-1793176196945-ade87d.mp4"
+  ],
+  "pageErrors": []
+}
