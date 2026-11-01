@@ -1,78 +1,91 @@
 import type { SceneAgentResult } from './sceneAgentTypes'
-import { runSceneAgentLangGraph } from './sceneAgentGraphLangGraph'
 import { runSceneAgentPi } from './pi/engine'
 import { stageModelKey } from '../ModelSelect'
-import { resolveToolProtocol } from './toolCapabilities'
-import {
-  selectSceneAgentEngine,
-  type RunSceneAgentInput,
-  type SceneAgentEngine,
-  type SceneAgentEnginePick,
-} from './sceneAgentEngine'
+import { findToolCapability } from './toolCapabilities'
+import type { AppSettings } from '../api'
+import type { StagePick } from '../ModelSelect'
+import type { SceneCodeAsk } from '../sceneCodeJob'
+import type { AgentRunLimits } from './agentLimits'
+import type { SceneAgentDeps } from './sceneAgentTypes'
+import type { ManifestSummary } from '../contextManifest'
 
-export type { RunSceneAgentInput, SceneAgentEngine, SceneAgentEnginePick }
 export type { SceneAgentSession } from './sceneAgentTools'
 export type { AgentEvent } from './sceneAgentTypes'
 
-function providerOf(input: SceneAgentEngineInput, modelKey: string) {
+/** 3D 调度聊天的运行输入；只有一个执行引擎，因此不再有引擎选择字段。 */
+export type RunSceneAgentInput = {
+  prompt: string
+  deps: SceneAgentDeps
+  settings: AppSettings | null
+  stagePick?: StagePick
+  ask?: SceneCodeAsk
+  requirements?: string[]
+  /** 可在本轮开始时作为运行基线的当前工作台代码 */
+  initialCode?: string
+  /** 本轮显式附件清单的摘要；用于每轮审计事件 */
+  manifestSummary?: ManifestSummary
+  /** 外部已组装好的 system（技能角色层 + 锁定契约 + 验收要求）；缺省用旧常量 */
+  system?: string
+  /** 外部取消信号 */
+  signal?: AbortSignal
+  /** 仅供测试缩短超时；生产路径从 settings.agentLimits 解析 */
+  limits?: Partial<Pick<AgentRunLimits, 'totalMs'>>
+}
+
+export type SceneAgentEngineInput = Pick<RunSceneAgentInput, 'settings' | 'stagePick'>
+
+export type SceneAgentCapability = {
+  available: boolean
+  /** 当前环节的模型标识；未配置时为空 */
+  model: string
+  provider: string
+  /** 不可用时的可读原因，含可换用的模型清单 */
+  reason?: string
+}
+
+/** 3D 聊天是否具备运行前提（已绑定环节模型）；不再按能力表拦截原生工具。 */
+export function sceneAgentCapability(input: SceneAgentEngineInput): SceneAgentCapability {
+  const modelKey = stageModelKey(input.settings, 'sceneCode', input.stagePick)
+  if (!modelKey) {
+    return {
+      available: false,
+      model: '',
+      provider: '',
+      reason: '没有可用的 3D 代码模型，请到设置页绑定「3D 代码」环节',
+    }
+  }
   const entry = input.settings?.models.find((m) => m.key === modelKey)
   const provider = entry ? input.settings?.providers.find((p) => p.id === entry.provider) : undefined
-  return { entry, provider }
-}
-
-/** 只解析引擎所需的最小输入；UI 展示与门面运行共用同一套判断。 */
-export type SceneAgentEngineInput = Pick<RunSceneAgentInput, 'engine' | 'settings' | 'stagePick'>
-
-/**
- * 解析本轮引擎：
- * - 显式入参优先，其次设置，最后默认
- * - pi 只对已声明原生工具调用的模型生效
- * - 显式要求 pi 但模型不支持 → 可读错误；设置要求 pi 但模型不支持 → 回退 langgraph
- */
-export function resolveSceneAgentEngine(input: SceneAgentEngineInput): SceneAgentEnginePick {
-  const pick = selectSceneAgentEngine(input.engine, input.settings?.agentEngine)
-  if (pick.engine !== 'pi') return pick
-
-  const modelKey = stageModelKey(input.settings, 'sceneCode', input.stagePick)
-  const { entry, provider } = modelKey ? providerOf(input, modelKey) : { entry: undefined, provider: undefined }
-  const protocol = resolveToolProtocol(input.settings?.agentToolProtocol, provider?.id, entry?.model)
-
-  if (protocol.protocol === 'native' && !protocol.error) {
-    return { ...pick, requested: input.engine ?? input.settings?.agentEngine ?? 'pi' }
-  }
-
-  const reason = `模型「${provider?.id || '未知渠道'} / ${entry?.model || '未配置'}」未声明支持原生工具调用，pi 引擎不适用`
-  if (input.engine === 'pi') {
-    throw new Error(`${reason}；请换用能力表内的模型，或把 agentEngine 设回 langgraph`)
-  }
-  return { engine: 'langgraph', requested: 'pi', fallbackReason: reason }
+  const model = entry?.model || modelKey
+  const providerId = provider?.id || ''
+  return { available: true, model, provider: providerId }
 }
 
 /**
- * 3D 调度聊天的稳定门面：调用方只依赖本函数与 SceneAgentResult。
- * 引擎实现可切换；默认行为与升级前一致。
+ * 3D 调度聊天的稳定门面。
+ *
+ * 只有一个执行引擎（pi），且只走原生工具调用；未绑定环节模型时才失败。
  */
 export async function runSceneAgent(input: RunSceneAgentInput): Promise<SceneAgentResult> {
-  const pick = resolveSceneAgentEngine(input)
-  const raw =
-    pick.engine === 'pi'
-      ? await runSceneAgentPi(input)
-      : await runSceneAgentLangGraph(input)
+  const capability = sceneAgentCapability(input)
+  if (!capability.available) throw new Error(capability.reason || '没有可用的 3D 代码模型')
 
-  const engineEvent = {
+  const raw = await runSceneAgentPi(input)
+
+  const protocolEvent = {
     type: 'custom' as const,
-    name: 'engine',
+    name: 'tool_protocol',
     value: {
-      engine: pick.engine,
-      requested: pick.requested ?? pick.engine,
-      ...(pick.fallbackReason ? { fallbackReason: pick.fallbackReason } : {}),
+      protocol: 'native' as const,
+      model: capability.model,
+      provider: capability.provider,
+      thinking: findToolCapability(capability.provider, capability.model)?.thinking ?? 'omit',
     },
   }
 
   return {
     ...raw,
-    engine: pick.engine,
-    ...(pick.fallbackReason ? { engineFallbackReason: pick.fallbackReason } : {}),
-    events: [...raw.events, engineEvent],
+    toolProtocol: 'native',
+    events: [...raw.events, protocolEvent],
   }
 }

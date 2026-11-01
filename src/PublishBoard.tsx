@@ -55,7 +55,7 @@ import {
   type RoundSnapshot,
 } from './publish/publishChat'
 import { AgentButton } from './agent/AgentButton'
-import type { AppSettings } from './api'
+import type { AppSettings, Stage } from './api'
 import type { StagePick } from './ModelSelect'
 import './publish/publish.css'
 import './publish/publishChat.css'
@@ -137,6 +137,7 @@ export default function PublishBoard({
   onConsumeInitial,
   settings,
   stagePick,
+  onPickStage,
 }: {
   projectName: string
   epNo: number
@@ -147,6 +148,7 @@ export default function PublishBoard({
   /** 发布助手的模型来源：设置页「发布」环节 */
   settings?: AppSettings | null
   stagePick?: StagePick
+  onPickStage?: (stage: Stage, key: string) => void
 }) {
   const [tab, setTab] = useState<Tab>('pending')
   const [platforms, setPlatforms] = useState<PlatformCapability[]>([])
@@ -1189,6 +1191,7 @@ export default function PublishBoard({
                     adapter={chatAdapter}
                     settings={settings ?? null}
                     stagePick={stagePick}
+                    onPickStage={onPickStage}
                     onToast={onToast}
                     onRunningChange={setChatRunning}
                     onClose={() => setChatOpen(false)}

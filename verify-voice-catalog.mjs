@@ -64,5 +64,25 @@ check('渠道不匹配报错', !mismatch.ok && mismatch.reason.includes('渠道'
 const none = lib.resolveVoiceForSpeaker({})
 check('无音色报错', !none.ok)
 
+const settings = {
+  defaults: { audio: 'volc-tts' },
+  models: [
+    { key: 'minimax-tts', provider: 'minimax' },
+    { key: 'volc-tts', provider: 'volc-tts' },
+  ],
+}
+check(
+  'resolveCharacterAudioModelKey 角色优先',
+  lib.resolveCharacterAudioModelKey({ voiceModelKey: 'minimax-tts' }, settings) === 'minimax-tts',
+)
+check(
+  'resolveCharacterAudioModelKey 默认回落',
+  lib.resolveCharacterAudioModelKey({}, settings) === 'volc-tts',
+)
+check(
+  'providerIdForAudioModelKey',
+  lib.providerIdForAudioModelKey(settings, 'minimax-tts') === 'minimax',
+)
+
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

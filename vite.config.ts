@@ -2,7 +2,6 @@ import { defineConfig, type Plugin } from 'vite'
 import type { DialogueDelivery } from './src/types'
 import tailwindcss from '@tailwindcss/vite'
 import { normalizeAgentLimits, type AgentLimitSettings } from './src/agent/agentLimits'
-import { normalizeSceneAgentEngine, type SceneAgentEngine } from './src/agent/sceneAgentEngine'
 import {
   entryOf,
   mergeCustomVoices,
@@ -11,7 +10,7 @@ import {
   voiceCapabilitiesForKind,
   type CustomVoice,
 } from './src/voiceCatalog'
-import { normalizeToolProtocol, toolThinkingMode, supportsNativeTools } from './src/agent/toolCapabilities'
+import { toolThinkingMode } from './src/agent/toolCapabilities'
 import { validateContract as validateSkillContract } from './src/skills/contracts'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
@@ -105,6 +104,9 @@ import {
   imageUrlsFromTask,
   isSupportedVideoModel,
   parseChatBody,
+  apimartUsesResponsesForTools,
+  buildApimartResponsesBody,
+  parseApimartResponsesRaw,
   pollTask as pollApimartTask,
   submitImage as submitApimartImage,
   submitVideo as submitApimartVideo,
@@ -122,8 +124,9 @@ import {
   normalizeChatMessages,
   normalizeToolCalls,
   normalizeToolSchemas,
-  toolRequestError,
+  assertChatToolsObjectParameters,
 } from './server/text-tools.mjs'
+import { convertChatMessages } from './server/chat-image-payload.mjs'
 import {
   appendDraft,
   beginDraft,
@@ -361,10 +364,6 @@ type AppSettings = {
   pricing?: Pricing
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
-  /** 3D agent 的工具协议；缺省 auto */
-  agentToolProtocol?: 'auto' | 'native' | 'json'
-  /** 3D agent 执行引擎；缺省 pi，模型不支持原生工具时回退 langgraph */
-  agentEngine?: SceneAgentEngine
   /** 设置库里的自定义音色条目 */
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
@@ -878,8 +877,6 @@ function normalizeSettings(raw: any): AppSettings {
         stageModels: normalizeStageModels(raw.stageModels),
         pricing: raw.pricing || {},
         agentLimits: normalizeAgentLimits(raw.agentLimits),
-        agentToolProtocol: normalizeToolProtocol(raw.agentToolProtocol),
-        agentEngine: normalizeSceneAgentEngine(raw.agentEngine),
         lipSync: normalizeLipSyncSettings(raw.lipSync),
         customVoices: normalizeCustomVoices(raw.customVoices),
         creative: normalizeCreativeSettings(raw.creative),
@@ -910,8 +907,6 @@ function normalizeSettings(raw: any): AppSettings {
     stageModels: {},
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
-    agentToolProtocol: 'auto',
-    agentEngine: normalizeSceneAgentEngine(undefined),
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),
@@ -986,8 +981,6 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
         : normalizeStageModels(cur.stageModels),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
-    agentToolProtocol: normalizeToolProtocol(patch.agentToolProtocol ?? cur.agentToolProtocol),
-    agentEngine: normalizeSceneAgentEngine(patch.agentEngine ?? cur.agentEngine),
     lipSync: patch.lipSync !== undefined ? normalizeLipSyncSettings(patch.lipSync) : normalizeLipSyncSettings(cur.lipSync),
     customVoices: patch.customVoices !== undefined ? normalizeCustomVoices(patch.customVoices) : normalizeCustomVoices(cur.customVoices),
     // 创意配置：请求里带了就以请求为准（可整体覆盖），没带就保留原值。
@@ -3980,29 +3973,20 @@ function seedreamProxy(): Plugin {
             if (kind === 'elevenlabs') {
               throw new Error('ElevenLabs 渠道不支持文本生成，请换文本模型')
             }
-            if (toolMode) {
-              const toolErr = toolRequestError({
-                tools,
-                providerId: provider?.id,
-                model,
-                supported: supportsNativeTools(provider?.id, model),
-              })
-              if (toolErr) {
-                res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, kind: 'tools-unsupported', message: toolErr }))
-                return
-              }
+            if (toolMode && kind === 'apimart') {
+              assertChatToolsObjectParameters(tools, { providerId: provider?.id, providerKind: kind })
             }
             const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
-            // MiniMax 也走 OpenAI 兼容 /chat/completions；这个端点支持 thinking 开关
-            const endpoint = `${base}/chat/completions`
 
-            const messages = chatMessages.length
-              ? chatMessages
-              : [
-                  ...(system ? [{ role: 'system', content: system }] : []),
-                  { role: 'user', content: prompt },
-                ]
+            const messages = convertChatMessages(
+              chatMessages.length
+                ? chatMessages
+                : [
+                    ...(system ? [{ role: 'system', content: system }] : []),
+                    { role: 'user', content: prompt },
+                  ],
+              { providerKind: kind, vision: modelHasCap(entry, 'vision') },
+            )
 
             const isMiniMaxM3 = kind === 'minimax' && /^MiniMax-M3$/i.test(model)
             const deepThink = deepSeekThinking(entry, provider, model, wantJson)
@@ -4013,28 +3997,31 @@ function seedreamProxy(): Plugin {
               toolThinking ||
               deepThink ||
               (isMiniMaxM3 && !toolMode ? (wantJson ? 'disabled' : 'adaptive') : undefined)
-            const providerBody = {
-              model,
-              messages,
-              max_tokens: Number(body.maxTokens) || 8192,
-              temperature: body.temperature ?? 0.7,
-              ...(tools.length
-                ? {
-                    tools,
-                    tool_choice:
-                      typeof body.toolChoice === 'string' || (body.toolChoice && typeof body.toolChoice === 'object')
-                        ? body.toolChoice
-                        : 'auto',
-                  }
-                : {}),
-              ...(thinkingMode ? { thinking: { type: thinkingMode } } : {}),
-            }
+            const apimartResponses = kind === 'apimart' && toolMode && apimartUsesResponsesForTools(model)
+            const endpoint = apimartResponses ? `${base}/responses` : `${base}/chat/completions`
+            const maxTokens = Number(body.maxTokens) || 8192
+            const temperature = body.temperature ?? 0.7
+            const toolChoice =
+              typeof body.toolChoice === 'string' || (body.toolChoice && typeof body.toolChoice === 'object')
+                ? body.toolChoice
+                : 'auto'
+            const providerBody = apimartResponses
+              ? buildApimartResponsesBody({ model, messages, tools, maxTokens, toolChoice })
+              : {
+                  model,
+                  messages,
+                  max_tokens: maxTokens,
+                  temperature,
+                  ...(tools.length ? { tools, tool_choice: toolChoice } : {}),
+                  ...(kind !== 'apimart' && thinkingMode ? { thinking: { type: thinkingMode } } : {}),
+                }
             if (toolMode) {
               console.log(
                 '[text] tool-mode',
                 JSON.stringify({
                   provider: provider?.id,
                   model,
+                  route: apimartResponses ? 'responses' : 'chat/completions',
                   thinking: thinkingMode || 'omit',
                   tools: tools.length,
                   messages: messages.length,
@@ -4072,7 +4059,7 @@ function seedreamProxy(): Plugin {
                 const upstream = await fetch(endpoint, {
                   method: 'POST',
                   headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ ...providerBody, stream: true }),
+                  body: JSON.stringify(apimartResponses ? providerBody : { ...providerBody, stream: true }),
                   signal: upstreamCtrl.signal,
                 })
                 if (!upstream.ok) {
@@ -4085,10 +4072,10 @@ function seedreamProxy(): Plugin {
                   return
                 }
                 const contentType = String(upstream.headers.get('content-type') || '')
-                if (!upstream.body || !contentType.includes('text/event-stream')) {
-                  // 渠道忽略 stream：按整段 JSON 回退，客户端仍能完成本轮。
+                if (apimartResponses || !upstream.body || !contentType.includes('text/event-stream')) {
+                  // APIMart Responses 或渠道忽略 stream：按整段 JSON 回退，客户端仍能完成本轮。
                   const raw = await upstream.text()
-                  const j = parseChatBody(raw, contentType)
+                  const j = apimartResponses ? parseApimartResponsesRaw(raw) : parseChatBody(raw, contentType)
                   const message = j?.choices?.[0]?.message
                   const toolCalls = normalizeToolCalls(message?.tool_calls, `call_${Date.now().toString(36)}`)
                   const text = String(message?.content ?? j?.reply ?? '')
@@ -4195,7 +4182,9 @@ function seedreamProxy(): Plugin {
             const raw = await r.text()
             if (!r.ok) throw new Error(`${provider?.label || kind} ${r.status}: ${raw.slice(0, 300)}`)
 
-            const j = parseChatBody(raw, r.headers.get('content-type') || '')
+            const j = apimartResponses
+              ? parseApimartResponsesRaw(raw)
+              : parseChatBody(raw, r.headers.get('content-type') || '')
             const message = j?.choices?.[0]?.message
             const toolCalls = normalizeToolCalls(message?.tool_calls, `call_${Date.now().toString(36)}`)
             const text = String(message?.content ?? j?.reply ?? '')
@@ -4772,7 +4761,8 @@ function seedreamProxy(): Plugin {
                 if (t.length > 400) throw new Error(`第 ${i + 1} 句台词过长（上限 400 字）`)
                 const v = String(lines[i]?.voice || voice)
                 const r = Math.min(260, Math.max(110, Number(lines[i]?.rate) || rate))
-                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`, voiceKey, lines[i], true)
+                const lineModelKey = String(lines[i]?.modelKey || voiceKey || '').trim()
+                const one = await synthesize(t, v, r, outDir, `${stamp}-${i}`, lineModelKey, lines[i], true)
                 for (const k of one.applied ?? []) applied.add(k)
                 for (const k of one.unsupported ?? []) unsupported.add(k)
                 parts.push({

@@ -85,7 +85,7 @@ settings.providers = [
 ]
 settings.models = [
   ...(settings.models || []).filter((m) => m.key !== 'first3d-code' && m.key !== 'first3d-vision'),
-  { key: 'first3d-code', label: 'First3D Code', cap: 'text', provider: 'first3d-mock', model: 'first3d-code' },
+  { key: 'first3d-code', label: 'First3D Code', cap: 'text', provider: 'first3d-mock', model: 'MiniMax-M3' },
   { key: 'first3d-vision', label: 'First3D Vision', cap: 'vision', provider: 'first3d-mock', model: 'first3d-vision' },
 ]
 settings.defaults = { ...(settings.defaults || {}), text: 'first3d-code', vision: 'first3d-vision' }
@@ -123,7 +123,10 @@ await page.route('**/api/text', (route) => {
     contentType: 'application/json',
     body: JSON.stringify({
       ok: true,
-      json: { content: call ? '' : '已完成', tool_calls: call ? [call] : [] },
+      finishReason: call ? 'tool_calls' : 'stop',
+      toolCalls: call
+        ? [{ id: `call_${call.name}_${callIndex}`, name: call.name, arguments: JSON.stringify(call.args) }]
+        : [],
       text: '',
       model: 'first3d-code',
       modelKey: 'first3d-code',

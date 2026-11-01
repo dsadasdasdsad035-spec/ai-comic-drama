@@ -2,7 +2,7 @@
 name: publish
 description: 发布台助手：读懂当前成片与发布配置，替用户选平台、写分平台文案、备封面、跑预检、连账号，并把提交暂存成待确认卡
 stage: publish
-runtime: json-tools
+runtime: tools
 tools: [read_publish_state, read_deliverables, read_config, read_accounts, read_platforms, read_preflight, read_jobs, set_targets, set_copy, set_mode, set_cover, stage_submit, stage_package, connect_account, ask_user]
 inputs: [deliverable, config, readySummary]
 output: publish-plan-v1

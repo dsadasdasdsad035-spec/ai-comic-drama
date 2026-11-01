@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { CharacterSheet } from './characters'
 import type { AppSettings, MediaBundle, ProjectAsset, ProjectData } from './api'
 import { getProject, listMedia } from './api'
+import { uploadImageFile } from './mediaUpload'
+import { useMediaPicker } from './agent/useMediaPicker'
 import type { ScheduleMeta, SceneCode, SceneCodeMeta, Shot3DContext, ShotData } from './types'
 import { SCENE_CODE_LIMITS, effectiveSeconds, isRenderableSceneCode, sceneCodeRuntime } from './types'
 import type { ShotNodeType } from './data'
@@ -31,7 +33,7 @@ import { prepareSceneCodeContext, type PreparedCodeContext } from './sceneCodePr
 import { renderSceneCode, trialSceneCode, sceneCodeRenderError } from './sceneCodeRender'
 import { abortError, blenderHealth, type BlenderHealth } from './sceneBlender'
 import { codeHashOf, sceneCodeFingerprint } from './sceneCodeFingerprint'
-import { buildManifest, type ContextManifest } from './contextManifest'
+import { buildManifest, shotScopeTitle, type ContextManifest } from './contextManifest'
 import { isSceneCodeFresh } from './sceneCodeFreshness'
 import { runSceneCodeJob } from './sceneCodeJob'
 import { checkSceneCode } from './sceneCodeSanitize'
@@ -164,6 +166,10 @@ export default function SceneCodeWorkbench({
   const [project, setProject] = useState<ProjectData | null>(null)
   const [media, setMedia] = useState<MediaBundle | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [chatUploading, setChatUploading] = useState(false)
+  const [chatPicking, setChatPicking] = useState(false)
+  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
+  const chatMediaPicker = useMediaPicker(projectName)
   const [catalog, setCatalog] = useState<Shot3DContextCatalog | null>(null)
   const [context, setContext] = useState<Shot3DContext | null>(() =>
     node.data.shot3DContext ? sanitizeShot3DContext(node.data.shot3DContext) : null,
@@ -284,9 +290,10 @@ export default function SceneCodeWorkbench({
   }, [catalog, context])
   const manifest = useMemo<ContextManifest>(() => {
     if (!context || !catalog) {
+      const head = { no: String(node.data.no || ''), duration, aspect: projectAspect }
       return {
         version: 1,
-        shot: { no: String(node.data.no || ''), duration, aspect: projectAspect },
+        scope: { title: shotScopeTitle(head), shot: head },
         attachments: [],
       }
     }
@@ -341,6 +348,16 @@ export default function SceneCodeWorkbench({
     return () => {
       alive = false
     }
+  }, [projectName])
+
+  /**
+   * 只刷新媒体清单。catalog 由 media 派生，所以上传/选素材后必须走这里，
+   * 否则新文件在上下文里却没有对应的 catalog 条目，生成时就读不到。
+   */
+  const refreshMedia = useCallback(async () => {
+    if (!projectName) return
+    const next = await listMedia(projectName)
+    setMedia(next)
   }, [projectName])
 
   useEffect(() => {
@@ -434,10 +451,14 @@ export default function SceneCodeWorkbench({
     setFuture([])
   }, [])
 
+  /**
+   * 写镜头上下文并作废已准备快照（参考变了，旧的 prepared 就不能再用）。
+   * 接受函数式更新：异步流程里（上传/选素材后刷新 media）闭包里的 context 可能已过期。
+   */
   const setContextSafe = useCallback(
-    (next: Shot3DContext) => {
+    (next: Shot3DContext | ((prev: Shot3DContext | null) => Shot3DContext)) => {
       pushCurrent()
-      setContext(next)
+      setContext((prev) => (typeof next === 'function' ? next(prev) : next))
       preparedRef.current = null
       setPreparedInfo(null)
     },
@@ -1028,6 +1049,64 @@ export default function SceneCodeWorkbench({
     setContextSafe(emptyShot3DContext(dialogueHashOf(node.data.dialogue)))
   }
 
+  /**
+   * 聊天里上传图片：三步不可拆，顺序错了图就进不了生成。
+   * 1) 落成项目媒体文件  2) 刷新 media（catalog 由它派生）  3) 写回镜头上下文
+   * 只做第 3 步会得到「上下文里有、catalog 里没有」，表现是加了图但 Blender 看不到。
+   */
+  const uploadChatImage = async (file: File) => {
+    if (!projectName) {
+      toast('先在顶栏选择项目，再上传图片')
+      return
+    }
+    setChatUploading(true)
+    try {
+      const url = await uploadImageFile(file, { project: projectName, prefix: 'chat-3d' })
+      await refreshMedia()
+      // 同 pickChatMedia：刷新 media 后旧 context 已过期，必须用函数式更新
+      setContextSafe((prev) => {
+        const base = prev ?? emptyShot3DContext(dialogueHashOf(node.data.dialogue))
+        return { ...base, imageUrls: [...new Set([...base.imageUrls, url])] }
+      })
+      toast('图片已加入本镜参考')
+    } catch (e) {
+      toast((e as Error).message || '上传图片失败')
+    } finally {
+      setChatUploading(false)
+    }
+  }
+
+  /** 聊天里从项目素材选：图片写 imageUrls，视频写 videoUrls，都是同一份镜头上下文 */
+  const pickChatMedia = async () => {
+    if (!context) return
+    setChatPicking(true)
+    try {
+      const item = await chatMediaPicker.open()
+      if (!item) return
+      if (item.mediaType === 'audio') {
+        toast('镜头上下文不接受音频')
+        return
+      }
+      // 新选的媒体可能还没进 catalog（例如刚在别处生成）；刷新一次再写，避免选了却看不到
+      await refreshMedia()
+      /**
+       * 必须用函数式更新：refreshMedia 会让 catalog 重建，期间 context 引用已经变了；
+       * 用闭包里的旧 context 展开会把这次选择覆盖掉（表现为选了但附件条没变）。
+       */
+      setContextSafe((prev) => {
+        const base = prev ?? emptyShot3DContext(dialogueHashOf(node.data.dialogue))
+        return item.mediaType === 'video'
+          ? { ...base, videoUrls: [...new Set([...base.videoUrls, item.url])] }
+          : { ...base, imageUrls: [...new Set([...base.imageUrls, item.url])] }
+      })
+      toast(item.mediaType === 'video' ? '视频已加入本镜参考' : '图片已加入本镜参考')
+    } catch (e) {
+      toast((e as Error).message || '选择素材失败')
+    } finally {
+      setChatPicking(false)
+    }
+  }
+
   const requestClose = () => {
     if (generating) cancelGenerate()
     if (renderBusy) cancelRender()
@@ -1374,6 +1453,10 @@ export default function SceneCodeWorkbench({
                   onRemoveAttachment={removeAttachment}
                   onToggleBrief={toggleBrief}
                   onClearAttachments={clearAttachments}
+                  onUploadImage={uploadChatImage}
+                  onPickMedia={() => void pickChatMedia()}
+                  picking={chatPicking}
+                  uploading={chatUploading}
                   prepareAgent={prepareAgent}
                   onDraftCode={applyAgentDraft}
                   onVideoAccepted={acceptAgentVideo}
@@ -1457,6 +1540,7 @@ export default function SceneCodeWorkbench({
           </div>
         </div>
       )}
+      {chatMediaPicker.node}
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import type { Stage } from '../api'
 
-export type SkillRuntime = 'json-tools' | 'scene3d'
+/** `tools`：跑在聊天工具循环里；`scene3d`：3D 场景代码。`json-tools` 是旧名，解析时归一化。 */
+export type SkillRuntime = 'tools' | 'scene3d'
 export type SkillSource = 'builtin' | 'override'
 
 export type SkillManifest = {

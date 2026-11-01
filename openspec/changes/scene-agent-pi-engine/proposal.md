@@ -1,5 +1,8 @@
 # Proposal
 
+> **状态：已被 `pi-only-chat-runtime` 取代（2026-10-29）。**
+> 本变更已实现，但其规格增量不再成立：它新增「聊天引擎可切换且可回退」等 6 条双引擎需求，而后续决定是删除 LangGraph 与 JSON action、全应用只保留 pi。因此**不要归档本变更**——归档会把互相矛盾的双引擎需求写进 `scene-agent-runtime` 主规格。其代码成果由 `pi-only-chat-runtime` 承接并继续收敛。
+
 ## Why
 
 3D 调度聊天目前把「循环」和「产品语义」焊在一起：`runSceneAgent` 直接依赖 LangGraph 的 `StateGraph`，并用两个自写 `BaseChatModel` 适配器（JSON action 与原生 tool calls）拼出模型调用。循环本身没有产品价值，却占了最容易出错的部分——工具顺序、取消、超时、历史压缩、事件去重。项目真正要守的是 12 个受控工具、渲染试运行门禁、视觉验收和每镜隔离。

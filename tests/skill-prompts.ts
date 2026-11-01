@@ -59,39 +59,63 @@ const rendered = (skill: ReturnType<typeof parse>, inputs: Record<string, unknow
 
 check('script 任务模板逐字等于旧 inline prompt', () => {
   const expected =
-    `原著：\nSRC\n\n要求：拆 3 集，每集目标时长约 75 秒。\n画风：科幻写实`
+    `原著：\nSRC\n\n要求：拆 3 集。每一集必须在 JSON 里写 targetSeconds（秒，集与集可不同，按场次体量估算）；75 仅作常见节奏参考，不要强行把每集都改成同一个数。\n画风：科幻写实`
   assert.equal(
     rendered(script, { source: 'SRC', epCount: 3, targetSeconds: 75, style: '科幻写实' }),
     expected,
   )
 })
 
-check('character 任务模板逐字等于旧 inline prompt', () => {
-  const expected =
-    `以下是第 1 集的剧本场次与分镜。\n\nSCENE\n\n【本集分镜出场与台词】\nSHOT\n\n` +
-    `要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。`
-  assert.equal(
-    rendered(character, {
-      scopeLabel: '第 1 集的剧本场次与分镜',
-      sceneText: 'SCENE',
-      shotBlock: '\n\n【本集分镜出场与台词】\nSHOT',
-    }),
-    expected,
+// 模板新增了参考图要点与 update 覆盖两段（角色聊天看图写锚点）。
+// 这里改为断言「旧的核心结构仍在 + 新规则存在」，而不是逐字等价：
+// 逐字等价会把「给模板加一段规则」变成永远不能做的改动。
+check('character 任务模板保留原结构', () => {
+  const out = rendered(character, {
+    scopeLabel: '第 1 集的剧本场次与分镜',
+    sceneText: 'SCENE',
+    shotBlock: '\n\n【本集分镜出场与台词】\nSHOT',
+    referenceDigest: '',
+  })
+  assert.ok(out.startsWith('以下是第 1 集的剧本场次与分镜。\n\nSCENE\n\n【本集分镜出场与台词】\nSHOT\n\n'))
+  assert.ok(
+    out.includes(
+      '要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。',
+    ),
   )
 })
 
-check('character 无分镜时不产生多余空行', () => {
-  const expected =
-    `以下是全剧的原文梗概与分集场次。\n\nSCENE\n\n` +
-    `要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。`
-  assert.equal(
-    rendered(character, {
-      scopeLabel: '全剧的原文梗概与分集场次',
-      sceneText: 'SCENE',
-      shotBlock: '',
-    }),
-    expected,
+check('character 模板包含参考图与 update 规则', () => {
+  const out = rendered(character, { scopeLabel: 'S', sceneText: 'C', shotBlock: '', referenceDigest: '' })
+  assert.ok(out.includes('【有参考图外观要点时】'))
+  assert.ok(out.includes('【已有角色要不要覆盖】'))
+  assert.ok(out.includes('"update": true'))
+})
+
+check('character 有参考图要点时插入到要求之前', () => {
+  const out = rendered(character, {
+    scopeLabel: 'S',
+    sceneText: 'C',
+    shotBlock: '',
+    referenceDigest: '【参考图外观要点】\n- 参考图 1：黑色短发\n\n',
+  })
+  const digestAt = out.indexOf('【参考图外观要点】')
+  const reqAt = out.indexOf('要求：找出所有需要出镜的具名角色')
+  assert.ok(digestAt > 0 && reqAt > digestAt, `${digestAt} -> ${reqAt}`)
+})
+
+check('character 无分镜且无图时不产生多余空行', () => {
+  const out = rendered(character, {
+    scopeLabel: '全剧的原文梗概与分集场次',
+    sceneText: 'SCENE',
+    shotBlock: '',
+    referenceDigest: '',
+  })
+  // 正文与要求之间恰好一个空行，不因为新占位符而多出空行
+  assert.ok(
+    out.startsWith('以下是全剧的原文梗概与分集场次。\n\nSCENE\n\n要求：找出所有需要出镜的具名角色'),
+    JSON.stringify(out.slice(0, 80)),
   )
+  assert.ok(!out.includes('SCENE\n\n\n'), '不能出现连续两个空行')
 })
 
 check('asset 任务模板逐字等于旧 inline prompt', () => {
@@ -196,9 +220,25 @@ check('缺输入被标记', () => {
 check('契约校验：合法剧本', () => {
   const r = validateContract('script-v1', {
     logline: 'L',
-    episodes: [{ no: 1, title: 'T', hook: 'H', scenes: [{ no: 1, slug: 'S', characters: ['A'] }] }],
+    episodes: [
+      {
+        no: 1,
+        title: 'T',
+        hook: 'H',
+        scenes: [
+          { no: 1, slug: 'S', place: 'P', time: '夜', beats: 'B', characters: ['A'] },
+        ],
+      },
+    ],
   })
   assert.equal(r.ok, true)
+})
+
+check('契约校验：场次缺叙事字段拒绝', () => {
+  const r = validateContract('script-v1', {
+    episodes: [{ no: 1, scenes: [{ no: 1, slug: 'S' }] }],
+  })
+  assert.equal(r.ok, false)
 })
 
 check('契约校验：缺 episodes 拒绝', () => {
@@ -248,7 +288,17 @@ check('契约校验：合法场景/道具', () => {
 
 check('契约校验：合法镜头表', () => {
   const r = validateContract('shots-v1', {
-    shots: [{ no: 'S01', scene_no: 1, seconds: 3, size: '中景', move: '固定', desc: '...' }],
+    shots: [
+      {
+        no: 'S01',
+        scene_no: 1,
+        scene_slug: '街口',
+        seconds: 3,
+        size: '中景',
+        move: '固定',
+        desc: '...',
+      },
+    ],
   })
   assert.equal(r.ok, true)
 })

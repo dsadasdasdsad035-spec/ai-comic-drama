@@ -149,7 +149,7 @@ try {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ ok: true, json: { content: '慢慢完成' }, text: '慢慢完成', modelLabel: 'mock' }),
+          body: JSON.stringify({ ok: true, text: '慢慢完成', finishReason: 'stop', toolCalls: [], modelLabel: 'mock' }),
         })
       } catch {
         /* 取消后请求已中止 */
@@ -160,21 +160,26 @@ try {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, json: { content: '重试成功' }, text: '重试成功', modelLabel: 'mock' }),
+        body: JSON.stringify({ ok: true, text: '重试成功', finishReason: 'stop', toolCalls: [], modelLabel: 'mock' }),
       })
       return
     }
-    let payload
+    // 原生工具调用：模型只认 toolCalls。
+    let reply
     if (phase === 0) {
       phase = 1
-      payload = { content: '提交剧本草稿', tool_calls: [{ name: 'submit_script', args: SCRIPT }] }
+      reply = {
+        text: '提交剧本草稿',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: 'call_1', name: 'submit_script', arguments: JSON.stringify(SCRIPT) }],
+      }
     } else {
-      payload = { content: '已完成剧本草稿' }
+      reply = { text: '已完成剧本草稿', finishReason: 'stop', toolCalls: [] }
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true, json: payload, text: payload.content, modelLabel: 'mock' }),
+      body: JSON.stringify({ ok: true, modelLabel: 'mock', ...reply }),
     })
   })
 

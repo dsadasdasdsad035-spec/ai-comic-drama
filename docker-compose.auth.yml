@@ -18,7 +18,9 @@ services:
       - "${PUBLIC_BIND_ADDR:-0.0.0.0}:${PUBLIC_PORT:-80}:80"
       - "${PUBLIC_BIND_ADDR:-0.0.0.0}:${PUBLIC_TLS_PORT:-443}:443"
     volumes:
-      - ./deploy/proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 代理模式：默认绑定域名（nginx.conf）；域名归别的服务时设
+      # PROXY_CONF=nginx.standalone.conf，改用纯端口模式
+      - ./deploy/proxy/${PROXY_CONF:-nginx.conf}:/etc/nginx/conf.d/default.conf:ro
       # 勿挂到 conf.d/，否则会被当顶层配置加载导致 location 报错
       - ./deploy/proxy/app-locations.conf:/etc/nginx/includes/app-locations.conf:ro
       - ./deploy/proxy/.htpasswd:/etc/nginx/auth/.htpasswd:ro

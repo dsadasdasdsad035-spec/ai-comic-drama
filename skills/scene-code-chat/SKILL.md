@@ -2,7 +2,7 @@
 name: scene-code-chat
 description: 在现有 Blender Python 场景代码基础上按用户要求改写，返回完整代码
 stage: sceneCode
-runtime: json-tools
+runtime: tools
 tools: []
 inputs: []
 output: scene3d-code-v1

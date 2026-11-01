@@ -7,7 +7,10 @@ import {
 } from '@assistant-ui/react'
 import type { AppSettings } from '../api'
 import { stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
+import { modelHasCap } from '../modelCaps'
 import { buildSkillPrompt } from '../skills/render'
+import { imageAttachments, type ChatAttachment } from './chatAttachments'
+import { classifyChatImage, imageContextLines, MAX_CHAT_IMAGE_BYTES } from '../../server/chat-image-payload.mjs'
 import { loadSkills } from '../skills/registry'
 import type { Skill } from '../skills/types'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
@@ -21,8 +24,8 @@ import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
 import { StageToolUis } from './stageToolUis'
 import { useAgentMessages } from './useAgentMessages'
 import { bindSkillTools, createStageToolSet } from './stageTools'
-import { runStageAgent } from './stageAgentGraph'
-import { loadChatThread, saveChatThread, threadTranscript, type ActiveSkill, type ChatThreadKey } from './threads'
+import { runStageAgent } from './pi/stageRunner'
+import { clearChatThread, loadChatThread, saveChatThread, threadTranscript, type ActiveSkill, type ChatThreadKey } from './threads'
 import type { AgentBuiltinPart, AgentMessage } from './sceneAgentTypes'
 import {
   WORKBENCH_PROFILES,
@@ -34,6 +37,12 @@ import {
   type WorkbenchTaskView,
 } from './workbenchChat'
 import { WorkbenchChatContext } from './workbenchChatContext'
+import { requireProjectStyle } from '../productionContext'
+
+async function ensureProjectStyleIfNeeded(host: Skill, adapter: WorkbenchChatAdapter) {
+  if (!host.manifest.inputs.includes('style')) return
+  requireProjectStyle(await adapter.projectSnapshot())
+}
 
 type Props = {
   adapter: WorkbenchChatAdapter
@@ -44,6 +53,10 @@ type Props = {
   onClose?: () => void
   /** 宿主草稿是否未保存；显式保存的工作台传入，用于同步写回执。 */
   dirty?: boolean
+  /** 回执里的「用它生成三视图」确认动作；不传则不渲染该按钮。 */
+  onRenderTurnaround?: (charNames: string[]) => Promise<void> | void
+  /** 生成三视图的估算费用，显示在按钮上 */
+  turnaroundCost?: number
 }
 
 const SKILL_BANNER = /^技能 [a-z0-9-]+ · (?:builtin|override|local) · v\d+/i
@@ -95,6 +108,9 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
     if (part.type === 'text') {
       // 旧线程可能带着“技能 script · builtin · v1”横幅；新 UI 不再展示，也不再传给模型。
       if (part.text && !SKILL_BANNER.test(part.text)) content.push({ type: 'text', text: part.text })
+    } else if (part.type === 'image-context') {
+      const lines = imageContextLines(part.items)
+      if (lines.length) content.push({ type: 'text', text: `【图片处置】\n${lines.join('\n')}` })
     } else if (part.type === 'step') {
       const chars = Number(part.chars) || 0
       const progress = chars > 0 ? `已生成 ${chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : chars} 字符` : '模型调用中…'
@@ -185,10 +201,64 @@ function AssistantText({ text }: { text: string }) {
   return <ChatStep turn={turn} phase="end">{detail}</ChatStep>
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i]
+    const b = i + 1 < bytes.length ? bytes[i + 1] : 0
+    const c = i + 2 < bytes.length ? bytes[i + 2] : 0
+    const triple = (a << 16) | (b << 8) | c
+    out += alphabet[(triple >> 18) & 63]
+    out += alphabet[(triple >> 12) & 63]
+    out += i + 1 < bytes.length ? alphabet[(triple >> 6) & 63] : '='
+    out += i + 2 < bytes.length ? alphabet[triple & 63] : '='
+  }
+  return out
+}
+
+/** 读取附件字节。超限时不编码，避免把大图放进请求。 */
+async function readChatImage(att: ChatAttachment): Promise<{ label: string; mimeType: string; data: string; bytes: number }> {
+  const label = att.label
+  const fromUrl = /\.jpe?g($|\?)/i.test(att.url || '')
+    ? 'image/jpeg'
+    : /\.webp($|\?)/i.test(att.url || '')
+      ? 'image/webp'
+      : /\.png($|\?)/i.test(att.url || '')
+        ? 'image/png'
+        : ''
+  try {
+    const res = await fetch(att.url || '', { credentials: 'same-origin' })
+    if (!res.ok) return { label, mimeType: '', data: '', bytes: Number.NaN }
+    const raw = new Uint8Array(await res.arrayBuffer())
+    const header = (res.headers.get('content-type') || '').split(';')[0].trim()
+    const mimeType = /^image\/(png|jpe?g|webp)$/.test(header) ? header : fromUrl
+    if (raw.byteLength > MAX_CHAT_IMAGE_BYTES) return { label, mimeType, data: '', bytes: raw.byteLength }
+    return { label, mimeType, bytes: raw.byteLength, data: bytesToBase64(raw) }
+  } catch {
+    return { label, mimeType: '', data: '', bytes: Number.NaN }
+  }
+}
+
+function UserText({ text }: { text: string }) {
+  if (!text.startsWith('【图片处置】\n')) return <ChatText text={text} />
+  const lines = text.slice('【图片处置】\n'.length).split('\n').filter(Boolean)
+  return (
+    <details data-chat-image-context className="mb-1 rounded-md border border-dashed border-border px-2 py-1 text-[10px] text-muted-foreground">
+      <summary className="cursor-pointer select-none">本轮图片 · {lines.length} 张</summary>
+      <ul className="mt-1 space-y-0.5">
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
 function UserMessage() {
   return (
     <ChatMessage role="user" variant="workbench">
-      <MessagePrimitive.Parts components={{ Text: ChatText }} />
+      <MessagePrimitive.Parts components={{ Text: UserText }} />
     </ChatMessage>
   )
 }
@@ -213,6 +283,8 @@ export default function SkillChat({
   onRunningChange,
   onClose,
   dirty,
+  onRenderTurnaround,
+  turnaroundCost,
 }: Props) {
   const {
     messages,
@@ -220,9 +292,11 @@ export default function SkillChat({
     running,
     setRunning,
     abortRef,
+    messageRef,
     begin,
     updateEvent,
     patchAssistant,
+    reset,
   } = useAgentMessages()
 
   const profile = WORKBENCH_PROFILES[adapter.surface]
@@ -245,6 +319,22 @@ export default function SkillChat({
   const [inspectOpen, setInspectOpen] = useState(false)
   const [taskView, setTaskView] = useState<WorkbenchTaskView | null>(null)
   const [actionError, setActionError] = useState('')
+  /** 本轮图片附件；只有 adapter 声明了 attachments 的工作台才会非空 */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  /**
+   * 附件来源换了（例如角色聊天切到另一个角色）就清空已选：
+   * 否则会把上一个角色的图带进这个角色的上下文。
+   */
+  // 会话键里能区分「谁的附件」：角色聊天是 charId，其他工作台没有
+  // 附件属于当前会话：切项目或切集时清空（由下面的 key 变化统一处理），
+  // 切换选中的卡片不再影响附件——附件是过程输入，不绑定某个角色。
+  const sessionSig = `${adapter.threadKey.project}|${adapter.threadKey.episode || 0}`
+  const lastSessionRef = useRef(sessionSig)
+  useEffect(() => {
+    if (lastSessionRef.current === sessionSig) return
+    lastSessionRef.current = sessionSig
+    setAttachments([])
+  }, [sessionSig])
   const [builtinRun, setBuiltinRun] = useState<{
     key: string
     label: string
@@ -258,9 +348,17 @@ export default function SkillChat({
   const messagesRef = useRef(messages)
   messagesRef.current = messages
   const lastKeyRef = useRef<{ key: string; threadKey: ChatThreadKey } | null>(null)
+  const clearGenRef = useRef(0)
+  const clearingRef = useRef(false)
+  const [clearing, setClearing] = useState(false)
 
   const threadKey = adapter.threadKey
-  const key = [threadKey.project, threadKey.surface, threadKey.episode || 0, threadKey.shotId || ''].join('|')
+  const key = [
+    threadKey.project,
+    threadKey.surface,
+    threadKey.episode || 0,
+    threadKey.shotId || (threadKey.charId ? `char:${threadKey.charId}` : ''),
+  ].join('|')
 
   const activeSkillsNow: ActiveSkill[] = [
     ...(hostSkill
@@ -312,7 +410,7 @@ export default function SkillChat({
           [...skills.values()].filter(
             (s) =>
               s.id !== host.id &&
-              s.manifest.runtime === 'json-tools' &&
+              (s.manifest.runtime === 'tools') &&
               s.manifest.tools.some((t) => t.startsWith('read_') || t === 'get_shot_context'),
           ),
         )
@@ -348,8 +446,9 @@ export default function SkillChat({
   }, [key, loadNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!loaded || running || !messages.length) return
+    if (!loaded || running || !messages.length || clearingRef.current) return
     const timer = setTimeout(() => {
+      if (clearingRef.current) return
       void saveChatThread(adapterRef.current.threadKey, messages, activeSkillsNow).catch(() => {})
     }, 500)
     return () => clearTimeout(timer)
@@ -362,7 +461,7 @@ export default function SkillChat({
       abortRef.current = null
       builtinRunRef.current?.controller.abort()
       const prev = lastKeyRef.current
-      if (prev && messagesRef.current.length) {
+      if (prev && messagesRef.current.length && !clearingRef.current) {
         void saveChatThread(prev.threadKey, messagesRef.current, activeRef.current).catch(() => {})
       }
     }
@@ -376,10 +475,92 @@ export default function SkillChat({
     return () => onRunningChange?.(false)
   }, [onRunningChange])
 
+  /** 附件来源；未声明时整块 UI 不出现 */
+  const attachSource = adapter.attachments
+  const [uploadingRef, setUploadingRef] = useState(false)
+  const refFileRef = useRef<HTMLInputElement | null>(null)
+
+  const addAttachment = (item: { key: string; label: string; url: string; kind?: ChatAttachment['kind'] }) => {
+    if (!attachSource) return
+    setAttachments((prev) => {
+      if (prev.length >= attachSource.limit) return prev
+      if (prev.some((a) => a.key === item.key)) return prev
+      return [
+        ...prev,
+        { key: item.key, kind: item.kind || 'image', label: item.label, url: item.url },
+      ]
+    })
+  }
+  const removeAttachment = (key: string) => {
+    setAttachments((prev) => prev.filter((a) => a.key !== key))
+  }
+
+  /**
+   * 从聊天里上传参考图：落成项目媒体文件，经 adapter 写回宿主数据，
+   * 然后自动加入本轮附件（用户上传就是为了用它）。
+   */
+  const [pickingProject, setPickingProject] = useState(false)
+  /** 从项目里挑一张图：由 adapter 提供，返回 null 表示取消 */
+  const pickFromProject = async () => {
+    if (!attachSource?.pick) return
+    setPickingProject(true)
+    try {
+      const item = await attachSource.pick()
+      if (item) addAttachment(item)
+    } catch (e) {
+      onToast?.((e as Error).message || '选择图片失败')
+    } finally {
+      setPickingProject(false)
+    }
+  }
+
+  const uploadAttachment = async (file: File) => {
+    if (!attachSource?.upload) return
+    setUploadingRef(true)
+    try {
+      // upload 负责落盘与写回宿主数据，并返回可直接加入本轮附件的新条目
+      const item = await attachSource.upload(file)
+      addAttachment(item)
+    } catch (e) {
+      onToast?.((e as Error).message || '上传参考图失败')
+    } finally {
+      setUploadingRef(false)
+    }
+  }
+
+  /**
+   * 送给技能的输入 = adapter 的输入 + 参考图要点。
+   * referenceDigest 始终存在（甚至为空串）：技能的 {{input:referenceDigest}}
+   * 只有在键缺失时才被算作「缺输入」，空串是合法的「没有图」。
+   */
+  const composeInputs = () => {
+    const base = adapter.inputs()
+    // 空串表示这轮没有视觉摘要。图片本身走用户消息，不写进技能模板。
+    return { ...base, referenceDigest: '' }
+  }
+
+  /**
+   * 本轮附件的文本标签。放进 userForModel 而不是技能模板输入，
+   * 这样五个技能都能知道「这张图叫什么」，且不需要改 SKILL.md。
+   */
+  const attachmentBlock = (): string => {
+    if (!attachments.length) return ''
+    const lines: string[] = ['【本轮附件】']
+    for (const a of attachments) {
+      if (a.kind === 'image') {
+        lines.push(`- 图片「${a.label}」`)
+        continue
+      }
+      const body = String(a.text || '').trim()
+      lines.push(`- ${a.kind === 'video' ? '视频' : a.kind === 'doc' ? '文档' : '文本'}「${a.label}」${body ? `：${body}` : '（无可用正文）'}`)
+    }
+    return `${lines.join('\n')}\n\n`
+  }
+
   const contextStats = useMemo<WorkbenchContextStats | null>(() => {
     if (!loaded || !hostSkill) return null
     try {
-      const inputs = adapter.inputs()
+      const inputs = composeInputs()
       const prompt = buildSkillPrompt(hostSkill, inputs, 'chat')
       const entries = Object.entries(inputs).map(([key, value]) => ({
         key,
@@ -395,7 +576,8 @@ export default function SkillChat({
     } catch {
       return null
     }
-  }, [adapter, hostSkill, loaded, profile, messages.length, running])
+    // 附件标签变化要刷新「将发送」里的输入统计
+  }, [adapter, hostSkill, loaded, profile, messages.length, running, attachments])
 
   const loadReadonly = (id: string) => {
     if (!id) return
@@ -443,10 +625,11 @@ export default function SkillChat({
     saveMode: profile.saveMode,
   })
 
-  const preview = () => {
+  const preview = async () => {
     if (!hostSkill) return
     try {
-      const inputs = adapter.inputs()
+      await ensureProjectStyleIfNeeded(hostSkill, adapter)
+      const inputs = composeInputs()
       const prompt = buildSkillPrompt(hostSkill, inputs, 'chat')
       const system = [prompt.system, ...readonlySystemText()].join('\n\n')
       setTaskView(makeTaskView(hostSkill, inputs, prompt, system))
@@ -455,8 +638,45 @@ export default function SkillChat({
     }
   }
 
+  const applyIfCurrent = (gen: number, fn: () => void) => {
+    if (clearGenRef.current !== gen) return
+    fn()
+  }
+
+  const clearConversation = async () => {
+    if (!messages.length || clearingRef.current) return
+    if (!window.confirm('清空当前对话？只删除聊天记录，不清左侧草稿，且不可恢复。')) return
+    clearingRef.current = true
+    setClearing(true)
+    clearGenRef.current += 1
+    abortRef.current?.abort()
+    abortRef.current = null
+    builtinRunRef.current?.controller.abort()
+    setBuiltinRun(null)
+    messageRef.current = null
+    try {
+      await clearChatThread(adapterRef.current.threadKey)
+    } catch (e) {
+      clearingRef.current = false
+      setClearing(false)
+      setRunning(false)
+      onToast?.((e as Error).message || '清空对话失败')
+      return
+    }
+    messagesRef.current = []
+    reset()
+    setReadonly([])
+    setAttachments([])
+    setTaskView(null)
+    setActionError('')
+    setInspectOpen(false)
+    setRunning(false)
+    clearingRef.current = false
+    setClearing(false)
+  }
+
   const run = async (text: string) => {
-    if (running || builtinRunRef.current) return
+    if (running || builtinRunRef.current || clearingRef.current) return
     setActionError('')
     const host = hostSkill
     if (!host) {
@@ -470,9 +690,28 @@ export default function SkillChat({
       onToast?.('没有可用的文本模型，请到设置页绑定该环节')
       return
     }
+    const entry = settings?.models.find((m) => m.key === modelKey)
+    const providerKind = settings?.providers.find((p) => p.id === entry?.provider)?.kind || ''
+    const vision = entry ? modelHasCap(entry, 'vision') : false
+    const loadedImages = await Promise.all(imageAttachments(attachments).map((att) => readChatImage(att)))
+    const decisions = loadedImages.map((image) => ({
+      image,
+      decision: classifyChatImage(image, { providerKind, vision }),
+    }))
+    const images = decisions
+      .filter((item) => item.decision.sent && item.image.data)
+      .map((item) => ({
+        type: 'image' as const,
+        data: item.image.data,
+        mimeType: item.decision.mimeType || item.image.mimeType,
+      }))
+    const placeholders = decisions
+      .filter((item) => !item.decision.sent)
+      .map((item) => `图片「${item.decision.label}」未送入模型：${item.decision.reason}`)
     let hostPrompt
     try {
-      hostPrompt = buildSkillPrompt(host, adapter.inputs(), 'chat')
+      await ensureProjectStyleIfNeeded(host, adapter)
+      hostPrompt = buildSkillPrompt(host, composeInputs(), 'chat')
       if (hostPrompt.missing.length) {
         throw new Error(`技能输入缺失：${hostPrompt.missing.join('、')}`)
       }
@@ -485,55 +724,77 @@ export default function SkillChat({
     const readonlySystem = readonlySystemText()
     const system = [hostPrompt.system, ...readonlySystem].join('\n\n')
     const taskCard = hostPrompt.task ? `【本轮技能任务】\n${hostPrompt.task}` : ''
-    const userForModel = taskCard ? `${taskCard}\n\n【用户要求】\n${text}` : text
+    const attachText = [attachmentBlock(), placeholders.length ? `${placeholders.join('\n')}\n\n` : ''].filter(Boolean).join('')
+    const head = [taskCard, attachText].filter(Boolean).join('\n')
+    const userForModel = head ? `${head}【用户要求】\n${text}` : text
     const tools = bindSkillTools(createStageToolSet(adapter), [
       { skill: host, mode: 'host' },
       ...readonly.map((s) => ({ skill: s, mode: 'readonly' as const })),
     ])
     const history = threadTranscript(messages)
-    setTaskView(makeTaskView(host, adapter.inputs(), hostPrompt, system))
+    setTaskView(makeTaskView(host, composeInputs(), hostPrompt, system))
 
+    const gen = clearGenRef.current
     userStartedRef.current = true
-    begin(text)
+    begin(
+      text,
+      decisions.length
+        ? [{
+            type: 'image-context',
+            items: decisions.map((item) => ({
+              label: item.decision.label,
+              sent: item.decision.sent,
+              ...(item.decision.reason ? { reason: item.decision.reason } : {}),
+            })),
+          }]
+        : [],
+    )
     const controller = new AbortController()
     abortRef.current = controller
     setRunning(true)
     try {
       const result = await runStageAgent({
         userText: userForModel,
+        images,
         system,
         tools,
         history,
         modelKey,
         stage: adapter.stage,
         signal: controller.signal,
-        onEvent: updateEvent,
+        onEvent: (event) => applyIfCurrent(gen, () => updateEvent(event)),
       })
       if (result.cancelled) {
-        patchAssistant((m) => (m.status === 'cancelled' ? m : { ...m, status: 'cancelled' }))
+        applyIfCurrent(gen, () => patchAssistant((m) => (m.status === 'cancelled' ? m : { ...m, status: 'cancelled' })))
       } else if (result.error) {
-        patchAssistant((m) =>
-          m.status === 'error'
-            ? m
-            : { ...m, status: 'error', parts: [...m.parts, { type: 'text', text: `失败：${result.error}` }] },
-        )
-        onToast?.(result.error)
+        applyIfCurrent(gen, () => {
+          patchAssistant((m) =>
+            m.status === 'error'
+              ? m
+              : { ...m, status: 'error', parts: [...m.parts, { type: 'text', text: `失败：${result.error}` }] },
+          )
+          onToast?.(result.error || '失败')
+        })
       } else {
-        patchAssistant((m) => ({ ...m, status: 'complete' }))
+        applyIfCurrent(gen, () => patchAssistant((m) => ({ ...m, status: 'complete' })))
       }
     } catch (e) {
       const message = (e as Error).message || String(e)
-      patchAssistant((m) => ({ ...m, status: 'error', parts: [...m.parts, { type: 'text', text: `失败：${message}` }] }))
-      onToast?.(message)
+      applyIfCurrent(gen, () => {
+        patchAssistant((m) => ({ ...m, status: 'error', parts: [...m.parts, { type: 'text', text: `失败：${message}` }] }))
+        onToast?.(message)
+      })
     } finally {
-      abortRef.current = null
-      setRunning(false)
+      applyIfCurrent(gen, () => {
+        abortRef.current = null
+        setRunning(false)
+      })
     }
   }
 
   /** 显式内置动作：用户点击触发，走宿主函数；不进入模型工具循环。 */
   const runBuiltinAction = async (action: BuiltinAction) => {
-    if (running || builtinRunRef.current) return
+    if (running || builtinRunRef.current || clearingRef.current) return
     const availability = builtinAvailability(action)
     if (availability.disabled) {
       onToast?.(availability.reason || '当前不可运行')
@@ -551,6 +812,7 @@ export default function SkillChat({
       status: 'running',
       startedAt: Date.now(),
     }
+    const gen = clearGenRef.current
     setMessages((prev) => [
       ...prev,
       { id: msgId, role: 'assistant', parts: [part], status: 'running' },
@@ -563,26 +825,28 @@ export default function SkillChat({
         : result.cancelled
           ? 'cancelled'
           : 'error'
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                status: result.ok
-                  ? ('complete' as const)
-                  : result.cancelled
-                    ? ('cancelled' as const)
-                    : ('error' as const),
-                parts: m.parts.map((p) =>
-                  p.type === 'builtin'
-                    ? { ...p, status: partStatus, result, endedAt: Date.now() }
-                    : p,
-                ),
-              }
-            : m,
-        ),
-      )
-      if (!result.ok) onToast?.(result.error || result.summary)
+      applyIfCurrent(gen, () => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  status: result.ok
+                    ? ('complete' as const)
+                    : result.cancelled
+                      ? ('cancelled' as const)
+                      : ('error' as const),
+                  parts: m.parts.map((p) =>
+                    p.type === 'builtin'
+                      ? { ...p, status: partStatus, result, endedAt: Date.now() }
+                      : p,
+                  ),
+                }
+              : m,
+          ),
+        )
+        if (!result.ok) onToast?.(result.error || result.summary)
+      })
     } catch (e) {
       const message = (e as Error).message || '内置动作失败'
       const result = builtinFailure(action.key, message, {
@@ -590,35 +854,40 @@ export default function SkillChat({
         scope: action.scope,
         saveMode: profile.saveMode,
       })
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? {
-                ...m,
-                status: 'error' as const,
-                parts: m.parts.map((p) =>
-                  p.type === 'builtin'
-                    ? { ...p, status: 'error' as const, result, endedAt: Date.now() }
-                    : p,
-                ),
-              }
-            : m,
-        ),
-      )
-      onToast?.(message)
+      applyIfCurrent(gen, () => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  status: 'error' as const,
+                  parts: m.parts.map((p) =>
+                    p.type === 'builtin'
+                      ? { ...p, status: 'error' as const, result, endedAt: Date.now() }
+                      : p,
+                  ),
+                }
+              : m,
+          ),
+        )
+        onToast?.(message)
+      })
     } finally {
-      setBuiltinRun(null)
+      applyIfCurrent(gen, () => setBuiltinRun(null))
     }
   }
+
+  /** 只带附件、不打字也能发送：补一句占位说明，让历史与重试有可读内容。 */
+  const ATTACHMENT_ONLY_PLACEHOLDER = '（见附件）'
 
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
     isRunning: running,
     onNew: async (message) => {
-      const text = appendText(message)
-      if (!text) return
-      await run(text)
+      const typed = appendText(message)
+      if (!typed && !attachments.length) return
+      await run(typed || ATTACHMENT_ONLY_PLACEHOLDER)
     },
     onCancel: async () => {
       abortRef.current?.abort()
@@ -649,6 +918,8 @@ export default function SkillChat({
     onRetry: lastUserText ? retryLast : undefined,
     running: busy,
     dirty,
+    onRenderTurnaround,
+    turnaroundCost,
   }
 
   return (
@@ -679,6 +950,9 @@ export default function SkillChat({
           setInspectOpen((v) => !v)
         }}
         onClose={onClose}
+        onClear={() => void clearConversation()}
+        canClear={messages.length > 0 && !clearing}
+        clearing={clearing}
       />
 
       {loadError ? (
@@ -711,7 +985,20 @@ export default function SkillChat({
             />
           ) : (
             <WorkbenchChatContext.Provider value={contextValue}>
-              <ChatThreadShell runtime={runtime} running={running} toolUis={<StageToolUis />}>
+              <ChatThreadShell runtime={runtime} running={running} scope={adapter.surface} toolUis={<StageToolUis />}>
+                {attachSource?.upload ? (
+                  <input
+                    ref={refFileRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      if (f) void uploadAttachment(f)
+                      e.target.value = ''
+                    }}
+                  />
+                ) : null}
                 <ChatThreadBody
                   UserMessage={UserMessage}
                   AssistantMessage={AssistantMessage}
@@ -731,6 +1018,27 @@ export default function SkillChat({
                   disabled={!loaded || !hostSkill || busy}
                   hint="Enter 发送 · Shift+Enter 换行"
                   cancelLabel="停止"
+                  {...(attachSource
+                    ? {
+                        attachments: {
+                          items: attachments,
+                          limit: attachSource.limit,
+                          available: attachSource.available(),
+                          hint: attachSource.hint,
+                          onAdd: addAttachment,
+                          onRemove: removeAttachment,
+                          onClear: () => setAttachments([]),
+                          ...(attachSource.upload
+                            ? { onUpload: () => refFileRef.current?.click(), uploadBusy: uploadingRef }
+                            : {}),
+                          ...(attachSource.pick
+                            ? { onPick: () => void pickFromProject(), picking: pickingProject }
+                            : {}),
+                          // 空输入时库不允许发送，只带附件的路径由宿主自己发起
+                          onSendAttachmentsOnly: () => void run(ATTACHMENT_ONLY_PLACEHOLDER),
+                        },
+                      }
+                    : {})}
                 />
               </ChatThreadShell>
             </WorkbenchChatContext.Provider>

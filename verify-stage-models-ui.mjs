@@ -54,6 +54,7 @@ await api(`/api/project?name=${PROJECT}`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
+    source: '一个关于门后声音的短故事。',
     episodes: [
       {
         no: 1,
@@ -156,44 +157,77 @@ const nav = (name) => page.locator('header').getByRole('button', { name, exact: 
 const stageSelect = (stage) => page.locator(`[data-stage-model-select="${stage}"] select`)
 const optionValues = (sel) =>
   sel.locator('option').evaluateAll((os) => os.map((o) => ({ value: o.value, text: o.textContent || '' })))
+const selectProject = async () => {
+  const sel = page.locator('.topbar-project select')
+  await sel.waitFor({ timeout: 15000 })
+  await page.waitForFunction(
+    (name) => {
+      const el = document.querySelector('.topbar-project select')
+      return el && Array.from(el.options).some((o) => o.value === name)
+    },
+    PROJECT,
+    { timeout: 15000 },
+  )
+  await sel.selectOption(PROJECT)
+}
+const runScriptGenerate = async () => {
+  const agent = page.locator('button.agent-btn').first()
+  await agent.waitFor({ state: 'visible', timeout: 15000 })
+  await page.waitForFunction(
+    () => {
+      const b = document.querySelector('button.agent-btn')
+      return b && !b.disabled
+    },
+    null,
+    { timeout: 15000 },
+  )
+  if ((await page.locator('[data-script-chat]').count()) === 0) {
+    await agent.click()
+  }
+  await page.locator('[data-script-chat]').waitFor({ timeout: 10000 })
+  await page
+    .locator('[data-script-chat] [data-chat-builtins] button', { hasText: /生成分集/ })
+    .first()
+    .click()
+  await page.locator('[data-script-chat] [data-chat-builtin-receipt]').first().waitFor({ timeout: 20000 })
+  await page.waitForTimeout(300)
+}
 
 try {
   await page.goto(APP_URL, { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
+  await selectProject()
 
   // ---- 剧本 ----
   await nav('剧本')
-  await page.waitForSelector('.sb-source')
+  await page.waitForSelector('.sb-right')
   const scriptSel = stageSelect('script')
   const scriptOptions = await optionValues(scriptSel)
   check('剧本选择器列出文本族模型', scriptOptions.filter((o) => o.value).length >= textModels.length, String(scriptOptions.length))
   check('剧本默认项显示解析结果', /默认 · /.test(scriptOptions[0]?.text || ''), scriptOptions[0]?.text)
   await scriptSel.selectOption(proKey)
-  await page.locator('.sb-source').fill('一个关于门后声音的短故事。')
-  await page.getByRole('button', { name: '生成分集' }).click()
-  await page.waitForSelector('.toast')
-  await page.waitForTimeout(300)
+  await runScriptGenerate()
   check('剧本请求带手选 modelKey', textBodies.at(-1)?.modelKey === proKey, JSON.stringify(textBodies.at(-1)?.modelKey))
-  check('剧本提示显示实际模型', /模型：测试模型/.test(await page.locator('.toast').innerText()))
+  const scriptReceipt = await page.locator('[data-script-chat] [data-chat-builtin-receipt]').first().innerText()
+  check('剧本回执显示实际模型', /模型[：:\s]*测试模型/.test(scriptReceipt), scriptReceipt.slice(0, 120))
 
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
+  await selectProject()
   await nav('剧本')
-  await page.waitForSelector('.sb-source')
+  await page.waitForSelector('.sb-right')
   check('刷新后剧本手选保持', (await stageSelect('script').inputValue()) === proKey, await stageSelect('script').inputValue())
+  const expandedAgent = page.locator('button.agent-btn[aria-expanded="true"]')
+  if (await expandedAgent.count()) await expandedAgent.first().click()
 
-  // ---- 镜头表 ----
+  // ---- 镜头表：产镜在 Agent，顶栏只验证环节模型选择器 ----
   await nav('镜头表')
-  await page.waitForSelector('.wb-gen textarea')
+  await page.waitForSelector('[data-shots-chat]')
   const shotSel = stageSelect('shot')
   check('镜头表选择器存在', (await optionValues(shotSel)).length >= textModels.length + 1)
   await shotSel.selectOption(liteKey)
-  await page.locator('.wb-gen textarea').fill('测试集：陈默站在门口，听见门后有动静。')
-  await page.getByRole('button', { name: '拆镜' }).click()
-  await page.waitForSelector('.toast')
-  await page.waitForTimeout(300)
-  check('拆镜请求带手选 modelKey', textBodies.at(-1)?.modelKey === liteKey, JSON.stringify(textBodies.at(-1)?.modelKey))
-  check('拆镜 prompt 命中', String(textBodies.at(-1)?.system || '').includes('分镜师'))
+  check('镜头表无页内拆镜条', (await page.locator('.wb-gen').count()) === 0)
+  check('镜头表 Agent 可见', await page.locator('[data-shots-chat]').isVisible())
 
   // ---- 提示词 ----
   await nav('提示词')
@@ -201,7 +235,7 @@ try {
   const promptSel = stageSelect('prompt')
   check('提示词选择器存在', (await optionValues(promptSel)).length >= textModels.length + 1)
   await promptSel.selectOption(proKey)
-  await page.getByRole('button', { name: '生成提示词' }).click()
+  await page.locator('main').getByRole('button', { name: '生成提示词', exact: true }).click()
   await page.waitForSelector('.toast')
   await page.waitForTimeout(300)
   check('提示词请求带手选 modelKey', textBodies.at(-1)?.modelKey === proKey, JSON.stringify(textBodies.at(-1)?.modelKey))
@@ -214,7 +248,7 @@ try {
   check('角色板有拆角色模型选择', (await optionValues(charSel)).length >= textModels.length + 1)
   check('角色板有三视图模型选择', (await optionValues(page.locator('[data-cap-model-select="view"] select'))).length >= 2)
   await charSel.selectOption(liteKey)
-  await page.getByRole('button', { name: '从本集拆角色' }).click()
+  await page.locator('button.btn.primary', { hasText: '从本集拆角色' }).click()
   await page.waitForSelector('.toast')
   await page.waitForTimeout(300)
   check('拆角色请求带手选 modelKey', textBodies.at(-1)?.modelKey === liteKey, JSON.stringify(textBodies.at(-1)?.modelKey))
@@ -284,12 +318,27 @@ try {
   const scriptDefault = page.locator('.st-stage-row', { hasText: '剧本（拆集）' }).locator('select')
   await scriptDefault.selectOption(proKey)
   await page.getByRole('button', { name: '保存设置' }).click()
-  await page.waitForTimeout(900)
+  await page.waitForTimeout(1200)
+  const savedSettings = (await api('/api/settings')).settings
+  check(
+    '剧本环节默认已写入设置',
+    savedSettings?.stageModels?.script === proKey,
+    String(savedSettings?.stageModels?.script),
+  )
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(700)
+  await selectProject()
   await nav('剧本')
-  await page.waitForSelector('.sb-source')
+  await page.waitForSelector('.sb-right')
   const defaultOption = (await optionValues(stageSelect('script')))[0]?.text || ''
-  const proLabel = original.models.find((m) => m.key === proKey)?.label || ''
-  check('改环节默认后默认标签更新', defaultOption.includes(proLabel), `${defaultOption} / ${proLabel}`)
+  const proEntry = original.models.find((m) => m.key === proKey)
+  const proLabel = proEntry?.label || ''
+  const proModel = proEntry?.model || ''
+  check(
+    '改环节默认后默认标签更新',
+    defaultOption.includes(proModel) || defaultOption.includes(proLabel),
+    `${defaultOption} / ${proLabel} / ${proModel}`,
+  )
 
   // ---- 无效 stageModels 键 ----
   await putSettings({
@@ -298,8 +347,9 @@ try {
   await page.evaluate(() => localStorage.removeItem('storyboard-stage-model-pick'))
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
+  await selectProject()
   await nav('剧本')
-  await page.waitForSelector('.sb-source')
+  await page.waitForSelector('.sb-right')
   const invalidOptions = await optionValues(stageSelect('script'))
   check(
     '无效环节默认显示不可用',
@@ -307,12 +357,20 @@ try {
     invalidOptions[0]?.text,
   )
   await page.unroute('**/api/text')
-  await page.locator('.sb-source').fill('一个关于门后声音的短故事。')
-  await page.getByRole('button', { name: '生成分集' }).click()
+  if ((await page.locator('[data-script-chat]').count()) === 0) {
+    await page.locator('button.agent-btn').first().click()
+  }
+  await page
+    .locator('[data-script-chat] [data-chat-builtins] button', { hasText: /生成分集/ })
+    .first()
+    .click()
   await page.waitForFunction(
-    () => /找不到可用的文本模型/.test(document.querySelector('.toast')?.textContent || ''),
+    () =>
+      /找不到可用的文本模型|没有可用的文本模型|设置页还没有可用的文本模型|配置的模型不可用/.test(
+        document.querySelector('.toast')?.textContent || '',
+      ),
     null,
-    { timeout: 5000 },
+    { timeout: 8000 },
   )
   check('无效环节默认生成失败提示明确', true)
 } finally {

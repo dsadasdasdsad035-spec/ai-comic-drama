@@ -1,7 +1,15 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { getProject, type AppSettings, type ProjectData, type Stage, type VoiceOption } from './api'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getProject, type AppSettings, type ProjectData, type Stage } from './api'
+import { uploadImageFile } from './mediaUpload'
+import { generateImage } from './api'
+import { TURNAROUND_SUFFIX } from './characters'
+import { imageCost } from './pricing'
+import { endTask, startTask } from './tasks'
 import type { Pricing } from './pricing'
-import type { CharacterSheet } from './characters'
+import { REFERENCE_LIMIT, type CharacterSheet } from './characters'
+import { CHAT_ATTACHMENT_LIMIT } from './agent/chatAttachments'
+import MediaPicker from './MediaPicker'
+import type { PickItem } from './mediaPick'
 import CharacterCard from './CharacterCard'
 import { CapModelSelect, hasTextModels, StageModelSelect, type StagePick } from './ModelSelect'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
@@ -24,8 +32,6 @@ type Props = {
   selectedShot: { id: string; no: string } | null
   selectedShotBudget?: { used: number; max: number; expression: boolean; omitted: number } | null
   onInject: (charId: string) => void
-  /** 可用音色（一镜多说话人时按角色取） */
-  voices: VoiceOption[]
   onAdd: () => void
   onDelete: (charId: string) => void
   /** 改名 = 换 id，需要同步连线与布局 */
@@ -69,7 +75,6 @@ export default function CharacterBoard({
   selectedShot,
   selectedShotBudget,
   onInject,
-  voices,
   onAdd,
   onDelete,
   onRename,
@@ -100,6 +105,10 @@ export default function CharacterBoard({
   const chatVisible = chatOpen && Boolean(projectName)
   const liveRef = useRef(characters)
   liveRef.current = characters
+  /** 「从项目选」的弹窗状态与 resolver；用 ref 保存避免 setState 竞态 */
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const pickResolveRef = useRef<((item: PickItem | null) => void) | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -117,6 +126,54 @@ export default function CharacterBoard({
     }
   }, [projectName])
 
+  /**
+   * 回执上的「用它生成三视图」：由用户点击触发，聊天不自作主张生图。
+   * 逻辑与 CharacterCard 里的一致（锚点 + 三视图尾巴、cap:'view'、n:2、参考图作身份输入），
+   * 但这里要按名字定位角色，因为回执只带了名字。
+   */
+  const renderTurnaround = useCallback(
+    async (names: string[]) => {
+      if (!projectName) throw new Error('先选择项目')
+      const targets = liveRef.current.filter((c) => names.includes(c.name) || names.includes(c.id))
+      const usable = targets.filter((c) => c.lookEn.trim())
+      if (!usable.length) {
+        throw new Error('这些角色还没有英文外观锚点，先生成锚点再出三视图')
+      }
+      for (const c of usable) {
+        const tid = startTask('image', `三视图 ${c.name}`, {
+          cost: price ? imageCost(price, 2) : undefined,
+        })
+        try {
+          const refs = c.referenceImages ?? []
+          const res = await generateImage({
+            prompt: `${c.lookEn}, ${TURNAROUND_SUFFIX}`,
+            ratio: '16:9',
+            n: 2,
+            cap: 'view',
+            modelKey: viewModel,
+            project: projectName,
+            ...(refs.length ? { refImages: refs } : {}),
+          })
+          const urls = res.urls?.length ? res.urls : [res.url]
+          const next = patch(c.id, {
+            candidates: urls,
+            activeIdx: 0,
+            image: urls[0],
+            state: 'idle',
+            error: undefined,
+          })
+          onPersist(next)
+          endTask(tid)
+        } catch (e) {
+          patch(c.id, { state: 'error', error: (e as Error).message })
+          endTask(tid, (e as Error).message)
+          throw e
+        }
+      }
+    },
+    [projectName, viewModel, price, patch, onPersist],
+  )
+
   const chatAdapter = useMemo<WorkbenchChatAdapter>(
     () => ({
       surface: 'characters',
@@ -125,6 +182,7 @@ export default function CharacterBoard({
       artifact: 'characters',
       writeTool: 'submit_characters',
       writeContract: 'characters-v1',
+      // 聊天以整板为范围：附件是过程输入，不绑定某个角色，也就不按角色分会话
       threadKey: { project: projectName, surface: 'characters' },
       scope: () => '本集',
       inputs: () => {
@@ -150,14 +208,59 @@ export default function CharacterBoard({
       applyDraft: (payload) => {
         const list = pickExtracted(payload)
         if (list.length === 0) return { ok: false, summary: '', error: '没有可写入的角色' }
-        const { next, added, filled, skipped } = mergeCharacters(liveRef.current, list)
+        const { next, added, filled, skipped, updated } = mergeCharacters(liveRef.current, list)
         liveRef.current = next
         onReplace(next)
+        // 覆盖要单独点名：用户看到「改写了谁」才知道图和文字冲突时被改了哪些角色
+        const overwritten = updated.length ? ` / 覆盖 ${updated.join('、')}` : ''
         return {
           ok: true,
-          summary: `已写入角色草稿：${next.length} 个（新增 ${added.length} / 补空 ${filled.length} / 跳过 ${skipped.length}）`,
-          counts: { total: next.length, added: added.length, filled: filled.length, skipped: skipped.length },
+          summary: `已写入角色草稿：${next.length} 个（新增 ${added.length} / 补空 ${filled.length} / 跳过 ${skipped.length}${overwritten}）`,
+          counts: {
+            total: next.length,
+            added: added.length,
+            filled: filled.length,
+            skipped: skipped.length,
+            ...(updated.length ? { updated: updated.length } : {}),
+          },
+          // 供回执上的「用它生成三视图」定位目标：本次新增与被覆盖的角色
+          subjects: [...added, ...updated],
         }
+      },
+      /**
+       * 图片附件是「生成角色的过程输入」：任何时候都能加图，不绑定角色。
+       * 上传与选图都只进本次对话，不写任何角色的 referenceImages；
+       * 角色参考图仍然只在角色卡上维护，两者互不影响。
+       */
+      attachments: {
+        available: () => [],
+        limit: CHAT_ATTACHMENT_LIMIT,
+        kinds: ['image'],
+        persist: 'thread',
+        hint: '图只用于本次对话，不会存进角色卡',
+        upload: async (file: File) => {
+          const url = await uploadImageFile(file, { project: projectName, prefix: 'chat-ref' })
+          return { key: url, kind: 'image' as const, label: file.name || '上传的图片', url }
+        },
+        pick: async () => {
+          // MediaPicker 只列图片：不可选类型在入口就被排除，不会让用户选完再被拒绝
+          setPicking(true)
+          try {
+            const item = await new Promise<PickItem | null>((resolve) => {
+              pickResolveRef.current = resolve
+              setPickerOpen(true)
+            })
+            if (!item) return null
+            return {
+              key: item.url,
+              kind: 'image' as const,
+              label: item.title || item.name || '项目图片',
+              url: item.url,
+            }
+          } finally {
+            setPicking(false)
+          }
+        },
       },
       builtins: [
         {
@@ -182,7 +285,8 @@ export default function CharacterBoard({
         },
       ],
     }),
-    [projectName, epNo, project, onReplace, onExtract, extracting, settings],
+    // 附件来源与项目图片无关角色选择，依赖里不再需要选中态
+    [projectName, epNo, project, onReplace, onExtract, extracting, settings, patch, onPersist, toast],
   )
 
   const runExtract = async (scope: 'episode' | 'script') => {
@@ -274,11 +378,10 @@ export default function CharacterBoard({
             patch={patch}
             canInject={Boolean(selectedShot)}
             onInject={() => onInject(c.id)}
-            voices={voices}
+            settings={settings}
             onDelete={() => onDelete(c.id)}
             onRename={(name) => onRename(c.id, name)}
             viewModel={viewModel}
-            audioModelKey={settings?.defaults?.audio}
             price={price}
             projectName={projectName}
             onPersist={onPersist}
@@ -319,12 +422,40 @@ export default function CharacterBoard({
               onToast={toast}
               onRunningChange={setChatRunning}
               onClose={() => setChatOpen(false)}
+              onRenderTurnaround={async (names) => {
+                try {
+                  await renderTurnaround(names)
+                  toast(`已为 ${names.join('、')} 生成三视图候选`)
+                } catch (e) {
+                  toast((e as Error).message || '生成三视图失败')
+                }
+              }}
+              turnaroundCost={price ? imageCost(price, 2) : undefined}
             />
           </Suspense>
         ) : (
           <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
       </WorkbenchChatAside>
+      {pickerOpen ? (
+        <MediaPicker
+          projectName={projectName}
+          currentKind="image"
+          accept={['image']}
+          onConfirm={(item) => {
+            const resolve = pickResolveRef.current
+            pickResolveRef.current = null
+            setPickerOpen(false)
+            resolve?.(item)
+          }}
+          onClose={() => {
+            const resolve = pickResolveRef.current
+            pickResolveRef.current = null
+            setPickerOpen(false)
+            resolve?.(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

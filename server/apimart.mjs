@@ -644,6 +644,158 @@ export function videoUrlFromTask(data) {
 
 // ---------------------------------------------------------------- 文本
 
+/**
+ * 部分 OpenAI 推理模型（如 gpt-6.1-sol）在 APIMart 上不能用 /chat/completions + tools，
+ * 必须走 /responses（chat/completions 会报 reasoning_effort 与 function tools 冲突）。
+ */
+export function apimartUsesResponsesForTools(model) {
+  const m = String(model || '').trim()
+  if (!m) return false
+  return /^gpt-[\d.]+(?:-[\w.]+)*-sol$/i.test(m) || /^o\d[\w.-]*$/i.test(m)
+}
+
+/** OpenAI chat tools → Responses API tools（name 在顶层） */
+export function toApimartResponseTools(chatTools) {
+  if (!Array.isArray(chatTools)) return []
+  const out = []
+  for (const item of chatTools) {
+    const fn = item?.function
+    if (!fn || typeof fn !== 'object') continue
+    const name = String(fn.name || '').trim()
+    if (!name) continue
+    out.push({
+      type: 'function',
+      name,
+      ...(typeof fn.description === 'string' && fn.description ? { description: fn.description } : {}),
+      parameters: fn.parameters && typeof fn.parameters === 'object' ? fn.parameters : { type: 'object', properties: {} },
+    })
+  }
+  return out
+}
+
+/** 已归一化的 chat messages → Responses input 数组 */
+export function chatMessagesToApimartResponseInput(messages) {
+  if (!Array.isArray(messages)) return []
+  const out = []
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue
+    const role = String(msg.role || '')
+    if (role === 'system' || role === 'user') {
+      out.push({ role, content: msg.content ?? '' })
+      continue
+    }
+    if (role === 'assistant') {
+      const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : []
+      for (const tc of calls) {
+        const fn = tc?.function && typeof tc.function === 'object' ? tc.function : {}
+        const name = String(fn.name || '').trim()
+        if (!name) continue
+        const args =
+          typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments ?? {})
+        out.push({
+          type: 'function_call',
+          call_id: String(tc.id || ''),
+          name,
+          arguments: args,
+        })
+      }
+      const text = contentText(msg.content).trim()
+      if (text) out.push({ role: 'assistant', content: text })
+      continue
+    }
+    if (role === 'tool') {
+      out.push({
+        type: 'function_call_output',
+        call_id: String(msg.tool_call_id || ''),
+        output: String(msg.content ?? ''),
+      })
+    }
+  }
+  return out
+}
+
+function unwrapApimartResponsePayload(j) {
+  if (!j || typeof j !== 'object') return j
+  if (j.object === 'response' || Array.isArray(j.output)) return j
+  const data = j.data
+  if (data && typeof data === 'object' && (data.object === 'response' || Array.isArray(data.output))) return data
+  return j
+}
+
+/** Responses 对象 → 与 chat/completions 同形的 choices，供现有 tool 解析复用 */
+export function apimartResponseToChatCompletion(response) {
+  const j = unwrapApimartResponsePayload(response)
+  const output = Array.isArray(j?.output) ? j.output : []
+  const toolCallsRaw = []
+  let text = ''
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue
+    if (item.type === 'function_call') {
+      toolCallsRaw.push({
+        id: String(item.call_id || item.id || ''),
+        type: 'function',
+        function: {
+          name: String(item.name || ''),
+          arguments:
+            typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}),
+        },
+      })
+    }
+    if (item.type === 'message') {
+      text += contentText(item.content)
+    }
+  }
+  text = text.trim()
+  const finishReason = toolCallsRaw.length ? 'tool_calls' : 'stop'
+  return {
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: text,
+          ...(toolCallsRaw.length ? { tool_calls: toolCallsRaw } : {}),
+        },
+        finish_reason: finishReason,
+      },
+    ],
+    ...(j?.usage && typeof j.usage === 'object' ? { usage: j.usage } : {}),
+  }
+}
+
+export function buildApimartResponsesBody({ model, messages, tools, maxTokens, toolChoice }) {
+  const tc =
+    typeof toolChoice === 'string' || (toolChoice && typeof toolChoice === 'object') ? toolChoice : 'auto'
+  // gpt-6.1-sol 等推理模型在 /responses 上不接受 temperature，由上游默认采样策略。
+  return {
+    model,
+    input: chatMessagesToApimartResponseInput(messages),
+    tools: toApimartResponseTools(tools),
+    tool_choice: tc,
+    max_output_tokens: maxTokens,
+  }
+}
+
+export function parseApimartResponsesRaw(raw) {
+  const text = String(raw || '').trim()
+  if (!text) throw new ApimartError('APIMart Responses 空响应', { kind: 'api' })
+  let j
+  try {
+    j = JSON.parse(text)
+  } catch {
+    throw new ApimartError('APIMart Responses 不是合法 JSON', { kind: 'api' })
+  }
+  if (j?.error) {
+    throw errorFromResponse(text, 400)
+  }
+  return apimartResponseToChatCompletion(j)
+}
+
+/** @deprecated 不再向 chat/completions 注入 reasoning_effort */
+export function apimartChatExtras() {
+  return {}
+}
+
 /** 兼容 APIMart 的 {code,data} 与裸 OpenAI 响应 */
 export function normalizeChatPayload(j) {
   if (j && typeof j === 'object' && j.data && typeof j.data === 'object' && Array.isArray(j.data.choices)) {

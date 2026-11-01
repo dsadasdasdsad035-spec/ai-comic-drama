@@ -45,7 +45,7 @@ settings.providers = [
 ]
 settings.models = [
   ...(settings.models || []).filter((m) => m.key !== 'agent-code' && m.key !== 'agent-vision'),
-  { key: 'agent-code', label: 'Agent Code', cap: 'text', provider: 'agent-mock', model: 'agent-code' },
+  { key: 'agent-code', label: 'Agent Code', cap: 'text', provider: 'agent-mock', model: 'MiniMax-M3' },
   { key: 'agent-vision', label: 'Agent Vision', cap: 'vision', provider: 'agent-mock', model: 'agent-vision' },
 ]
 settings.defaults = { ...(settings.defaults || {}), text: 'agent-code', vision: 'agent-vision' }
@@ -110,12 +110,17 @@ await page.route('**/api/text', async (route) => {
     c = calls[toolIndex++]
     content = before === 0 ? '先读取当前镜头\n```js\nconst a = 1\nconst b = 2\n```' : before === 1 ? '准备提交场景代码' : ''
   }
+  // 原生工具调用：聊天只认 toolCalls，不再有 JSON action 的 payload。
   return route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({
       ok: true,
-      json: { content: c ? content : '已完成', tool_calls: c ? [c] : [] },
-      text: '', model: 'agent-code', modelKey: 'agent-code', modelLabel: 'Agent Code',
+      text: c ? content : '已完成',
+      finishReason: c ? 'tool_calls' : 'stop',
+      toolCalls: c
+        ? [{ id: `call_${c.name}_${toolIndex}`, name: c.name, arguments: JSON.stringify(c.args) }]
+        : [],
+      model: 'agent-code', modelKey: 'agent-code', modelLabel: 'Agent Code',
     }),
   })
 })
@@ -141,33 +146,27 @@ await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(600)
 await page.getByRole('button', { name: '生成到画布' }).click()
 await page.waitForTimeout(1000)
-await page.getByRole('button', { name: '画布', exact: true }).click()
-await page.waitForTimeout(600)
-const id = await page.evaluate((name) => {
-  const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(name)}`) || '{}')
-  return (s.nodes || []).find((x) => x.data?.shotId === 'E01-S01')?.id
-}, NAME)
-await page.evaluate((id) => { const el = document.querySelector(`[data-id="${id}"]`); const o = { bubbles: true, button: 0, view: window }; for (const t of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, o)) }, id)
+await page.getByRole('button', { name: '提示词', exact: true }).click()
+await page.waitForTimeout(1000)
 await page.waitForTimeout(300)
-await page.locator(`[data-id="${id}"]`).dispatchEvent('contextmenu', { clientX: 700, clientY: 420, button: 2 })
 await page.waitForTimeout(250)
-await page.locator('.ctx-action', { hasText: '编辑 3D 调度' }).click()
+  await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
 for (let i = 0; i < 40; i++) {
-  if (await page.locator('[data-chat-root]').count()) break
+  if (await page.locator('[data-chat-scope="scene3d"]').count()) break
   await page.waitForTimeout(300)
 }
-check('agent 聊天面板懒加载', await page.locator('[data-chat-root]').count() === 1)
-const input = page.locator('[data-chat-input]')
+check('agent 聊天面板懒加载', (await page.locator('[data-chat-scope="scene3d"]').count()) === 1)
+const input = page.locator('[data-chat-scope="scene3d"] [data-chat-input]')
 await input.waitFor({ timeout: 10000 })
 check('assistant-ui composer 存在', await input.count() === 1)
 await input.fill('生成山、男女双剑对打，镜头环绕并始终正对两人')
-await page.getByRole('button', { name: '发送', exact: true }).click()
+await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
 await page.waitForFunction(
-  () => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false',
+  () => document.querySelector('[data-chat-scope="scene3d"]')?.getAttribute('data-running') === 'false',
   null,
   { timeout: 240000 },
 )
-const panel = await page.locator('[data-chat-root]').innerText()
+const panel = await page.locator('[data-chat-scope="scene3d"]').innerText()
 check('工具卡按顺序出现', /读取镜头上下文|已读取镜头上下文/.test(panel) && panel.includes('代码草稿') && panel.includes('渲染'), panel.slice(0, 600))
 check('finish 只显示代码阶段完成', panel.includes('代码阶段完成') && !panel.includes('场景完成'), panel.slice(-800))
 check('MP4 视频卡出现', (await page.locator('[data-chat-video]').count()) === 1)
@@ -190,8 +189,8 @@ check('验收清单显示', panel.includes('验收通过') && panel.includes('�
 check('完成摘要显示', panel.includes('山、男女双剑对打和环绕镜头已完成'), panel.slice(-200))
 check('模型调用 6 次', textCalls.length === 6, String(textCalls.length))
 check('没有旧聊天日志', (await page.locator('.cw-chat-log').count()) === 0)
-await page.locator('[data-chat-input]').focus()
-check('聊天输入可聚焦', await page.locator('[data-chat-input]').evaluate((el) => document.activeElement === el))
+await page.locator('[data-chat-scope="scene3d"] [data-chat-input]').focus()
+check('聊天输入可聚焦', await page.locator('[data-chat-scope="scene3d"] [data-chat-input]').evaluate((el) => document.activeElement === el))
 await page.locator('.cw-shell').screenshot({ path: `${evidence}/agent-chat.png` })
 
 // 主题与窄屏：工具卡、缩略图、清单在日间/夜间和 900px 仍可读。
@@ -214,25 +213,25 @@ const overflow760 = await page.evaluate(() => document.documentElement.scrollWid
 check('760px 无横向溢出', !overflow760)
 await page.locator('.cw-shell').screenshot({ path: `${evidence}/agent-chat-760.png` })
 // 页签切换：聊天保持挂载，内容与滚动位置不丢。
-const historyBefore = await page.locator('[data-chat-root]').innerText()
+const historyBefore = await page.locator('[data-chat-scope="scene3d"]').innerText()
 await page.setViewportSize({ width: 1600, height: 720 })
 await page.waitForTimeout(300)
-const viewport = page.locator('[data-chat-viewport]')
+const viewport = page.locator('[data-chat-scope="scene3d"] [data-chat-viewport]')
 const scrollMetrics = await viewport.evaluate((el) => ({ client: el.clientHeight, height: el.scrollHeight }))
 check('聊天视口可滚动', scrollMetrics.height > scrollMetrics.client, JSON.stringify(scrollMetrics))
 await viewport.evaluate((el) => { el.scrollTop = 60 })
 const scrollBefore = await viewport.evaluate((el) => el.scrollTop)
 await page.getByRole('button', { name: '代码', exact: true }).click()
 await page.waitForTimeout(250)
-check('切到代码页签聊天仍挂载', await page.locator('[data-chat-root]').count() === 1)
-check('隐藏的聊天页签不可见', !(await page.locator('[data-chat-root]').isVisible()))
+check('切到代码页签聊天仍挂载', (await page.locator('[data-chat-scope="scene3d"]').count()) === 1)
+check('隐藏的聊天页签不可见', !(await page.locator('[data-chat-scope="scene3d"]').isVisible()))
 check('代码页签可见', await page.locator('.cw-code').isVisible())
 await page.getByRole('button', { name: '聊天', exact: true }).click()
 await page.waitForTimeout(250)
-const historyAfter = await page.locator('[data-chat-root]').innerText()
+const historyAfter = await page.locator('[data-chat-scope="scene3d"]').innerText()
 check('切回聊天内容不变', historyAfter === historyBefore, `${historyBefore.length} -> ${historyAfter.length}`)
 check('切回聊天帧仍在', await page.locator('[data-chat-frames] img').count() === 5)
-const scrollAfter = await page.locator('[data-chat-viewport]').evaluate((el) => el.scrollTop)
+const scrollAfter = await page.locator('[data-chat-scope="scene3d"] [data-chat-viewport]').evaluate((el) => el.scrollTop)
 check('切回聊天滚动位置不变', scrollAfter === scrollBefore, `${scrollBefore} -> ${scrollAfter}`)
 await page.setViewportSize({ width: 1600, height: 1000 })
 await page.waitForTimeout(300)
@@ -240,27 +239,27 @@ await page.waitForTimeout(300)
 // 运行中切换：延迟首个模型响应，确认切到代码页签后 agent 继续完成。
 phase = 'second'
 delaySecond = true
-await page.locator('[data-chat-input]').fill('运行中切换测试')
-await page.getByRole('button', { name: '发送', exact: true }).click()
+await page.locator('[data-chat-scope="scene3d"] [data-chat-input]').fill('运行中切换测试')
+await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
 await page.waitForFunction(() => document.querySelectorAll('[data-chat-message="user"]').length >= 2)
 await page.getByRole('button', { name: '代码', exact: true }).click()
 await page.waitForTimeout(300)
-check('运行中切页签仍运行', await page.locator('[data-chat-root]').getAttribute('data-running') === 'true')
-await page.waitForFunction(() => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false', null, { timeout: 90000 })
-const backgroundText = await page.locator('[data-chat-root]').innerText()
+check('运行中切页签仍运行', await page.locator('[data-chat-scope="scene3d"]').getAttribute('data-running') === 'true')
+await page.waitForFunction(() => document.querySelector('[data-chat-scope="scene3d"]')?.getAttribute('data-running') === 'false', null, { timeout: 90000 })
+const backgroundText = await page.locator('[data-chat-scope="scene3d"]').innerText()
 check('后台运行完成', backgroundText.includes('切页签后完成') && backgroundText.includes('切换后继续执行'), backgroundText.slice(-800))
 await page.getByRole('button', { name: '聊天', exact: true }).click()
 await page.waitForTimeout(200)
-check('切回看到后台完成摘要', (await page.locator('[data-chat-root]').innerText()).includes('切页签后完成'))
+check('切回看到后台完成摘要', (await page.locator('[data-chat-scope="scene3d"]').innerText()).includes('切页签后完成'))
 
 // 当前工作台已有代码：run_render 可直接运行，不要求先 set_scene_code。
 phase = 'baseline'
 await page.setViewportSize({ width: 1600, height: 1000 })
 await page.waitForTimeout(300)
-await page.locator('[data-chat-input]').fill('运行当前场景，不要重新生成代码')
-await page.getByRole('button', { name: '发送', exact: true }).click()
-await page.waitForFunction(() => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false', null, { timeout: 60000 })
-const baselinePanel = await page.locator('[data-chat-root]').innerText()
+await page.locator('[data-chat-scope="scene3d"] [data-chat-input]').fill('运行当前场景，不要重新生成代码')
+await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
+await page.waitForFunction(() => document.querySelector('[data-chat-scope="scene3d"]')?.getAttribute('data-running') === 'false', null, { timeout: 60000 })
+const baselinePanel = await page.locator('[data-chat-scope="scene3d"]').innerText()
 check('已有代码直接运行不报未提交', !baselinePanel.includes('还没有提交代码') && baselinePanel.includes('渲染试运行通过'), baselinePanel.slice(-1000))
 check('已有代码可直接抓帧', await page.locator('[data-chat-frames] img').count() >= 3)
 check('基线运行完成', baselinePanel.includes('当前基线运行完成'))

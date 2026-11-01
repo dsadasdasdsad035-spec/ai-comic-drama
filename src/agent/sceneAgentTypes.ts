@@ -50,7 +50,13 @@ export type AgentContextPart = {
   turn: number
   keys: string[]
   counts: { image: number; video: number; text: number }
-  metadata: { no: string; duration: number; aspect: string }
+  /** 作用域头：title 通用；shot 只在镜头场景下存在 */
+  metadata: { title: string; shot?: { no: string; duration: number; aspect: string } }
+}
+/** 本轮图片是送出还是占位。只记标签和原因，不记图片字节。 */
+export type AgentImageContextPart = {
+  type: 'image-context'
+  items: { label: string; sent: boolean; reason?: string }[]
 }
 export type AgentStepPart = {
   type: 'step'
@@ -95,6 +101,7 @@ export type AgentMessagePart =
   | AgentVideoReviewPart
   | AgentStepPart
   | AgentContextPart
+  | AgentImageContextPart
   | AgentDraftPart
   | AgentBuiltinPart
 
@@ -121,7 +128,7 @@ export type AgentEvent =
       turn: number
       keys: string[]
       counts: { image: number; video: number; text: number }
-      metadata: { no: string; duration: number; aspect: string }
+      metadata: { title: string; shot?: { no: string; duration: number; aspect: string } }
     }
   | { type: 'code'; codeHash: string; lineCount: number }
   | { type: 'draft_started'; draftId: string; lines: number; chars: number }
@@ -255,12 +262,8 @@ export type SceneAgentResult = {
   error?: string
   attempts: number
   reviewAttempts: number
-  /** 本轮实际使用的工具协议 */
-  toolProtocol?: 'native' | 'json'
-  /** 本轮实际使用的执行引擎；由门面填写 */
-  engine?: 'langgraph' | 'pi'
-  /** 回退到实际引擎的原因；正常选择时缺省 */
-  engineFallbackReason?: string
+  /** 本轮实际使用的工具协议；只有一个引擎，恒为 native */
+  toolProtocol?: 'native'
   events: AgentEvent[]
 }
 

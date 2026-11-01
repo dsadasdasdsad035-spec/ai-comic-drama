@@ -133,19 +133,9 @@ try {
     page.locator(`[data-${attr}-chat] [data-chat-tool="builtin_action"]`).allInnerTexts()
 
   await openView('镜头表', 'shots')
-  await page.locator('[data-shots-chat] [data-chat-builtins] button', { hasText: '拆镜' }).first().click()
-  await page.locator('[data-shots-chat] [data-chat-builtin-receipt]').waitFor({ timeout: 180000 })
-  const shotCards = await cardTexts('shots')
-  const shotRows = await page.locator('table.wb-table tbody tr').count()
-  check('真实模型：聊天拆镜成功', shotRows > 0, `rows=${shotRows}`)
-  check('真实模型：拆镜回执含模型/耗时', shotCards.some((t) => t.includes('模型')), shotCards.join(' / ').slice(0, 240))
+  check('真实模型：无页内拆镜按钮', (await page.getByRole('button', { name: '拆镜', exact: true }).count()) === 0)
+  check('真实模型：镜头表 Agent 默认展开', await page.locator('[data-shots-chat]').isVisible())
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-real-shots.png') })
-
-  await page.getByRole('button', { name: '拆镜', exact: true }).click()
-  await page.waitForTimeout(1500)
-  const topShotRows = await page.locator('table.wb-table tbody tr').count()
-  check('真实模型：顶部按钮也能出镜头', topShotRows > 0, `rows=${topShotRows}`)
-  check('真实模型：顶部按钮不新增聊天回执', (await cardTexts('shots')).length === 1)
 
   await openView('提示词', 'prompts')
   await page.locator('[data-prompts-chat] [data-chat-builtins] button', { hasText: '生成提示词' }).first().click()

@@ -49,14 +49,26 @@ export type ManifestAttachment =
   | ManifestVideoAttachment
   | ManifestTextAttachment
 
+/** 3D 场景需要的结构化镜头头；其他工作台（如角色聊天）没有镜头概念，不提供。 */
+export type ManifestShotHead = {
+  id?: string
+  no: string
+  duration: number
+  aspect: string
+}
+
+/**
+ * 清单的作用域头。title 是所有工作台都能显示的通用文案；
+ * shot 只给需要结构化镜头信息的消费方（3D 代码生成）。
+ */
+export type ManifestScope = {
+  title: string
+  shot?: ManifestShotHead
+}
+
 export type ContextManifest = {
   version: 1
-  shot: {
-    id?: string
-    no: string
-    duration: number
-    aspect: string
-  }
+  scope: ManifestScope
   attachments: ManifestAttachment[]
 }
 
@@ -65,7 +77,7 @@ export type ManifestCounts = { image: number; video: number; text: number }
 export type ManifestSummary = {
   attachmentKeys: string[]
   counts: ManifestCounts
-  metadata: ContextManifest['shot']
+  metadata: ManifestScope
 }
 
 export type BuildManifestInput = {
@@ -75,6 +87,11 @@ export type BuildManifestInput = {
   shotNo?: string
   duration: number
   aspect: string
+}
+
+/** 镜头作用域的展示文案；3D 聊天与检查器共用，保证文案只写一处。 */
+export function shotScopeTitle(shot: ManifestShotHead): string {
+  return `镜头 ${shot.no || '未编号'} · ${shot.duration.toFixed(1)}s · ${shot.aspect}`
 }
 
 function sourceOf(item: Shot3DContextItem): ManifestImageAttachment['source'] {
@@ -199,14 +216,15 @@ export function buildManifest(input: BuildManifestInput): ContextManifest {
     })
   }
 
+  const shot: ManifestShotHead = {
+    ...(input.shotId ? { id: input.shotId } : {}),
+    no: String(input.shotNo || ''),
+    duration: Number(input.duration) || 0,
+    aspect: String(input.aspect || ''),
+  }
   return {
     version: 1,
-    shot: {
-      ...(input.shotId ? { id: input.shotId } : {}),
-      no: String(input.shotNo || ''),
-      duration: Number(input.duration) || 0,
-      aspect: String(input.aspect || ''),
-    },
+    scope: { title: shotScopeTitle(shot), shot },
     attachments,
   }
 }
@@ -225,7 +243,7 @@ export function manifestSummary(manifest: ContextManifest): ManifestSummary {
   return {
     attachmentKeys: manifest.attachments.map((a) => a.key),
     counts: manifestCounts(manifest),
-    metadata: manifest.shot,
+    metadata: manifest.scope,
   }
 }
 
@@ -243,8 +261,12 @@ export function manifestText(
   assetMeta: Record<string, ManifestAssetMeta> = {},
 ): string {
   const lines: string[] = []
+  // 3D 代码提示词的镜头头保持原样：有结构化镜头就用它，没有则退回通用标题
+  const head = manifest.scope.shot
   lines.push(
-    `【镜头】${manifest.shot.no || '未编号'}｜${manifest.shot.duration.toFixed(1)}s｜${manifest.shot.aspect}`,
+    head
+      ? `【镜头】${head.no || '未编号'}｜${head.duration.toFixed(1)}s｜${head.aspect}`
+      : `【上下文】${manifest.scope.title}`,
   )
 
   const texts = manifest.attachments.filter(

@@ -29,6 +29,18 @@ const child = spawn(
 )
 const api = async (p, init) => (await fetch(`${APP}${p}`, init)).json()
 
+/**
+ * 原生工具调用把 system 放进 messages、把工具声明放进 tools；
+ * 断言统一走这两个取值器，避免依赖已经移除的顶层 system 字段。
+ */
+const systemOf = (call) =>
+  (Array.isArray(call?.messages) ? call.messages : [])
+    .filter((m) => m.role === 'system')
+    .map((m) => String(m.content || ''))
+    .join('\n') + String(call?.system || '')
+const toolNamesOf = (call) =>
+  (Array.isArray(call?.tools) ? call.tools : []).map((t) => String(t?.function?.name || ''))
+
 let up = false
 for (let i = 0; i < 80; i++) {
   try {
@@ -179,23 +191,33 @@ try {
   await page.route('**/api/text', async (route) => {
     const body = route.request().postDataJSON()
     calls.push(body)
-    const system = String(body.system || '')
+    // 原生工具调用模式下 system 在 messages 里，不再是顶层字段。
+    const system = (Array.isArray(body.messages) ? body.messages : [])
+      .filter((m) => m.role === 'system')
+      .map((m) => String(m.content || ''))
+      .join('\n')
     let stage = ''
     if (system.includes('角色设定师')) stage = 'character'
     else if (system.includes('场景与道具设定师')) stage = 'asset'
     else if (system.includes('你是分镜师')) stage = 'shot'
     else if (system.includes('AI 影像提示词工程师')) stage = 'prompt'
-    let payload
+    // 原生工具调用：模型只认 toolCalls，不再有 JSON action 的 payload。
+    let reply
     if (stage && !stageCalls[stage]) {
       stageCalls[stage] = 1
-      payload = { content: `提交${stage}草稿`, tool_calls: [{ name: `submit_${stage === 'shot' ? 'shots' : stage === 'prompt' ? 'prompts' : stage === 'asset' ? 'designs' : 'characters'}`, args: PAYLOADS[stage] }] }
+      const writeTool = `submit_${stage === 'shot' ? 'shots' : stage === 'prompt' ? 'prompts' : stage === 'asset' ? 'designs' : 'characters'}`
+      reply = {
+        text: `提交${stage}草稿`,
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: `call_${stage}`, name: writeTool, arguments: JSON.stringify(PAYLOADS[stage]) }],
+      }
     } else {
-      payload = { content: `${stage || 'chat'} 完成` }
+      reply = { text: `${stage || 'chat'} 完成`, finishReason: 'stop', toolCalls: [] }
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true, json: payload, text: payload.content, modelLabel: 'mock' }),
+      body: JSON.stringify({ ok: true, modelLabel: 'mock', ...reply }),
     })
   })
 
@@ -261,7 +283,11 @@ try {
   const shotHeader = await page.locator('[data-shots-chat] [data-chat-header]').innerText()
   check('镜头表头部身份/范围/模型', shotHeader.includes('分镜助手') && shotHeader.includes('本集') && shotHeader.includes('Mock Text'), shotHeader.slice(0, 120))
   const shotEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
-  check('镜头表空态属于本工作台', shotEmpty.includes('只改镜头草稿') && !shotEmpty.includes('抓帧'), shotEmpty.slice(0, 100))
+  check(
+    '镜头表空态属于本工作台',
+    shotEmpty.includes('左侧镜头草稿') && !shotEmpty.includes('抓帧'),
+    shotEmpty.slice(0, 100),
+  )
   check('镜头表空态有三个示例', (await page.locator('[data-shots-chat] [data-chat-suggestion]').count()) === 3)
   const shotPlaceholder = await page.getByLabel('shots 技能聊天输入').getAttribute('placeholder')
   check('镜头表 placeholder 属于本工作台', Boolean(shotPlaceholder?.includes('12 个 3 秒') && !shotPlaceholder.includes('第 3 集节奏')), shotPlaceholder || '')
@@ -273,12 +299,14 @@ try {
 
   await page.locator('[data-shots-chat] select[aria-label="加载只读技能"]').selectOption('prompt')
   check('镜头表可加载只读提示词技能', (await page.locator('[data-shots-chat] .skill-chip.readonly').textContent())?.includes('prompt'))
+  const callsBeforeReadonly = calls.length
   await send('shots', '用提示词技能看看这一镜')
   await page.getByText('shot 完成').first().waitFor({ timeout: 15000 })
+  for (let i = 0; i < 40 && calls.length <= callsBeforeReadonly; i++) await page.waitForTimeout(100)
   const readonlyCall = calls[calls.length - 1]
-  check('只读技能进入 system', String(readonlyCall?.system || '').includes('【只读技能：prompt】'))
-  check('只读技能不获得写工具', !String(readonlyCall?.system || '').includes('submit_prompts'))
-  check('宿主写工具仍在', String(readonlyCall?.system || '').includes('submit_shots'))
+  check('只读技能进入 system', systemOf(readonlyCall).includes('【只读技能：prompt】'), systemOf(readonlyCall).slice(0, 200))
+  check('只读技能不获得写工具', !toolNamesOf(readonlyCall).includes('submit_prompts'), toolNamesOf(readonlyCall).join(','))
+  check('宿主写工具仍在', toolNamesOf(readonlyCall).includes('submit_shots'), toolNamesOf(readonlyCall).join(','))
 
   // 按集线程：切到 E02 是空线程，切回 E01 恢复
   await page.locator('.epbar-trigger').click()
@@ -314,10 +342,12 @@ try {
 
   await page.locator('[data-prompts-chat] select[aria-label="加载只读技能"]').selectOption('character')
   check('提示词表可加载只读角色技能', (await page.locator('[data-prompts-chat] .skill-chip.readonly').textContent())?.includes('character'))
+  const callsBeforePromptReadonly = calls.length
   await send('prompts', '角色锚点够不够')
   await page.getByText('prompt 完成').first().waitFor({ timeout: 15000 })
+  for (let i = 0; i < 40 && calls.length <= callsBeforePromptReadonly; i++) await page.waitForTimeout(100)
   const promptReadonlyCall = calls[calls.length - 1]
-  check('提示词只读技能进入 system', String(promptReadonlyCall?.system || '').includes('【只读技能：character】'))
+  check('提示词只读技能进入 system', systemOf(promptReadonlyCall).includes('【只读技能：character】'), systemOf(promptReadonlyCall).slice(0, 200))
   check('提示词只读技能无写工具', !String(promptReadonlyCall?.system || '').includes('submit_characters'))
 
   check('页面无脚本错误', errors.length === 0, errors.join(' | '))

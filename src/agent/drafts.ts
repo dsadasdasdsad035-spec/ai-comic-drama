@@ -24,7 +24,13 @@ export function mergeScriptDraft(
     if (!Number.isFinite(no)) continue
     if (byNo.has(no)) updated++
     else added++
-    byNo.set(no, { ...ep, no })
+    const prev = byNo.get(no)
+    byNo.set(no, {
+      ...prev,
+      ...ep,
+      no,
+      targetSeconds: ep.targetSeconds ?? prev?.targetSeconds,
+    })
   }
   const episodes = [...byNo.values()].sort((a, b) => Number(a.no) - Number(b.no))
   return { episodes, added, updated, kept: Math.max(0, current.length - updated), mode }

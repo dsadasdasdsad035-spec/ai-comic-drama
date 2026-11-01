@@ -1,17 +1,20 @@
-import { DynamicStructuredTool } from '@langchain/core/tools'
-import type { StructuredToolInterface } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { ProjectData } from '../api'
-import { getContractSchema, validateContract } from '../skills/contracts'
+import {
+  getContractToolSchema,
+  normalizeCharactersContractPayload,
+  validateContract,
+} from '../skills/contracts'
 import type { Skill } from '../skills/types'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
+import { defineTool, type ToolDef } from './tool'
 
 export type LoadedSkill = { skill: Skill; mode: 'host' | 'readonly' }
 
 export type StageToolSet = {
-  read: Map<string, StructuredToolInterface>
-  submit?: StructuredToolInterface
-  byName: Map<string, StructuredToolInterface>
+  read: Map<string, ToolDef>
+  submit?: ToolDef
+  byName: Map<string, ToolDef>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -84,23 +87,23 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     return Array.isArray(p.shots) ? (p.shots as Array<Record<string, unknown>>) : []
   }
 
-  const readSource = new DynamicStructuredTool({
+  const readSource = defineTool({
     name: 'read_source',
     description: '读取当前项目的原著/梗概。只读；返回可能被截断。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       const d = await scriptData()
       return { ok: true, source: d.source, chars: d.source.length }
     },
   })
 
-  const readEpisodes = new DynamicStructuredTool({
+  const readEpisodes = defineTool({
     name: 'read_episodes',
     description: '读取分集与场次。只读；可用 episode 只取某一集。',
     schema: z.object({
       episode: z.number().int().min(1).optional().describe('只读第 N 集；省略则读全部分集'),
     }),
-    func: async ({ episode }) => {
+    run: async ({ episode }) => {
       const d = await scriptData()
       const episodes = episode
         ? d.episodes.filter((e) => Number(asRecord(e).no) === Number(episode))
@@ -109,11 +112,11 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readScript = new DynamicStructuredTool({
+  const readScript = defineTool({
     name: 'read_script',
     description: '读取项目剧本：原著、logline、分集场次。只读。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       const d = await scriptData()
       return {
         ok: true,
@@ -126,13 +129,13 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readCharacters = new DynamicStructuredTool({
+  const readCharacters = defineTool({
     name: 'read_characters',
     description: '读取角色表与外观锚点。只读；可用 names 过滤。',
     schema: z.object({
       names: z.array(z.string()).max(50).optional().describe('只读这些角色名'),
     }),
-    func: async ({ names }) => {
+    run: async ({ names }) => {
       const list = await charactersData()
       const filtered = names?.length
         ? list.filter((x) => names.includes(String(asRecord(x).name || '')))
@@ -141,14 +144,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readDesigns = new DynamicStructuredTool({
+  const readDesigns = defineTool({
     name: 'read_designs',
     description: '读取场景/道具设定卡。只读；可用 kind 和 names 过滤。',
     schema: z.object({
       kind: z.enum(['scene', 'prop']).optional().describe('scene 场景 / prop 道具'),
       names: z.array(z.string()).max(50).optional().describe('只读这些名称'),
     }),
-    func: async ({ kind, names }) => {
+    run: async ({ kind, names }) => {
       const list = await designsData()
       const filtered = list.filter((x) => {
         const o = asRecord(x)
@@ -160,7 +163,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readShots = new DynamicStructuredTool({
+  const readShots = defineTool({
     name: 'read_shots',
     description: '读取镜头表。只读；可用 episode / shotIds 过滤，limit 控制条数。',
     schema: z.object({
@@ -168,7 +171,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       shotIds: z.array(z.string()).max(100).optional().describe('只读这些 shot.id'),
       limit: z.number().int().min(1).max(200).optional().describe('最多返回多少镜'),
     }),
-    func: async ({ episode, shotIds, limit }) => {
+    run: async ({ episode, shotIds, limit }) => {
       const all = await shotsData()
       let list = all
       if (episode) list = list.filter((s) => Number(s.episode) === Number(episode))
@@ -181,13 +184,13 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readEpisode = new DynamicStructuredTool({
+  const readEpisode = defineTool({
     name: 'read_episode',
     description: '读取某一集的场次与镜头摘要。只读。',
     schema: z.object({
       episode: z.number().int().min(1).describe('第 N 集'),
     }),
-    func: async ({ episode }) => {
+    run: async ({ episode }) => {
       const d = await scriptData()
       const ep = d.episodes.find((x) => Number(asRecord(x).no) === Number(episode))
       if (!ep) return { ok: false, error: `没有第 ${episode} 集` }
@@ -196,7 +199,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readByName = new Map<string, StructuredToolInterface>([
+  const readByName = new Map<string, ToolDef>([
     [readSource.name, readSource],
     [readEpisodes.name, readEpisodes],
     [readScript.name, readScript],
@@ -207,16 +210,18 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   ])
 
   const contractId = adapter.writeContract
-  const submitSchema = getContractSchema(contractId)
+  const submitSchema = getContractToolSchema(contractId)
   if (!submitSchema) throw new Error(`未知输出契约：${contractId}`)
-  const submit = new DynamicStructuredTool({
+  const submit = defineTool({
     name: adapter.writeTool,
     description:
       '提交当前工作台的产物草稿。只写入草稿并交给宿主合并，不保存到项目；' +
       '返回新增/更新数量。大产物不要重复贴给用户。',
     schema: submitSchema,
-    func: async (payload) => {
-      const checked = validateContract(contractId, payload)
+    run: async (payload) => {
+      const normalized =
+        contractId === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
+      const checked = validateContract(contractId, normalized)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
       const applied = adapter.applyDraft(checked.value)
       adapter.onDraftChanged?.()
@@ -225,6 +230,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         ok: true,
         summary: applied.summary,
         ...(applied.counts ? { counts: applied.counts } : {}),
+        // 回执上的「用它生成三视图」靠它定位目标角色，不解析文本
+        ...(applied.subjects?.length ? { subjects: applied.subjects } : {}),
         ...(applied.hash ? { hash: applied.hash } : {}),
       }
     },
@@ -242,8 +249,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 export function bindSkillTools(
   set: StageToolSet,
   loaded: LoadedSkill[],
-): StructuredToolInterface[] {
-  const byName = new Map<string, StructuredToolInterface>()
+): ToolDef[] {
+  const byName = new Map<string, ToolDef>()
   for (const { skill, mode } of loaded) {
     for (const name of skill.manifest.tools) {
       if (mode === 'readonly' && name.startsWith('submit_')) continue

@@ -2,7 +2,7 @@
 name: script
 description: 把原著改编成多集短剧剧本，产出分集、场次、台词与钩子
 stage: script
-runtime: json-tools
+runtime: tools
 tools: [read_source, read_episodes, submit_script]
 inputs: [source, epCount, targetSeconds, style]
 output: script-v1
@@ -28,6 +28,7 @@ version: 1
     {
       "no": 1,
       "title": "集标题",
+      "targetSeconds": 60,
       "hook": "本集结尾钩子",
       "scenes": [
         {"no": 1, "slug": "场景简称", "place": "地点", "time": "时间/光线",
@@ -51,5 +52,5 @@ version: 1
 原著：
 {{input:source}}
 
-要求：拆 {{input:epCount}} 集，每集目标时长约 {{input:targetSeconds}} 秒。
+要求：拆 {{input:epCount}} 集。每一集必须在 JSON 里写 targetSeconds（秒，集与集可不同，按场次体量估算）；{{input:targetSeconds}} 仅作常见节奏参考，不要强行把每集都改成同一个数。
 画风：{{input:style}}

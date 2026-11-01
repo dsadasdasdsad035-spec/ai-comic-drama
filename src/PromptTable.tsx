@@ -23,6 +23,7 @@ import {
 } from './prompts'
 import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
 import { mergePromptDraft } from './agent/promptDraft'
+import { requireProjectStyle, resolveProjectStyle } from './productionContext'
 import { shotToData } from './shotSync'
 import { shot3DRenderPatch, shot3DSavePatch } from './shot3dPatch'
 import WorkbenchBar from './WorkbenchBar'
@@ -38,7 +39,8 @@ import {
 import { AgentButton } from './agent/AgentButton'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
-import IntakeDialog from './intake/IntakeDialog'
+import { projectImageAttachmentSource } from './agent/projectAttachments'
+import { useMediaPicker } from './agent/useMediaPicker'
 import { endTask, startTask } from './tasks'
 
 const LazySkillChat = lazy(() => import('./agent/SkillChat'))
@@ -206,9 +208,10 @@ export default function PromptTable({
   const [batchSize, setBatchSize] = useState(5)
   const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null)
   const [chatRunning, setChatRunning] = useState(false)
-  const [intakeOpen, setIntakeOpen] = useState(false)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('prompts')
   const chatVisible = chatOpen && Boolean(projectName)
+  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
+  const mediaPicker = useMediaPicker(projectName)
 
   const liveRef = useRef({ shots, chars, style })
   liveRef.current = { shots, chars, style }
@@ -237,7 +240,7 @@ export default function PromptTable({
         const l = liveRef.current
         const brief = l.shots.filter((s) => (Number(s.episode) || 1) === epNo).map(promptBrief)
         return {
-          style: l.style || '近未来科幻写实',
+          style: resolveProjectStyle({ style: l.style }) ?? '',
           bible: characterBible(l.chars) || '（项目里还没有角色锚点）',
           briefJson: JSON.stringify(brief),
         }
@@ -285,8 +288,19 @@ export default function PromptTable({
           run: (signal) => runPromptsRef.current(signal),
         },
       ],
+      attachments: projectImageAttachmentSource({
+        projectName,
+        prefix: 'chat-prompts',
+        picker: {
+          open: async () => {
+            const item = await mediaPicker.open()
+            return item ? { url: item.url, title: item.title, name: item.name } : null
+          },
+        },
+        hint: '图片只用于本次对话，不写入提示词表',
+      }),
     }),
-    [projectName, epNo],
+    [projectName, epNo, mediaPicker],
   )
 
   const load = useCallback(async () => {
@@ -436,7 +450,7 @@ export default function PromptTable({
       const bible = characterBible(chars) || '（项目里还没有角色锚点）'
       const brief = g.map(promptBrief)
       try {
-        const resolvedStyle = style || '近未来科幻写实'
+        const resolvedStyle = requireProjectStyle({ style })
         const skill = await buildBoardSkillPrompt('prompt', {
           style: resolvedStyle,
           bible,
@@ -706,14 +720,6 @@ export default function PromptTable({
               dirty={dirty}
               controlsId="workbench-chat-prompts"
             />
-            <button
-              className="btn btn-ghost"
-              disabled={!projectName}
-              onClick={() => setIntakeOpen(true)}
-              title="导入已写好的提示词：按镜号归位，只写文件里给了值的列"
-            >
-              导入
-            </button>
             <button className="btn" onClick={load} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
@@ -884,33 +890,6 @@ export default function PromptTable({
         </Suspense>
       )}
 
-      {intakeOpen ? (
-        <IntakeDialog
-          target="prompts"
-          projectName={projectName}
-          epNo={epNo}
-          settings={settings}
-          stagePick={stagePick}
-          shots={shots}
-          episodes={[]}
-          chars={chars}
-          toast={toast}
-          onClose={() => setIntakeOpen(false)}
-          onApply={(r) => {
-            if (r.shots) {
-              setShots(r.shots)
-              setDirty(true)
-            }
-            // 资料包可能带来角色；提示词页不持有完整角色卡，直接落项目
-            if (r.characters && projectName) {
-              patchProject(projectName, { characters: r.characters } as never)
-                .then(() => toast(`角色已写入项目 · ${r.characters!.length} 个`))
-                .catch((e) => toast((e as Error).message || '角色写入失败'))
-            }
-            toast(`已导入提示词草稿：${r.summary}（记得保存）`)
-          }}
-        />
-      ) : null}
       <WorkbenchChatAside
         surface="prompts"
         open={chatVisible}
@@ -932,6 +911,7 @@ export default function PromptTable({
           <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
       </WorkbenchChatAside>
+      {mediaPicker.node}
     </div>
   )
 }

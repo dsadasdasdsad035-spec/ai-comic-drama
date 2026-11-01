@@ -1,4 +1,4 @@
-import type { CharacterSheet } from './characters'
+import { markExpressionSheetStale, markExpressionsStale, type CharacterSheet } from './characters'
 import { toSheet, type ProjectChar } from './charMap'
 import type { ProjectEpisode } from './api'
 
@@ -63,11 +63,12 @@ export function pickExtracted(json: unknown): ExtractedChar[] {
 export function mergeCharacters(
   cur: CharacterSheet[],
   incoming: ExtractedChar[],
-): { next: CharacterSheet[]; added: string[]; filled: string[]; skipped: string[] } {
+): { next: CharacterSheet[]; added: string[]; filled: string[]; skipped: string[]; updated: string[] } {
   const next = [...cur]
   const added: string[] = []
   const filled: string[] = []
   const skipped: string[] = []
+  const updated: string[] = []
 
   for (const raw of incoming) {
     const sheet = toSheet(raw)
@@ -78,6 +79,28 @@ export function mergeCharacters(
       continue
     }
     const old = next[idx]
+    /**
+     * 覆盖已有锚点必须由模型显式声明 update:true。
+     * 默认仍然「已有 lookEn 就跳过」——那是防「一次拆角色把用户手写的锚点冲掉」。
+     * 但用户带图说「按这张改陈默」时跳过会很怪，所以留这条显式通道。
+     */
+    const wantsUpdate = (raw as { update?: unknown }).update === true
+    if (wantsUpdate) {
+      next[idx] = {
+        ...old,
+        role: sheet.role || old.role,
+        age: sheet.age || old.age,
+        lookCn: sheet.lookCn || old.lookCn,
+        lookEn: sheet.lookEn || old.lookEn,
+        palette: sheet.palette || old.palette,
+        keywords: sheet.keywords.length ? sheet.keywords : old.keywords,
+        // 锚点变了，表情总图按既有指纹规则失效
+        expressionSheet: markExpressionSheetStale(old.expressionSheet),
+        expressions: markExpressionsStale(old.expressions),
+      }
+      updated.push(sheet.name)
+      continue
+    }
     if (old.lookEn.trim()) {
       skipped.push(sheet.name)
       continue
@@ -93,5 +116,5 @@ export function mergeCharacters(
     }
     filled.push(sheet.name)
   }
-  return { next, added, filled, skipped }
+  return { next, added, filled, skipped, updated }
 }

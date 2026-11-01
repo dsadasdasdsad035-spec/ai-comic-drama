@@ -13,6 +13,7 @@ export function useWorkbenchChatOpen(surface: WorkbenchSurface) {
     } catch {
       /* localStorage 不可用时按视口决定 */
     }
+    if (surface === 'shots') return true
     return typeof window !== 'undefined' && window.innerWidth >= 1440
   })
 

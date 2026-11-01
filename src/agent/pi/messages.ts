@@ -1,5 +1,5 @@
 import type { Message } from '@earendil-works/pi-ai'
-import type { ProviderChatMessage } from '../../api'
+import type { ProviderChatMessage, ProviderContentPart } from '../../api'
 
 /** pi 的 system/user 内容可能是字符串，也可能是文本/图片块数组。 */
 export function contentText(content: unknown): string {
@@ -41,6 +41,30 @@ function assistantCalls(block: AssistantLike): { id: string; name: string; argum
     .filter((x): x is { id: string; name: string; arguments: string } => Boolean(x))
 }
 
+/** 用户消息保留图片块；纯文字仍收成字符串。 */
+function userContent(content: unknown): string | ProviderContentPart[] {
+  if (typeof content === 'string') return content.trim()
+  if (!Array.isArray(content)) return ''
+  const parts: ProviderContentPart[] = []
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue
+    const block = part as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown; label?: unknown }
+    if (block.type === 'text') {
+      const text = String(block.text ?? '').trim()
+      if (text) parts.push({ type: 'text', text })
+    } else if (block.type === 'image') {
+      const data = String(block.data ?? '')
+      const mimeType = String(block.mimeType ?? '')
+      if (!data || !mimeType) continue
+      const label = String(block.label ?? '').trim()
+      parts.push({ type: 'image', data, mimeType, ...(label ? { label } : {}) })
+    }
+  }
+  if (!parts.length) return ''
+  if (parts.length === 1 && parts[0].type === 'text') return parts[0].text
+  return parts
+}
+
 /**
  * pi 消息 → 项目 provider 消息。
  *
@@ -61,8 +85,12 @@ export function toProviderMessages(messages: readonly Message[]): ProviderChatMe
         break
       }
       case 'user': {
-        const text = contentText(message.content).trim()
-        if (text) rest.push({ role: 'user', content: text })
+        const parts = userContent(message.content)
+        if (typeof parts === 'string') {
+          if (parts) rest.push({ role: 'user', content: parts })
+        } else if (parts.length) {
+          rest.push({ role: 'user', content: parts })
+        }
         break
       }
       case 'assistant': {
@@ -84,6 +112,7 @@ export function toProviderMessages(messages: readonly Message[]): ProviderChatMe
         break
       }
       case 'toolResult': {
+        // 工具结果只留文字。图片块留给用户消息，不从工具回传里送出。
         const text = contentText(message.content).trim()
         rest.push({
           role: 'tool',

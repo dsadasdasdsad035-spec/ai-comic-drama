@@ -1,5 +1,4 @@
-import { DynamicStructuredTool } from '@langchain/core/tools'
-import type { StructuredToolInterface } from '@langchain/core/tools'
+import { defineTool, type ToolDef } from '../agent/tool'
 import { z } from 'zod'
 import { askVision, type AppSettings, type Cap } from '../api'
 import { isRunnableModel, modelHasCap } from '../modelCaps'
@@ -161,11 +160,11 @@ const FRAME_PROMPT = [
 export function createCreativeToolSet(deps: CreativeToolDeps) {
   const snapshot = () => deps.getSnapshot()
 
-  const readSession = new DynamicStructuredTool({
+  const readSession = defineTool({
     name: 'read_creative_session',
     description: '读取当前创意会话的标题、模式、源视频列表与产物列表。只读。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       const snap = await snapshot()
       return {
         ok: true,
@@ -195,13 +194,13 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const readSource = new DynamicStructuredTool({
+  const readSource = defineTool({
     name: 'read_creative_source',
     description: '读取某个源视频的技术信息与镜头切分状态。只读；sourceId 省略时读最近一个。',
     schema: z.object({
       sourceId: z.string().optional().describe('源视频 id；省略则读最近一个'),
     }),
-    func: async ({ sourceId }) => {
+    run: async ({ sourceId }) => {
       const snap = await snapshot()
       const src = sourceId ? snap.sources.find((s) => s.id === sourceId) : snap.sources[0]
       if (!src) return { ok: false, error: '会话里还没有源视频' }
@@ -226,14 +225,14 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const readShots = new DynamicStructuredTool({
+  const readShots = defineTool({
     name: 'read_video_shots',
     description: '读取镜头切分结果：每镜的时间范围、状态与证据帧路径。只读。',
     schema: z.object({
       sourceId: z.string().optional().describe('源视频 id；省略读最近一个'),
       only: z.enum(['all', 'unframed', 'unanalyzed']).optional().describe('过滤：全部 / 缺帧 / 未分析'),
     }),
-    func: async ({ sourceId, only }) => {
+    run: async ({ sourceId, only }) => {
       const snap = await snapshot()
       const src = sourceId ? snap.sources.find((s) => s.id === sourceId) : snap.sources[0]
       if (!src) return { ok: false, error: '会话里还没有源视频' }
@@ -257,7 +256,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const readFrameDetail = new DynamicStructuredTool({
+  const readFrameDetail = defineTool({
     name: 'read_frame_detail',
     description:
       '读取某一镜的证据帧，并用视觉模型描述画面（景别、机位、主体、动作、环境、光影、色彩）。' +
@@ -267,7 +266,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
       index: z.number().int().min(1).describe('镜头序号（从 1 开始）'),
       analyze: z.boolean().optional().describe('false 只返回帧路径，不调用视觉模型'),
     }),
-    func: async ({ sourceId, index, analyze }) => {
+    run: async ({ sourceId, index, analyze }) => {
       const snap = await snapshot()
       const src = sourceId ? snap.sources.find((s) => s.id === sourceId) : snap.sources[0]
       if (!src) return { ok: false, error: '会话里还没有源视频' }
@@ -335,7 +334,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const ingest = new DynamicStructuredTool({
+  const ingest = defineTool({
     name: 'ingest_source',
     description:
       '摄取一个源视频：传 url 时由服务端按已启用的适配器选择下载方式。' +
@@ -343,7 +342,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     schema: z.object({
       url: z.string().min(1).describe('公网视频链接或平台分享链接'),
     }),
-    func: async ({ url }) => {
+    run: async ({ url }) => {
       try {
         const r = await ingestCreative({ sessionId: deps.sessionId, url })
         deps.onSourceChanged?.()
@@ -359,11 +358,11 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const probe = new DynamicStructuredTool({
+  const probe = defineTool({
     name: 'probe_source',
     description: '重新读取源视频的技术信息（时长、分辨率、帧率、音轨）。不产生模型费用。',
     schema: z.object({ sourceId: z.string() }),
-    func: async ({ sourceId }) => {
+    run: async ({ sourceId }) => {
       try {
         const r = await probeCreativeSource(sourceId)
         deps.onSourceChanged?.()
@@ -374,14 +373,14 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const split = new DynamicStructuredTool({
+  const split = defineTool({
     name: 'split_scenes',
     description: '按画面变化把源视频切成镜头段。覆盖整段时长，过短的段会并入相邻段。',
     schema: z.object({
       sourceId: z.string(),
       threshold: z.number().min(0.05).max(0.95).optional().describe('灵敏度；越大越不敏感'),
     }),
-    func: async ({ sourceId, threshold }) => {
+    run: async ({ sourceId, threshold }) => {
       try {
         const r = await splitCreativeSource(sourceId, threshold)
         deps.onSourceChanged?.()
@@ -399,7 +398,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const frames = new DynamicStructuredTool({
+  const frames = defineTool({
     name: 'extract_frames',
     description: '给镜头抽证据帧。默认每镜一帧；重跑会追加而不是覆盖已有帧。',
     schema: z.object({
@@ -408,7 +407,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
       framesPerShot: z.number().int().min(1).max(3).optional(),
       overwrite: z.boolean().optional().describe('true 时替换已有帧'),
     }),
-    func: async ({ sourceId, shotIndexes, framesPerShot, overwrite }) => {
+    run: async ({ sourceId, shotIndexes, framesPerShot, overwrite }) => {
       try {
         const r = await extractFrames(sourceId, { shotIndexes, framesPerShot, overwrite })
         deps.onSourceChanged?.()
@@ -426,12 +425,12 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
 
   const submitSchema = getContractSchema('reverse-v1')
   if (!submitSchema) throw new Error('缺少 reverse-v1 契约')
-  const submit = new DynamicStructuredTool({
+  const submit = defineTool({
     name: 'submit_reverse_pack',
     description:
       '提交反推结果（reverse-v1）。只写入创意产物，不修改项目；不合格会被拒绝并返回校验错误。',
     schema: submitSchema,
-    func: async (payload) => {
+    run: async (payload) => {
       const checked = validateContract('reverse-v1', payload)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
       try {
@@ -448,7 +447,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const genImage = new DynamicStructuredTool({
+  const genImage = defineTool({
     name: 'generate_image',
     description:
       '用绑定的图像模型生成一张图。会先确认费用；未绑定模型或用户拒绝时返回失败，不发起请求。',
@@ -456,7 +455,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
       prompt: z.string().min(1).describe('画面描述'),
       modelKey: z.string().optional().describe('覆盖本次使用的模型键'),
     }),
-    func: async ({ prompt, modelKey }) => {
+    run: async ({ prompt, modelKey }) => {
       const resolved = modelKey
         ? { key: modelKey, label: modelKey }
         : creativeModelFor(deps.settings, deps.creative, 'image')
@@ -478,7 +477,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const genVideo = new DynamicStructuredTool({
+  const genVideo = defineTool({
     name: 'generate_video',
     description:
       '用绑定的视频模型生成一段视频。真实 Seedance 2.0+ 每次都要确认；未确认不发起请求。',
@@ -487,7 +486,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
       image: z.string().optional().describe('首帧图路径'),
       modelKey: z.string().optional(),
     }),
-    func: async ({ prompt, image, modelKey }) => {
+    run: async ({ prompt, image, modelKey }) => {
       const resolved = modelKey ? { key: modelKey, label: modelKey } : creativeModelFor(deps.settings, deps.creative, 'video')
       if (!deps.generateVideo) return { ok: false, error: '当前环境没有可用的生视频实现' }
       const gate = await askCost(deps, {
@@ -508,14 +507,14 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const genVoice = new DynamicStructuredTool({
+  const genVoice = defineTool({
     name: 'generate_voice',
     description: '用绑定的配音模型把文本转成语音。会先确认费用。',
     schema: z.object({
       text: z.string().min(1),
       modelKey: z.string().optional(),
     }),
-    func: async ({ text, modelKey }) => {
+    run: async ({ text, modelKey }) => {
       const resolved = modelKey ? { key: modelKey, label: modelKey } : creativeModelFor(deps.settings, deps.creative, 'audio')
       if (!deps.generateVoice) return { ok: false, error: '当前环境没有可用的配音实现' }
       const gate = await askCost(deps, {
@@ -535,7 +534,7 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const byName = new Map<string, StructuredToolInterface>([
+  const byName = new Map<string, ToolDef>([
     [readSession.name, readSession],
     [readSource.name, readSource],
     [readShots.name, readShots],
@@ -557,8 +556,8 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
 export function bindCreativeTools(
   set: ReturnType<typeof createCreativeToolSet>,
   skills: Array<{ skill: Skill; mode: 'host' | 'readonly' }>,
-): StructuredToolInterface[] {
-  const out = new Map<string, StructuredToolInterface>()
+): ToolDef[] {
+  const out = new Map<string, ToolDef>()
   for (const { skill, mode } of skills) {
     for (const name of skill.manifest.tools) {
       if (mode === 'readonly' && (name.startsWith('submit_') || name.startsWith('generate_') || name.startsWith('ingest_'))) {

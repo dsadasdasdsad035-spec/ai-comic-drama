@@ -7,8 +7,6 @@ import { mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildSync } from 'esbuild'
-import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages'
-import { DynamicStructuredTool } from '@langchain/core/tools'
 import { z } from 'zod'
 
 const tmp = path.join(process.cwd(), '.verify-native-tool-protocol')
@@ -31,21 +29,48 @@ async function bundle(entry, name, external = []) {
 try {
   const caps = await bundle('src/agent/toolCapabilities.ts', 'toolCapabilities.mjs')
 
-  // 能力表：只声明实测过的四个模型
-  assert.equal(caps.supportsNativeTools('minimax', 'MiniMax-M3'), true)
-  assert.equal(caps.supportsNativeTools('ark-plan', 'doubao-seed-2-1-lite-260915'), true)
-  assert.equal(caps.supportsNativeTools('ark-plan', 'deepseek-v4-flash'), true)
-  assert.equal(caps.supportsNativeTools('ark-plan', 'kimi-k3'), true)
+  // 能力表：8 个实测模型，判定以模型为键
+  for (const model of [
+    'MiniMax-M3',
+    'doubao-seed-2-1-lite-260915',
+    'doubao-seed-2-1-pro-260915',
+    'doubao-seed-evolving',
+    'deepseek-v4-flash',
+    'deepseek-v4-pro',
+    'kimi-k3',
+    'glm-5.3',
+  ]) {
+    assert.equal(caps.supportsNativeTools('ark-plan', model), true, `${model} 应支持原生工具`)
+    assert.equal(caps.supportsNativeTools(undefined, model), true, `${model} 无渠道也应支持`)
+  }
   assert.equal(caps.supportsNativeTools('minimax', 'MiniMax-Unknown'), false)
-  assert.equal(caps.supportsNativeTools('ark-plan', 'doubao-seed-2-1-pro-260915'), false)
-  assert.equal(caps.supportsNativeTools(undefined, 'MiniMax-M3'), false)
+  assert.equal(caps.supportsNativeTools('deepseek', 'deepseek-chat'), false)
+  assert.equal(caps.supportsNativeTools('apimart', 'gpt-5.1'), false)
+  assert.equal(caps.supportsNativeTools('ark-plan', undefined), false)
+
+  // 同一模型换渠道：判定不变，这是 model-only 键的核心保证
+  assert.equal(
+    caps.supportsNativeTools('minimax', 'MiniMax-M3'),
+    caps.supportsNativeTools('apimart', 'MiniMax-M3'),
+  )
+  assert.equal(
+    caps.supportsNativeTools('ark-plan', 'deepseek-v4-flash'),
+    caps.supportsNativeTools('deepseek', 'deepseek-v4-flash'),
+  )
+
+  assert.ok(caps.nativeToolModels().length === 8)
+  caps.requireNativeTools('apimart', 'no-such-model')
 
   // thinking 策略：已验证模型关闭 thinking，未知模型不设置
   for (const [provider, model] of [
     ['minimax', 'MiniMax-M3'],
     ['ark-plan', 'doubao-seed-2-1-lite-260915'],
+    ['ark-plan', 'doubao-seed-2-1-pro-260915'],
+    ['ark-plan', 'doubao-seed-evolving'],
     ['ark-plan', 'deepseek-v4-flash'],
+    ['ark-plan', 'deepseek-v4-pro'],
     ['ark-plan', 'kimi-k3'],
+    ['ark-plan', 'glm-5.3'],
   ]) {
     assert.equal(caps.toolThinkingMode(provider, model), 'disable')
   }
@@ -120,10 +145,7 @@ try {
   assert.equal(schemas[0].function.name, 'x')
   assert.equal(schemas[0].function.description, 'dx')
 
-  assert.match(
-    serverTools.toolRequestError({ tools: [{}], providerId: 'ark', model: 'm', supported: false }),
-    /未声明支持原生工具调用/,
-  )
+  assert.equal(serverTools.toolRequestError({ tools: [{}], providerId: 'ark', model: 'm', supported: false }), '')
   assert.equal(
     serverTools.toolRequestError({ tools: [{}], providerId: 'minimax', model: 'MiniMax-M3', supported: true }),
     '',
@@ -163,35 +185,41 @@ try {
   assert.deepEqual(plainOut.toolDeltas, [])
   assert.equal(plain.end().toolCalls.length, 0)
 
-  // ---- 客户端原生模型 ----
-  const nativeMod = await bundle('src/agent/nativeToolChatModel.ts', 'nativeToolChatModel.mjs', [
-    '@langchain/core',
-    '@langchain/core/*',
-  ])
+  // ---- 客户端工具声明与消息映射（由 pi 适配层承担） ----
+  const toolMod = await bundle('src/agent/tool.ts', 'tool.mjs')
+  const defineTool = toolMod.defineTool
+  const adapter = await bundle('src/agent/pi/toolAdapter.ts', 'toolAdapter.mjs')
+  const messagesMod = await bundle('src/agent/pi/messages.ts', 'piMessages.mjs')
 
-  const tool = new DynamicStructuredTool({
+  const tool = defineTool({
     name: 'get_weather',
     description: '查天气',
     schema: z.object({ city: z.string().describe('城市') }),
-    func: async () => 'ok',
+    run: async () => ({ ok: true }),
   })
-  const openaiTool = nativeMod.toOpenAITool(tool)
-  assert.equal(openaiTool.type, 'function')
-  assert.equal(openaiTool.function.name, 'get_weather')
-  assert.equal(openaiTool.function.parameters.type, 'object')
-  assert.equal(openaiTool.function.parameters.$schema, undefined)
-  assert.ok(openaiTool.function.parameters.properties.city)
+  const params = adapter.toolParameters(tool.schema)
+  assert.equal(params.type, 'object')
+  assert.equal(params.$schema, undefined)
+  assert.ok(params.properties.city)
 
-  const mapped = nativeMod.toProviderMessages([
-    new SystemMessage('系统角色'),
-    new HumanMessage('你好'),
-    new AIMessage({
-      content: '',
-      tool_calls: [{ id: 'c1', name: 'get_weather', args: { city: '北京' } }],
-    }),
-    new ToolMessage({ content: '{"ok":true}', tool_call_id: 'c1', name: 'get_weather' }),
-    new SystemMessage('[场景草稿] 摘要'),
-    new AIMessage('完成'),
+  const mapped = messagesMod.toProviderMessages([
+    { role: 'system', content: '系统角色', timestamp: 1 },
+    { role: 'user', content: '你好', timestamp: 2 },
+    {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'c1', name: 'get_weather', arguments: { city: '北京' } }],
+      timestamp: 3,
+    },
+    {
+      role: 'toolResult',
+      toolCallId: 'c1',
+      toolName: 'get_weather',
+      content: [{ type: 'text', text: '{"ok":true}' }],
+      isError: false,
+      timestamp: 4,
+    },
+    { role: 'system', content: '[场景草稿] 摘要', timestamp: 5 },
+    { role: 'assistant', content: [{ type: 'text', text: '完成' }], timestamp: 6 },
   ])
   assert.equal(mapped[0].role, 'system')
   assert.match(mapped[0].content, /系统角色/)
@@ -201,86 +229,31 @@ try {
   assert.equal(mapped[2].tool_calls[0].function.arguments, '{"city":"北京"}')
   assert.equal(mapped[3].tool_call_id, 'c1')
 
-  const orphan = nativeMod.toProviderMessages([
-    new HumanMessage('hi'),
-    new ToolMessage({ content: 'x', tool_call_id: 'missing' }),
+  const orphan = messagesMod.toProviderMessages([
+    { role: 'user', content: 'hi', timestamp: 1 },
+    { role: 'toolResult', toolCallId: 'missing', toolName: 'x', content: [{ type: 'text', text: 'x' }], isError: false, timestamp: 2 },
   ])
   assert.deepEqual(orphan.map((m) => m.role), ['user'])
 
-  const askCalls = []
-  const model = new nativeMod.NativeToolChatModel({
-    ask: async (opts) => {
-      askCalls.push(opts)
-      return {
-        text: '',
-        finishReason: 'tool_calls',
-        toolCalls: [
-          { id: 'call_a', name: 'get_weather', arguments: '{"city":"北京"}' },
-          { id: 'call_b', name: 'get_time', arguments: '{}' },
-        ],
-      }
-    },
-    tools: [tool],
-  })
-  const result = await model._generate([new HumanMessage('查天气')], {})
-  assert.equal(askCalls.length, 1)
-  assert.equal(askCalls[0].messages[0].role, 'user')
-  assert.equal(askCalls[0].tools[0].function.name, 'get_weather')
-  assert.equal(askCalls[0].toolChoice, 'auto')
-  const ai = result.generations[0].message
-  assert.deepEqual(ai.tool_calls.map((c) => c.name), ['get_weather', 'get_time'])
-  assert.deepEqual(ai.tool_calls[0].args, { city: '北京' })
+  // 工具声明转 OpenAI function：$schema/$id 必须去掉，默认值字段不进 required
+  const toolsMod = await bundle('src/agent/pi/toolAdapter.ts', 'toolFns.mjs')
+  const piTools = toolsMod.toPiTools([
+    defineTool({
+      name: 'submit_x',
+      description: '提交',
+      schema: z.object({ items: z.array(z.string()).optional().default([]), title: z.string() }),
+      run: async () => ({ ok: true }),
+    }),
+  ])
+  const fn = piTools[0]
+  assert.equal(fn.name, 'submit_x')
+  assert.equal(fn.parameters.type, 'object')
+  assert.deepEqual(fn.parameters.required, ['title'])
+  assert.equal(fn.parameters.$schema, undefined)
 
-  await assert.rejects(
-    () =>
-      new nativeMod.NativeToolChatModel({
-        ask: async () => ({
-          text: '',
-          finishReason: 'tool_calls',
-          toolCalls: [{ id: 'x', name: 'bad', arguments: '{oops' }],
-        }),
-        tools: [tool],
-      })._generate([new HumanMessage('x')], {}),
-    /不是合法 JSON/,
-  )
-  await assert.rejects(
-    () =>
-      new nativeMod.NativeToolChatModel({
-        ask: async () => ({ text: '半截', finishReason: 'length' }),
-        tools: [tool],
-      })._generate([new HumanMessage('x')], {}),
-    /长度上限/,
-  )
-  const plainAnswer = await new nativeMod.NativeToolChatModel({
-    ask: async () => ({ text: '好的', finishReason: 'stop' }),
-    tools: [tool],
-  })._generate([new HumanMessage('x')], {})
-  assert.equal(plainAnswer.generations[0].message.content, '好的')
-  assert.equal(plainAnswer.generations[0].message.tool_calls?.length ?? 0, 0)
-
-  // 参数增量回调原样透传；abort 原样抛出
-  let seenDelta = null
-  await new nativeMod.NativeToolChatModel({
-    ask: async (opts) => {
-      opts.onToolCallDelta?.({ index: 0, id: 'call_x', name: 'get_weather', delta: '{}' })
-      return { text: 'ok', finishReason: 'stop' }
-    },
-    tools: [tool],
-    onToolCallDelta: (delta) => { seenDelta = delta },
-  })._generate([new HumanMessage('x')], {})
-  assert.equal(seenDelta?.id, 'call_x')
-  assert.equal(seenDelta?.name, 'get_weather')
-
-  await assert.rejects(
-    () =>
-      new nativeMod.NativeToolChatModel({
-        ask: async () => {
-          throw new DOMException('aborted', 'AbortError')
-        },
-        tools: [tool],
-      })._generate([new HumanMessage('x')], {}),
-    (error) => error.name === 'AbortError',
-  )
+  // 失败编码为 isError（pi 契约：不 throw）
+  const failed = await piTools[0].execute("c1", {})
+  assert.equal(failed.isError, true)
 
   console.log('OK native tool protocol: capabilities, server normalization, stream aggregation, message mapping, model calls')
 } finally {

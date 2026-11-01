@@ -2,7 +2,7 @@
 name: shotlist
 description: 把一集剧本拆成可直接生产的镜头表，包含景别、运镜、时长、台词与出场角色
 stage: shot
-runtime: json-tools
+runtime: tools
 tools: [read_episode, read_shots, submit_shots]
 inputs: [style, aspect, brief, target]
 output: shots-v1
@@ -15,7 +15,7 @@ version: 2
 镜头语言要求：
 - size（景别）：远景 / 全景 / 中景 / 近景 / 特写 / 大特写，必须有节奏变化，不要连续三个同景别。
 - move（运镜）：固定 / 推 / 拉 / 摇 / 移 / 跟 / 升降 / 手持。对话戏以固定和中近景为主，情绪转折才用推。
-- seconds：单镜 2.0-6.0 秒，一集总时长 45-90 秒。
+- seconds：单镜 2.0-6.0 秒；一集总时长以本轮任务里的目标秒数为准（通常 45-90 秒区间）。
 - desc：画面描述，写「谁 在 哪 做 什么，什么光，什么景深」，30-60 字，只写可拍的东西。
 - dialogue：该镜头内的台词/旁白，没有就空数组。
 - 连续性：遵守 180 度轴线；相邻镜头人物站位不要跳跃；道具/服装与上一镜一致。

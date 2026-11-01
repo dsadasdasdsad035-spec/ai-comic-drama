@@ -117,6 +117,37 @@ check(
   JSON.stringify(collected2.refs.map((r) => r.url)),
 )
 
+
+// ---------------------------------------------------------------- update 覆盖语义
+const X = await import(bundle('src/charExtract.ts', 'charExtract'))
+const existing = [
+  { id: '陈默', name: '陈默', role: '主角', lookCn: '我写的中文', lookEn: 'my locked english',
+    palette: '铁灰', keywords: ['义肢'], expressionSheet: { image: '/p/sheet.png', columns: 4, rows: 2, cells: [], source: 'generated', fingerprint: 'old' } },
+]
+const incomingNoUpdate = [{ name: '陈默', look_en: 'model english' }]
+const noUpd = X.mergeCharacters(existing, incomingNoUpdate)
+check('没有 update：已有锚点被跳过', noUpd.skipped.includes('陈默') && noUpd.next[0].lookEn === 'my locked english', JSON.stringify({ skipped: noUpd.skipped, lookEn: noUpd.next[0].lookEn }))
+check('没有 update：updated 为空', noUpd.updated.length === 0, JSON.stringify(noUpd.updated))
+
+const incomingUpdate = [{ name: '陈默', look_en: 'model english', update: true }]
+const withUpd = X.mergeCharacters(existing, incomingUpdate)
+check('带 update：锚点被覆盖', withUpd.next[0].lookEn === 'model english', JSON.stringify(withUpd.next[0].lookEn))
+check('带 update：记入 updated 且不进 skipped', withUpd.updated.includes('陈默') && !withUpd.skipped.includes('陈默'), JSON.stringify({ updated: withUpd.updated, skipped: withUpd.skipped }))
+check('带 update：表情总图被标失效', withUpd.next[0].expressionSheet?.stale === true, JSON.stringify(withUpd.next[0].expressionSheet))
+
+const incomingNew = [{ name: '雪球', look_en: 'white cat' }]
+const addNew = X.mergeCharacters(existing, incomingNew)
+check('新角色直接新增', addNew.added.includes('雪球') && addNew.updated.length === 0, JSON.stringify({ added: addNew.added, updated: addNew.updated }))
+
+// 空锚点的已有角色：即使不带 update 也应补空
+const blankExisting = [{ id: '甲', name: '甲', role: '', lookCn: '', lookEn: '', palette: '', keywords: [] }]
+const fillBlank = X.mergeCharacters(blankExisting, [{ name: '甲', look_en: 'filled english' }])
+check('已有角色锚点为空时补空（不需要 update）', fillBlank.filled.includes('甲') && fillBlank.next[0].lookEn === 'filled english', JSON.stringify(fillBlank.next[0]))
+
+// update 但没给新锚点：保留旧值，不能清空
+const updNoAnchor = X.mergeCharacters(existing, [{ name: '陈默', update: true }])
+check('update 但锚点为空时保留旧锚点', updNoAnchor.next[0].lookEn === 'my locked english', JSON.stringify(updNoAnchor.next[0].lookEn))
+
 fs.rmSync(outDir, { recursive: true, force: true })
 console.log(bad === 0 ? '\n全部通过' : `\n${bad} 项未通过`)
 process.exit(bad === 0 ? 0 : 1)

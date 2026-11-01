@@ -109,7 +109,7 @@ if (REAL) {
     ],
     models: [
       ...(settings.models || []).filter((m) => m.key !== 'duel-code' && m.key !== 'duel-vision'),
-      { key: 'duel-code', label: 'Duel Code', cap: 'text', provider: 'agent-duel-mock', model: 'duel-code' },
+      { key: 'duel-code', label: 'Duel Code', cap: 'text', provider: 'agent-duel-mock', model: 'MiniMax-M3' },
       { key: 'duel-vision', label: 'Duel Vision', cap: 'vision', provider: 'agent-duel-mock', model: 'duel-vision' },
     ],
     defaults: { ...(settings.defaults || {}), text: 'duel-code', vision: 'duel-vision' },
@@ -135,7 +135,10 @@ if (REAL) {
       contentType: 'application/json',
       body: JSON.stringify({
         ok: true,
-        json: { content: call ? '' : '已完成', tool_calls: call ? [call] : [] },
+        finishReason: call ? 'tool_calls' : 'stop',
+        toolCalls: call
+          ? [{ id: `call_${call.name}_${index}`, name: call.name, arguments: JSON.stringify(call.args) }]
+          : [],
         text: '', model: 'duel-code', modelKey: 'duel-code', modelLabel: 'Duel Code',
       }),
     })

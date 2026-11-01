@@ -181,9 +181,8 @@ try {
 const lib = await load([
   'src/agent/sceneAgentTools.ts',
   'src/agent/agentMessageReducer.ts',
-  'src/agent/agentHistory.ts',
-  'src/agent/zcodeChatModel.ts',
-  '@langchain/core/messages',
+  'src/agent/pi/compact.ts',
+  'src/agent/tool.ts',
 ])
 
 const BASE = `import bpy
@@ -334,68 +333,69 @@ check(
   JSON.stringify({ ok: r.ok, draft: session.draft, codeDraftId: session.codeDraftId }),
 )
 
-// ---------- 3. 历史压缩 ----------
-const { AIMessage, HumanMessage, SystemMessage, ToolMessage } = lib
+// ---------- 3. 历史压缩（pi 消息形状） ----------
+// compactPiHistory 是草稿分片折叠的唯一实现；这里覆盖「保留最近 4 次编辑 + 提交后编辑」规则。
 const messages = []
 for (let i = 0; i < 6; i++) {
-  messages.push(
-    new AIMessage({
-      content: '',
-      tool_calls: [{ name: 'append_scene_draft', args: { chunk: `chunk-${i}` }, id: `append-${i}` }],
-    }),
-  )
-  messages.push(
-    new ToolMessage({
-      content: JSON.stringify({ ok: true, draftId: 'draft-1', lines: i + 1, chars: 100 }),
-      tool_call_id: `append-${i}`,
-      name: 'append_scene_draft',
-    }),
-  )
+  messages.push({
+    role: 'assistant',
+    content: [{ type: 'toolCall', id: `append-${i}`, name: 'append_scene_draft', arguments: { chunk: `chunk-${i}` } }],
+    timestamp: i * 2 + 1,
+  })
+  messages.push({
+    role: 'toolResult',
+    toolCallId: `append-${i}`,
+    toolName: 'append_scene_draft',
+    content: [{ type: 'text', text: JSON.stringify({ ok: true, draftId: 'draft-1', lines: i + 1, chars: 100 }) }],
+    isError: false,
+    timestamp: i * 2 + 2,
+  })
 }
-messages.push(
-  new AIMessage({ content: '', tool_calls: [{ name: 'commit_scene_draft', args: {}, id: 'commit-1' }] }),
-)
-messages.push(
-  new ToolMessage({
-    content: JSON.stringify({ ok: true, draftId: 'draft-1', codeHash: 'abcdef1234', lineCount: 42 }),
-    tool_call_id: 'commit-1',
-    name: 'commit_scene_draft',
-  }),
-)
-messages.push(new HumanMessage('继续'))
-messages.push(
-  new AIMessage({ content: '', tool_calls: [{ name: 'append_scene_draft', args: { chunk: 'tail' }, id: 'append-tail' }] }),
-)
-messages.push(
-  new ToolMessage({
-    content: JSON.stringify({ ok: true, draftId: 'draft-1', lines: 43, chars: 110 }),
-    tool_call_id: 'append-tail',
-    name: 'append_scene_draft',
-  }),
-)
-const compacted = lib.compactDraftHistory(messages)
-const appendCalls = compacted
-  .filter((m) => m instanceof AIMessage)
-  .flatMap((m) => m.tool_calls || [])
-  .filter((c) => c.name === 'append_scene_draft')
-check('历史压缩保留最近 4 次 + 提交后编辑', appendCalls.length === 5, `kept=${appendCalls.length}`)
-check('历史压缩保留全部 commit', compacted.some((m) => m instanceof AIMessage && m.tool_calls?.some((c) => c.name === 'commit_scene_draft')))
-check('历史压缩保留最近编辑 tail', appendCalls.some((c) => c.id === 'append-tail'))
-check('历史压缩插入摘要', compacted.some((m) => m instanceof SystemMessage && String(m.content).includes('场景草稿')))
-const summary = compacted.find((m) => m instanceof SystemMessage)
-check('摘要包含提交 hash/行数', String(summary?.content).includes('abcdef1234') && String(summary?.content).includes('42'))
-const promptAfterCompact = lib.historyPrompt(messages)
-check(
-  '模型历史包含草稿摘要且不含被折叠分片',
-  promptAfterCompact.includes('[场景草稿]') && !promptAfterCompact.includes('chunk-0'),
-  promptAfterCompact.slice(0, 300),
-)
+messages.push({
+  role: 'assistant',
+  content: [{ type: 'toolCall', id: 'commit-1', name: 'commit_scene_draft', arguments: {} }],
+  timestamp: 20,
+})
+messages.push({
+  role: 'toolResult',
+  toolCallId: 'commit-1',
+  toolName: 'commit_scene_draft',
+  content: [{ type: 'text', text: JSON.stringify({ ok: true, draftId: 'draft-1', codeHash: 'abcdef1234', lineCount: 42 }) }],
+  isError: false,
+  timestamp: 21,
+})
+messages.push({ role: 'user', content: '继续', timestamp: 22 })
+messages.push({
+  role: 'assistant',
+  content: [{ type: 'toolCall', id: 'append-tail', name: 'append_scene_draft', arguments: { chunk: 'tail' } }],
+  timestamp: 23,
+})
+messages.push({
+  role: 'toolResult',
+  toolCallId: 'append-tail',
+  toolName: 'append_scene_draft',
+  content: [{ type: 'text', text: JSON.stringify({ ok: true, draftId: 'draft-1', lines: 43, chars: 110 }) }],
+  isError: false,
+  timestamp: 24,
+})
 
-const compactedNoCommit = lib.compactDraftHistory(messages.slice(0, 12))
-const noCommitAppends = compactedNoCommit
-  .filter((m) => m instanceof AIMessage)
-  .flatMap((m) => m.tool_calls || [])
-  .filter((c) => c.name === 'append_scene_draft')
+const callsOf = (list) =>
+  list
+    .filter((m) => m.role === 'assistant')
+    .flatMap((m) => m.content.filter((c) => c.type === 'toolCall'))
+
+const compacted = lib.compactPiHistory(messages)
+const appendCalls = callsOf(compacted).filter((c) => c.name === 'append_scene_draft')
+check('历史压缩保留最近 4 次 + 提交后编辑', appendCalls.length === 5, `kept=${appendCalls.length}`)
+check('历史压缩保留全部 commit', callsOf(compacted).some((c) => c.name === 'commit_scene_draft'))
+check('历史压缩保留最近编辑 tail', appendCalls.some((c) => c.id === 'append-tail'))
+check('历史压缩插入摘要', compacted.some((m) => m.role === 'system' && String(m.content).includes('场景草稿')))
+const summary = compacted.find((m) => m.role === 'system')
+check('摘要包含提交 hash/行数', String(summary?.content).includes('abcdef1234') && String(summary?.content).includes('42'))
+check('被折叠的 toolResult 不再残留', !compacted.some((m) => m.role === 'toolResult' && m.toolCallId === 'append-0'))
+
+const compactedNoCommit = lib.compactPiHistory(messages.slice(0, 12))
+const noCommitAppends = callsOf(compactedNoCommit).filter((c) => c.name === 'append_scene_draft')
 check('无 commit 时也只保留最近 4 次', noCommitAppends.length === 4, `kept=${noCommitAppends.length}`)
 
 // ---------- 4. 提示词 ----------

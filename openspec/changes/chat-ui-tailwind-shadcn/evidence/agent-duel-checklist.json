@@ -5,5 +5,5 @@
   "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('.ctx-action').filter({ hasText: '编辑 3D 调度' })\n",
   "panel": "",
   "textCalls": 0,
-  "savedAt": "2026-10-28T10:27:56.626Z"
+  "savedAt": "2026-10-29T10:49:55.092Z"
 }

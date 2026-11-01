@@ -16,7 +16,8 @@ fs.writeFileSync(
   [
     `export * from ${JSON.stringify(path.join(root, 'src/agent/sceneAgentGraph.ts'))}`,
     `export * from ${JSON.stringify(path.join(root, 'src/agent/pi/events.ts'))}`,
-    `export * from ${JSON.stringify(path.join(root, 'src/agent/pi/tools.ts'))}`,
+    `export * from ${JSON.stringify(path.join(root, 'src/agent/pi/toolAdapter.ts'))}`,
+    `export * from ${JSON.stringify(path.join(root, 'src/agent/tool.ts'))}`,
     `export * from ${JSON.stringify(path.join(root, 'src/agent/pi/streamFn.ts'))}`,
     `export * from ${JSON.stringify(path.join(root, 'src/agent/pi/compact.ts'))}`,
     `export * from ${JSON.stringify(path.join(root, 'src/agent/sceneAgentTools.ts'))}`,
@@ -132,12 +133,12 @@ function deps(overrides = {}) {
     deps: deps({ onDraftCode: (code) => { draftCode = code } }),
   })
   const toolStarts = result.events.filter((e) => e.type === 'tool_start').map((e) => e.toolName)
-  check('pi 正常链路完成', result.engine === 'pi' && result.finished === true && !result.error, JSON.stringify({ engine: result.engine, error: result.error }))
+  check('pi 正常链路完成', result.finished === true && !result.error, JSON.stringify({ error: result.error }))
   check('工具顺序与模型一致', JSON.stringify(toolStarts) === JSON.stringify(['get_shot_context', 'set_scene_code', 'run_render', 'capture_frames', 'review_frames', 'finish']), JSON.stringify(toolStarts))
   check('代码进入草稿', result.code?.includes('primitive_cone_add') && draftCode === result.code)
   check('抓帧 5 张 + 验收通过', result.frames?.length === 5 && result.review?.passed === true, JSON.stringify({ frames: result.frames?.length, passed: result.review?.passed }))
   check('finish 后不再请求模型', asks.length === 6, String(asks.length))
-  check('轨迹带引擎事件', result.events.some((e) => e.type === 'custom' && e.name === 'engine' && e.value?.engine === 'pi'))
+  check('轨迹带工具协议事件', result.events.some((e) => e.type === 'custom' && e.name === 'tool_protocol' && e.value?.protocol === 'native'))
   check('模型请求带工具声明', asks[0]?.tools?.length === 12 && asks[0]?.toolChoice === 'auto', String(asks[0]?.tools?.length))
 }
 
@@ -178,8 +179,8 @@ function deps(overrides = {}) {
 {
   // 用真实工具 spec，但把 execute 换成探针：参数非法时 pi 必须在校验阶段拒绝，探针不应被调用。
   const session = lib.createSceneAgentSession()
-  const built = lib.createPiAgentTools(deps(), session)
-  const finishTool = built.tools.find((t) => t.name === 'finish')
+  const built = lib.toPiTools(lib.createSceneAgentTools(deps(), session).tools)
+  const finishTool = built.find((t) => t.name === 'finish')
   let executed = 0
   const probe = {
     ...finishTool,
@@ -216,14 +217,14 @@ function deps(overrides = {}) {
   const session = lib.createSceneAgentSession()
   session.code = CODE
   session.trial = { ok: true }
-  const { tools } = lib.createPiAgentTools(deps(), session, ['山体'])
+  const tools = lib.toPiTools(lib.createSceneAgentTools(deps(), session, ['山体']).tools)
   const capture = tools.find((t) => t.name === 'capture_frames')
   const out = await capture.execute('c1', { times: [0, 1] })
   const contentText = out.content.map((c) => c.text || '').join('')
   check('content 不含帧 data URL', !contentText.includes('data:image'), contentText.slice(0, 120))
   check('content 只保留时间点', JSON.parse(contentText).frames.every((f) => f.url === undefined), contentText)
   check('details 保留完整帧', Array.isArray(out.details?.frames) && out.details.frames[0].url.startsWith('data:image'), JSON.stringify(out.details).slice(0, 120))
-  check('成功结果不是错误', out.isError === false)
+  check('成功结果不是错误', !out.isError)
   const finish = tools.find((t) => t.name === 'finish')
   const failedFinish = await finish.execute('c2', { summary: 'x' })
   check('finish 未通过门禁时不终止', failedFinish.terminate !== true && failedFinish.isError === true, JSON.stringify(failedFinish.details))
@@ -352,43 +353,129 @@ function deps(overrides = {}) {
 }
 
 
-// ---------------------------------------------------------------- 6.2 引擎选择四分支
+// ---------------------------------------------------------------- 6.2 环节模型前提（不再按能力表拦截）
 {
   const nonNative = {
     ...settings,
     providers: [{ id: 'openai', label: 'O', kind: 'openai', baseUrl: '', apiKey: '', caps: ['text'] }],
     models: [{ key: 'plain', label: 'Plain', cap: 'text', provider: 'openai', model: 'gpt-x' }],
     stageModels: { sceneCode: 'plain' },
-    agentEngine: undefined,
   }
-  const pickDefault = lib.resolveSceneAgentEngine({ settings: { ...settings, agentEngine: undefined } })
-  check('默认引擎为 pi', pickDefault.engine === 'pi', JSON.stringify(pickDefault))
-  const pickDefaultFallback = lib.resolveSceneAgentEngine({ settings: nonNative })
-  check('默认 pi + 非原生模型 → 回退', pickDefaultFallback.engine === 'langgraph' && Boolean(pickDefaultFallback.fallbackReason), JSON.stringify(pickDefaultFallback))
-  const pickExplicit = lib.resolveSceneAgentEngine({ settings: { ...settings, agentEngine: undefined }, engine: 'pi' })
-  check('显式 pi + 原生模型 → pi', pickExplicit.engine === 'pi', JSON.stringify(pickExplicit))
-  const pickFallback = lib.resolveSceneAgentEngine({ settings: { ...nonNative, agentEngine: 'pi' } })
-  check('设置 pi + 非原生模型 → 回退', pickFallback.engine === 'langgraph' && Boolean(pickFallback.fallbackReason), JSON.stringify(pickFallback))
-  let thrown = ''
-  try {
-    lib.resolveSceneAgentEngine({ settings: nonNative, engine: 'pi' })
-  } catch (e) {
-    thrown = e.message
+  const supported = lib.sceneAgentCapability({ settings })
+  check('已绑定环节模型 → 可用', supported.available === true, JSON.stringify(supported))
+  const unlisted = lib.sceneAgentCapability({ settings: nonNative })
+  check('能力表外模型仍可运行', unlisted.available === true, JSON.stringify(unlisted))
+
+  let asked = 0
+  const resultUnlisted = await lib.runSceneAgent({
+    prompt: '非表内模型',
+    settings: nonNative,
+    ask: async () => {
+      asked += 1
+      return { text: '完成', finishReason: 'stop' }
+    },
+    deps: deps(),
+  })
+  check('能力表外模型可发起模型请求', asked >= 1, String(asked))
+  check('能力表外模型协议仍为 native', resultUnlisted.toolProtocol === 'native', JSON.stringify(resultUnlisted.toolProtocol))
+
+  const result = await lib.runSceneAgent({
+    prompt: '原生模型',
+    settings,
+    ask: scriptedAsk([{ text: '完成' }]),
+    deps: deps(),
+  })
+  check('单一引擎结果协议恒为 native', result.toolProtocol === 'native', JSON.stringify(result.toolProtocol))
+  check('结果不再带引擎字段', !('engine' in result) && !('engineFallbackReason' in result), JSON.stringify(Object.keys(result)))
+}
+
+
+// ---------------------------------------------------------------- 6.3 试运行失败后修复（单引擎回归）
+{
+  const sequence = [
+    {
+      calls: [
+        { name: 'set_scene_code', args: { code: CODE } },
+        { name: 'run_render', args: {} },
+      ],
+    },
+    {
+      calls: [
+        { name: 'set_scene_code', args: { code: CODE } },
+        { name: 'run_render', args: {} },
+      ],
+    },
+    {
+      calls: [
+        { name: 'capture_frames', args: { times: [0] } },
+        { name: 'review_frames', args: {} },
+        { name: 'finish', args: { summary: '修复完成' } },
+      ],
+    },
+  ]
+  let tries = 0
+  const result = await lib.runSceneAgent({
+    prompt: '修复场景',
+    settings,
+    ask: scriptedAsk(sequence),
+    deps: deps({
+      runTrial: async () => {
+        tries += 1
+        return tries === 1 ? { ok: false, error: '场景里没有对象' } : { ok: true, firstFrame: 'data:image/jpeg;base64,AA' }
+      },
+    }),
+  })
+  const toolStarts = result.events.filter((e) => e.type === 'tool_start').map((e) => e.toolName)
+  check('试运行失败后继续修复', tries === 2 && result.finished === true && !result.error, JSON.stringify({ tries, error: result.error }))
+  check('修复后仍完整走完验收', toolStarts.filter((n) => n === 'run_render').length === 2 && result.review?.passed === true, JSON.stringify(toolStarts))
+}
+
+// ---------------------------------------------------------------- 6.4 镜头隔离（单引擎回归）
+{
+  // 记录型草稿客户端：断言所有草稿操作都落在当前镜头。
+  const scopes = []
+  let draftSeq = 0
+  const recordingClient = {
+    async begin(scope) {
+      scopes.push(scope.shotId)
+      draftSeq += 1
+      return { id: `d${draftSeq}`, project: scope.project, shotId: scope.shotId, lines: 0, chars: 0 }
+    },
+    async append(id) {
+      return { id, project: 'p', shotId: 'S01', lines: 1, chars: 1 }
+    },
+    async read(id) {
+      return { id, project: 'p', shotId: 'S01', lines: 1, chars: 1, text: '', totalLines: 1, startLine: 1, endLine: 2 }
+    },
+    async patch(id) {
+      return { id, project: 'p', shotId: 'S01', lines: 1, chars: 1 }
+    },
+    async commit(id) {
+      return { id, project: 'p', shotId: 'S01', lines: 1, chars: 1, code: CODE }
+    },
+    async discard() {},
+    async text() {
+      return CODE
+    },
   }
-  check('显式 pi + 非原生模型 → 报错', thrown.includes('未声明支持原生工具调用'), thrown)
-  let runError = ''
-  try {
-    await lib.runSceneAgent({
-      prompt: '非原生模型',
-      engine: 'pi',
-      settings: nonNative,
-      ask: scriptedAsk([{ text: 'x' }]),
-      deps: deps(),
-    })
-  } catch (e) {
-    runError = e.message
-  }
-  check('pi 非原生模型运行时抛可读错误', runError.includes('未声明支持原生工具调用'), runError)
+  const result = await lib.runSceneAgent({
+    prompt: '隔离验收',
+    settings,
+    ask: scriptedAsk([
+      {
+        calls: [
+          { name: 'set_scene_code', args: { code: CODE } },
+          { name: 'run_render', args: {} },
+          { name: 'capture_frames', args: { times: [0] } },
+          { name: 'review_frames', args: {} },
+          { name: 'finish', args: { summary: 'ok' } },
+        ],
+      },
+    ]),
+    deps: deps({ draftScope: { project: 'p', shotId: 'S01' }, draftClient: recordingClient }),
+  })
+  check('镜头隔离：草稿作用域只有当前镜头', scopes.length > 0 && scopes.every((id) => id === 'S01'), JSON.stringify(scopes))
+  check('镜头隔离：代码写入当前草稿', Boolean(result.code?.includes('primitive_cone_add')) && !result.error, JSON.stringify(result.error))
 }
 
 clearTimeout(watchdog)

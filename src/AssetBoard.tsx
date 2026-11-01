@@ -31,6 +31,8 @@ import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
+import { projectImageAttachmentSource } from './agent/projectAttachments'
+import { useMediaPicker } from './agent/useMediaPicker'
 import WorkbenchBar from './WorkbenchBar'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
@@ -97,6 +99,8 @@ export default function AssetBoard({
   const [tipOpen, setTipOpen] = useState(true)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('assets')
   const chatVisible = chatOpen && Boolean(projectName)
+  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
+  const mediaPicker = useMediaPicker(projectName)
   const builtinStateRef = useRef({ extracting, settings, projectName, ready, project })
   builtinStateRef.current = { extracting, settings, projectName, ready, project }
   const runExtractRef = useRef<
@@ -187,8 +191,19 @@ export default function AssetBoard({
           run: (signal) => runExtractRef.current('script', signal),
         },
       ],
+      attachments: projectImageAttachmentSource({
+        projectName,
+        prefix: 'chat-asset',
+        picker: {
+          open: async () => {
+            const item = await mediaPicker.open()
+            return item ? { url: item.url, title: item.title, name: item.name } : null
+          },
+        },
+        hint: '图片只用于本次对话，不写入场景/道具卡',
+      }),
     }),
-    [projectName, epNo, project],
+    [projectName, epNo, project, mediaPicker],
   )
 
   useEffect(() => {
@@ -748,6 +763,7 @@ export default function AssetBoard({
           <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
       </WorkbenchChatAside>
+      {mediaPicker.node}
     </div>
   )
 }

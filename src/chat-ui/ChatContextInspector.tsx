@@ -37,8 +37,7 @@ export function ChatContextInspector({
       </header>
 
       <div className="text-muted-foreground">
-        镜头 {manifest.shot.no || '未编号'} · {manifest.shot.duration.toFixed(1)}s ·{' '}
-        {manifest.shot.aspect}
+        {manifest.scope.title}
       </div>
       <div className="mb-1.5 text-muted-foreground">
         视觉模型收到 {counts.image + counts.video} 个媒体附件；代码模型收到{' '}

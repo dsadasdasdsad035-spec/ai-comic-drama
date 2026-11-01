@@ -12,8 +12,6 @@
     "@assistant-ui/react": "^0.15.30",
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
-    "@langchain/core": "^1.2.20",
-    "@langchain/langgraph": "^1.5.2",
     "@radix-ui/react-collapsible": "^1.2.1",
     "@radix-ui/react-separator": "^1.2.0",
     "@radix-ui/react-slot": "^1.5.0",

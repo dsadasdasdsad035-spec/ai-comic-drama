@@ -251,6 +251,8 @@ export default function IntakeDialog({
         context: {
           style: '',
           aspect: '16:9',
+          epNo,
+          episodes: episodes as ProjectEpisode[],
         },
       })
       setOrganized(r.json)

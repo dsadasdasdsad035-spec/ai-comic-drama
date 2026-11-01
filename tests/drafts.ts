@@ -56,6 +56,13 @@ check('同一批次重复集号后者生效', () => {
   assert.equal(r.updated, 2)
 })
 
+check('改稿未带 targetSeconds 保留已有', () => {
+  const withTarget = [{ no: 1, title: 'A', targetSeconds: 60, scenes: [] }]
+  const r = mergeScriptDraft(withTarget, [{ no: 1, title: 'A2', scenes: [{ no: 1, slug: 'x', place: 'p', time: 't', beats: 'b' }] }])
+  assert.equal(r.episodes[0].targetSeconds, 60)
+  assert.equal(r.episodes[0].title, 'A2')
+})
+
 check('镜头映射使用场次简称和稳定 id', () => {
   const r = buildShotsFromModel(
     [{ no: 'S01', scene_no: 1, seconds: 3, size: '中景', move: '固定', desc: '雨夜', cast: ['陈默'] }],

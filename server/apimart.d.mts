@@ -125,6 +125,20 @@ export declare function downloadResult(opts: {
 
 export declare function imageUrlsFromTask(data: any): string[]
 export declare function videoUrlFromTask(data: any): string
+export declare function apimartUsesResponsesForTools(model: string): boolean
+export declare function toApimartResponseTools(chatTools: any[]): any[]
+export declare function chatMessagesToApimartResponseInput(messages: any[]): any[]
+export declare function apimartResponseToChatCompletion(response: any): any
+export declare function buildApimartResponsesBody(opts: {
+  model: string
+  messages: any[]
+  tools: any[]
+  maxTokens: number
+  toolChoice?: unknown
+}): Record<string, unknown>
+export declare function parseApimartResponsesRaw(raw: string): any
+/** @deprecated */
+export declare function apimartChatExtras(opts?: { toolMode?: boolean }): Record<string, unknown>
 export declare function normalizeChatPayload(j: any): any
 export declare function parseChatBody(raw: string, contentType?: string): any
 export declare function normalizeSseChunk(raw: any): any

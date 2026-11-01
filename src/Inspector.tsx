@@ -1077,13 +1077,9 @@ function InspectorBody({
           </select>
         </div>
 
-          <CapModelSelect
-            cap="audio"
-            label="配音模型"
-            settings={settings}
-            value={pick.audio}
-            onChange={(key) => onPick('audio', key)}
-          />
+          <p className="st-hint voice-model-hint" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
+            配音模型按说话角色绑定；在「角色」工作台为每个角色选择配音模型与音色。本镜未映射到角色时使用设置页默认配音模型。
+          </p>
           <label className="field expression-ref-toggle" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
             <span>表情参考</span>
             <span className="switch-row">

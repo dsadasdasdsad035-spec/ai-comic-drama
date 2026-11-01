@@ -59,6 +59,8 @@ function StageToolCard({
   const ctx = useWorkbenchChatContext()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [turning, setTurning] = useState(false)
+  const [turned, setTurned] = useState(false)
   const label = LABELS[toolName] || toolName
   const r = record(result)
   const error = typeof r.error === 'string' ? r.error : ''
@@ -71,6 +73,22 @@ function StageToolCard({
   const canSave = Boolean(
     isSubmit && !running && !error && saveMode === 'explicit' && ctx?.onSave && !savedNow,
   )
+  /**
+   * 「用它生成三视图」：只在角色回执上出现，且必须由人点。
+   * 有锚点才可点——没有 look_en 时生图没有依据。
+   */
+  const submittedNames =
+    isSubmit && toolName === 'submit_characters' && Array.isArray(r.subjects)
+      ? (r.subjects as unknown[]).map((x) => String(x)).filter(Boolean)
+      : []
+  const canRender =
+    isSubmit &&
+    toolName === 'submit_characters' &&
+    !running &&
+    !error &&
+    Boolean(ctx?.onRenderTurnaround) &&
+    submittedNames.length > 0 &&
+    !turned
 
   if (isBuiltin) {
     const builtinLabel = String(args?.label || r.label || label)
@@ -216,6 +234,34 @@ function StageToolCard({
           )}
           {saveMode === 'explicit' && !canSave && !savedNow && (
             <span className="text-[10px] text-muted-foreground">在左侧点保存</span>
+          )}
+          {canRender && (
+            <button
+              type="button"
+              data-chat-render-turnaround
+              className="rounded border border-border px-1.5 py-0.5 text-[10px] text-foreground hover:bg-muted disabled:opacity-50"
+              disabled={turning}
+              onClick={async () => {
+                if (!ctx?.onRenderTurnaround) return
+                setTurning(true)
+                try {
+                  await ctx.onRenderTurnaround(submittedNames)
+                  setTurned(true)
+                } finally {
+                  setTurning(false)
+                }
+              }}
+              title="按当前锚点生成两张三视图候选；参考图作为身份输入"
+            >
+              {turning
+                ? '生成中…'
+                : `用它生成三视图${ctx?.turnaroundCost ? ` · ¥${ctx.turnaroundCost.toFixed(2)}` : ''}`}
+            </button>
+          )}
+          {turned && (
+            <span className="rounded bg-[var(--ok-dim)] px-1 text-[10px] text-[var(--ok)]">
+              已生成三视图
+            </span>
           )}
         </div>
       )}

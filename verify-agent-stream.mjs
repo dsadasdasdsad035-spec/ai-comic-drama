@@ -125,47 +125,76 @@ const { applyAgentEvent } = await load('src/agent/agentMessageReducer.ts')
   check('reducer：参数完整才写入 args', ready.parts.find((p) => p.type === 'tool-call')?.args?.code === 'x')
 }
 
-// ---------------------------------------------------------------- 事件桥
-const { createAgentEventBridge } = await load('src/agent/sceneAgentEvents.ts')
+// ---------------------------------------------------------------- 事件桥（pi）
+const { createPiEventBridge } = await load('src/agent/pi/events.ts')
 {
-  const bridge = createAgentEventBridge()
-  const start = bridge.map({ event: 'on_chain_start', name: 'agent', run_id: 'chain-1' })
-  check('桥：步骤开始', start && start.type === 'agent_step' && start.phase === 'start' && start.turn === 1, JSON.stringify(start))
+  const bridge = createPiEventBridge()
+
+  const start = bridge.map({ type: 'turn_start' })
+  check('桥：步骤开始', start.length === 1 && start[0].type === 'agent_step' && start[0].phase === 'start' && start[0].turn === 1, JSON.stringify(start))
 
   const first = bridge.map({
-    event: 'on_chat_model_stream',
-    run_id: 'model-1',
-    data: { chunk: { content: '你' } },
+    type: 'message_update',
+    assistantMessageEvent: { type: 'text_delta', delta: '你' },
   })
   check(
     '桥：首片先 start 再 content',
-    Array.isArray(first) && first[0].type === 'text_message_start' && first[1].type === 'text_message_content' && first[1].delta === '你',
+    first.length === 2 && first[0].type === 'text_message_start' && first[1].type === 'text_message_content' && first[1].delta === '你',
     JSON.stringify(first),
   )
   const second = bridge.map({
-    event: 'on_chat_model_stream',
-    run_id: 'model-1',
-    data: { chunk: { content: '好' } },
+    type: 'message_update',
+    assistantMessageEvent: { type: 'text_delta', delta: '好' },
   })
-  check('桥：后续只发 content', Array.isArray(second) && second.length === 1 && second[0].delta === '好', JSON.stringify(second))
+  check('桥：后续只发 content', second.length === 1 && second[0].delta === '好', JSON.stringify(second))
 
-  const reasoning = bridge.map({
-    event: 'on_chat_model_stream',
-    run_id: 'model-1',
-    data: { chunk: { content: '', additional_kwargs: { reasoning_content: '内部推理' } } },
+  const thinking = bridge.map({
+    type: 'message_update',
+    assistantMessageEvent: { type: 'thinking_delta', delta: '内部推理' },
   })
-  check('桥：reasoning 不产生事件', reasoning === null)
+  check('桥：thinking 不产生事件', thinking.length === 0, JSON.stringify(thinking))
 
-  const end = bridge.map({ event: 'on_chat_model_end', run_id: 'model-1' })
-  check('桥：文本结束', end && end.type === 'text_message_end', JSON.stringify(end))
-
-  const agentEnd = bridge.map({
-    event: 'on_chain_end',
-    name: 'agent',
-    run_id: 'chain-1',
-    data: { output: { messages: [{ type: 'ai', content: '完整说明' }] } },
+  const end = bridge.map({
+    type: 'message_end',
+    message: { role: 'assistant', content: [{ type: 'text', text: '你好' }] },
   })
-  check('桥：步骤结束带说明', agentEnd && agentEnd.type === 'agent_step' && agentEnd.phase === 'end', JSON.stringify(agentEnd))
+  check(
+    '桥：文本结束 + 步骤结束带说明',
+    end.some((e) => e.type === 'text_message_end') && end.some((e) => e.type === 'agent_step' && e.phase === 'end'),
+    JSON.stringify(end),
+  )
+
+  const toolStart = bridge.map({
+    type: 'tool_execution_start',
+    toolCallId: 't1',
+    toolName: 'run_render',
+    args: { code: 'x'.repeat(400), times: [0, 1] },
+  })
+  check(
+    '桥：工具开始裁剪参数',
+    toolStart.length === 1 && toolStart[0].type === 'tool_start' && toolStart[0].args.codeChars === 400 && toolStart[0].args.code === undefined,
+    JSON.stringify(toolStart),
+  )
+  const toolEnd = bridge.map({
+    type: 'tool_execution_end',
+    toolCallId: 't1',
+    toolName: 'run_render',
+    result: { content: [], details: { ok: true } },
+    isError: false,
+  })
+  check(
+    '桥：工具结束取 details',
+    toolEnd.length === 1 && toolEnd[0].type === 'tool_end' && toolEnd[0].result.ok === true,
+    JSON.stringify(toolEnd),
+  )
+  const dup = bridge.map({
+    type: 'tool_execution_end',
+    toolCallId: 't1',
+    toolName: 'run_render',
+    result: { content: [], details: { ok: true } },
+    isError: false,
+  })
+  check('桥：工具事件去重', dup.length === 0, JSON.stringify(dup))
 }
 
 // ---------------------------------------------------------------- 真实代理

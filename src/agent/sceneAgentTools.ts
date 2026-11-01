@@ -1,5 +1,4 @@
-import { DynamicStructuredTool } from '@langchain/core/tools'
-import type { StructuredToolInterface } from '@langchain/core/tools'
+import { defineTool, type ToolDef } from './tool'
 import { z } from 'zod'
 import { checkSceneCode } from '../sceneCodeSanitize'
 import { codeHashOf } from '../sceneCodeFingerprint'
@@ -99,8 +98,8 @@ export function createSceneAgentTools(
   session: SceneAgentSession,
   defaultRequirements: string[] = ['画面主体可见', '构图与镜头符合用户描述'],
 ): {
-  tools: StructuredToolInterface[]
-  byName: Map<string, StructuredToolInterface>
+  tools: ToolDef[]
+  byName: Map<string, ToolDef>
 } {
   const draftClient = deps.draftClient || sceneDraftClient
 
@@ -199,11 +198,11 @@ export function createSceneAgentTools(
     }
   }
 
-  const getShotContext = new DynamicStructuredTool({
+  const getShotContext = defineTool({
     name: 'get_shot_context',
     description: '读取当前镜头的元数据、已选附件、当前代码摘要和草稿状态。只读。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       const base = await deps.getShotContext()
       // 代码摘要必须来自本会话的实时草稿；否则 set_scene_code 成功后仍会回报旧代码。
       const codeSummary = session.code
@@ -216,12 +215,12 @@ export function createSceneAgentTools(
     },
   })
 
-  const beginSceneDraft = new DynamicStructuredTool({
+  const beginSceneDraft = defineTool({
     name: 'begin_scene_draft',
     description:
       '为当前镜头创建或重置一个服务端草稿（不用也不能传路径）。长代码先 begin，再用 append 分片写入；短代码可直接 set_scene_code。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       try {
         const scope = scopeOf()
         const state = await draftClient.begin(scope)
@@ -252,13 +251,13 @@ export function createSceneAgentTools(
     },
   })
 
-  const appendSceneDraft = new DynamicStructuredTool({
+  const appendSceneDraft = defineTool({
     name: 'append_scene_draft',
     description: '向当前草稿末尾追加一段代码（单次建议不超过 2000 字符；JSON 协议下过长容易截断）。大代码按 import/常量、build、pose、dispose 分段写入。',
     schema: z.object({
       chunk: z.string().min(1).max(8000).describe('要追加的代码片段；单次最多 8000 字符，建议 1500 以内'),
     }),
-    func: async ({ chunk }) => {
+    run: async ({ chunk }) => {
       if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
       try {
         const state = await draftClient.append(session.draft.id, chunk)
@@ -282,7 +281,7 @@ export function createSceneAgentTools(
     },
   })
 
-  const readSceneDraft = new DynamicStructuredTool({
+  const readSceneDraft = defineTool({
     name: 'read_scene_draft',
     description:
       '按 1-based 行范围读取当前草稿（最多 200 行/8KB）。patch 前先读要改的片段，返回带行号的文本和总行数。',
@@ -290,7 +289,7 @@ export function createSceneAgentTools(
       startLine: z.number().int().min(1).optional().describe('起始行，1-based，含'),
       endLine: z.number().int().min(2).optional().describe('结束行，不含；省略时最多读 200 行'),
     }),
-    func: async ({ startLine, endLine }) => {
+    run: async ({ startLine, endLine }) => {
       if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
       try {
         const result = await draftClient.read(session.draft.id, startLine, endLine)
@@ -316,7 +315,7 @@ export function createSceneAgentTools(
     },
   })
 
-  const patchSceneDraft = new DynamicStructuredTool({
+  const patchSceneDraft = defineTool({
     name: 'patch_scene_draft',
     description:
       '替换当前草稿的一个行范围：startLine 1-based 含，endLine 不含；一次只做一处编辑，避免多个范围互相错位。',
@@ -325,7 +324,7 @@ export function createSceneAgentTools(
       endLine: z.number().int().min(1),
       text: z.string().describe('替换后的内容；传空字符串表示删除该范围'),
     }),
-    func: async ({ startLine, endLine, text }) => {
+    run: async ({ startLine, endLine, text }) => {
       if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
       try {
         const state = await draftClient.patch(session.draft.id, startLine, endLine, text)
@@ -349,19 +348,19 @@ export function createSceneAgentTools(
     },
   })
 
-  const commitSceneDraft = new DynamicStructuredTool({
+  const commitSceneDraft = defineTool({
     name: 'commit_scene_draft',
     description:
       '读取整份草稿并做静态准入，通过后设为当前 agent 代码（仍不会覆盖工作台草稿）。提交后必须 run_render 试运行。',
     schema: z.object({}),
-    func: async () => commitCurrentDraft(),
+    run: async () => commitCurrentDraft(),
   })
 
-  const discardSceneDraft = new DynamicStructuredTool({
+  const discardSceneDraft = defineTool({
     name: 'discard_scene_draft',
     description: '删除当前草稿。已提交的 session.code 不变；不会修改工作台草稿。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       const draft = session.draft
       if (!draft) return fail('当前没有草稿')
       try {
@@ -376,7 +375,7 @@ export function createSceneAgentTools(
     },
   })
 
-  const setSceneCode = new DynamicStructuredTool({
+  const setSceneCode = defineTool({
     name: 'set_scene_code',
     description:
       '提交完整短代码的快捷方式（等价于写入临时草稿并立即 commit）。提交后必须运行渲染试运行；失败代码不会成为当前草稿。' +
@@ -384,7 +383,7 @@ export function createSceneAgentTools(
     schema: z.object({
       code: z.string().min(1).describe('完整 Blender Python 代码，必须定义 build/pose/dispose'),
     }),
-    func: async ({ code }) => {
+    run: async ({ code }) => {
       const normalized = normalizeSceneCodeArg(code)
       // 短代码快捷方式：没有草稿作用域（例如单测/旧调用）时直接走同一套准入。
       if (!deps.draftScope) return applyCode(normalized)
@@ -426,11 +425,11 @@ export function createSceneAgentTools(
     },
   })
 
-  const runSandbox = new DynamicStructuredTool({
+  const runSandbox = defineTool({
     name: 'run_render',
     description: '用本机 Blender 渲染当前代码草稿的开头与结尾帧（试运行），返回能否渲染。',
     schema: z.object({}),
-    func: async () => {
+    run: async () => {
       if (!session.code) return fail('还没有提交代码；先用 commit_scene_draft 或 set_scene_code')
       const trialDraftId =
         session.draft && session.codeDraftId === session.draft.id ? session.draft.id : undefined
@@ -474,13 +473,13 @@ export function createSceneAgentTools(
     },
   })
 
-  const captureFrames = new DynamicStructuredTool({
+  const captureFrames = defineTool({
     name: 'capture_frames',
     description: '按秒抓取当前代码的关键帧，抓满 5 个时间点；必须先通过 run_render。',
     schema: z.object({
       times: z.array(z.number().min(0)).min(1).max(DEFAULT_AGENT_LIMITS.maxFrames).optional(),
     }),
-    func: async ({ times }) => {
+    run: async ({ times }) => {
       if (!session.code || !session.trial?.ok) return fail('先提交代码并通过 run_render')
       const requested = (times || [0, 1, 2, 3, 4]).slice(0, DEFAULT_AGENT_LIMITS.maxFrames)
       try {
@@ -502,13 +501,13 @@ export function createSceneAgentTools(
     },
   })
 
-  const reviewFrames = new DynamicStructuredTool({
+  const reviewFrames = defineTool({
     name: 'review_frames',
     description: '用视觉清单检查已抓取的关键帧。没有视觉模型时返回 needsHumanReview。',
     schema: z.object({
       requirements: z.array(z.string()).max(12).optional(),
     }),
-    func: async ({ requirements }) => {
+    run: async ({ requirements }) => {
       if (!session.frames?.length) return fail('先调用 capture_frames')
       session.reviewAttempts++
       try {
@@ -531,13 +530,13 @@ export function createSceneAgentTools(
     },
   })
 
-  const finish = new DynamicStructuredTool({
+  const finish = defineTool({
     name: 'finish',
     description: '声明当前镜头场景完成。必须已有通过的渲染试运行；视觉验收需通过或明确转人工。',
     schema: z.object({
       summary: z.string().min(1).max(500).describe('给用户的最终摘要'),
     }),
-    func: async ({ summary }) => {
+    run: async ({ summary }) => {
       if (!session.trial?.ok) return fail('场景未通过渲染试运行，不能结束')
       if (!session.review) return fail('尚未进行视觉验收，不能结束')
       if (!session.review.passed && !session.review.needsHumanReview) {

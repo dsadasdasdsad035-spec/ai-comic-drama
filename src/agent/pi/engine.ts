@@ -6,14 +6,15 @@ import type { SceneCodeAsk } from '../../sceneCodeJob'
 import { checkSceneCode } from '../../sceneCodeSanitize'
 import { codeHashOf } from '../../sceneCodeFingerprint'
 import { resolveAgentLimits } from '../agentLimits'
-import type { RunSceneAgentInput } from '../sceneAgentEngine'
+import type { RunSceneAgentInput } from '../sceneAgentGraph'
 import {
   createSceneAgentSession,
+  createSceneAgentTools,
   type SceneAgentSession,
 } from '../sceneAgentTools'
 import { DEFAULT_AGENT_LIMITS, type AgentEvent, type SceneAgentResult } from '../sceneAgentTypes'
 import { createPiEventBridge } from './events'
-import { createPiAgentTools } from './tools'
+import { toPiTools } from './toolAdapter'
 import { createPiStreamFn, toOpenAIFunctions } from './streamFn'
 import { compactPiHistory } from './compact'
 import { gateAgentEvents } from '../agentEventGate'
@@ -95,7 +96,11 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
     deps.onEvent?.(event)
   }
 
-  const { tools, byName } = createPiAgentTools(deps, session, input.requirements)
+  // 12 个工具的 Agency 外壳由适配层从 zod 生成，不再维护第二份手写参数声明。
+  const { tools: defs, byName: defsByName } = createSceneAgentTools(deps, session, input.requirements)
+  const tools = toPiTools(defs)
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
+  void defsByName
 
   const stageEntry = input.settings?.models.find((m) => m.key === modelKey)
   const stageProvider = stageEntry
@@ -105,7 +110,7 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
   const ask = input.ask || defaultAsk()
   const bridge = createPiEventBridge()
   let pendingNudge: string | null = null
-  // 与 LangGraph 引擎的 512 步上限对齐：模型只回文本时不会无限催促下去。
+  // 512 步安全阀：模型只回文本时不会无限催促下去。
   let turns = 0
   const MAX_TURNS = 512
 
@@ -219,6 +224,10 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
     if (controller.signal.aborted) {
       if (timedOut) error = timeoutMessage(totalMs)
       else cancelled = true
+    } else {
+      // streamFn 按 pi 契约把渠道失败编码进消息而不是抛出；
+      // 不读出来，运行会以「未完成 finish」收场，真实失败原因就丢了。
+      error = lastStreamError(agent.state.messages as AgentMessage[])
     }
   } catch (e) {
     if (timedOut) error = timeoutMessage(totalMs)
@@ -259,3 +268,16 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
 }
 
 export type { SceneAgentSession }
+
+/** 取最后一条助手消息里的流错误；正常结束时返回空串。 */
+function lastStreamError(messages: readonly AgentMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.role !== 'assistant') continue
+    const stopReason = (message as { stopReason?: unknown }).stopReason
+    if (stopReason !== 'error') return ''
+    const detail = (message as { errorMessage?: unknown }).errorMessage
+    return String(detail || '模型调用失败')
+  }
+  return ''
+}

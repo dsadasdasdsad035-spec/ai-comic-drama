@@ -2,7 +2,7 @@
 name: prompt
 description: 把镜头表转成可直接执行的文生图首帧提示词与图生视频运动提示词
 stage: prompt
-runtime: json-tools
+runtime: tools
 tools: [read_shots, read_characters, read_designs, submit_prompts]
 inputs: [style, bible, briefJson]
 output: prompts-v1

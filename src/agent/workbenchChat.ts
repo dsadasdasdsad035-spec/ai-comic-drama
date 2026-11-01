@@ -127,7 +127,7 @@ export const WORKBENCH_BUILTIN_KEYS: Record<
   script: ['generate_episodes'],
   characters: ['extract_characters_episode', 'extract_characters_script'],
   assets: ['extract_designs_episode', 'extract_designs_script'],
-  shots: ['split_shots'],
+  shots: [],
   prompts: ['generate_prompts'],
 }
 
@@ -146,7 +146,7 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
   script: {
     title: '剧本助手',
     emptyTitle: '改这一版剧本',
-    emptyBody: '按你的要求改分集、场次和钩子；也可以直接点下面的「生成分集」从零生成。只改草稿，保存前不动项目。',
+    emptyBody: '按你的要求改分集、场次和钩子；也可点「生成分集」从零拆集（需项目里已有原著，或在对话里贴全文）。只改草稿，保存前不动项目。',
     suggestions: ['把节奏改紧一点', '第 3 集结尾留一个反转', '只重写第 5–8 集'],
     placeholder: '例如：把第 3 集节奏改快，结尾留一个反转钩子…',
     saveMode: 'explicit',
@@ -173,11 +173,12 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
   shots: {
     title: '分镜助手',
     emptyTitle: '把这一集拆成可拍镜头',
-    emptyBody: '把本集 beat 拆成镜头，改景别、运镜和时长；也可以直接点下面的「拆镜」。只改镜头草稿。',
-    suggestions: ['拆成 12 个 3 秒镜头', '加两个反应镜', '按冲突强度重排'],
+    emptyBody:
+      '在对话里说明如何拆镜或改某一镜；模型会读本集场次并写入左侧镜头草稿。左侧表格可手改字段，保存前不会落库。',
+    suggestions: ['拆成 12 个 3 秒镜头', '加两个反应镜', '把 S03 改成近景'],
     placeholder: '例如：拆成 12 个 3 秒镜头，结尾加一个反应镜…',
     saveMode: 'explicit',
-    inputLabels: { style: '画风', aspect: '画幅', brief: '本集内容', target: '目标时长' },
+    inputLabels: { style: '画风', aspect: '画幅', brief: '本集摘要', target: '目标时长' },
   },
   prompts: {
     title: '提示词助手',
@@ -219,12 +220,52 @@ export type DraftApplyResult = {
   counts?: Record<string, number>
   hash?: string
   error?: string
+  /**
+   * 本次草稿里需要后续动作的条目名（如刚写入的角色）。
+   * 回执上的「用它生成三视图」靠它知道给谁出图，不靠解析文本。
+   */
+  subjects?: string[]
 }
 
 /**
  * 工作台聊天适配器：宿主只实现取输入、读活草稿、读已保存项目、合并草稿四件事。
  * 工具和运行器共用这个接口，不直接写项目。
  */
+/**
+ * 聊天里的附件来源声明。
+ * 只有声明了它的工作台才显示附件入口；其余工作台界面零变化。
+ * available 返回「可选什么」，kinds 声明「能收哪些类型」——
+ * 两者分开：一个面可以只收图片但列出视频候选（候选会被过滤掉），
+ * 也可以两者一致。不接受某类型时必须在入口就排除，不能选完再拒绝。
+ */
+export type WorkbenchAttachmentSource = {
+  /** 当前可供选择的图片 */
+  available: () => { key: string; label: string; url: string }[]
+  /** 单次上限；所有类型共享同一计数 */
+  limit: number
+  /** 这个面接受的附件类型；不声明时按只收图片处理 */
+  kinds?: ('image' | 'video' | 'doc' | 'text')[]
+  /**
+   * 附件去向的说明，仅用于文档与诊断。
+   * 切片 1 里五个工作台都是 'thread'：附件只进本次对话，不写宿主数据。
+   */
+  persist?: 'thread' | 'host'
+  /** 上传一张本地文件到项目媒体并返回新条目；不提供时不显示上传入口 */
+  upload?: (file: File) => Promise<WorkbenchAttachmentItem>
+  /** 从项目素材里挑一条；返回 null 表示用户取消。不提供时不显示「从素材选」 */
+  pick?: () => Promise<WorkbenchAttachmentItem | null>
+  /** 附件来源的说明，用于 UI 提示（不要写成「某个角色的参考图」——附件属于本次对话） */
+  hint?: string
+}
+
+/** 上传/选择返回的附件条目；kind 省略时按图片处理 */
+export type WorkbenchAttachmentItem = {
+  key: string
+  label: string
+  url: string
+  kind?: 'image' | 'video' | 'doc' | 'text'
+}
+
 export type WorkbenchChatAdapter = {
   surface: WorkbenchSurface
   skillId: string
@@ -244,6 +285,8 @@ export type WorkbenchChatAdapter = {
   onDraftChanged?: () => void
   /** 聊天里的显式内置动作；不提供时聊天与改动前一致。 */
   builtins?: BuiltinAction[]
+  /** 图片附件来源；不提供时不显示附件入口。 */
+  attachments?: WorkbenchAttachmentSource
 }
 
 /** 读工具结果上限：超出的返回摘要，避免把整份产物塞进下一轮上下文。 */

@@ -3048,33 +3048,6 @@ body.si-resizing {
   white-space: nowrap;
 }
 
-.wb-gen {
-  display: flex;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
-  flex-shrink: 0;
-}
-
-.wb-gen textarea {
-  flex: 1;
-  resize: vertical;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  font-family: inherit;
-}
-
-.wb-genbtn {
-  align-self: stretch;
-  white-space: nowrap;
-}
-
 .wb-empty {
   flex: 1;
   display: grid;
@@ -3485,17 +3458,6 @@ body.si-resizing {
   position: relative;
 }
 
-.sb-left {
-  width: 380px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-right: 1px solid var(--line);
-  overflow: auto;
-}
-
 .sb-right {
   flex: 1;
   min-width: 0;
@@ -3527,45 +3489,6 @@ body.si-resizing {
 .sb-note {
   color: var(--muted);
   font-size: var(--fs-xs);
-}
-
-.sb-source {
-  flex: 1 1 46%;
-  min-height: 180px;
-  resize: vertical;
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-md);
-  padding: 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.7;
-  font-family: inherit;
-}
-
-.sb-logline {
-  min-height: 56px;
-  resize: vertical;
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-md);
-  padding: 8px 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.6;
-  font-family: inherit;
-}
-
-.sb-opts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.sb-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .sb-ep {
@@ -10803,6 +10726,35 @@ body,
   white-space: nowrap;
 }
 
+.creative-header-meta .creative-meta-model.wb-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 10px;
+}
+
+.creative-header-meta .creative-meta-model.wb-field select {
+  max-width: 140px;
+  font-size: 10px;
+  padding: 0 2px;
+}
+
+[data-chat-context-bar] .wb-context-model.wb-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 11px;
+}
+
+[data-chat-context-bar] .wb-context-model.wb-field select {
+  max-width: 160px;
+  font-size: 10px;
+}
+
 /* 只有可能很长的那几项允许被压缩 */
 .creative-header-meta > .creative-meta-item:first-child,
 .creative-header-meta > .creative-meta-item:nth-child(3) {
@@ -12241,3 +12193,180 @@ body,
   font-size: var(--fs-xs);
   font-weight: 600;
 }
+
+/* ---------------------------------------------------------------- 聊天附件条（输入区内） */
+/* 位置由 ChatThreadBody 决定：在输入框上方、与发送操作同属一个输入区。 */
+.ca-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  min-width: 0;
+}
+
+.ca-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.ca-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.ca-count {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ca-badge {
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  line-height: 1.6;
+}
+
+.ca-badge.busy {
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.ca-badge.ok {
+  background: var(--ok-dim);
+  color: var(--ok);
+}
+
+.ca-badge.warn {
+  background: var(--warn-dim);
+  color: var(--warn);
+}
+
+.ca-link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ca-hint {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.ca-empty {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ca-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 1px;
+}
+
+/* 已选与可选共用一种 chip 外形：横向紧凑，长标签省略 */
+.ca-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 148px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.ca-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.ca-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ca-chip img {
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 2px;
+  display: block;
+  flex: none;
+}
+
+.ca-thumb-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1;
+}
+
+.ca-thumb-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ca-remove {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 1px;
+  pointer-events: none;
+}
+
+/* 3D 的 brief 排除开关塞进 chip 里，尺寸必须比正文更小 */
+.ca-chip .ca-brief {
+  flex: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 8px;
+  line-height: 1;
+  padding: 0 1px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.ca-chip .ca-brief.on {
+  color: var(--fg);
+}
+
+.ca-chip .ca-brief.off {
+  text-decoration: line-through;
+}
+

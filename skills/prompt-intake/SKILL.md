@@ -2,7 +2,7 @@
 name: prompt-intake
 description: 把已有的提示词文本按镜号归位成首帧与视频两列，缺哪列就不输出哪列
 stage: prompt
-runtime: json-tools
+runtime: tools
 tools: []
 inputs: [raw, style]
 output: prompts-v1

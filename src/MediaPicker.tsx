@@ -28,6 +28,11 @@ type Props = {
   projectName: string
   currentUrl?: string
   currentKind: AssetKind
+  /**
+   * 只允许这些媒体类型；省略表示不限。
+   * 调用方据此在入口就排除不可选类型，而不是让用户选完再被拒绝。
+   */
+  accept?: ('image' | 'video' | 'audio')[]
   onConfirm: (item: PickItem) => void
   onClose: () => void
 }
@@ -151,6 +156,7 @@ export default function MediaPicker({
   projectName,
   currentUrl,
   currentKind,
+  accept,
   onConfirm,
   onClose,
 }: Props) {
@@ -275,11 +281,26 @@ export default function MediaPicker({
 
   const items = useMemo(() => {
     const base = buildPickItems(media, { url: currentUrl, kind: currentKind })
+    // 入口就按 accept 过滤：调用方声明只收图片时，视频/音频不该出现在候选里
+    const allowed = accept && accept.length ? new Set(accept) : null
+    const kept = allowed ? base.filter((i) => allowed.has(i.mediaType)) : base
     // 刚上传的排在同类最前：用户刚选完文件，最想看到的就是它
-    if (!uploaded.length) return base
+    if (!uploaded.length) return kept
     const seen = new Set(uploaded.map((u) => u.url))
-    return [...uploaded, ...base.filter((b) => !seen.has(b.url))]
-  }, [media, currentUrl, currentKind, uploaded])
+    return [...uploaded, ...kept.filter((b) => !seen.has(b.url))]
+  }, [media, currentUrl, currentKind, uploaded, accept])
+
+  /** 只显示 accept 允许的页签；避免出现一个永远是空列表的分类 */
+  const visibleTabs = useMemo(() => {
+    if (!accept || !accept.length) return TABS
+    const allowed = new Set(accept)
+    return TABS.filter((t) => {
+      if (t.key === 'video') return allowed.has('video')
+      if (t.key === 'audio') return allowed.has('audio')
+      if (t.key === 'project' || t.key === 'generated' || t.key === 'stock') return allowed.has('image')
+      return true
+    })
+  }, [accept])
 
   const countFor = (key: Tab) => {
     if (key === 'manual' || key === 'stock') return 0
@@ -462,7 +483,7 @@ export default function MediaPicker({
 
         <div className="mp-toolbar">
           <div className="mp-tabs" role="tablist" aria-label="素材来源">
-            {TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <button
                 key={t.key}
                 id={`mp-tab-${t.key}`}

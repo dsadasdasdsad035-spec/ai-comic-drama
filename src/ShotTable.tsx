@@ -1,7 +1,6 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MOVES, SHOT_SIZES } from './types'
 import {
-  callText,
   getProject,
   patchProject,
   listProjects,
@@ -11,27 +10,26 @@ import {
   type ProjectShot,
   type Stage,
 } from './api'
-import { hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
+import { StageModelSelect, type StagePick } from './ModelSelect'
 import { dialogueToText, parseDialogue, reconcileDialogueDelivery } from './prompts'
-import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
 import { clearHandEdited, mergeGenerated } from './shotSync'
 import PerformanceEditor from './PerformanceEditor'
 import WorkbenchBar from './WorkbenchBar'
 import LipSyncPanel from './LipSyncPanel'
 import { performanceSummary } from './performance'
-import { endTask, startTask } from './tasks'
 import { buildShotsFromModel } from './agent/shotDraft'
-import {
-  builtinFailure,
-  type BuiltinResult,
-  WORKBENCH_BUILTINS,
-  type WorkbenchChatAdapter,
-} from './agent/workbenchChat'
+import { type WorkbenchChatAdapter } from './agent/workbenchChat'
 import { AgentButton } from './agent/AgentButton'
 import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
 import { useWorkbenchChatOpen } from './agent/chatPanel'
-import IntakeDialog from './intake/IntakeDialog'
+import { projectImageAttachmentSource } from './agent/projectAttachments'
+import { useMediaPicker } from './agent/useMediaPicker'
 import { blankShot, findDuplicateNos, insertAfter, nextShotNo, removeRow } from './shotRows'
+import {
+  resolveEpisodeTarget,
+  resolveProjectStyle,
+  setEpisodeTargetSeconds,
+} from './productionContext'
 
 const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
@@ -56,6 +54,21 @@ type Props = {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
+function describeEpisode(ep: any): string {
+  const parts: string[] = []
+  if (ep?.title) parts.push(`第 ${ep.no} 集《${ep.title}》`)
+  if (ep?.hook) parts.push(`结尾钩子：${ep.hook}`)
+  for (const sc of ep?.scenes ?? []) {
+    const itn = sc.intensity === undefined || sc.intensity === null ? '' : `｜强度 ${sc.intensity}/10`
+    const tone = sc.tone ? `｜基调 ${sc.tone}` : ''
+    parts.push(
+      `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}` +
+        `${itn}${tone}｜${sc.beats || ''}｜在场：${(sc.characters ?? []).join('、')}`,
+    )
+  }
+  return parts.join('\n')
+}
+
 export default function ShotTable({
   projectName,
   setProjectName,
@@ -72,32 +85,25 @@ export default function ShotTable({
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [style, setStyle] = useState('')
   const [aspect, setAspect] = useState('16:9')
-  const [target, setTarget] = useState(60)
-  const [brief, setBrief] = useState('')
-  const [episodes, setEpisodes] = useState<any[]>([])
+  const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
+  const [episodesDirty, setEpisodesDirty] = useState(false)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [genning, setGenning] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [chatRunning, setChatRunning] = useState(false)
-  const [intakeOpen, setIntakeOpen] = useState(false)
   const [perfEdit, setPerfEdit] = useState<string | null>(null)
+  /** 待删除的镜头 id：显式删除意图，保存时随 deleteShotIds 提交 */
+  const [pendingDelete, setPendingDelete] = useState<string[]>([])
+  const [orphanOpen, setOrphanOpen] = useState(false)
   const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('shots')
   const chatVisible = chatOpen && Boolean(projectName)
+  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
+  const mediaPicker = useMediaPicker(projectName)
 
-  const liveRef = useRef({ shots, style, aspect, brief, target, episodes })
-  liveRef.current = { shots, style, aspect, brief, target, episodes }
+  const liveRef = useRef({ shots, style, aspect, episodes, epNo })
+  liveRef.current = { shots, style, aspect, episodes, epNo }
+  const episodeTarget = useMemo(() => resolveEpisodeTarget(episodes, epNo), [episodes, epNo])
   const saveRef = useRef<() => Promise<void>>(async () => {})
-  const builtinStateRef = useRef({ genning, brief, settings, projectName })
-  builtinStateRef.current = { genning, brief, settings, projectName }
-  const runSplitRef = useRef<(signal?: AbortSignal) => Promise<BuiltinResult>>(async () =>
-    builtinFailure('split_shots', '拆镜尚未就绪', {
-      label: '拆镜',
-      scope: 'episode',
-      saveMode: 'explicit',
-    }),
-  )
 
   const chatAdapter = useMemo<WorkbenchChatAdapter>(
     () => ({
@@ -111,11 +117,12 @@ export default function ShotTable({
       scope: () => '本集',
       inputs: () => {
         const l = liveRef.current
+        const ep = l.episodes.find((x: any) => Number(x?.no) === l.epNo)
         return {
-          style: l.style || '近未来科幻写实',
+          style: resolveProjectStyle({ style: l.style }) ?? '',
           aspect: l.aspect,
-          brief: l.brief,
-          target: l.target,
+          brief: ep ? describeEpisode(ep) : '',
+          target: resolveEpisodeTarget(l.episodes, l.epNo),
         }
       },
       ownDraft: () => liveRef.current.shots,
@@ -141,24 +148,19 @@ export default function ShotTable({
         }
       },
       saveDraft: () => saveRef.current(),
-      builtins: [
-        {
-          ...WORKBENCH_BUILTINS.split_shots,
-          disabled: () => {
-            const st = builtinStateRef.current
-            if (!st.projectName) return { disabled: true, reason: '先选择项目' }
-            if (st.genning) return { disabled: true, reason: '正在拆镜' }
-            if (!st.brief.trim()) return { disabled: true, reason: '先写本集内容或梗概' }
-            if (!hasTextModels(st.settings)) {
-              return { disabled: true, reason: '设置页还没有可用的文本模型' }
-            }
-            return { disabled: false }
+      attachments: projectImageAttachmentSource({
+        projectName,
+        prefix: 'chat-shots',
+        picker: {
+          open: async () => {
+            const item = await mediaPicker.open()
+            return item ? { url: item.url, title: item.title, name: item.name } : null
           },
-          run: (signal) => runSplitRef.current(signal),
         },
-      ],
+        hint: '图片只用于本次对话，不写入镜头表',
+      }),
     }),
-    [projectName, epNo],
+    [projectName, epNo, mediaPicker],
   )
 
   const load = useCallback(
@@ -170,7 +172,8 @@ export default function ShotTable({
         setShots(p.shots ?? [])
         setStyle(p.style ?? '')
         setAspect(p.aspect ?? '16:9')
-        setEpisodes(p.episodes ?? [])
+        setEpisodes((p.episodes ?? []) as ProjectEpisode[])
+        setEpisodesDirty(false)
         setDirty(false)
         toast(`已加载 ${name}：${(p.shots ?? []).length} 镜`)
       } catch (e: any) {
@@ -197,11 +200,16 @@ export default function ShotTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName])
 
-  // 切集时把该集的场景 beats 填进拆镜输入框
   useEffect(() => {
-    const e = episodes.find((x: any) => Number(x?.no) === epNo)
-    setBrief(e ? describeEpisode(e) : '')
-  }, [epNo, episodes])
+    try {
+      if (sessionStorage.getItem('workbench-chat:shots:openOnce') === '1') {
+        sessionStorage.removeItem('workbench-chat:shots:openOnce')
+        setChatOpen(true)
+      }
+    } catch {
+      /* sessionStorage 不可用 */
+    }
+  }, [projectName, epNo, setChatOpen])
 
   /** 当前集的镜头。集号缺失的老数据按第 1 集处理 */
   const visible = useMemo(
@@ -252,109 +260,6 @@ export default function ShotTable({
     setDirty(true)
   }
 
-  const runSplit = useCallback(
-    async (signal?: AbortSignal): Promise<BuiltinResult> => {
-      const label = '拆镜'
-      const action = 'split_shots'
-      const fail = (message: string, cancelled = false) =>
-        builtinFailure(action, message, {
-          label,
-          scope: 'episode',
-          saveMode: 'explicit',
-          ...(cancelled ? { cancelled: true } : {}),
-        })
-      const l = liveRef.current
-      if (!projectName) return fail('先选择项目')
-      if (!l.brief.trim()) return fail('先写本集内容或梗概，再来拆镜')
-      if (!hasTextModels(settings)) return fail('设置页还没有可用的文本模型，先加一条再拆镜')
-      if (signal?.aborted) return fail('已取消', true)
-      setGenning(true)
-      setElapsed(0)
-      const t0 = Date.now()
-      const timer = window.setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
-      const tid = startTask('text', `E${pad(epNo)} 拆镜`)
-      try {
-        const resolvedStyle = l.style || '近未来科幻写实'
-        const skill = await buildBoardSkillPrompt('shotlist', {
-          style: resolvedStyle,
-          aspect: l.aspect,
-          brief: l.brief,
-          target: l.target,
-        })
-        const r = await callText<{ shots: any[] }>({
-          system: skill.system,
-          prompt: skill.task,
-          modelKey: stageModelKey(settings, 'shot', stagePick),
-          json: true,
-          maxTokens: 8192,
-          signal,
-        })
-        assertSkillOutput('shots-v1', r.json)
-        const got = r.json?.shots
-        if (!Array.isArray(got) || got.length === 0) throw new Error('模型没给出镜头列表')
-        if (signal?.aborted) {
-          endTask(tid, '已取消')
-          return fail('已取消', true)
-        }
-        const built = buildShotsFromModel(got, l.episodes as ProjectEpisode[], epNo)
-        const visibleNow = l.shots.filter((s) => (Number(s.episode) || 1) === epNo)
-        // 手改过的字段在重新生成时保住，这是 handEdited 唯一生效的地方
-        const merged = mergeGenerated(visibleNow, built.shots)
-        const kept = merged.filter((s) => (s.handEdited?.length ?? 0) > 0).length
-        // 只替换本集，别集的镜头原样保留
-        setShots((prev) => [...prev.filter((x) => (Number(x.episode) || 1) !== epNo), ...merged])
-        setDirty(true)
-        const sum = merged.reduce((a, s) => a + (Number(s.seconds) || 0), 0)
-        const secs = Math.round((Date.now() - t0) / 1000)
-        endTask(tid)
-        return {
-          ok: true,
-          action,
-          label,
-          scope: 'episode',
-          summary:
-            `E${pad(epNo)} 拆出 ${merged.length} 镜 / ${sum.toFixed(1)}s · ${secs}s` +
-            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
-            (kept > 0 ? ` · ${kept} 镜的手改字段已保留` : '') +
-            (built.sceneFallback > 0
-              ? ` · ${built.sceneFallback} 镜场次缺失/无效，已回退第 ${built.fallbackSceneNo} 场`
-              : '') +
-            '，草稿未保存',
-          counts: {
-            shots: merged.length,
-            kept,
-            sceneFallback: built.sceneFallback,
-          },
-          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
-          elapsedMs: Date.now() - t0,
-          saveMode: 'explicit',
-        }
-      } catch (e) {
-        const err = e as Error
-        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
-        endTask(tid, cancelled ? '已取消' : err.message || '拆镜失败')
-        return fail(cancelled ? '已取消' : err.message || '拆镜失败', cancelled)
-      } finally {
-        window.clearInterval(timer)
-        setGenning(false)
-      }
-    },
-    [projectName, epNo, settings, stagePick],
-  )
-  runSplitRef.current = runSplit
-
-  const generate = async () => {
-    const r = await runSplit()
-    if (!r.ok) {
-      if (!r.cancelled) toast(r.error || '拆镜失败')
-      return
-    }
-    toast(r.summary)
-  }
-
-  /** 待删除的镜头 id：显式删除意图，保存时随 deleteShotIds 提交 */
-  const [pendingDelete, setPendingDelete] = useState<string[]>([])
-  const [orphanOpen, setOrphanOpen] = useState(false)
   const orphanShots = useMemo(() => visible.filter((s) => s.orphan), [visible])
   const orphanCount = orphanShots.length
 
@@ -407,6 +312,10 @@ export default function ShotTable({
       // 服务端做了字段级合并，拿回真正落盘的结果
       setShots(r.shots as ProjectShot[])
       setPendingDelete([])
+      if (episodesDirty) {
+        await patchProject(projectName, { episodes })
+        setEpisodesDirty(false)
+      }
       setDirty(false)
       onSaved?.()
       toast(`已写回 project.json · ${r.shots.length} 镜`)
@@ -437,8 +346,17 @@ export default function ShotTable({
                 type="number"
                 min={10}
                 step={5}
-                value={target}
-                onChange={(e) => setTarget(Math.max(10, Number(e.target.value) || 60))}
+                value={episodeTarget}
+                onChange={(e) => {
+                  const next = setEpisodeTargetSeconds(
+                    episodes,
+                    epNo,
+                    Math.max(10, Number(e.target.value) || episodeTarget),
+                  )
+                  setEpisodes(next)
+                  setEpisodesDirty(true)
+                  setDirty(true)
+                }}
                 style={{ width: 64 }}
               />
               <span className="label">秒</span>
@@ -463,36 +381,12 @@ export default function ShotTable({
               dirty={dirty}
               controlsId="workbench-chat-shots"
             />
-            <button
-              className="btn btn-ghost"
-              disabled={!projectName}
-              onClick={() => setIntakeOpen(true)}
-              title="导入镜头表：表格按表头映射，默认只改文件里出现的镜号"
-            >
-              导入
-            </button>
             <button className="btn" onClick={() => load(projectName)} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
           </>
         }
       />
-
-      <div className="wb-gen">
-        <textarea
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          placeholder="本集内容 / 梗概 / 场景 beats —— 拆镜的输入。从项目里加载到 episodes 时会自动带上。"
-          rows={3}
-        />
-        <button
-          className="btn wb-genbtn"
-          onClick={generate}
-          disabled={genning || !brief.trim() || !hasTextModels(settings)}
-        >
-          {genning ? `拆镜中 ${elapsed}s` : '拆镜'}
-        </button>
-      </div>
 
       {visible.length > 0 ? (
         <div className="wb-row-tools">
@@ -512,7 +406,9 @@ export default function ShotTable({
 
       {visible.length === 0 ? (
         <div className="wb-empty">
-          {loading ? '加载中…' : `E${pad(epNo)} 还没有镜头。上面写点内容，点「拆镜」。`}
+          {loading
+            ? '加载中…'
+            : `E${pad(epNo)} 还没有镜头。在右侧 Agent 描述如何拆镜（例如：拆成 12 个 3 秒镜头）。`}
         </div>
       ) : (
         <div className="wb-scroll">
@@ -738,8 +634,8 @@ export default function ShotTable({
       <div className="wb-foot">
         <span className="wb-sum">
           {visible.length} 镜 · 总时长{' '}
-          <b className={total > target ? 'over' : ''}>{total.toFixed(1)}s</b> / 目标 {target}s
-          {total > target && <span className="wb-warn">超 {(total - target).toFixed(1)}s</span>}
+          <b className={total > episodeTarget ? 'over' : ''}>{total.toFixed(1)}s</b> / 目标 {episodeTarget}s
+          {total > episodeTarget && <span className="wb-warn">超 {(total - episodeTarget).toFixed(1)}s</span>}
         </span>
         <span className="wb-sum">
           已在画布 {pushed} / {visible.length}
@@ -758,33 +654,6 @@ export default function ShotTable({
           生成到画布
         </button>
       </div>
-      {intakeOpen ? (
-        <IntakeDialog
-          target="shots"
-          projectName={projectName}
-          epNo={epNo}
-          settings={settings}
-          stagePick={stagePick}
-          shots={shots}
-          episodes={episodes as ProjectEpisode[]}
-          chars={[]}
-          toast={toast}
-          onClose={() => setIntakeOpen(false)}
-          onApply={(r) => {
-            if (r.shots) {
-              setShots(r.shots)
-              setDirty(true)
-            }
-            // 资料包可能带来角色；镜头表不持有完整角色卡，直接落项目
-            if (r.characters && projectName) {
-              patchProject(projectName, { characters: r.characters } as never)
-                .then(() => toast(`角色已写入项目 · ${r.characters!.length} 个`))
-                .catch((e) => toast((e as Error).message || '角色写入失败'))
-            }
-            toast(`已导入镜头草稿：${r.summary}（记得保存）`)
-          }}
-        />
-      ) : null}
     </main>
       <WorkbenchChatAside
         surface="shots"
@@ -807,22 +676,7 @@ export default function ShotTable({
           <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
       </WorkbenchChatAside>
+      {mediaPicker.node}
     </div>
   )
-}
-
-function describeEpisode(ep: any): string {
-  const parts: string[] = []
-  if (ep?.title) parts.push(`第 ${ep.no} 集《${ep.title}》`)
-  if (ep?.hook) parts.push(`结尾钩子：${ep.hook}`)
-  for (const sc of ep?.scenes ?? []) {
-    // 强度决定运镜条数（0-3 一条 / 4-6 两条 / 7-10 三条），必须带给拆镜模型
-    const itn = sc.intensity === undefined || sc.intensity === null ? '' : `｜强度 ${sc.intensity}/10`
-    const tone = sc.tone ? `｜基调 ${sc.tone}` : ''
-    parts.push(
-      `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}` +
-        `${itn}${tone}｜${sc.beats || ''}｜在场：${(sc.characters ?? []).join('、')}`,
-    )
-  }
-  return parts.join('\n')
 }

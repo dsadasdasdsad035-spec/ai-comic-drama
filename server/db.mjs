@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS characters (
   voice_provider TEXT DEFAULT '',
   voice_model_key TEXT DEFAULT '',
   voice_sample TEXT DEFAULT '',
+  reference_images TEXT DEFAULT '[]',
   UNIQUE(project_id, name)
 );
 CREATE TABLE IF NOT EXISTS assets (
@@ -479,8 +480,8 @@ function importProject(d, name, data) {
     d.prepare(
       `INSERT INTO characters
        (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx,
-        expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample,reference_images)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       pid, String(c.name || ''), String(c.role || ''), String(c.age || ''),
       String(c.look_cn || ''), String(c.look_en || ''), String(c.palette || ''),
@@ -490,6 +491,7 @@ function importProject(d, name, data) {
       jsonColumn(c.expressions), jsonColumn(c.expression_sheet),
       String(c.voice || ''), String(c.voice_provider || ''), String(c.voice_model_key || ''),
       jsonColumn(c.voice_sample),
+      JSON.stringify(Array.isArray(c.reference_images) ? c.reference_images : []),
     )
   }
   for (const [i, ep] of (data.episodes || []).entries()) {
@@ -898,6 +900,9 @@ function assemble(p) {
         ...(c.voice_model_key ? { voice_model_key: c.voice_model_key } : {}),
         ...(c.image ? { image: c.image } : {}),
         ...(c.candidates && c.candidates !== '[]' ? { candidates: JSON.parse(c.candidates || '[]') } : {}),
+        ...(c.reference_images && c.reference_images !== '[]'
+          ? { reference_images: JSON.parse(c.reference_images || '[]') }
+          : {}),
         ...(c.active_idx == null ? {} : { activeIdx: Number(c.active_idx) }),
         ...(expressions && typeof expressions === 'object' ? { expressions } : {}),
         ...(expressionSheet && typeof expressionSheet === 'object' ? { expression_sheet: expressionSheet } : {}),
@@ -1096,8 +1101,8 @@ export function writeProject(root, name, data = {}) {
       db.prepare(
         `INSERT INTO characters
          (project_id,name,role,age,look_cn,look_en,palette,keywords,sort,image,candidates,active_idx,
-          expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          expressions,expression_sheet,voice,voice_provider,voice_model_key,voice_sample,reference_images)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         pid, String(c?.name || ''), String(c?.role || ''), String(c?.age || ''),
         String(c?.look_cn || ''), String(c?.look_en || ''), String(c?.palette || ''),
@@ -1107,6 +1112,7 @@ export function writeProject(root, name, data = {}) {
         jsonColumn(c?.expressions), jsonColumn(c?.expression_sheet),
         String(c?.voice || ''), String(c?.voice_provider || ''), String(c?.voice_model_key || ''),
         jsonColumn(c?.voice_sample),
+        JSON.stringify(Array.isArray(c?.reference_images) ? c.reference_images : []),
       )
     }
   }

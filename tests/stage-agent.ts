@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createStageToolSet, bindSkillTools } from '../src/agent/stageTools'
-import { runStageAgent } from '../src/agent/stageAgentGraph'
+import { runStageAgent } from '../src/agent/pi/stageRunner'
 import type { WorkbenchChatAdapter } from '../src/agent/workbenchChat'
 import { parseSkillText } from '../src/skills/parse'
 import type { AgentEvent } from '../src/agent/sceneAgentTypes'
@@ -119,20 +119,26 @@ await check('submit_script 拒绝空分集', async () => {
 await check('runStageAgent 执行工具循环并发出事件', async () => {
   let call = 0
   const events: AgentEvent[] = []
-  const ask = async (o: { system: string; prompt: string }) => {
+  const ask = async (o: { messages: { role: string; content: string }[]; tools?: unknown[] }) => {
     call++
+    const system = o.messages.find((m) => m.role === 'system')?.content || ''
     if (call === 1) {
-      assert.ok(o.system.includes('你是短剧/漫剧的编剧与分集策划。'), 'system 应包含技能角色层')
-      assert.ok(o.system.includes('每次回复只输出 JSON'), 'system 应包含固定协议')
-      assert.ok(!o.prompt.includes('你是短剧/漫剧的编剧与分集策划。'), '技能正文不应混进 prompt')
+      assert.ok(system.includes('你是短剧/漫剧的编剧与分集策划。'), 'system 应包含技能角色层')
+      assert.ok(Array.isArray(o.tools) && o.tools.length > 0, '应声明原生工具')
+      const user = o.messages.find((m) => m.role === 'user')?.content || ''
+      assert.ok(!user.includes('你是短剧/漫剧的编剧与分集策划。'), '技能正文不应混进 user 消息')
       return {
-        json: { content: '提交剧本草稿', tool_calls: [{ name: 'submit_script', args: validScript }] },
-        text: '',
+        text: '提交剧本草稿',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: 'call_1', name: 'submit_script', arguments: JSON.stringify(validScript) }],
         modelLabel: 'mock',
       } as never
     }
-    assert.ok(o.prompt.includes('submit_script'), '第二轮应看到工具结果')
-    return { json: { content: '剧本草稿已更新' }, text: '剧本草稿已更新', modelLabel: 'mock' } as never
+    assert.ok(
+      o.messages.some((m) => m.role === 'tool'),
+      '第二轮应看到工具结果',
+    )
+    return { text: '剧本草稿已更新', finishReason: 'stop', modelLabel: 'mock' } as never
   }
   const result = await runStageAgent({
     userText: '把第 1 集改成悬疑',
@@ -153,8 +159,9 @@ await check('runStageAgent 执行工具循环并发出事件', async () => {
 await check('runStageAgent 超过步数上限报错', async () => {
   const ask = async () =>
     ({
-      json: { content: '', tool_calls: [{ name: 'read_source', args: {} }] },
       text: '',
+      finishReason: 'tool_calls',
+      toolCalls: [{ id: `c${Math.random()}`, name: 'read_source', arguments: '{}' }],
       modelLabel: 'mock',
     }) as never
   const events: AgentEvent[] = []
@@ -201,8 +208,9 @@ await check('取消后不写草稿', async () => {
   const ask = async () => {
     controller.abort()
     return {
-      json: { content: '', tool_calls: [{ name: 'submit_script', args: validScript }] },
       text: '',
+      finishReason: 'tool_calls',
+      toolCalls: [{ id: 'call_1', name: 'submit_script', arguments: JSON.stringify(validScript) }],
       modelLabel: 'mock',
     } as never
   }
@@ -252,6 +260,101 @@ await check('镜头工作台读自己的未保存草稿、读上游已保存角�
   assert.equal(submitted.ok, true)
   assert.ok(submitted.summary.includes('1 镜'))
   assert.ok(shotApplied)
+})
+
+
+await check('工具执行中取消不产生后续事件', async () => {
+  applied = null
+  const controller = new AbortController()
+  const events: AgentEvent[] = []
+  let askRound = 0
+  const ask = async () => {
+    askRound += 1
+    if (askRound === 1) {
+      return {
+        text: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: 'call_1', name: 'read_source', arguments: '{}' }],
+        modelLabel: 'mock',
+      } as never
+    }
+    // 第二轮请求在取消后不应再发生
+    return { text: '不应到达', finishReason: 'stop', toolCalls: [], modelLabel: 'mock' } as never
+  }
+  const result = await runStageAgent({
+    userText: '读一下再取消',
+    system: scriptSkill.role,
+    tools: hostTools,
+    stage: 'script',
+    ask: ask as never,
+    signal: controller.signal,
+    onEvent: (e) => {
+      events.push(e)
+      // READ 工具执行期间触发取消
+      if (e.type === 'tool_start' && e.toolName === 'read_source') controller.abort()
+    },
+  })
+  assert.equal(result.cancelled, true)
+  assert.equal(applied, null, '取消后不得写草稿')
+  const afterCancel = events.slice(events.findIndex((e) => e.type === 'cancelled') + 1)
+  assert.deepEqual(
+    afterCancel.filter((e) => e.type === 'tool_start' || e.type === 'tool_end'),
+    [],
+    '取消后不得出现新的工具事件',
+  )
+  assert.ok(!events.some((e) => e.type === 'agent_step' && e.phase === 'end' && e.text === '不应到达'))
+})
+
+await check('超时返回可读错误并提前结束', async () => {
+  const started = Date.now()
+  const ask = async () => {
+    // 模拟渠道挂住：直到被取消才返回
+    await new Promise((resolve) => setTimeout(resolve, 5000))
+    return { text: '慢', finishReason: 'stop', toolCalls: [], modelLabel: 'mock' } as never
+  }
+  const events: AgentEvent[] = []
+  const result = await runStageAgent({
+    userText: '超时',
+    system: scriptSkill.role,
+    tools: hostTools,
+    stage: 'script',
+    ask: ask as never,
+    totalMs: 800,
+    onEvent: (e) => events.push(e),
+  })
+  const elapsed = Date.now() - started
+  assert.ok(result.error?.includes('运行超时'), String(result.error))
+  assert.ok(elapsed < 4000, `超时未提前结束：${elapsed}ms`)
+  assert.ok(events.some((e) => e.type === 'error'))
+})
+
+await check('有图时第二条参数进入用户消息，无图时仍是字符串', async () => {
+  const seen: { content: unknown }[] = []
+  const ask = async (o: { messages: { role: string; content: unknown }[] }) => {
+    const user = o.messages.find((m) => m.role === 'user')
+    if (user) seen.push({ content: user.content })
+    return { text: '收到', finishReason: 'stop', modelLabel: 'mock' } as never
+  }
+  await runStageAgent({
+    userText: '只看文字',
+    system: scriptSkill.role,
+    tools: hostTools,
+    stage: 'script',
+    ask: ask as never,
+  })
+  assert.equal(typeof seen[0]?.content, 'string')
+  seen.length = 0
+  await runStageAgent({
+    userText: '看图',
+    images: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }],
+    system: scriptSkill.role,
+    tools: hostTools,
+    stage: 'script',
+    ask: ask as never,
+  })
+  const content = seen[0]?.content
+  assert.ok(Array.isArray(content))
+  assert.equal((content as { type: string; data?: string }[]).some((part) => part.type === 'image' && part.data === 'AAAA'), true)
 })
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

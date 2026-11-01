@@ -14,8 +14,7 @@ export function ChatContextPart({ data }: { data: AgentContextPart }) {
       </summary>
       <div className="mt-1 space-y-1">
         <div>
-          镜头 {data.metadata.no || '未编号'} · {data.metadata.duration.toFixed(1)}s ·{' '}
-          {data.metadata.aspect}
+          {data.metadata.title}
         </div>
         {total > 0 && (
           <div className="flex flex-wrap gap-1">

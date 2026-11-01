@@ -5,8 +5,8 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
-import type { AppSettings } from '../api'
-import { stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
+import type { AppSettings, Stage } from '../api'
+import { StageModelSelect, stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
 import { buildSkillPrompt } from '../skills/render'
 import { loadSkills } from '../skills/registry'
 import type { Skill } from '../skills/types'
@@ -18,7 +18,7 @@ import { WorkbenchHeader, type WorkbenchContextStats } from '@/chat-ui/Workbench
 import { WorkbenchInspector } from '@/chat-ui/WorkbenchInspector'
 import { ChatThreadBody, ChatThreadShell } from '../agent/ChatThreadShell'
 import { useAgentMessages } from '../agent/useAgentMessages'
-import { runStageAgent } from '../agent/stageAgentGraph'
+import { runStageAgent } from '../agent/pi/stageRunner'
 import { loadChatThread, saveChatThread, threadTranscript, type ActiveSkill, type ChatThreadKey } from '../agent/threads'
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import type { WorkbenchProfile, WorkbenchTaskView } from '../agent/workbenchChat'
@@ -175,6 +175,7 @@ type Props = {
   adapter: PublishChatAdapter
   settings: AppSettings | null
   stagePick?: StagePick
+  onPickStage?: (stage: Stage, key: string) => void
   onToast?: (message: string) => void
   onRunningChange?: (running: boolean) => void
   onClose?: () => void
@@ -184,7 +185,15 @@ type Props = {
  * 发布助手：复用工作台聊天壳，但宿主契约换成发布配置。
  * 线程按项目 + 集持久化；工具只改配置或暂存意图，不提交。
  */
-export default function PublishChat({ adapter, settings, stagePick, onToast, onRunningChange, onClose }: Props) {
+export default function PublishChat({
+  adapter,
+  settings,
+  stagePick,
+  onPickStage,
+  onToast,
+  onRunningChange,
+  onClose,
+}: Props) {
   const { messages, setMessages, running, setRunning, abortRef, begin, updateEvent, patchAssistant } =
     useAgentMessages()
 
@@ -479,6 +488,18 @@ export default function PublishChat({ adapter, settings, stagePick, onToast, onR
           setInspectOpen((v) => !v)
         }}
         onClose={onClose}
+        modelSelect={
+          onPickStage ? (
+            <StageModelSelect
+              stage="publish"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+              className="wb-field wb-context-model"
+            />
+          ) : undefined
+        }
       />
 
       <div data-publish-boundary className="shrink-0 border-b border-border/60 bg-secondary/30 px-3 py-1 text-[10px] text-muted-foreground">

@@ -19,7 +19,7 @@ const skillText = (over: Record<string, string> = {}, task = '任务：{{input:a
     name: 'demo',
     description: '一个用于测试的技能，描述足够长',
     stage: 'script',
-    runtime: 'json-tools',
+    runtime: 'tools',
     tools: '[read_source]',
     inputs: '[a]',
     output: 'script-v1',
@@ -84,6 +84,12 @@ check('creative 环节可解析', () => {
 
 check('未知 runtime 报错', () => {
   assert.throws(() => parseSkillText('demo', skillText({ runtime: 'nope' })), /未知运行时/)
+})
+
+// 旧字面量仍要能加载：用户已保存的技能覆盖里写的是 json-tools。
+check('旧 runtime(json-tools) 归一化为 tools', () => {
+  const parsed = parseSkillText('demo', skillText({ runtime: 'json-tools' }))
+  assert.equal(parsed.manifest.runtime, 'tools')
 })
 
 check('未知占位符报错', () => {

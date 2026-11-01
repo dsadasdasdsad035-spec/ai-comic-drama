@@ -7,6 +7,15 @@ export type ChatThreadKey = {
   surface: ChatSurface | string
   episode?: number
   shotId?: string
+  /**
+   * 历史字段，保留只为向后兼容与回滚。
+   *
+   * 上一版用它把角色聊天按角色分会话（序列化进 shot_id 槽位，写成 `char:<角色id>`）。
+   * 现在聊天附件是「过程输入」、不绑定角色，角色聊天回到整板会话，因此不再传它。
+   * 仍在 `queryOf` 里支持：旧记录还存在表里，把这个键改回带 charId 即可恢复读取。
+   * 3D 场景聊天用的是真实 shotId，与它无关。
+   */
+  charId?: string
 }
 
 export type ActiveSkill = {
@@ -31,7 +40,8 @@ function queryOf(key: ChatThreadKey, extra: Record<string, string> = {}): string
     project: key.project,
     surface: String(key.surface),
     episode: String(Math.max(0, Math.floor(Number(key.episode) || 0))),
-    shotId: key.shotId || '',
+    // 角色聊天：charId 落到 shot_id 槽位（表主键没有 char_id 列，重建表有丢历史的风险）
+    shotId: key.shotId || (key.charId ? `char:${key.charId}` : ''),
     ...extra,
   })
   return q.toString()

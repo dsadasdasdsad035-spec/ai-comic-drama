@@ -2,7 +2,7 @@
 name: scene-code
 description: 根据镜头文本、参考素材和媒体 brief 生成完整的 Blender Python 场景代码
 stage: sceneCode
-runtime: json-tools
+runtime: tools
 tools: []
 inputs: []
 output: scene3d-code-v1

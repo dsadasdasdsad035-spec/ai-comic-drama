@@ -114,7 +114,7 @@ settings.providers = [
 ]
 settings.models = [
   ...(settings.models || []).filter((m) => m.key !== 'draft-code' && m.key !== 'draft-vision'),
-  { key: 'draft-code', label: 'Draft Code', cap: 'text', provider: 'draft-mock', model: 'draft-code' },
+  { key: 'draft-code', label: 'Draft Code', cap: 'text', provider: 'draft-mock', model: 'MiniMax-M3' },
   { key: 'draft-vision', label: 'Draft Vision', cap: 'vision', provider: 'draft-mock', model: 'draft-vision' },
 ]
 settings.defaults = { ...(settings.defaults || {}), text: 'draft-code', vision: 'draft-vision' }
@@ -185,7 +185,7 @@ await page.route('**/api/text', async (route) => {
         contentType: 'application/json',
         body: JSON.stringify({
           ok: true,
-          json: { content: '等待下一步', tool_calls: [] },
+          finishReason: 'stop', toolCalls: [],
           text: '',
           model: 'draft-code',
           modelKey: 'draft-code',
@@ -203,7 +203,8 @@ await page.route('**/api/text', async (route) => {
     contentType: 'application/json',
     body: JSON.stringify({
       ok: true,
-      json: { content: '', tool_calls: [call] },
+      finishReason: 'tool_calls',
+      toolCalls: [{ id: `call_${call.name}_${callIndex}`, name: call.name, arguments: JSON.stringify(call.args) }],
       text: '',
       model: 'draft-code',
       modelKey: 'draft-code',
@@ -220,31 +221,20 @@ try {
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(1000)
-  await page.getByRole('button', { name: '画布', exact: true }).click()
-  await page.waitForTimeout(600)
-  const nodeId = await page.evaluate((name) => {
-    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(name)}`) || '{}')
-    return (s.nodes || []).find((x) => x.data?.shotId === 'E01-S01')?.id
-  }, NAME)
-  check('镜头进入画布', Boolean(nodeId), String(nodeId))
-  await page.evaluate((nid) => {
-    const el = document.querySelector(`[data-id="${nid}"]`)
-    const opt = { bubbles: true, button: 0, view: window }
-    for (const t of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, opt))
-  }, nodeId)
+  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  await page.waitForTimeout(1000)
   await page.waitForTimeout(300)
-  await page.locator(`[data-id="${nodeId}"]`).dispatchEvent('contextmenu', { clientX: 700, clientY: 420, button: 2 })
   await page.waitForTimeout(250)
-  await page.locator('.ctx-action', { hasText: '编辑 3D 调度' }).click()
+  await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
   await page.locator('.cw-shell').waitFor({ timeout: 15000 })
   await page.waitForTimeout(800)
 
-  const input = page.locator('[data-chat-input]')
+  const input = page.locator('[data-chat-scope="scene3d"] [data-chat-input]')
   await input.waitFor({ timeout: 10000 })
   await input.fill('用草稿分片写一个完整场景，然后试运行')
-  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
 
-  const draftCard = page.locator('[data-chat-draft]').last()
+  const draftCard = page.locator('[data-chat-scope="scene3d"] [data-chat-draft]').last()
   await draftCard.waitFor({ timeout: 30000 })
   await page.waitForFunction(
     () => [...document.querySelectorAll('[data-chat-draft]')].some((el) => el.textContent?.includes('已提交，待试运行')),
@@ -301,7 +291,7 @@ try {
   await page.waitForTimeout(300)
   check('切换页签后草稿卡仍在', await draftCard.isVisible())
 
-  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '取消', exact: true }).click()
   await page.waitForTimeout(600)
   releaseStall()
   for (let i = 0; i < 20 && fs.existsSync(draftFile); i++) await page.waitForTimeout(200)
@@ -316,7 +306,7 @@ try {
   })
   await page.getByRole('button', { name: '聊天', exact: true }).click()
   await input.fill('再提交一个坏草稿，验证旧代码保留')
-  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
   await page.waitForFunction(
     () => {
       const cards = [...document.querySelectorAll('[data-chat-draft]')]
@@ -325,7 +315,7 @@ try {
     null,
     { timeout: 30000 },
   )
-  const failureCard = page.locator('[data-chat-draft]').last()
+  const failureCard = page.locator('[data-chat-scope="scene3d"] [data-chat-draft]').last()
   const failureText = await failureCard.innerText()
   check('失败草稿卡显示失败原因', failureText.includes('代码必须定义 build'), failureText.slice(0, 220))
   await page.getByRole('button', { name: '代码', exact: true }).click()
@@ -333,7 +323,7 @@ try {
   const codeAfterFailure = await page.locator('.cw-code').inputValue()
   check('提交失败不改工作台代码', codeAfterFailure.includes(MARKER) && codeAfterFailure.includes('def build'))
   await page.getByRole('button', { name: '聊天', exact: true }).click()
-  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '取消', exact: true }).click()
   await page.waitForTimeout(500)
   releaseStall()
   for (let i = 0; i < 20 && fs.existsSync(draftFile); i++) await page.waitForTimeout(200)

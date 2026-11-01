@@ -63,7 +63,7 @@ import {
   getSettings,
   saveScheduleVideo,
   listProjects,
-  listVoices,
+  listVoicesCached,
   getProject,
   listMedia,
   mergeProjectShots,
@@ -84,7 +84,11 @@ import {
 import { dialogueToText, parseDialogue } from './prompts'
 import { deliveryForSpeaker, voiceFingerprint } from './performance'
 import { audioRefCapabilitiesFor, nativeAudioFingerprint } from './nativeAudio'
-import { resolveVoiceForSpeaker } from './voiceCatalog'
+import {
+  providerIdForAudioModelKey,
+  resolveCharacterAudioModelKey,
+  resolveVoiceForSpeaker,
+} from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, resolveNeighborToken, SHOT_NEXT, SHOT_PREV } from './shotReferences'
@@ -949,11 +953,11 @@ function Shell() {
     }
   }, [appSettings, reloadSettings])
 
-  /** 当前生效的配音模型：手动选择 > 设置页默认；切换后重新取对应渠道的音色 */
-  const audioModelKey = modelPick.audio || appSettings?.defaults?.audio || ''
+  /** Inspector 无角色映射时的音色列表：仅跟设置页默认配音模型 */
+  const defaultAudioModelKey = appSettings?.defaults?.audio || ''
   useEffect(() => {
     let alive = true
-    listVoices(audioModelKey || undefined).then((v) => {
+    listVoicesCached(defaultAudioModelKey || undefined).then((v) => {
       if (!alive) return
       setVoices(v.voices)
       setVoiceProvider(v.provider)
@@ -961,7 +965,7 @@ function Shell() {
     return () => {
       alive = false
     }
-  }, [audioModelKey])
+  }, [defaultAudioModelKey])
 
   /**
    * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。
@@ -1030,7 +1034,13 @@ function Shell() {
         const scopeLabel =
           scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原文梗概与分集场次'
         const shotBlock = shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : ''
-        const skill = await buildBoardSkillPrompt('character', { scopeLabel, sceneText, shotBlock })
+        const skill = await buildBoardSkillPrompt('character', {
+          scopeLabel,
+          sceneText,
+          shotBlock,
+          // 内置拆角色不带聊天附件；空串表示没有参考图，缺这个键会被技能当成输入缺失
+          referenceDigest: '',
+        })
         const modelKey = stageModelKey(st.settings as AppSettings, 'character', stagePick)
         if (!modelKey) throw new Error('设置页还没有可用的文本模型')
         const r = await callText<{ characters?: unknown[] }>({
@@ -1051,7 +1061,7 @@ function Shell() {
           )
         }
         if (signal?.aborted) return fail('已取消', true)
-        const { next, added, filled, skipped } = mergeCharacters(charactersRef.current, list)
+        const { next, added, filled, skipped, updated } = mergeCharacters(charactersRef.current, list)
         setCharacters(next)
         const secs = Math.round((Date.now() - t0) / 1000)
         return {
@@ -1063,6 +1073,7 @@ function Shell() {
             `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
             (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
             (filled.length ? ` · 补全 ${filled.length}` : '') +
+            (updated.length ? ` · 覆盖 ${updated.join('、')}` : '') +
             (skipped.length ? ` · 跳过已有 ${skipped.length}` : '') +
             '，约 1 秒后自动落库',
           counts: {
@@ -2626,17 +2637,20 @@ function Shell() {
       }
       const available = voicesRef.current
       const lines = parseDialogue(text)
-      const audioModel = appSettings?.models.find((m) => m.key === audioModelKey)
-      const currentProviderId = audioModel?.provider
       const charOf = (speaker: string) => charactersRef.current.find((c) => c.name === speaker)
+      const modelKeyForSpeaker = (speaker: string) =>
+        resolveCharacterAudioModelKey(charOf(speaker), appSettings)
       const pick = available.find((v) => v.id === node.data.voiceName) ?? available[0]
-      const resolutions = lines.map((line) =>
-        resolveVoiceForSpeaker({
-          character: charOf(line.speaker),
-          currentProviderId,
+      const resolutions = lines.map((line) => {
+        const char = charOf(line.speaker)
+        const lineModelKey = modelKeyForSpeaker(line.speaker)
+        const lineProvider = providerIdForAudioModelKey(appSettings, lineModelKey)
+        return resolveVoiceForSpeaker({
+          character: char,
+          currentProviderId: lineProvider,
           fallbackVoice: pick?.id,
-        }),
-      )
+        })
+      })
       const failed = resolutions.find((r) => !r.ok)
       if (failed && !failed.ok) {
         patch(id, { voiceState: 'error', voiceError: failed.reason })
@@ -2652,14 +2666,24 @@ function Shell() {
         deliveryForSpeaker(node.data.performance, speaker, node.data.dialogueDelivery, i)
       const deliveries = lines.map((l, i) => deliveryOf(l.speaker, i))
       const firstVoice = lines.length ? charOf(lines[0].speaker)?.voiceId || pick?.id || '' : ''
+      const firstModelKey =
+        lines.length > 0
+          ? modelKeyForSpeaker(lines[0].speaker)
+          : resolveCharacterAudioModelKey(undefined, appSettings)
+      const modelKeysUsed = new Set<string>()
       const payload = lines.length > 1
         ? {
-            lines: lines.map((l, i) => ({
-              text: l.text,
-              voice: voiceOf(l.speaker),
-              rate: node.data.voiceRate ?? 180,
-              ...deliveries[i],
-            })),
+            lines: lines.map((l, i) => {
+              const mk = modelKeyForSpeaker(l.speaker)
+              if (mk) modelKeysUsed.add(mk)
+              return {
+                text: l.text,
+                voice: voiceOf(l.speaker),
+                rate: node.data.voiceRate ?? 180,
+                modelKey: mk || undefined,
+                ...deliveries[i],
+              }
+            }),
           }
         : {
             text: lines[0]?.text ?? text,
@@ -2667,16 +2691,29 @@ function Shell() {
             rate: node.data.voiceRate ?? 180,
             performance: deliveries[0],
           }
+      if (firstModelKey) modelKeysUsed.add(firstModelKey)
+      const bodyModelKey =
+        lines.length <= 1
+          ? firstModelKey || undefined
+          : modelKeysUsed.size === 1
+            ? [...modelKeysUsed][0]
+            : undefined
 
       try {
-        const r = await generateVoice({ ...payload, modelKey: modelPick.audio })
+        const r = await generateVoice({ ...payload, modelKey: bodyModelKey })
+        const metaModel =
+          modelKeysUsed.size === 1
+            ? [...modelKeysUsed][0]
+            : modelKeysUsed.size > 1
+              ? 'mixed'
+              : firstModelKey || undefined
         patch(id, {
           voiceUrl: r.url,
           voiceState: 'idle',
           voiceSeconds: r.seconds,
           voiceMeta: {
             engine: r.engine,
-            model: modelPick.audio || undefined,
+            model: metaModel,
             voice: firstVoice,
             applied: r.applied ?? [],
             unsupported: r.unsupported ?? [],
@@ -2688,7 +2725,7 @@ function Shell() {
         patch(id, { voiceState: 'error', voiceError: (e as Error).message })
       }
     },
-    [patch, modelPick, appSettings, audioModelKey],
+    [patch, appSettings],
   )
 
   const voiceAll = async () => {
@@ -2938,7 +2975,11 @@ function Shell() {
             {...(view === 'creative' ? { inert: '' as unknown as boolean } : {})}
           >
             <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
-            <ProjectMenu onCreated={applyProjectCreated} onDeleted={applyProjectDeletion} />
+            <ProjectMenu
+              currentProjectName={projectName}
+              onCreated={applyProjectCreated}
+              onDeleted={applyProjectDeletion}
+            />
             <EpPicker
               projectName={projectName}
               epNo={epNo}
@@ -3035,6 +3076,7 @@ function Shell() {
           <CreativeStudio
             settings={appSettings}
             stagePick={stagePick}
+            onPickStage={pickStageModel}
             onToast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)
@@ -3070,7 +3112,14 @@ function Shell() {
             stagePick={stagePick}
             onPickStage={pickStageModel}
             onDirtyChange={setScriptDirty}
-            onGotoShotTable={() => changeView('table')}
+            onGotoShotTable={() => {
+              try {
+                sessionStorage.setItem('workbench-chat:shots:openOnce', '1')
+              } catch {
+                /* sessionStorage 不可用 */
+              }
+              changeView('table')
+            }}
             onSaved={() => setEpVersion((v) => v + 1)}
             toast={(m) => {
               setToast(m)
@@ -3104,6 +3153,7 @@ function Shell() {
             onConsumeInitial={() => setPublishTarget(null)}
             settings={appSettings}
             stagePick={stagePick}
+            onPickStage={pickStageModel}
             onToast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3200)
@@ -3111,6 +3161,7 @@ function Shell() {
           />
         ) : view === 'settings' ? (
           <Settings
+            currentProjectName={projectName}
             onSaved={reloadSettings}
             onProjectsDeleted={applyProjectDeletion}
             toast={(m) => {
@@ -3154,7 +3205,6 @@ function Shell() {
                 : null
             }
             onInject={injectCharacter}
-            voices={voices}
             onAdd={addCharacter}
             onDelete={deleteCharacter}
             onRename={renameCharacter}

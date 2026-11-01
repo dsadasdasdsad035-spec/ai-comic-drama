@@ -4,6 +4,8 @@ import NewProjectDialog from './NewProjectDialog'
 import ProjectManagerDialog from './ProjectManagerDialog'
 
 type Props = {
+  /** 顶栏当前项目名，供管理弹窗编辑制作参数 */
+  currentProjectName?: string
   /** 新建成功：父级刷新列表并切换项目 */
   onCreated: (name: string) => void | Promise<void>
   /** 删除成功：父级刷新列表并处理上下文回退 */
@@ -15,7 +17,7 @@ type Props = {
  * 因此不受 WorkbenchBar 的窄密度折叠影响。
  * 弹层沿用 EpPicker 的规则：点击外部 / Esc / 窗口变化都关闭并归还焦点。
  */
-export default function ProjectMenu({ onCreated, onDeleted }: Props) {
+export default function ProjectMenu({ currentProjectName = '', onCreated, onDeleted }: Props) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ left: 0, top: 0 })
   const [creating, setCreating] = useState(false)
@@ -130,6 +132,7 @@ export default function ProjectMenu({ onCreated, onDeleted }: Props) {
       {managing && (
         <ProjectManagerDialog
           variant="dialog"
+          currentProjectName={currentProjectName}
           onClose={() => setManaging(false)}
           onDeleted={async (names) => {
             await onDeleted(names)

@@ -11,6 +11,13 @@ export type CharacterExpression = {
   stale?: boolean
 }
 
+/**
+ * 角色参考图上限。
+ * 生成三视图时 refImage 已占一张，参考图过多会让模型在「多个人」之间摇摆；
+ * 4 张足以覆盖正脸、侧脸、全身、表情。
+ */
+export const REFERENCE_LIMIT = 4
+
 /** 总图固定 4 列 × 2 行；格子坐标用 0..1 归一化，按实际图片尺寸换算。 */
 export const EXPRESSION_SHEET_COLUMNS = 4 as const
 export const EXPRESSION_SHEET_ROWS = 2 as const

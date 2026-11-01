@@ -2,7 +2,7 @@
 name: script-intake
 description: 把用户已经写好的剧本文本整理成分集结构，只做结构切分不做改写
 stage: script
-runtime: json-tools
+runtime: tools
 tools: []
 inputs: [raw, epCount, targetSeconds, style]
 output: script-v1

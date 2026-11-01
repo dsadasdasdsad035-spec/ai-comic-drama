@@ -14,11 +14,9 @@ import {
 } from '@assistant-ui/react'
 import type { AppSettings } from '../api'
 import type { StagePick } from '../ModelSelect'
-import { resolveStageModel } from '../ModelSelect'
-import { resolveToolProtocol } from './toolCapabilities'
 import type { SceneCodeCheck } from '../sceneCodeSanitize'
 import type { PreparedCodeContext } from '../sceneCodePrepare'
-import { runSceneAgent, resolveSceneAgentEngine } from './sceneAgentGraph'
+import { runSceneAgent, sceneAgentCapability } from './sceneAgentGraph'
 import { manifestSummary, manifestText, type ContextManifest } from '../contextManifest'
 import { AgentBlenderSession } from './agentSandbox'
 import { applyAgentEvent } from './agentMessageReducer'
@@ -37,14 +35,15 @@ import {
   type AgentVideoReviewPart,
   type SceneAgentDeps,
 } from './sceneAgentTypes'
-import { ChatContextTray } from '@/chat-ui/ChatContextTray'
 import { ChatContextInspector } from '@/chat-ui/ChatContextInspector'
 import { ChatContextPart } from '@/chat-ui/ChatContextPart'
+import { SCENE_CODE_LIMITS } from '../types'
 import { ChatText } from '@/chat-ui/ChatText'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
 import { DraftPart, DraftTool } from '@/chat-ui/tools/DraftTools'
 import { sceneDraftClient } from '../sceneDraft'
 import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
+import type { ChatAttachment } from './chatAttachments'
 import { loadChatThread, saveChatThread } from './threads'
 import { getSkill } from '../skills/registry'
 import { buildSkillPrompt } from '../skills/render'
@@ -265,6 +264,12 @@ type Props = {
   onRemoveAttachment: (key: string) => void
   onToggleBrief?: (key: string) => void
   onClearAttachments?: () => void
+  /** 上传一张本地图片并写进镜头上下文（宿主负责落盘 + 刷新 media + 写 context） */
+  onUploadImage?: (file: File) => Promise<void> | void
+  /** 从项目素材里选一条并写进镜头上下文 */
+  onPickMedia?: () => void
+  picking?: boolean
+  uploading?: boolean
   prepareAgent: () => Promise<PreparedCodeContext>
   onDraftCode: (code: string, check: SceneCodeCheck, prepared: PreparedCodeContext) => Promise<void> | void
   onVideoAccepted: (input: AgentVideoAcceptedInput) => Promise<void>
@@ -287,6 +292,10 @@ export default function SceneAgentChat({
   onRemoveAttachment,
   onToggleBrief,
   onClearAttachments,
+  onUploadImage,
+  onPickMedia,
+  picking,
+  uploading,
   prepareAgent,
   onDraftCode,
   onVideoAccepted,
@@ -311,28 +320,8 @@ export default function SceneAgentChat({
   const videoSessionsRef = useRef<Map<string, VideoSession>>(new Map())
   const draftIdRef = useRef<string | null>(null)
   const requirementsList = requirements?.length ? requirements : undefined
-  // 当前环节模型与协议：只做展示，实际选择在 runSceneAgent 里用同一套能力表
-  const protocol = (() => {
-    const entry = resolveStageModel(settings, 'sceneCode', stagePick).entry
-    const provider = entry ? settings?.providers.find((p) => p.id === entry.provider) : undefined
-    return resolveToolProtocol(settings?.agentToolProtocol, provider?.id, entry?.model)
-  })()
-  const protocolLabel = protocol.error
-    ? '原生（当前模型不支持，运行会报错）'
-    : protocol.protocol === 'native'
-      ? '原生 tool calls'
-      : protocol.reason === 'auto-json'
-        ? 'JSON action（模型未声明支持，自动回退）'
-        : 'JSON action'
-  // 引擎只做展示；实际选择在 runSceneAgent 里用同一套判断。
-  const engineLabel = (() => {
-    try {
-      const pick = resolveSceneAgentEngine({ settings, stagePick })
-      return pick.fallbackReason ? `${pick.engine}（已回退）` : pick.engine
-    } catch {
-      return 'langgraph（配置不可用）'
-    }
-  })()
+  const capability = sceneAgentCapability({ settings, stagePick })
+  const protocolLabel = capability.available ? '原生 tool calls' : '未绑定 3D 代码模型'
   const [threadLoaded, setThreadLoaded] = useState(false)
   const [sceneSkillMeta, setSceneSkillMeta] = useState<{
     id: string
@@ -345,6 +334,8 @@ export default function SceneAgentChat({
   const metaRef = useRef(sceneSkillMeta)
   metaRef.current = sceneSkillMeta
   const userStartedRef = useRef(false)
+  /** 附件条的上传入口：真正的落盘与写 context 由宿主负责 */
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
 
   // 打开工作台时恢复该镜头的线程；运行中的旧消息标记取消，不自动重跑。
   useEffect(() => {
@@ -867,14 +858,32 @@ export default function SceneAgentChat({
     }
   }, [])
 
+  /**
+   * manifest 是镜头上下文的唯一投影：这里只做类型映射，不做取舍。
+   * 文本项也带进附件条，因为用户需要看到「这次会发什么」并能逐项移除。
+   */
+  const manifestAttachments: ChatAttachment[] = manifest.attachments.map((a) => {
+    if (a.kind === 'image') {
+      return { key: a.key, kind: 'image' as const, label: a.label, url: a.url, manifestKey: a.key }
+    }
+    if (a.kind === 'video') {
+      return { key: a.key, kind: 'video' as const, label: a.label, url: a.url, manifestKey: a.key }
+    }
+    return { key: a.key, kind: 'text' as const, label: a.label, text: a.text, manifestKey: a.key }
+  })
+  const briefOffSet = new Set(
+    manifest.attachments.filter((a) => a.kind !== 'text' && !a.includeBrief).map((a) => a.key),
+  )
+
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
     isRunning: running,
     onNew: async (message) => {
-      const text = appendText(message)
-      if (!text) return
-      await run(text)
+      const typed = appendText(message)
+      // 3D 的附件是镜头上下文，本来就已随本轮发送；没有文字时仍需要一句话才能发起
+      if (!typed && !manifestAttachments.length) return
+      await run(typed || '（见当前镜头附件）')
     },
     onCancel: async () => cancel(),
   })
@@ -892,6 +901,7 @@ export default function SceneAgentChat({
         <ChatThreadShell
           runtime={runtime}
           running={running}
+          scope="scene3d"
           toolUis={
             <>
               <RunSandboxUI />
@@ -917,17 +927,6 @@ export default function SceneAgentChat({
           <div className="scene-skill-chip" data-tool-protocol>
             工具协议：{protocolLabel}
           </div>
-          <div className="scene-skill-chip" data-agent-engine>
-            引擎：{engineLabel}
-          </div>
-          <ChatContextTray
-            manifest={manifest}
-            onRemove={onRemoveAttachment}
-            {...(onToggleBrief ? { onToggleBrief } : {})}
-            {...(onClearAttachments ? { onClear: onClearAttachments } : {})}
-            onInspect={() => setInspectorOpen((v) => !v)}
-            inspecting={inspectorOpen}
-          />
             {inspectorOpen && (
               <ChatContextInspector
                 manifest={manifest}
@@ -944,7 +943,69 @@ export default function SceneAgentChat({
             placeholder="例如：生成山、男女双剑对打、环绕镜头…"
             inputLabel="3D agent 聊天输入"
             disabled={!sceneSkill}
+            hint="Enter 发送 · Shift+Enter 换行"
+            attachments={{
+              items: manifestAttachments,
+              // 3D 的上限由镜头上下文的素材预算决定（图片 16 / 视频 4），
+              // 这里只做展示上限，不让附件条把整份上下文渲染成一面墙
+              limit: SCENE_CODE_LIMITS.images + SCENE_CODE_LIMITS.videos,
+              locked: running,
+              onRemove: onRemoveAttachment,
+              ...(onClearAttachments ? { onClear: onClearAttachments } : {}),
+              ...(onUploadImage ? { onUpload: () => uploadInputRef.current?.click() } : {}),
+              ...(uploading ? { uploadBusy: true } : {}),
+              ...(onPickMedia ? { onPick: onPickMedia } : {}),
+              ...(picking ? { picking: true } : {}),
+              hint: '这里是当前镜头会发给模型的全部参考；上传与从素材选都会写回镜头上下文',
+              extra: onToggleBrief
+                ? (item) => {
+                    if (item.kind === 'text') return null
+                    const on = !briefOffSet.has(item.manifestKey || item.key)
+                    return (
+                      <button
+                        type="button"
+                        className={`ca-brief ${on ? 'on' : 'off'}`}
+                        title={on ? '排除这份媒体 brief' : '恢复这份媒体 brief'}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onToggleBrief(item.manifestKey || item.key)
+                        }}
+                        data-ca-brief
+                      >
+                        brief
+                      </button>
+                    )
+                  }
+                : undefined,
+              actions: (
+                <button
+                  type="button"
+                  className="ca-link"
+                  onClick={() => setInspectorOpen((v) => !v)}
+                  data-ca-inspect
+                >
+                  {inspectorOpen ? '收起' : '查看将发送'}
+                </button>
+              ),
+              // 空输入时库不允许发送；3D 的附件是镜头上下文，允许直接以它发起一轮
+              ...(manifestAttachments.length
+                ? { onSendAttachmentsOnly: () => void run('（见当前镜头附件）') }
+                : {}),
+            }}
           />
+          {onUploadImage ? (
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) void onUploadImage(f)
+                e.target.value = ''
+              }}
+            />
+          ) : null}
         </ChatThreadShell>
       </AgentUiContext.Provider>
     </VideoUiContext.Provider>

@@ -2,12 +2,12 @@
 name: character
 description: 从剧本场次与分镜中提取需要出镜的具名角色，产出可直接生图的外观锚点
 stage: character
-runtime: json-tools
+runtime: tools
 tools: [read_script, read_characters, submit_characters]
-inputs: [scopeLabel, sceneText, shotBlock]
+inputs: [scopeLabel, sceneText, shotBlock, referenceDigest]
 output: characters-v1
 contracts: [characters-v1]
-version: 2
+version: 3
 ---
 ## 角色与约束
 你是角色设定师，为 AI 生图做「外观锚点」，保证多镜头之间角色长相一致。
@@ -48,4 +48,16 @@ version: 2
 
 {{input:sceneText}}{{input:shotBlock}}
 
-要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。
+{{input:referenceDigest}}要求：找出所有需要出镜的具名角色（含只在台词里出现的说话人）。跑龙套同样并入具体角色，不要单列「路人」；每个角色给出可直接生图的外观锚点。
+
+【有参考图外观要点时】
+1. 图片是外观的第一依据：发型发色、服装、配饰、体型、眼睛颜色都按要点写，不要用剧本里的文字覆盖图上看见的。
+2. 文字只补图上判断不出的部分（年龄区间、身份、职业感），不要重复图上已经明确的内容。
+3. 要点里写了「图与文字冲突」的，以图为准，并在该角色的说明里点出这一处不一致。
+4. 要点里出现「未看图」时，说明这次没有图片输入，按文字锚点写，不要假装描述过图片。
+5. 只给要点里出现的角色写图依据；要点没提到的角色按文字写。
+
+【已有角色要不要覆盖】
+- 默认不覆盖：项目里已有同名角色且已有 look_en 时，跳过它（保留用户原有的锚点）。
+- 只有当用户明确要求修改某个已有角色（例如「按这张改陈默的外观」「更新陈默的长相」）时，才在该角色条目上加 `"update": true`，系统才会覆盖它的锚点。
+- 新建角色、或不确定是否要改已有角色时，不要带 update。

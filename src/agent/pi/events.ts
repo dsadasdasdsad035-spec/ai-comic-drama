@@ -32,7 +32,7 @@ export type PiEventBridge = {
 /**
  * pi 事件 → 项目 AgentEvent。
  *
- * 三类事件与 LangGraph 引擎保持一致：步骤生命周期、文本生命周期、工具生命周期。
+ * 三类事件：步骤生命周期、文本生命周期、工具生命周期。
  * thinking_* 一律丢弃，不把隐藏推理带进 UI 或线程记录。
  */
 export function createPiEventBridge(): PiEventBridge {

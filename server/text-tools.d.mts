@@ -2,9 +2,13 @@ export declare const MAX_TOOL_MESSAGES: number
 export declare const MAX_TOOLS: number
 
 export type ProviderToolCall = { id: string; name: string; arguments: string }
+export type ProviderContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string; label?: string }
+
 export type ProviderChatMessage = {
   role: string
-  content: string
+  content: string | ProviderContentPart[]
   tool_calls?: unknown[]
   tool_call_id?: string
   name?: string
@@ -23,3 +27,7 @@ export declare function toolRequestError(input: {
   model?: string
   supported: boolean
 }): string
+export declare function assertChatToolsObjectParameters(
+  tools: unknown,
+  opts?: { providerId?: string; providerKind?: string },
+): void

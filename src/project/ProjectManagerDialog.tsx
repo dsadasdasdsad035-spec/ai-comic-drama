@@ -7,10 +7,13 @@ import {
   type ProjectDeleteResult,
   type ProjectSummary,
 } from '../api'
+import ProjectProductionPanel from './ProjectProductionPanel'
 
 type Props = {
   /** 常驻面板（设置页）或弹窗（全局带） */
   variant: 'dialog' | 'inline'
+  /** 顶栏当前项目：用于制作参数编辑 */
+  currentProjectName?: string
   onClose?: () => void
   /** 删除成功后通知父级刷新项目列表与全局上下文 */
   onDeleted: (names: string[]) => void | Promise<void>
@@ -50,7 +53,7 @@ function fmtTime(iso?: string) {
  * 项目管理：列表、搜索、单项/批量删除。
  * 删除前先按项目取预览，确认层显示真实影响；活动发布任务由服务端 409 拦截。
  */
-export default function ProjectManagerDialog({ variant, onClose, onDeleted }: Props) {
+export default function ProjectManagerDialog({ variant, onClose, onDeleted, currentProjectName = '' }: Props) {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [root, setRoot] = useState('')
   const [loading, setLoading] = useState(true)
@@ -182,6 +185,11 @@ export default function ProjectManagerDialog({ variant, onClose, onDeleted }: Pr
 
   const body = (
     <>
+      {currentProjectName ? (
+        <ProjectProductionPanel projectName={currentProjectName} />
+      ) : (
+        <p className="st-hint">在顶栏选择项目后，可在此编辑画风与画幅。</p>
+      )}
       <div className="proj-manager-toolbar">
         <input
           className="proj-manager-search"

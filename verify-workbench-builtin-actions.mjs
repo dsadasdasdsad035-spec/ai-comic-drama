@@ -297,73 +297,15 @@ try {
   const cardTexts = async (attr) =>
     page.locator(`[data-${attr}-chat] [data-chat-tool="builtin_action"]`).allInnerTexts()
 
-  // 镜头表：空态动作、禁用原因、执行、按钮一致性
+  // 镜头表：chat-first，无页内梗概/拆镜与内置拆镜
   await openView('镜头表', 'shots')
-  const shotEmpty = await page.locator('[data-shots-chat] [data-chat-builtins]').innerText()
-  check('镜头表空态有拆镜', shotEmpty.includes('拆镜'), shotEmpty.replace(/\n/g, ' | '))
-  const brief = page.getByPlaceholder(/本集内容/)
-  const briefValue = await brief.inputValue()
-  await brief.fill('')
-  await page.waitForTimeout(200)
-  const disabledBtn = page.locator('[data-shots-chat] [data-chat-builtins] button', { hasText: '拆镜' })
-  check('缺少 brief 时动作禁用', await disabledBtn.isDisabled())
-  check(
-    '禁用原因可读',
-    String(await disabledBtn.getAttribute('title')).includes('先写本集内容'),
-    String(await disabledBtn.getAttribute('title')),
-  )
-  await brief.fill(briefValue)
-  await page.waitForTimeout(200)
-  const longBrief = '过渡镜头内容。'.repeat(400)
-  await brief.fill(longBrief)
-  await page.waitForTimeout(200)
-
-  active = 'shot'
-  await runAction('shots', '拆镜')
-  await waitReceipt('shots')
-  const shotCards = await cardTexts('shots')
-  check('镜头聊天动作生成回执', shotCards.some((t) => t.includes('拆出 6 镜')), shotCards.join(' / '))
-  check(
-    '大 brief 完整 inline 发送',
-    String(lastTextBody?.prompt || '').includes('过渡镜头内容') &&
-      String(lastTextBody?.prompt || '').length > 2500,
-    `prompt ${String(lastTextBody?.prompt || '').length} 字`,
-  )
-  check('镜头表结果 6 镜', (await page.locator('table.wb-table tbody tr').count()) === 6)
-  check('首轮后头部仍有内置动作入口', (await page.locator('[data-shots-chat] select[aria-label="运行内置动作"]').count()) === 1)
-
-  // 顶部按钮走同一宿主，不新增聊天回执
-  await page.getByRole('button', { name: '拆镜', exact: true }).click()
-  await page.waitForTimeout(900)
-  check('顶部按钮结果一致', (await page.locator('table.wb-table tbody tr').count()) === 6)
-  check('顶部按钮不新增聊天回执', (await cardTexts('shots')).length === 1)
-  await page.getByRole('button', { name: '保存到 project.json', exact: true }).click()
-  await page.waitForTimeout(700)
-  const savedShots = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.shots
-  check('镜头动作结果可保存', (savedShots || []).length === 6)
+  check('无页内梗概条', (await page.locator('.wb-gen').count()) === 0)
+  check('主区无拆镜按钮', (await page.getByRole('button', { name: '拆镜', exact: true }).count()) === 0)
+  check('镜头表无内置拆镜键', lib.WORKBENCH_BUILTIN_KEYS.shots.length === 0)
+  const shotChatEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
+  check('空态指向 Agent', /Agent|拆镜|镜头/.test(shotChatEmpty), shotChatEmpty.replace(/\n/g, ' ').slice(0, 120))
+  check('Agent 面板默认可见', await page.locator('[data-shots-chat]').isVisible())
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-shots.png') })
-
-  // 取消：运行中禁用发送/顶部按钮，取消后草稿不变
-  delayMs = 4000
-  await page.locator('[data-shots-chat] select[aria-label="运行内置动作"]').selectOption('split_shots')
-  const shotStop = page.locator('[data-shots-chat] button', { hasText: '停止 拆镜' })
-  await shotStop.waitFor({ timeout: 5000 })
-  check('动作运行中顶部按钮禁用', await page.locator('.wb-genbtn').isDisabled())
-  check('动作运行中聊天输入禁用', await page.getByLabel('shots 技能聊天输入').isDisabled())
-  await shotStop.click()
-  await page.waitForTimeout(900)
-  const cancelledCard = (await cardTexts('shots')).at(-1) || ''
-  check('取消回执显示已取消', cancelledCard.includes('已取消'), cancelledCard.slice(0, 160))
-  check('取消后镜头草稿不变', (await page.locator('table.wb-table tbody tr').count()) === 6)
-  delayMs = 0
-
-  // 线程持久化：刷新后回执仍在
-  await page.waitForTimeout(900)
-  await openView('镜头表', 'shots')
-  await page.waitForTimeout(1200)
-  const restored = await cardTexts('shots')
-  check('刷新后回执仍在', restored.length >= 2, `cards=${restored.length}`)
-  check('刷新后保留动作摘要', restored.some((t) => t.includes('拆出 6 镜')), restored.join(' / ').slice(0, 200))
 
   // 剧本
   await openView('剧本', 'script')
@@ -373,9 +315,6 @@ try {
   check('剧本动作回执', (await cardTexts('script')).some((t) => t.includes('生成 2 集')))
   check('剧本草稿替换为 2 集', (await page.locator('.sb-ep').count()) === 2)
   check('剧本回执标明全剧', (await cardTexts('script')).some((t) => t.includes('全剧')))
-  await page.getByRole('button', { name: /重新生成分集|生成分集/ }).first().click()
-  await page.waitForTimeout(700)
-  check('剧本顶部按钮结果一致', (await page.locator('.sb-ep').count()) === 2)
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await page.waitForTimeout(700)
   const savedScript = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project
@@ -481,26 +420,19 @@ try {
       shots: [{ ...shots[0], desc: 'B 项目镜头', keyframe_prompt: '', video_prompt: '' }],
     }),
   })
-  projectVariant = 'B'
-  active = 'shot'
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
   await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
   await page.locator('.topbar-project select').selectOption(NAME_B)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.locator('[data-shots-chat]').waitFor({ timeout: 15000 })
-  await page.getByLabel('shots 技能聊天输入').waitFor({ timeout: 15000 })
   await page.waitForTimeout(900)
-  await runAction('shots', '拆镜')
-  await waitReceipt('shots')
-  check('B 项目动作回执', (await cardTexts('shots')).some((t) => t.includes('拆出 2 镜')))
+  check('B 项目镜头表数据', (await page.locator('.wb-table').innerText()).includes('B 项目镜头'))
   await page.locator('.topbar-project select').selectOption(NAME)
   await page.waitForTimeout(1800)
-  const aCards = await cardTexts('shots')
-  check(
-    '切换项目不串回执',
-    aCards.some((t) => t.includes('拆出 6 镜')) && !aCards.some((t) => t.includes('拆出 2 镜')),
-    aCards.join(' / ').slice(0, 200),
-  )
+  await page.getByRole('button', { name: '镜头表', exact: true }).click()
+  await page.waitForTimeout(900)
+  const aTable = await page.locator('.wb-table').innerText()
+  check('切换回 A 不串 B 镜头', aTable.includes('回收人') && !aTable.includes('B 项目镜头 2'), aTable.slice(0, 120))
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-isolation.png') })
 
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))

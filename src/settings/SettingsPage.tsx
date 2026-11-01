@@ -40,12 +40,7 @@ import {
   type CreativeSettings,
 } from '../creative/settings'
 import { listCreativeAdapters, type AdapterInfo } from '../creative/mediaApi'
-import { findToolCapability, normalizeToolProtocol, type ToolProtocol } from '../agent/toolCapabilities'
-import {
-  DEFAULT_SCENE_AGENT_ENGINE,
-  normalizeSceneAgentEngine,
-  type SceneAgentEngine,
-} from '../agent/sceneAgentEngine'
+import { findToolCapability } from '../agent/toolCapabilities'
 import { resolveStageModel, stageModelEntries, textModelEntries } from '../ModelSelect'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from '../pricing'
 import CatalogDialog, { type CatalogEntry } from './CatalogDialog'
@@ -57,6 +52,8 @@ import ProjectManagerDialog from '../project/ProjectManagerDialog'
 type Props = {
   toast: (m: string) => void
   onSaved?: () => void
+  /** 顶栏当前项目，供制作参数编辑 */
+  currentProjectName?: string
   /** 项目删除成功：父级刷新项目列表与全局上下文 */
   onProjectsDeleted?: (names: string[]) => void | Promise<void>
 }
@@ -139,6 +136,7 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'sceneCode', label: '3D 代码（生成/聊天）', hint: '参考内容 → Blender Python 代码；空则沿用文本默认' },
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
   { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
+  { stage: 'creative', label: '创意（对话助手）', hint: '创意工作室聊天主循环；空则沿用文本默认' },
   { stage: 'publish', label: '发布（发布助手）', hint: '发布台聊天助手；空则沿用文本默认' },
 ]
 
@@ -269,8 +267,6 @@ function cleanHash(input: {
   stageModels: Partial<Record<Stage, string>>
   pricing: Pricing
   agentLimits: Required<AgentLimitSettings>
-  agentToolProtocol: ToolProtocol
-  agentEngine: SceneAgentEngine
   creative?: CreativeSettings
   stock?: StockSettings
   lipSync: LipSyncSettings
@@ -294,15 +290,13 @@ function providerKeyPlaceholder(kind: ProviderKind): string {
   return '留空 = 沿用 .env 的 OPENAI_API_KEY'
 }
 
-export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Props) {
+export default function SettingsPage({ toast, onSaved, onProjectsDeleted, currentProjectName = '' }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
   const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
-  const [agentToolProtocol, setAgentToolProtocol] = useState<ToolProtocol>('auto')
-  const [agentEngine, setAgentEngine] = useState<SceneAgentEngine>(() => normalizeSceneAgentEngine(undefined))
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
   const [stock, setStock] = useState<StockSettings>({ providers: {} })
   const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
@@ -343,8 +337,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
     stageModels,
     pricing,
     agentLimits,
-    agentToolProtocol,
-    agentEngine,
     creative,
     stock,
     lipSync,
@@ -384,8 +376,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
         setStageModels(s.stageModels || {})
         setPricing(normalizePricing(s.pricing))
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
-        setAgentToolProtocol(normalizeToolProtocol(s.agentToolProtocol))
-        setAgentEngine(normalizeSceneAgentEngine(s.agentEngine))
         setCreative(normalizeCreativeSettings(s.creative))
         setStock({ providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } })
         setLipSync(normalizeLipSyncSettings(s.lipSync))
@@ -402,8 +392,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
             stageModels: s.stageModels || {},
             pricing: normalizePricing(s.pricing),
             agentLimits: normalizeAgentLimits(s.agentLimits),
-            agentToolProtocol: normalizeToolProtocol(s.agentToolProtocol),
-            agentEngine: normalizeSceneAgentEngine(s.agentEngine),
             creative: normalizeCreativeSettings(s.creative),
             stock: { providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } },
             lipSync: normalizeLipSyncSettings(s.lipSync),
@@ -495,8 +483,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
         stageModels,
         pricing,
         agentLimits,
-        agentToolProtocol,
-        agentEngine,
         creative,
         stock,
         lipSync,
@@ -511,8 +497,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
         stageModels: saved.stageModels || stageModels,
         pricing: normalizePricing(saved.pricing),
         agentLimits: normalizeAgentLimits(saved.agentLimits),
-        agentToolProtocol: normalizeToolProtocol(saved.agentToolProtocol),
-        agentEngine: normalizeSceneAgentEngine(saved.agentEngine),
         creative: normalizeCreativeSettings(saved.creative),
         stock: { providers: { ...((saved.stock?.providers || {}) as StockSettings['providers']) } },
         lipSync: normalizeLipSyncSettings(saved.lipSync),
@@ -526,8 +510,6 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
       setStageModels(next.stageModels)
       setPricing(next.pricing)
       setAgentLimits(next.agentLimits)
-      setAgentToolProtocol(next.agentToolProtocol)
-      setAgentEngine(next.agentEngine)
       setCreative(next.creative as CreativeSettings)
       setStock(next.stock)
       setLipSync(next.lipSync)
@@ -738,22 +720,11 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
         sceneResolution.entry.model,
       )
     : undefined
-  const sceneEngineText = !sceneResolution.entry
-    ? '未配置 3D 代码模型，运行时无法选择引擎'
-    : sceneCapability?.nativeTools
-      ? agentEngine === 'pi'
-        ? '当前模型支持原生工具调用，将使用 pi 引擎'
-        : '当前模型支持原生工具调用，但已选择 LangGraph 引擎'
-      : agentEngine === 'pi'
-        ? '当前模型未声明原生工具调用，运行时会自动回退 LangGraph'
-        : '当前模型未声明原生工具调用，将与 LangGraph 的 JSON action 回退配合'
   const sceneCapabilityText = !sceneResolution.entry
     ? '未配置 3D 代码模型'
     : sceneCapability?.nativeTools
       ? `当前 ${sceneResolution.entry.label} · 支持原生工具调用（thinking ${sceneCapability.thinking === 'disable' ? '关闭' : '不设置'}）`
-      : `当前 ${sceneResolution.entry.label} · 未声明支持原生工具调用${
-          agentToolProtocol === 'native' ? '；显式 native 会报错' : '，auto 将使用 JSON'
-        }`
+      : `当前 ${sceneResolution.entry.label} · 未验证，聊天不可用`
 
   const missingKeys = providers.filter((p) => p.keyAvailable === false)
   const billing = providers.filter((p) => tested[p.id] && !tested[p.id].ok && tested[p.id].kind === 'billing')
@@ -1223,29 +1194,8 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
           <em>默认 {AGENT_LIMIT_DEFAULTS.totalSeconds} 秒；范围 {AGENT_LIMIT_RANGES.totalSeconds.min}–{AGENT_LIMIT_RANGES.totalSeconds.max}</em>
         </label>
         <label className="st-field">
-          <span>执行引擎</span>
-          <select
-            value={agentEngine}
-            onChange={(e) => setAgentEngine(normalizeSceneAgentEngine(e.target.value))}
-          >
-            <option value="pi">pi（默认）：能力表内模型自动启用</option>
-            <option value="langgraph">LangGraph：含 JSON action 回退</option>
-          </select>
-          <em>
-            默认 {DEFAULT_SCENE_AGENT_ENGINE}；{sceneEngineText}
-          </em>
-        </label>
-        <label className="st-field">
-          <span>工具协议</span>
-          <select
-            value={agentToolProtocol}
-            onChange={(e) => setAgentToolProtocol(normalizeToolProtocol(e.target.value))}
-          >
-            <option value="auto">自动：模型支持就用原生</option>
-            <option value="native">原生 tool calls</option>
-            <option value="json">JSON action（兼容 / 回退）</option>
-          </select>
-          <em>{sceneCapabilityText}</em>
+          <span>聊天工具能力</span>
+          <em data-agent-capability>{sceneCapabilityText}</em>
         </label>
       </div>
       <h4 className="st-subhead">兼容字段</h4>
@@ -2046,6 +1996,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted }: Prop
       </p>
       <ProjectManagerDialog
         variant="inline"
+        currentProjectName={currentProjectName}
         onDeleted={async (names) => {
           await onProjectsDeleted?.(names)
           toast(names.length === 1 ? `已删除项目 ${names[0]}` : `已删除 ${names.length} 个项目`)

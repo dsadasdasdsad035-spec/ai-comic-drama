@@ -5,7 +5,7 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
-import { generateImage, generateVoice, saveSettings, startVideo, waitVideo, type AppSettings } from '../api'
+import { generateImage, generateVoice, saveSettings, startVideo, waitVideo, type AppSettings, type Stage } from '../api'
 import { stageModelKey, type StagePick } from '../ModelSelect'
 import { buildSkillPrompt } from '../skills/render'
 import { loadSkills } from '../skills/registry'
@@ -16,7 +16,7 @@ import { ChatStep } from '@/chat-ui/ChatStep'
 import { ChatThreadBody, ChatThreadShell } from '../agent/ChatThreadShell'
 import { CreativeToolUis } from './CreativeToolUis'
 import { useAgentMessages } from '../agent/useAgentMessages'
-import { runStageAgent } from '../agent/stageAgentGraph'
+import { runStageAgent } from '../agent/pi/stageRunner'
 import { threadTranscript } from '../agent/threads'
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import { CreativeSessionList } from './CreativeSessionList'
@@ -177,6 +177,7 @@ const MODE_HINT: Record<CreativeMode, string> = {
 export type CreativeStudioProps = {
   settings: AppSettings | null
   stagePick?: StagePick
+  onPickStage?: (stage: Stage, key: string) => void
   onToast?: (message: string) => void
   onProjectDataChanged?: () => void
 }
@@ -187,7 +188,13 @@ export type CreativeStudioProps = {
  * 与 SkillChat 的关键差别：没有宿主草稿、没有 submit_* 合并语义，
  * 工具集自带媒体摄取与付费闸门；会话可以没有项目。
  */
-export default function CreativeStudio({ settings, stagePick, onToast, onProjectDataChanged }: CreativeStudioProps) {
+export default function CreativeStudio({
+  settings,
+  stagePick,
+  onPickStage,
+  onToast,
+  onProjectDataChanged,
+}: CreativeStudioProps) {
   const { messages, setMessages, running, setRunning, abortRef, begin, updateEvent, patchAssistant } = useAgentMessages()
 
   const [sessions, setSessions] = useState<CreativeSession[]>([])
@@ -690,20 +697,10 @@ export default function CreativeStudio({ settings, stagePick, onToast, onProject
             mode={mode}
             onModeChange={(m) => void changeMode(m)}
             sessionTitle={session?.title || ''}
+            settings={settings}
+            stagePick={stagePick}
+            onPickStage={onPickStage}
             modelKey={modelKey}
-            modelLabel={
-              modelKey
-                ? (() => {
-                    const m = settings?.models?.find((x) => x.key === modelKey)
-                    return m ? `${m.label} · ${m.model}` : modelKey
-                  })()
-                : '未绑定文本模型'
-            }
-            modelShort={
-              modelKey
-                ? settings?.models?.find((x) => x.key === modelKey)?.model || modelKey
-                : '未绑定文本模型'
-            }
             skillId={hostSkill?.id || MODE_SKILL[mode]}
             skillError={skillError}
             running={running}
@@ -784,18 +781,20 @@ export default function CreativeStudio({ settings, stagePick, onToast, onProject
                           : skillError || '正在准备会话…'
                       }
                       cancelLabel="停止"
+                      composerTop={
+                        mode !== 'plan' ? (
+                          <CreativeComposerBar
+                            session={session}
+                            busy={busyAction}
+                            disabled={running || !session}
+                            onUrl={(url) => void ingest({ url })}
+                            onUpload={(data, name) => void ingest({ data, name })}
+                            onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
+                            onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}
+                          />
+                        ) : null
+                      }
                     />
-                    {mode !== 'plan' ? (
-                      <CreativeComposerBar
-                        session={session}
-                        busy={busyAction}
-                        disabled={running || !session}
-                        onUrl={(url) => void ingest({ url })}
-                        onUpload={(data, name) => void ingest({ data, name })}
-                        onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
-                        onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}
-                      />
-                    ) : null}
                   </div>
                   <CreativeArtifacts
                     session={session}

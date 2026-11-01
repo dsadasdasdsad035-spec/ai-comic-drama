@@ -200,9 +200,39 @@ export type VoiceResolution =
   | { ok: true; voice: string }
   | { ok: false; reason: string }
 
+/** 设置里解析音频模型键与渠道（避免 voiceCatalog ↔ api 循环依赖） */
+export type AudioModelSettings = {
+  defaults?: { audio?: string }
+  models?: Array<{ key: string; provider: string }>
+}
+
+export type CharacterAudioModelInput = {
+  voiceModelKey?: string
+}
+
+/** 角色绑定的配音模型键；未绑定时用设置页默认。 */
+export function resolveCharacterAudioModelKey(
+  character: CharacterAudioModelInput | undefined,
+  settings: AudioModelSettings | null | undefined,
+): string {
+  const fromChar = String(character?.voiceModelKey || '').trim()
+  if (fromChar) return fromChar
+  return String(settings?.defaults?.audio || '').trim()
+}
+
+export function providerIdForAudioModelKey(
+  settings: AudioModelSettings | null | undefined,
+  modelKey: string,
+): string {
+  const key = String(modelKey || '').trim()
+  if (!key) return ''
+  return settings?.models?.find((m) => m.key === key)?.provider || ''
+}
+
 /** 显式角色音色优先；只有没有显式音色时才用当前镜头/渠道默认。 */
 export function resolveVoiceForSpeaker(input: {
   character?: { voiceId?: string; voiceProvider?: string }
+  /** 该行说话角色绑定模型所属渠道（不是整片全局模型） */
   currentProviderId?: string
   fallbackVoice?: string
 }): VoiceResolution {
@@ -211,7 +241,7 @@ export function resolveVoiceForSpeaker(input: {
     if (input.character?.voiceProvider && input.currentProviderId && input.character.voiceProvider !== input.currentProviderId) {
       return {
         ok: false,
-        reason: `角色音色属于渠道 ${input.character.voiceProvider}，当前音频模型属于 ${input.currentProviderId}；请切换音频模型或改选音色`,
+        reason: `角色音色属于渠道 ${input.character.voiceProvider}，该角色配音模型属于 ${input.currentProviderId}；请在角色卡切换配音模型或改选音色`,
       }
     }
     return { ok: true, voice: explicit }

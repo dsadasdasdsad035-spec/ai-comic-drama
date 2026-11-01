@@ -215,7 +215,13 @@ const manifestContext = {
 const manifest = buildManifest({ context: manifestContext, catalog, shotNo: 'S01', duration: 3, aspect: '16:9' })
 const attachmentText = manifestText(manifest)
 check('manifest 只含显式附件', manifest.attachments.length === 3, JSON.stringify(manifest.attachments.map((a) => a.key)))
-check('manifest 元数据只有镜号/时长/画幅', manifest.shot.no === 'S01' && manifest.shot.duration === 3 && manifest.shot.aspect === '16:9')
+// 清单头已泛化为 scope：title 通用，shot 保留结构化镜头信息供 3D 消费
+check(
+  'manifest 元数据只有镜号/时长/画幅',
+  manifest.scope.shot.no === 'S01' && manifest.scope.shot.duration === 3 && manifest.scope.shot.aspect === '16:9',
+  JSON.stringify(manifest.scope),
+)
+check('manifest scope.title 供通用 UI 显示', manifest.scope.title === '镜头 S01 · 3.0s · 16:9', manifest.scope.title)
 check('manifest 文本含已选 prompt 与台词', attachmentText.includes('画面提示词：陈默站在门口') && attachmentText.includes('旁白：门开了'), attachmentText)
 check('manifest 文本不含未选内容', !attachmentText.includes('镜头推近') && !attachmentText.includes('中景') && !attachmentText.includes('冷光') && !attachmentText.includes('E01'), attachmentText)
 check('manifest 文本含素材稳定键', attachmentText.includes('key=image:u1') && attachmentText.includes('参考图'), attachmentText)

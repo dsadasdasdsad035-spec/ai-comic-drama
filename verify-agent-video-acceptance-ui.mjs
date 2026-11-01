@@ -80,9 +80,12 @@ await page.route('**/api/text', (route) => {
     contentType: 'application/json',
     body: JSON.stringify({
       ok: true,
-      json: { content: call ? '' : '已完成', tool_calls: call ? [call] : [] },
+      finishReason: call ? 'tool_calls' : 'stop',
+      toolCalls: call
+        ? [{ id: `call_${call.name}_${index}`, name: call.name, arguments: JSON.stringify(call.args) }]
+        : [],
       text: '',
-      model: 'video-ui-code',
+      model: 'MiniMax-M3',
       modelKey: 'video-ui-code',
       modelLabel: 'Video UI Code',
     }),
@@ -129,34 +132,21 @@ try {
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '生成到画布' }).click()
-  await page.waitForTimeout(1000)
-  await page.getByRole('button', { name: '画布', exact: true }).click()
-  await page.waitForTimeout(600)
-  const id = await page.evaluate((name) => {
-    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(name)}`) || '{}')
-    return (s.nodes || []).find((x) => x.data?.shotId === 'E01-S01')?.id
-  }, NAME)
-  check('镜头进入画布', Boolean(id), String(id))
-  await page.evaluate((nid) => {
-    const el = document.querySelector(`[data-id="${nid}"]`)
-    const o = { bubbles: true, button: 0, view: window }
-    for (const t of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, o))
-  }, id)
-  await page.waitForTimeout(300)
-  await page.locator(`[data-id="${id}"]`).dispatchEvent('contextmenu', { clientX: 700, clientY: 420, button: 2 })
-  await page.waitForTimeout(250)
-  await page.locator('.ctx-action', { hasText: '编辑 3D 调度' }).click()
+  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  await page.waitForTimeout(1200)
+  // 3D 调度入口在提示词工作台：点该镜所在行的「打开」。
+  await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
   await page.locator('.cw-shell').waitFor({ timeout: 15000 })
-  const input = page.locator('[data-chat-input]')
+  const input = page.locator('[data-chat-scope="scene3d"] [data-chat-input]')
   await input.waitFor({ timeout: 10000 })
   await input.fill('运行当前场景，不要重新生成代码')
-  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
   await page.waitForFunction(
-    () => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false',
+    () => document.querySelector('[data-chat-scope="scene3d"]')?.getAttribute('data-running') === 'false',
     null,
     { timeout: 240000 },
   )
-  panel = await page.locator('[data-chat-root]').innerText()
+  panel = await page.locator('[data-chat-scope="scene3d"]').innerText()
   check('finish 显示代码阶段完成', panel.includes('代码阶段完成'), panel.slice(-1000))
   check('视频阶段已启动', panel.includes('开始 MP4 视频验收'), panel.slice(-1000))
   check('聊天出现 MP4 卡片', (await page.locator('[data-chat-video]').count()) === 1)
@@ -191,7 +181,7 @@ try {
     await page.waitForTimeout(1500)
     const adopted = await api(`/api/project?name=${encodeURIComponent(NAME)}`)
     const adoptedShot = adopted?.project?.shots?.find((s) => s.id === 'E01-S01') || null
-    const adoptedPanel = await page.locator('[data-chat-root]').innerText()
+    const adoptedPanel = await page.locator('[data-chat-scope="scene3d"]').innerText()
     check('人工采用后写入项目视频', adoptedShot?.schedule_video === videoUrl, `${adoptedShot?.schedule_video || ''} vs ${videoUrl}`)
     check('人工采用后代码哈希一致', adoptedShot?.scene_code?.codeHash === sha(FIXTURE), String(adoptedShot?.scene_code?.codeHash || '').slice(0, 12))
     check('人工采用后标记已保存', /已人工采用并保存|已保存/.test(adoptedPanel), adoptedPanel.slice(-900))
@@ -239,8 +229,17 @@ try {
   } else {
     check('视频验收通过', videoStatus === 'passed', String(videoStatus))
     check('MP4 帧验收通过', (await page.locator('[data-chat-video-review]').getAttribute('data-status')) === 'passed')
+    // 视频验收在 finish 之后异步完成；收尾文字会晚于上面的面板快照，重新取一次。
+    await page
+      .waitForFunction(
+        () => /MP4 帧验收.*通过/.test(document.querySelector('[data-chat-scope="scene3d"]')?.innerText || ''),
+        null,
+        { timeout: 60000 },
+      )
+      .catch(() => {})
+    panel = await page.locator('[data-chat-scope="scene3d"]').innerText()
     check('最终文字说明已保存', /MP4 帧验收.*通过/.test(panel) && panel.includes('已保存'), panel.slice(-800))
-    check('最终文字包含 MP4 地址', /\/videos\/schedule-/.test(panel))
+    check('最终文字包含 MP4 地址', /\/videos\/[\w.-]+\.mp4/.test(panel), panel.slice(-500))
     check('视频元数据代码哈希一致', shot?.scene_code_meta?.codeHash === shot?.scene_code?.codeHash, `${shot?.scene_code_meta?.codeHash || ''}`)
     check('视频地址与元数据一致', Boolean(shot?.schedule_video) && shot.schedule_video === videoUrl, `${shot?.schedule_video || ''} vs ${videoUrl}`)
     check('视频元数据时长正确', Number(shot?.scene_code_meta?.duration) === SECONDS, String(shot?.scene_code_meta?.duration))
@@ -291,16 +290,16 @@ try {
         ]
         index = 0
         visionCalls = 0
-        await page.locator('[data-chat-input]').fill('修改代码并重新验收')
-        await page.getByRole('button', { name: '发送', exact: true }).click()
+        await page.locator('[data-chat-scope="scene3d"] [data-chat-input]').fill('修改代码并重新验收')
+        await page.locator('[data-chat-scope="scene3d"]').getByRole('button', { name: '发送', exact: true }).click()
         try {
           await page.waitForFunction(
-            () => document.querySelector('[data-chat-root]')?.getAttribute('data-running') === 'false',
+            () => document.querySelector('[data-chat-scope="scene3d"]')?.getAttribute('data-running') === 'false',
             null,
             { timeout: 90000 },
           )
         } catch (e) {
-          const stuck = await page.locator('[data-chat-root]').innerText().catch(() => '')
+          const stuck = await page.locator('[data-chat-scope="scene3d"]').innerText().catch(() => '')
           console.log('STALE_TIMEOUT_PANEL', stuck.slice(-2500))
           console.log('STALE_TIMEOUT_DEBUG', JSON.stringify({ index, visionCalls, callCount: calls.length }))
           throw e

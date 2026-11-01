@@ -1,7 +1,7 @@
 /**
  * 工具结果里「模型该看什么」的裁剪规则。
- * LangGraph 引擎用它生成 ToolMessage，pi 引擎用它生成 AgentToolResult.content；
- * 两个引擎必须用同一份规则，否则同一次对话在切换引擎后模型看到的历史会不一致。
+ * 运行时用它生成模型可见摘要，界面仍拿到完整结果；
+ * 只有一处实现，模型看到的历史不会因入口不同而不一致。
  */
 export function modelFacingResult(toolName: string, result: unknown): unknown {
   if (!result || typeof result !== 'object') return result

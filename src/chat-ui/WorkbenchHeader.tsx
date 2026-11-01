@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Sparkles, X } from 'lucide-react'
 import { cn } from '@/chat-ui/lib/utils'
 import type { Skill } from '../skills/types'
@@ -45,6 +46,10 @@ export function WorkbenchHeader({
   canInspect,
   onToggleInspect,
   onClose,
+  onClear,
+  canClear,
+  clearing,
+  modelSelect,
 }: {
   title: string
   scope: string
@@ -68,6 +73,12 @@ export function WorkbenchHeader({
   canInspect: boolean
   onToggleInspect: () => void
   onClose?: () => void
+  /** 清空当前线程；不传则不渲染入口（发布台等） */
+  onClear?: () => void
+  canClear?: boolean
+  clearing?: boolean
+  /** 替换上下文条里的只读模型标签（例如发布助手手选环节模型） */
+  modelSelect?: ReactNode
 }) {
   const summary = stats
     ? `${stats.entries.length} 项 · ${fmtChars(stats.total)} 字${
@@ -104,6 +115,19 @@ export function WorkbenchHeader({
         <span className="skill-chip host" hidden>
           {hostSkillId}
         </span>
+        {onClear ? (
+          <button
+            type="button"
+            data-chat-clear
+            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={onClear}
+            disabled={!canClear || clearing}
+            aria-label="清空对话"
+            title="清空当前对话，下一轮不再带给模型"
+          >
+            {clearing ? '清空中…' : '清空对话'}
+          </button>
+        ) : null}
         <button
           type="button"
           className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
@@ -132,9 +156,11 @@ export function WorkbenchHeader({
         data-chat-context-bar
         className="flex max-h-[72px] flex-wrap items-center gap-x-1.5 gap-y-1 overflow-y-auto border-t border-border/60 px-3 py-1 text-[11px] leading-relaxed text-muted-foreground"
       >
-        <span className={cn('shrink-0', !modelReady && 'text-destructive')} title={modelLabel}>
-          模型 {modelLabel}
-        </span>
+        {modelSelect ?? (
+          <span className={cn('shrink-0', !modelReady && 'text-destructive')} title={modelLabel}>
+            模型 {modelLabel}
+          </span>
+        )}
         <span aria-hidden="true" className="text-border">·</span>
         <span className="min-w-0 truncate" title={summary}>
           本轮带入 {summary}

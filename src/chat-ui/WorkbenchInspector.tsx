@@ -23,7 +23,7 @@ const TABS = [
 type Tab = (typeof TABS)[number][0]
 
 const SAVE_LABEL: Record<WorkbenchTaskView['saveMode'], string> = {
-  explicit: '显式保存（在左侧点保存）',
+  explicit: '显式保存（在顶栏点保存）',
   auto: '自动保存（角色表约 1 秒后落库）',
   immediate: '立即落库',
 }

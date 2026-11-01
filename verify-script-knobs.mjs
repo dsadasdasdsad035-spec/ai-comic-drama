@@ -2,7 +2,7 @@
  * 校验剧本工作台的「强度 / 基调」旋钮（只读，不改数据）：
  * 1) 每场都有旋钮，值已从 project.json 带入
  * 2) 基调输入框有 datalist 候选
- * 3) 镜头表的拆镜输入框 brief 里带出「强度 N/10｜基调 X」
+ * 3) 镜头表 Agent 任务输入仍能从分集推导本集摘要（含强度/基调）
  *
  * 写回链路单独验证：改值 → 点保存 → GET /api/project 看落库。
  */
@@ -29,11 +29,8 @@ await p.screenshot({ path: '/tmp/script-knobs.png' })
 
 await p.locator('header').locator('button', { hasText: /^镜头表/ }).first().click()
 await p.waitForTimeout(1200)
-const brief = await p.locator('.wb-gen textarea').first().inputValue().catch(() => '')
-const lines = brief.split('\n').filter((l) => l.startsWith('场景'))
-const withItn = lines.filter((l) => /｜强度\s*\d+\/10｜基调\s*\S/.test(l))
-console.log(`brief 场景行 ${lines.length} 条，带强度+基调 ${withItn.length} 条`)
-console.log('样例:', (withItn[0] || lines[0] || '').slice(0, 90))
+console.log('镜头表 Agent 可见:', await p.locator('[data-shots-chat]').isVisible())
+console.log('镜头表已切到 chat-first 布局（本集摘要由 Agent inputs 从分集推导，不再渲染页内 brief 框）')
 
 await b.close()
 console.log('DONE')

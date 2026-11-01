@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { applyAgentEvent } from './agentMessageReducer'
-import type { AgentEvent, AgentMessage } from './sceneAgentTypes'
+import type { AgentEvent, AgentMessage, AgentMessagePart } from './sceneAgentTypes'
 
 function makeId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -27,11 +27,11 @@ export function useAgentMessages() {
     setMessages((prev) => prev.map((m) => (m.id === messageId ? fn(m) : m)))
   }
 
-  const begin = (userText: string) => {
+  const begin = (userText: string, extraParts: AgentMessagePart[] = []) => {
     const user: AgentMessage = {
       id: makeId(),
       role: 'user',
-      parts: [{ type: 'text', text: userText }],
+      parts: [{ type: 'text', text: userText }, ...extraParts],
       status: 'complete',
     }
     const assistant: AgentMessage = { id: makeId(), role: 'assistant', parts: [], status: 'running' }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { generateImage, generateVoice, type VoiceOption } from './api'
+import { generateImage, generateVoice, listVoicesCached, type AppSettings, type VoiceOption } from './api'
 import { ACCEPT_ATTR, pickImageFile, uploadImageFile } from './mediaUpload'
 import {
   DEFAULT_VOICE_SAMPLE_TEXT,
@@ -7,6 +7,7 @@ import {
   identityFingerprint,
   isVoiceSampleUsable,
   voiceSampleFingerprint,
+  REFERENCE_LIMIT,
   type CharacterExpressionSheet,
   type CharacterSheet,
   type VoiceSample,
@@ -22,18 +23,22 @@ import { EMOTION_OPTIONS } from './performance'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
 import type { PerformanceEmotion } from './types'
-import { VOICE_SOURCE_LABELS } from './voiceCatalog'
+import {
+  providerIdForAudioModelKey,
+  resolveCharacterAudioModelKey,
+  VOICE_SOURCE_LABELS,
+} from './voiceCatalog'
+import { CapModelSelect } from './ModelSelect'
 
 type Props = {
   c: CharacterSheet
   patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   canInject: boolean
   onInject: () => void
-  voices: VoiceOption[]
+  settings: AppSettings | null
   onDelete: () => void
   onRename: (name: string) => void
   viewModel?: string
-  audioModelKey?: string
   price?: Pricing
   projectName: string
   onPersist: (next: CharacterSheet[]) => void
@@ -46,8 +51,6 @@ type Props = {
 
 type Tab = 'turnaround' | 'sheet' | 'voice'
 
-/** 参考图上限：三视图生成时 refImage 已占一张，参考图过多会让模型在「多个人」之间摇摆 */
-const REFERENCE_LIMIT = 4
 
 function splitKeywords(value: string): string[] {
   return value
@@ -65,11 +68,10 @@ export default function CharacterCard({
   patch,
   canInject,
   onInject,
-  voices,
+  settings,
   onDelete,
   onRename,
   viewModel,
-  audioModelKey,
   price,
   projectName,
   onPersist,
@@ -102,10 +104,23 @@ export default function CharacterCard({
   const [sheetError, setSheetError] = useState('')
   const [sheetErrors, setSheetErrors] = useState<string[]>([])
   const [previewEmotion, setPreviewEmotion] = useState<PerformanceEmotion>('neutral')
+  const [voices, setVoices] = useState<VoiceOption[]>([])
+  const characterAudioModelKey = resolveCharacterAudioModelKey(c, settings)
 
   useEffect(() => {
     setSampleText(c.voiceSample?.text || DEFAULT_VOICE_SAMPLE_TEXT)
   }, [c.id, c.voiceSample?.text])
+
+  useEffect(() => {
+    let alive = true
+    listVoicesCached(characterAudioModelKey || undefined).then((v) => {
+      if (!alive) return
+      setVoices(v.voices)
+    })
+    return () => {
+      alive = false
+    }
+  }, [characterAudioModelKey])
 
   const candidates = c.candidates ?? []
   const activeIdx = c.activeIdx ?? 0
@@ -127,7 +142,7 @@ export default function CharacterCard({
     c.voiceSample &&
       (c.voiceSample.stale ||
         sampleText !== c.voiceSample.text ||
-        c.voiceSample.modelKey !== audioModelKey ||
+        c.voiceSample.modelKey !== characterAudioModelKey ||
         c.voiceSample.fingerprint !==
           voiceSampleFingerprint({
             url: c.voiceSample.url,
@@ -422,6 +437,10 @@ export default function CharacterCard({
     }
   }
 
+  const voiceProviderMismatch =
+    Boolean(c.voiceId && c.voiceProvider && characterAudioModelKey) &&
+    providerIdForAudioModelKey(settings, characterAudioModelKey) !== c.voiceProvider
+
   const generateSample = async () => {
     if (!projectName) {
       setSampleError('先选择项目再生成音色样本')
@@ -429,6 +448,10 @@ export default function CharacterCard({
     }
     if (!c.voiceId) {
       setSampleError('先给角色选择音色，再生成样本')
+      return
+    }
+    if (voiceProviderMismatch) {
+      setSampleError('音色与配音模型渠道不一致，请先改选音色或配音模型')
       return
     }
     setSampleBusy(true)
@@ -439,7 +462,7 @@ export default function CharacterCard({
         voice: c.voiceId,
         project: projectName,
         purpose: 'character-sample',
-        modelKey: audioModelKey,
+        modelKey: characterAudioModelKey || undefined,
       })
       const sample: VoiceSample = {
         url: r.url,
@@ -447,12 +470,12 @@ export default function CharacterCard({
         seconds: r.seconds,
         engine: r.engine,
         voiceId: c.voiceId,
-        modelKey: audioModelKey,
+        modelKey: characterAudioModelKey || undefined,
         fingerprint: voiceSampleFingerprint({
           url: r.url,
           text: sampleText,
           voiceId: c.voiceId,
-          modelKey: audioModelKey,
+          modelKey: characterAudioModelKey || undefined,
           engine: r.engine,
         }),
         stale: false,
@@ -483,12 +506,34 @@ export default function CharacterCard({
 
   const setVoice = (voiceId: string) => {
     const chosen = voices.find((v) => v.id === voiceId)
+    const modelKey = characterAudioModelKey || undefined
+    const provider = providerIdForAudioModelKey(settings, modelKey || '') || chosen?.provider
     const next = patch(c.id, {
       voiceId: voiceId || undefined,
-      voiceProvider: chosen?.provider,
-      voiceModelKey: chosen?.modelKey,
+      voiceProvider: provider,
+      voiceModelKey: modelKey,
     })
     onPersist(next)
+  }
+
+  const setAudioModel = (key: string) => {
+    const trimmed = key.trim()
+    const resolvedKey = trimmed || String(settings?.defaults?.audio || '').trim()
+    const provider = providerIdForAudioModelKey(settings, resolvedKey)
+    const fields: Partial<CharacterSheet> = {
+      voiceModelKey: trimmed || undefined,
+      voiceProvider: provider || undefined,
+    }
+    if (
+      c.voiceId &&
+      c.voiceProvider &&
+      provider &&
+      c.voiceProvider !== provider &&
+      c.voiceSample
+    ) {
+      fields.voiceSample = { ...c.voiceSample, stale: true }
+    }
+    onPersist(patch(c.id, fields))
   }
 
   const voiceOptions = (() => {
@@ -748,6 +793,14 @@ export default function CharacterCard({
 
   const renderVoice = () => (
     <div className="char-voice-pane">
+      <CapModelSelect
+        cap="audio"
+        label="配音模型"
+        settings={settings}
+        value={c.voiceModelKey || ''}
+        onChange={setAudioModel}
+        className="char-voice-model wb-field"
+      />
       {voices.length > 0 ? (
         <label className="char-voice">
           <span>音色</span>
@@ -760,7 +813,10 @@ export default function CharacterCard({
           </select>
         </label>
       ) : (
-        <p className="st-hint">当前没有可用音色；先到设置页配置音频模型。</p>
+        <p className="st-hint">当前配音模型没有可用音色；请检查设置页 Key 或换模型。</p>
+      )}
+      {voiceProviderMismatch && (
+        <div className="gen-warn">音色与当前配音模型渠道不一致，请改选音色或换回对应模型。</div>
       )}
 
       <div className="char-voice-sample">
@@ -777,7 +833,11 @@ export default function CharacterCard({
           </span>
         </div>
         <div className="char-sample-actions">
-          <button className="btn-mini" disabled={sampleBusy || !c.voiceId} onClick={() => void generateSample()}>
+          <button
+            className="btn-mini"
+            disabled={sampleBusy || !c.voiceId || voiceProviderMismatch}
+            onClick={() => void generateSample()}
+          >
             {sampleBusy ? '生成中…' : c.voiceSample ? '重新生成样本' : '生成音色样本'}
           </button>
           {c.voiceSample && (
@@ -801,7 +861,7 @@ export default function CharacterCard({
   )
 
   return (
-    <div className={`char-card char-card-v2 ${editing ? 'editing' : ''}`}>
+    <div className={`char-card char-card-v2 ${editing ? 'editing' : ''}`} data-char-card={c.id}>
       <div className="char-head">
         <span className="char-name">{c.name}</span>
         <span className="char-role">{c.role || '未定位'}</span>

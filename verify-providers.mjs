@@ -5,7 +5,7 @@
  * 3) defaults 可改可存
  * 4) /api/seedance dryRun 按 modelKey 选到对应模型
  * 5) 设置页 UI：渠道卡 / 模型行 / 默认下拉
- * 6) Inspector 出现出图/出片/配音模型下拉，选择后落 localStorage 并进入生成请求
+ * 6) Inspector 出现出图/出片模型下拉；角色板可选配音模型（按角色绑定）
  * 跑法：node verify-providers.mjs
  */
 import { chromium } from 'playwright-core'
@@ -169,6 +169,14 @@ await p.waitForTimeout(1200)
 const s1 = (await api('/api/settings')).settings
 check('设置页保存的默认值落库', s1.defaults.video === 'ark-video-2-0', String(s1.defaults.video))
 
+// ---- 4b. 角色板配音模型 ----
+await p.getByRole('button', { name: '角色', exact: true }).click()
+await p.waitForTimeout(800)
+check(
+  '角色卡有配音模型选择',
+  (await p.locator('[data-cap-model-select="audio"] select').count()) >= 1,
+)
+
 // ---- 5. 画布生成时选模型 ----
 await p.getByRole('button', { name: '镜头表', exact: true }).click()
 await p.waitForTimeout(1000)
@@ -187,7 +195,8 @@ if (shotNodeId) {
     for (const t of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new MouseEvent(t, opt))
   }, shotNodeId)
   await p.waitForTimeout(500)
-  check('Inspector 出现模型下拉', (await p.locator('.mp-row').count()) >= 3, String(await p.locator('.mp-row').count()))
+  check('Inspector 出现出图/出片模型下拉', (await p.locator('.mp-row').count()) >= 2, String(await p.locator('.mp-row').count()))
+  check('Inspector 无全局配音模型下拉', (await p.locator('.mp-row', { hasText: '配音模型' }).count()) === 0)
 
   await p.locator('.mp-row', { hasText: '出图模型' }).locator('select').selectOption('ark-image')
   await p.waitForTimeout(300)

@@ -26,10 +26,12 @@ const scriptV1 = passthrough({
           .array(
             passthrough({
               no: noLike.optional(),
-              slug: z.string().optional(),
-              place: z.string().optional(),
-              time: z.string().optional(),
-              beats: z.string().optional(),
+              // 原生工具模式下这份 schema 就是模型看到的第一手约束：
+              // 场景的核心叙事字段必须必填，否则模型会交出「通过校验但内容为空」的场次。
+              slug: z.string(),
+              place: z.string(),
+              time: z.string(),
+              beats: z.string(),
               characters: z.array(z.string()).optional(),
               intensity: z.number().optional(),
               tone: z.string().optional(),
@@ -63,6 +65,11 @@ const charactersV1 = z.union([
   passthrough({ characters: z.array(characterItem) }),
   z.array(characterItem),
 ])
+
+/** 角色 submit 的 tool 声明：仅 object 外壳，满足 APIMart 等严格网关。 */
+const charactersV1ToolDeclaration = passthrough({
+  characters: z.array(characterItem),
+})
 
 const designItem = passthrough({
   name: z.string().min(1),
@@ -114,12 +121,13 @@ const shotsV1 = passthrough({
     .array(
       passthrough({
         no: noLike,
-        scene_no: z.union([z.number(), z.string()]).optional(),
-        scene_slug: z.string().optional(),
-        seconds: z.number().optional(),
-        size: z.string().optional(),
-        move: z.string().optional(),
-        desc: z.string().optional(),
+        // 必填的理由同 script-v1：缺这些字段的镜头不可生产，宽松 schema 会让模型只回镜号。
+        scene_no: z.union([z.number(), z.string()]),
+        scene_slug: z.string(),
+        seconds: z.number(),
+        size: z.string(),
+        move: z.string(),
+        desc: z.string(),
         dialogue: z
           .array(
             passthrough({
@@ -265,6 +273,18 @@ export function getContract(id: string): SkillContract | undefined {
 /** 给工具参数复用同一份输出 schema，避免提示词形状与工具校验两套。 */
 export function getContractSchema(id: string): z.ZodType | undefined {
   return REGISTRY[id]?.schema
+}
+
+/** 发给模型的 tool 参数 schema；校验仍用 getContractSchema + validateContract。 */
+export function getContractToolSchema(id: string): z.ZodType | undefined {
+  if (id === 'characters-v1') return charactersV1ToolDeclaration
+  return getContractSchema(id)
+}
+
+/** 契约校验前：裸数组 → `{ characters: [...] }`。 */
+export function normalizeCharactersContractPayload(raw: unknown): unknown {
+  if (Array.isArray(raw)) return { characters: raw }
+  return raw
 }
 
 export function contractIds(): string[] {

@@ -13,7 +13,12 @@ const STAGES: Stage[] = [
   'creative',
   'publish',
 ]
-const RUNTIMES = ['json-tools', 'scene3d'] as const
+/**
+ * 运行时取值。`json-tools` 是协议改名前的旧字面量，仍接受并归一化为 `tools`，
+ * 否则用户已保存的技能覆盖会因为一次改名而整份加载失败。
+ */
+const RUNTIMES = ['tools', 'json-tools', 'scene3d'] as const
+const normalizeRuntime = (value: string): string => (value === 'json-tools' ? 'tools' : value)
 const ROLE_HEADING = '## 角色与约束'
 const TASK_HEADING = '## 任务'
 const PLACEHOLDER = /\{\{input:([A-Za-z0-9_]+)\}\}/g
@@ -177,7 +182,7 @@ export function parseSkillText(id: string, text: string, source: SkillSource = '
     name,
     description,
     stage,
-    runtime: runtime as SkillManifest['runtime'],
+    runtime: normalizeRuntime(runtime) as SkillManifest['runtime'],
     tools,
     inputs,
     output,

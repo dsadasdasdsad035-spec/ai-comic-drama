@@ -4,9 +4,14 @@
  */
 import {
   ApimartError,
+  apimartResponseToChatCompletion,
+  buildApimartResponsesBody,
+  apimartUsesResponsesForTools,
+  chatMessagesToApimartResponseInput,
   errorFromResponse,
   normalizeChatPayload,
   normalizeSseChunk,
+  toApimartResponseTools,
 } from './server/apimart.mjs'
 
 let bad = 0
@@ -48,6 +53,51 @@ check(
   'SSE code 非 200',
   kindOf(() => normalizeSseChunk({ code: 402, message: 'insufficient balance' })) === 'api',
 )
+
+check('gpt-6.1-sol 走 Responses', apimartUsesResponsesForTools('gpt-6.1-sol'))
+check('deepseek-v4-flash 仍走 chat/completions', !apimartUsesResponsesForTools('deepseek-v4-flash'))
+
+const respTools = toApimartResponseTools([
+  { type: 'function', function: { name: 'ping', description: 'd', parameters: { type: 'object' } } },
+])
+check('Responses tools 扁平 name', respTools[0]?.name === 'ping' && !respTools[0]?.function)
+
+const respInput = chatMessagesToApimartResponseInput([
+  { role: 'user', content: 'hi' },
+  {
+    role: 'assistant',
+    content: '',
+    tool_calls: [{ id: 'c1', type: 'function', function: { name: 'ping', arguments: '{}' } }],
+  },
+  { role: 'tool', tool_call_id: 'c1', content: '{"ok":true}' },
+])
+check(
+  'Responses input 含 function_call 链',
+  respInput.some((x) => x.type === 'function_call') && respInput.some((x) => x.type === 'function_call_output'),
+)
+
+const chatShape = apimartResponseToChatCompletion({
+  output: [
+    { type: 'function_call', call_id: 'c1', name: 'ping', arguments: '{}' },
+  ],
+})
+check(
+  'Responses 转 chat tool_calls',
+  chatShape.choices?.[0]?.message?.tool_calls?.[0]?.function?.name === 'ping',
+)
+
+const respBody = buildApimartResponsesBody({
+  model: 'gpt-6.1-sol',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [{ type: 'function', function: { name: 'ping', description: 'd', parameters: { type: 'object' } } }],
+  maxTokens: 128,
+})
+check('Responses 请求体不含 temperature', !('temperature' in respBody))
+check(
+  'Responses 请求体 tools parameters 为 object',
+  respBody.tools?.[0]?.parameters?.type === 'object',
+)
+check('Responses 请求体 tools 无顶层 anyOf', !respBody.tools?.[0]?.parameters?.anyOf)
 
 console.log(bad ? `\n${bad} 项失败` : '\n全部通过')
 process.exit(bad ? 1 : 0)

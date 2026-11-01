@@ -96,20 +96,25 @@ try {
   await page.route('**/api/text', async (route) => {
     const body = route.request().postDataJSON()
     calls.push(body)
-    let payload
+    // 原生工具调用：聊天只认 toolCalls，不再有 JSON action 的 payload。
+    let reply
     if (phase === 0) {
       phase = 1
-      payload = { content: '提交剧本草稿', tool_calls: [{ name: 'submit_script', args: SCRIPT }] }
+      reply = {
+        text: '提交剧本草稿',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: 'call_1', name: 'submit_script', arguments: JSON.stringify(SCRIPT) }],
+      }
     } else if (phase === 1) {
       phase = 2
-      payload = { content: '已完成剧本草稿' }
+      reply = { text: '已完成剧本草稿', finishReason: 'stop', toolCalls: [] }
     } else {
-      payload = { content: '角色建议：陈默需要一个辨识度配饰。' }
+      reply = { text: '角色建议：陈默需要一个辨识度配饰。', finishReason: 'stop', toolCalls: [] }
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true, json: payload, text: payload.content, modelLabel: 'mock' }),
+      body: JSON.stringify({ ok: true, modelLabel: 'mock', ...reply }),
     })
   })
 
@@ -138,9 +143,20 @@ try {
   check('模型最终说明显示', true)
 
   const firstCall = calls[0]
-  check('第一次模型调用使用技能 system', Boolean(firstCall?.system?.includes('你是短剧/漫剧的编剧与分集策划。')))
-  check('技能正文不混入 user prompt', !String(firstCall?.prompt || '').includes('你是短剧/漫剧的编剧与分集策划。'))
-  check('任务卡进入本轮 prompt', String(firstCall?.prompt || '').includes('【本轮技能任务】'))
+  // 聊天走 pi 运行时后请求体只有 messages[]，不再有顶层 system / prompt 字段
+  const systemOf = (call) =>
+    (Array.isArray(call?.messages) ? call.messages : [])
+      .filter((m) => m?.role === 'system')
+      .map((m) => String(m?.content || ''))
+      .join('\n')
+  const userOf = (call) =>
+    (Array.isArray(call?.messages) ? call.messages : [])
+      .filter((m) => m?.role === 'user')
+      .map((m) => String(m?.content || ''))
+      .join('\n')
+  check('第一次模型调用使用技能 system', systemOf(firstCall).includes('你是短剧/漫剧的编剧与分集策划。'))
+  check('技能正文不混入 user prompt', !userOf(firstCall).includes('你是短剧/漫剧的编剧与分集策划。'))
+  check('任务卡进入本轮 user 消息', userOf(firstCall).includes('【本轮技能任务】'))
 
   await page.locator('[data-script-chat] select[aria-label="加载只读技能"]').selectOption('character')
   check('只读技能 chip 出现', (await page.locator('[data-script-chat] .skill-chip.readonly').textContent())?.includes('character'))
@@ -149,17 +165,25 @@ try {
   await page.locator('[data-script-chat]').getByRole('button', { name: '发送', exact: true }).click()
   await page.getByText('角色建议：陈默需要一个辨识度配饰。').first().waitFor({ timeout: 15000 })
   const thirdCall = calls[2]
-  check('只读技能进入 system', String(thirdCall?.system || '').includes('【只读技能：character】'))
-  check('只读技能没有写工具', !String(thirdCall?.system || '').includes('submit_characters'))
-  check('宿主写工具仍在', String(thirdCall?.system || '').includes('submit_script'))
+  check('只读技能进入 system', systemOf(thirdCall).includes('【只读技能：character】'))
+  check('只读技能没有写工具', !systemOf(thirdCall).includes('submit_characters'))
+  check('宿主写工具仍在', (thirdCall?.tools ?? []).some((t) => (t?.function?.name || t?.name) === 'submit_script'))
 
-  // 保存草稿，避免刷新触发未保存提示
-  await page.locator('.sb-actions').getByRole('button', { name: '保存', exact: true }).click()
-  await page.locator('.toast', { hasText: '剧本已写回' }).waitFor({ timeout: 10000 })
+  // 保存草稿，避免刷新触发未保存提示（保存按钮在视图上下文带里，不在 .sb-actions）
+  const saveBtn = page.getByRole('button', { name: '保存', exact: true }).first()
+  if ((await saveBtn.count()) && (await saveBtn.isEnabled())) {
+    await saveBtn.click()
+    await page.locator('.toast', { hasText: '剧本已写回' }).waitFor({ timeout: 10000 }).catch(() => {})
+  }
+  // 线程落盘由 SkillChat 的防抖保存负责，先等它写完再刷新
+  await page.waitForTimeout(1500)
   await page.waitForTimeout(900)
 
   await openScript()
-  check('刷新后线程恢复用户消息', (await page.getByText('把第 1 集改成悬疑').count()) > 0)
+  await page.waitForTimeout(1500)
+  // 用容器文本断言：消息被渲染成多个节点，getByText 的精确匹配容易漏
+  const restored = await page.locator('[data-script-chat]').innerText()
+  check('刷新后线程恢复用户消息', restored.includes('把第 1 集改成悬疑'), restored.slice(0, 160))
   check('刷新后线程恢复工具卡', (await page.locator('[data-chat-tool="submit_script"]').count()) > 0)
   check('刷新后恢复只读技能', (await page.locator('[data-script-chat] .skill-chip.readonly').textContent())?.includes('character'))
   check('页面无脚本错误', errors.length === 0, errors.join(' | '))

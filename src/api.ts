@@ -395,7 +395,7 @@ export type VoiceResult = {
   unsupported?: string[]
 }
 
-export type VoiceLine = { text: string; voice?: string; rate?: number } & DialogueDelivery
+export type VoiceLine = { text: string; voice?: string; rate?: number; modelKey?: string } & DialogueDelivery
 
 export async function generateVoice(o: {
   /** 单句模式：传 text；多说话人模式：传 lines（每行可各自指定音色） */
@@ -522,6 +522,23 @@ export async function listVoices(modelKey?: string, refresh = false): Promise<Vo
   }
 }
 
+const voiceListCache = new Map<string, VoiceList>()
+
+/** 按 modelKey 缓存音色列表；角色板多卡共用同一渠道时少打 /api/voices */
+export async function listVoicesCached(modelKey?: string, refresh = false): Promise<VoiceList> {
+  const cacheKey = String(modelKey || '').trim()
+  if (refresh) voiceListCache.delete(cacheKey)
+  const hit = voiceListCache.get(cacheKey)
+  if (hit) return hit
+  const list = await listVoices(modelKey, refresh)
+  voiceListCache.set(cacheKey, list)
+  return list
+}
+
+export function clearVoiceListCache() {
+  voiceListCache.clear()
+}
+
 // ---------------------------------------------------------------- 项目 / 文本
 
 export type ProjectSummary = {
@@ -614,6 +631,8 @@ export type ProjectEpisode = {
   no: number
   title?: string
   hook?: string
+  /** 该集成片目标时长（秒）；各集可不同 */
+  targetSeconds?: number
   scenes?: {
     no?: number
     slug?: string
@@ -839,9 +858,14 @@ export type ProviderToolCall = {
   arguments: string
 }
 
+export type ProviderContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string; label?: string }
+
 export type ProviderChatMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  /** 纯文本，或同一条用户消息里的文字与图片块 */
+  content: string | ProviderContentPart[]
   tool_calls?: unknown[]
   tool_call_id?: string
   name?: string
@@ -1206,13 +1230,6 @@ export type AppSettings = {
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
-  /**
-   * 3D agent 的工具协议：auto 按模型能力表选择，native 强制原生 tool calls，json 强制 JSON action。
-   * 缺省 auto；不支持 tools 的模型在 auto 下继续走 JSON。
-   */
-  agentToolProtocol?: 'auto' | 'native' | 'json'
-  /** 3D agent 执行引擎；缺省 pi，模型不支持原生工具时回退 langgraph */
-  agentEngine?: 'langgraph' | 'pi'
   /** 口型 provider；默认关闭，Key 只存设置库 */
   lipSync?: LipSyncSettings
   /** 设置库里的自定义音色条目 */

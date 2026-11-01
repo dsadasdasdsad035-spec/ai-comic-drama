@@ -4,9 +4,12 @@
  * 注意这不是自动路径——只有用户在导入对话框里主动点按钮才会调用。
  * 超长文本按原文已有的集/场标记切块，没有标记就拒绝，绝不截断。
  */
+import type { ProjectEpisode } from '../api'
+import { DEFAULT_EPISODE_TARGET_SECONDS, resolveProjectStyle } from '../productionContext'
 import { callText } from '../api'
 import { buildBoardSkillPrompt } from '../skills/board'
 import { assertSkillOutput } from '../skills/board'
+import { normalizeShotsIntakeOutput } from './shotsIntakeNormalize'
 
 export type IntakeTarget = 'script' | 'shots' | 'prompts'
 
@@ -119,7 +122,14 @@ export async function runIntake(opts: {
   target: IntakeTarget
   raw: string
   modelKey: string
-  context?: { style?: string; aspect?: string; epCount?: number; targetSeconds?: number }
+  context?: {
+    style?: string
+    aspect?: string
+    epCount?: number
+    targetSeconds?: number
+    epNo?: number
+    episodes?: ProjectEpisode[]
+  }
   signal?: AbortSignal
 }): Promise<IntakeResult> {
   const { target, raw } = opts
@@ -136,13 +146,13 @@ export async function runIntake(opts: {
   const inputs: Record<string, unknown> = { raw: '' }
   if (target === 'script') {
     inputs.epCount = opts.context?.epCount ?? Math.max(1, countEpisodes(text))
-    inputs.targetSeconds = opts.context?.targetSeconds ?? 75
-    inputs.style = opts.context?.style || '近未来科幻写实'
+    inputs.targetSeconds = opts.context?.targetSeconds ?? DEFAULT_EPISODE_TARGET_SECONDS
+    inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
   } else if (target === 'shots') {
-    inputs.style = opts.context?.style || '近未来科幻写实'
+    inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
     inputs.aspect = opts.context?.aspect || '16:9'
   } else {
-    inputs.style = opts.context?.style || '近未来科幻写实'
+    inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
   }
 
   const parts: unknown[] = []
@@ -158,8 +168,11 @@ export async function runIntake(opts: {
       signal: opts.signal,
     })
     if (!modelLabel) modelLabel = r.modelLabel
-    const json = r.json
+    let json = r.json
     if (json === undefined) throw new Error(`第 ${i + 1} 块没有返回可解析的 JSON`)
+    if (target === 'shots') {
+      json = normalizeShotsIntakeOutput(json, opts.context?.epNo ?? 1, opts.context?.episodes ?? [])
+    }
     assertSkillOutput(INTAKE_CONTRACT[target], json)
     parts.push(json)
   }

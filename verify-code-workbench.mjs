@@ -138,8 +138,8 @@ settings.providers = [
 ]
 settings.models = [
   ...(settings.models || []).filter((m) => !['code', 'code2', 'vision'].includes(m.key)),
-  { key: 'code', label: 'Mock Code', cap: 'text', provider: 'mock-code', model: 'mock-code' },
-  { key: 'code2', label: 'Mock Code 2', cap: 'text', provider: 'mock-code', model: 'mock-code-2' },
+  { key: 'code', label: 'Mock Code', cap: 'text', provider: 'mock-code', model: 'MiniMax-M3' },
+  { key: 'code2', label: 'Mock Code 2', cap: 'text', provider: 'mock-code', model: 'MiniMax-M3' },
   { key: 'vision', label: 'Mock Vision', cap: 'vision', provider: 'mock-code', model: 'mock-vision' },
 ]
 settings.defaults = { ...(settings.defaults || {}), text: 'code', vision: 'vision' }
@@ -163,20 +163,25 @@ await page.route('**/api/text', (route) => {
   const body = JSON.parse(route.request().postData() || '{}')
   textPosts.push(body)
   const call = agentCalls[agentCallIndex++]
+  // 原生工具调用：聊天只认 toolCalls，不再有 JSON action 的 payload。
+  const toolCalls = call
+    ? [{ id: `call_${call.name}_${agentCallIndex}`, name: call.name, arguments: JSON.stringify(call.args) }]
+    : []
   const payload = {
     ok: true,
-    json: { content: call ? '' : '已完成', tool_calls: call ? [call] : [] },
+    finishReason: call ? 'tool_calls' : 'stop',
+    toolCalls,
     text: '',
     model: 'mock-code-2',
     modelKey: 'code2',
     modelLabel: 'Mock Code 2',
   }
   if (process.env.SSE_MOCK === '1') {
-    // 走真实 SSE 路径：meta → progress → done（done 里带 JSON action）
+    // 走真实 SSE 路径：meta → progress → done（done 里带原生 toolCalls）
     const sse = [
       { type: 'meta', model: 'mock-code-2', modelKey: 'code2', modelLabel: 'Mock Code 2' },
       { type: 'progress', chars: 120 },
-      { type: 'done', text: '', json: payload.json, model: 'mock-code-2', modelKey: 'code2', modelLabel: 'Mock Code 2' },
+      { type: 'done', text: '', finishReason: payload.finishReason, toolCalls: payload.toolCalls, model: 'mock-code-2', modelKey: 'code2', modelLabel: 'Mock Code 2' },
     ]
       .map((event) => `data: ${JSON.stringify(event)}\n\n`)
       .join('')

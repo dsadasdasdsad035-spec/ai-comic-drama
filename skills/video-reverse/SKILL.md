@@ -2,7 +2,7 @@
 name: video-reverse
 description: 把一条参考视频逐镜反推成可直接使用的首帧提示词与运动提示词
 stage: creative
-runtime: json-tools
+runtime: tools
 tools: [read_creative_session, read_creative_source, read_video_shots, read_frame_detail, ingest_source, probe_source, split_scenes, extract_frames, submit_reverse_pack, generate_image, generate_video, generate_voice]
 inputs: [mode, sourceLabel, shotCount, aspect]
 output: reverse-v1

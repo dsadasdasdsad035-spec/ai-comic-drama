@@ -248,7 +248,7 @@ async function main() {
         name: 'video-reverse',
         description: '',
         stage: 'creative',
-        runtime: 'json-tools',
+        runtime: 'tools',
         tools: ['read_video_shots', 'submit_reverse_pack', 'generate_image'],
         inputs: [],
         output: 'reverse-v1',

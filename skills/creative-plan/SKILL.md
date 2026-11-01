@@ -2,7 +2,7 @@
 name: creative-plan
 description: 在还没有项目时把一句想法发展成可拍的创意方向、节奏与镜头草案
 stage: creative
-runtime: json-tools
+runtime: tools
 tools: [read_creative_session, read_creative_source, read_video_shots, read_frame_detail]
 inputs: [topic, constraints]
 output: creative-plan-v1

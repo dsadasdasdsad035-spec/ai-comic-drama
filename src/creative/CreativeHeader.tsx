@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/chat-ui/lib/utils'
+import type { AppSettings, Stage } from '../api'
+import { StageModelSelect, type StagePick } from '../ModelSelect'
 import type { CreativeMode } from './sessionStore'
 
 const MODES: Array<{ id: CreativeMode; label: string; hint: string }> = [
@@ -13,9 +15,10 @@ export function CreativeHeader({
   mode,
   onModeChange,
   sessionTitle,
+  settings,
+  stagePick,
+  onPickStage,
   modelKey,
-  modelLabel,
-  modelShort,
   skillId,
   skillError,
   running,
@@ -28,11 +31,10 @@ export function CreativeHeader({
   mode: CreativeMode
   onModeChange: (mode: CreativeMode) => void
   sessionTitle: string
+  settings: AppSettings | null
+  stagePick?: StagePick
+  onPickStage?: (stage: Stage, key: string) => void
   modelKey: string
-  /** 完整模型标签，放 title 供悬停查看 */
-  modelLabel: string
-  /** 头部只显示短名（模型 id），完整标签在 title 里 */
-  modelShort: string
   skillId: string
   skillError: string
   running: boolean
@@ -68,12 +70,18 @@ export function CreativeHeader({
             {running ? <span className="shrink-0 text-[10px] text-primary">正在处理…</span> : null}
           </div>
           <div data-creative-context className="creative-header-meta">
-            <span
-              className={cn('creative-meta-item', !modelKey && 'text-destructive')}
-              title={`文本模型决定对话主循环：${modelLabel}`}
-            >
-              模型 {modelShort}
-            </span>
+            {onPickStage ? (
+              <StageModelSelect
+                stage="creative"
+                settings={settings}
+                pick={stagePick}
+                onChange={onPickStage}
+                compact
+                className={cn('creative-meta-model wb-field', !modelKey && 'text-destructive')}
+              />
+            ) : (
+              <span className={cn('creative-meta-item', !modelKey && 'text-destructive')}>未绑定文本模型</span>
+            )}
             <span aria-hidden="true" className="creative-meta-sep">·</span>
             <span className="creative-meta-item" title="宿主技能随模式切换">
               技能 {skillId}
