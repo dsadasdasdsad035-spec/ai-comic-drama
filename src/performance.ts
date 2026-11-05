@@ -102,3 +102,60 @@ export function deliveryForSpeaker(
 export function voiceFingerprint(text: string, delivery?: DialogueDelivery[]): string {
   return shortHash(JSON.stringify({ text: String(text || ''), delivery: delivery ?? [] }))
 }
+
+const paceLabel = (pace: PerformancePace | undefined) =>
+  PACE_OPTIONS.find((o) => o.value === pace)?.label ?? ''
+const volumeLabel = (vol: PerformanceVolume | undefined) =>
+  VOLUME_OPTIONS.find((o) => o.value === vol)?.label ?? ''
+
+/** 有效表演条目数（有角色名） */
+export function performanceVideoEntryCount(performance: PerformanceEntry[] | undefined): number {
+  return (performance ?? []).filter((p) => String(p.character || '').trim()).length
+}
+
+/**
+ * 视频出片自动正文中的【表演方向】段；无有效 performance 时返回空串。
+ */
+export function performanceVideoPromptBlock(
+  performance: PerformanceEntry[] | undefined,
+  dialogue: { speaker: string; text: string }[],
+  delivery: DialogueDelivery[] | undefined,
+): string {
+  const entries = (performance ?? []).map(normalizePerformanceEntry).filter((p) => p.character)
+  if (!entries.length) return ''
+
+  const roleLines = entries.map((e) => {
+    const bits = [`${e.character}：${emotionLabel(e.emotion)}，强度 ${e.intensity ?? 3}`]
+    if (e.action?.trim()) bits.push(e.action.trim())
+    else if (e.gaze?.trim()) bits.push(`视线${e.gaze.trim()}`)
+    if (e.speaks) bits.push('本镜说话')
+    return bits.join('，')
+  })
+
+  const deliveryBits: string[] = []
+  dialogue.forEach((line, i) => {
+    const speaker = String(line.speaker || '').trim()
+    if (!speaker) return
+    const del = deliveryForSpeaker(performance, speaker, delivery, i)
+    const parts: string[] = []
+    if (del.emotion && del.emotion !== 'neutral') parts.push(emotionLabel(del.emotion))
+    if (del.pace && del.pace !== 'normal') parts.push(`语速${paceLabel(del.pace)}`)
+    if (del.volume && del.volume !== 'normal') parts.push(volumeLabel(del.volume))
+    if (del.emphasis?.trim()) parts.push(`重音「${del.emphasis.trim()}」`)
+    if (parts.length) deliveryBits.push(`${speaker}台词：${parts.join('，')}`)
+  })
+
+  const body = [...roleLines, ...deliveryBits].join('；')
+  return `\n\n【表演方向】${body}`
+}
+
+/** 指纹用：稳定序列化表演与逐行 delivery */
+export function performanceFingerprintPayload(
+  performance: PerformanceEntry[] | undefined,
+  delivery: DialogueDelivery[] | undefined,
+): { performance: PerformanceEntry[]; dialogueDelivery: DialogueDelivery[] } {
+  return {
+    performance: (performance ?? []).map((p) => normalizePerformanceEntry(p)),
+    dialogueDelivery: delivery ?? [],
+  }
+}

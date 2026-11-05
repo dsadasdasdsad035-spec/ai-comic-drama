@@ -29,6 +29,19 @@ import {
   VOICE_SOURCE_LABELS,
 } from './voiceCatalog'
 import { CapModelSelect } from './ModelSelect'
+import { CharacterImageCropModal } from './CharacterImageCropModal'
+import { planMaterialCropForFile, planMaterialCropForUrl, type MaterialCropPlan } from './imageMaterialCrop'
+import {
+  resolveVoiceUiState,
+  voiceIdInCatalog,
+  voiceSummaryLine,
+  type VoiceUiInput,
+} from './voiceUiState'
+
+type CropPending = {
+  plan: MaterialCropPlan
+  kind: 'ref' | 'turnaround' | 'promote'
+}
 
 type Props = {
   c: CharacterSheet
@@ -84,8 +97,11 @@ export default function CharacterCard({
   const fileRef = useRef<HTMLInputElement>(null)
   const exprFileRef = useRef<HTMLInputElement>(null)
   const refFileRef = useRef<HTMLInputElement>(null)
+  const voiceSelectRef = useRef<HTMLSelectElement>(null)
   const [refBusy, setRefBusy] = useState(false)
   const [refError, setRefError] = useState('')
+  const [cropPending, setCropPending] = useState<CropPending | null>(null)
+  const [cropBusy, setCropBusy] = useState(false)
   const [tab, setTab] = useState<Tab>('turnaround')
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState({
@@ -105,6 +121,7 @@ export default function CharacterCard({
   const [sheetErrors, setSheetErrors] = useState<string[]>([])
   const [previewEmotion, setPreviewEmotion] = useState<PerformanceEmotion>('neutral')
   const [voices, setVoices] = useState<VoiceOption[]>([])
+  const [engineSwitchHint, setEngineSwitchHint] = useState(false)
   const characterAudioModelKey = resolveCharacterAudioModelKey(c, settings)
 
   useEffect(() => {
@@ -137,7 +154,7 @@ export default function CharacterCard({
   const previewCell = sheet ? cellForEmotion(sheet, previewEmotion) : undefined
   const previewLabel = exprLabel(previewEmotion)
   const voiceLabel =
-    voices.find((v) => v.id === c.voiceId)?.label || c.voiceId || '跟随镜头'
+    voices.find((v) => v.id === c.voiceId)?.label || c.voiceId || '未选音色'
   const sampleStale = Boolean(
     c.voiceSample &&
       (c.voiceSample.stale ||
@@ -152,7 +169,20 @@ export default function CharacterCard({
             engine: c.voiceSample.engine,
           })),
   )
-  const sampleUsable = Boolean(c.voiceSample && isVoiceSampleUsable(c.voiceSample) && !sampleStale)
+  const voiceUiInput: VoiceUiInput = {
+    projectName,
+    character: c,
+    settings,
+    voicesCount: voices.length,
+    sampleStale,
+    sampleText,
+    voiceSample: c.voiceSample,
+  }
+  const voiceUi = resolveVoiceUiState(voiceUiInput)
+  const voiceSummary = voiceSummaryLine(voiceUiInput)
+  const samplePreview =
+    sampleText.trim().split(/\n/).slice(0, 2).join(' ').trim().slice(0, 120) ||
+    DEFAULT_VOICE_SAMPLE_TEXT.slice(0, 80)
 
   const status = c.state === 'running'
     ? '生成中'
@@ -338,7 +368,28 @@ export default function CharacterCard({
     }
   }
 
-  const uploadTurnaround = async (file: File) => {
+  const releaseCropPlan = (plan: MaterialCropPlan | null | undefined) => {
+    if (plan?.previewUrl.startsWith('blob:')) URL.revokeObjectURL(plan.previewUrl)
+  }
+
+  const cancelCrop = () => {
+    releaseCropPlan(cropPending?.plan)
+    setCropPending(null)
+    setCropBusy(false)
+  }
+
+  const persistTurnaroundUrl = (url: string) => {
+    const next = patch(c.id, {
+      image: url,
+      candidates: undefined,
+      activeIdx: undefined,
+      state: 'idle',
+      error: undefined,
+    })
+    onPersist(next)
+  }
+
+  const uploadTurnaroundFile = async (file: File) => {
     if (!projectName) {
       patch(c.id, { state: 'error', error: '先选择项目再上传图片' })
       return
@@ -346,21 +397,38 @@ export default function CharacterCard({
     patch(c.id, { state: 'running', error: undefined })
     try {
       const url = await uploadImageFile(file, { project: projectName, prefix: 'char' })
-      const next = patch(c.id, {
-        image: url,
-        candidates: undefined,
-        activeIdx: undefined,
-        state: 'idle',
-        error: undefined,
-      })
-      onPersist(next)
+      persistTurnaroundUrl(url)
     } catch (e) {
       patch(c.id, { state: 'error', error: (e as Error).message })
     }
   }
 
+  const uploadTurnaround = async (file: File) => {
+    const check = pickImageFile(file)
+    if (!check.ok) {
+      patch(c.id, { state: 'error', error: check.reason })
+      return
+    }
+    try {
+      const plan = await planMaterialCropForFile(file)
+      if (plan) {
+        setCropPending({ plan, kind: 'turnaround' })
+        return
+      }
+    } catch (e) {
+      patch(c.id, { state: 'error', error: (e as Error).message })
+      return
+    }
+    await uploadTurnaroundFile(file)
+  }
+
+  const persistReferenceUrl = (url: string) => {
+    const refs = [...(c.referenceImages ?? []), url].slice(0, REFERENCE_LIMIT)
+    onPersist(patch(c.id, { referenceImages: refs }))
+  }
+
   /** 上传参考图：保存成功才写状态；不依赖英文锚点 */
-  const uploadReference = async (file: File) => {
+  const uploadReferenceFile = async (file: File) => {
     if (!projectName) {
       setRefError('先选择项目再上传参考图')
       return
@@ -369,8 +437,7 @@ export default function CharacterCard({
     setRefBusy(true)
     try {
       const url = await uploadImageFile(file, { project: projectName, prefix: 'char-ref' })
-      const refs = [...(c.referenceImages ?? []), url].slice(0, REFERENCE_LIMIT)
-      onPersist(patch(c.id, { referenceImages: refs }))
+      persistReferenceUrl(url)
     } catch (e) {
       setRefError((e as Error).message || '上传失败')
     } finally {
@@ -378,8 +445,68 @@ export default function CharacterCard({
     }
   }
 
+  const uploadReference = async (file: File) => {
+    const check = pickImageFile(file)
+    if (!check.ok) {
+      setRefError(check.reason)
+      return
+    }
+    try {
+      const plan = await planMaterialCropForFile(file)
+      if (plan) {
+        setCropPending({ plan, kind: 'ref' })
+        return
+      }
+    } catch (e) {
+      setRefError((e as Error).message || '图片读取失败')
+      return
+    }
+    await uploadReferenceFile(file)
+  }
+
+  const confirmCropUpload = async () => {
+    if (!cropPending) return
+    const { plan, kind } = cropPending
+    setCropBusy(true)
+    try {
+      const file = plan.croppedFile
+      if (kind === 'ref') {
+        await uploadReferenceFile(file)
+      } else if (kind === 'turnaround') {
+        await uploadTurnaroundFile(file)
+      } else {
+        if (!projectName) {
+          setRefError('先选择项目')
+          return
+        }
+        setRefBusy(true)
+        const url = await uploadImageFile(file, { project: projectName, prefix: 'char' })
+        persistTurnaroundUrl(url)
+        setRefBusy(false)
+      }
+      releaseCropPlan(plan)
+      setCropPending(null)
+    } catch (e) {
+      const msg = (e as Error).message || '上传失败'
+      if (kind === 'ref') setRefError(msg)
+      else patch(c.id, { state: 'error', error: msg })
+    } finally {
+      setCropBusy(false)
+      setRefBusy(false)
+    }
+  }
+
   /** 设为三视图：该图成为当前 image 并进入候选；参考图列表保留它作为输入记录 */
-  const promoteReference = (url: string) => {
+  const promoteReference = async (url: string) => {
+    try {
+      const plan = await planMaterialCropForUrl(url, 'char-promote')
+      if (plan) {
+        setCropPending({ plan, kind: 'promote' })
+        return
+      }
+    } catch {
+      /* 跨域或加载失败时仍允许原图升格 */
+    }
     const candidates = [...new Set([...(c.candidates ?? []), url])]
     onPersist(
       patch(c.id, {
@@ -437,21 +564,14 @@ export default function CharacterCard({
     }
   }
 
-  const voiceProviderMismatch =
-    Boolean(c.voiceId && c.voiceProvider && characterAudioModelKey) &&
-    providerIdForAudioModelKey(settings, characterAudioModelKey) !== c.voiceProvider
-
   const generateSample = async () => {
-    if (!projectName) {
-      setSampleError('先选择项目再生成音色样本')
+    if (!voiceUi.canGenerateSample) {
+      setSampleError(voiceUi.message)
       return
     }
-    if (!c.voiceId) {
-      setSampleError('先给角色选择音色，再生成样本')
-      return
-    }
-    if (voiceProviderMismatch) {
-      setSampleError('音色与配音模型渠道不一致，请先改选音色或配音模型')
+    const voiceId = c.voiceId?.trim()
+    if (!voiceId) {
+      setSampleError('请先选择说话音色')
       return
     }
     setSampleBusy(true)
@@ -459,7 +579,7 @@ export default function CharacterCard({
     try {
       const r = await generateVoice({
         text: sampleText,
-        voice: c.voiceId,
+        voice: voiceId,
         project: projectName,
         purpose: 'character-sample',
         modelKey: characterAudioModelKey || undefined,
@@ -469,12 +589,12 @@ export default function CharacterCard({
         text: sampleText,
         seconds: r.seconds,
         engine: r.engine,
-        voiceId: c.voiceId,
+        voiceId,
         modelKey: characterAudioModelKey || undefined,
         fingerprint: voiceSampleFingerprint({
           url: r.url,
           text: sampleText,
-          voiceId: c.voiceId,
+          voiceId,
           modelKey: characterAudioModelKey || undefined,
           engine: r.engine,
         }),
@@ -508,6 +628,7 @@ export default function CharacterCard({
     const chosen = voices.find((v) => v.id === voiceId)
     const modelKey = characterAudioModelKey || undefined
     const provider = providerIdForAudioModelKey(settings, modelKey || '') || chosen?.provider
+    setEngineSwitchHint(false)
     const next = patch(c.id, {
       voiceId: voiceId || undefined,
       voiceProvider: provider,
@@ -517,23 +638,35 @@ export default function CharacterCard({
   }
 
   const setAudioModel = (key: string) => {
-    const trimmed = key.trim()
-    const resolvedKey = trimmed || String(settings?.defaults?.audio || '').trim()
-    const provider = providerIdForAudioModelKey(settings, resolvedKey)
-    const fields: Partial<CharacterSheet> = {
-      voiceModelKey: trimmed || undefined,
-      voiceProvider: provider || undefined,
-    }
-    if (
-      c.voiceId &&
-      c.voiceProvider &&
-      provider &&
-      c.voiceProvider !== provider &&
-      c.voiceSample
-    ) {
-      fields.voiceSample = { ...c.voiceSample, stale: true }
-    }
-    onPersist(patch(c.id, fields))
+    void (async () => {
+      const trimmed = key.trim()
+      const resolvedKey = trimmed || String(settings?.defaults?.audio || '').trim()
+      const provider = providerIdForAudioModelKey(settings, resolvedKey)
+      const list = await listVoicesCached(resolvedKey || undefined, true)
+      setVoices(list.voices)
+      const fields: Partial<CharacterSheet> = {
+        voiceModelKey: trimmed || undefined,
+      }
+      const inCatalog = voiceIdInCatalog(c.voiceId, list.voices)
+      if (c.voiceId && !inCatalog) {
+        fields.voiceId = undefined
+        fields.voiceProvider = provider || undefined
+        if (c.voiceSample) fields.voiceSample = { ...c.voiceSample, stale: true }
+        setEngineSwitchHint(true)
+      } else {
+        fields.voiceProvider = provider || undefined
+        if (
+          c.voiceSample &&
+          provider &&
+          c.voiceProvider &&
+          provider !== c.voiceProvider
+        ) {
+          fields.voiceSample = { ...c.voiceSample, stale: true }
+        }
+        setEngineSwitchHint(false)
+      }
+      onPersist(patch(c.id, fields))
+    })()
   }
 
   const voiceOptions = (() => {
@@ -570,7 +703,9 @@ export default function CharacterCard({
           <span className="char-refs-count">
             {refs.length}/{REFERENCE_LIMIT}
           </span>
-          <span className="char-refs-hint">只用于生成三视图与表情总图，不进分镜参考</span>
+          <span className="char-refs-hint">
+            只用于生成三视图与表情总图，不进分镜参考；过竖/过宽图上传时会提示中心裁切（适配视频参考）
+          </span>
         </div>
         {refs.length > 0 ? (
           <div className="char-refs-grid">
@@ -585,7 +720,7 @@ export default function CharacterCard({
                     ) : (
                       <button
                         className="btn-mini"
-                        onClick={() => promoteReference(url)}
+                        onClick={() => void promoteReference(url)}
                         title="把这张设成当前三视图，此后它才会进入分镜参考"
                       >
                         设为三视图
@@ -792,71 +927,107 @@ export default function CharacterCard({
   )
 
   const renderVoice = () => (
-    <div className="char-voice-pane">
-      <CapModelSelect
-        cap="audio"
-        label="配音模型"
-        settings={settings}
-        value={c.voiceModelKey || ''}
-        onChange={setAudioModel}
-        className="char-voice-model wb-field"
-      />
-      {voices.length > 0 ? (
-        <label className="char-voice">
-          <span>音色</span>
-          <select value={c.voiceId ?? ''} onChange={(e) => setVoice(e.target.value)}>
-            <option value="">跟随镜头</option>
-            {c.voiceId && !voices.some((v) => v.id === c.voiceId) && (
-              <option value={c.voiceId}>未知/保留原值 · {c.voiceId}</option>
-            )}
-            {voiceOptions}
-          </select>
-        </label>
-      ) : (
-        <p className="st-hint">当前配音模型没有可用音色；请检查设置页 Key 或换模型。</p>
-      )}
-      {voiceProviderMismatch && (
-        <div className="gen-warn">音色与当前配音模型渠道不一致，请改选音色或换回对应模型。</div>
-      )}
-
-      <div className="char-voice-sample">
-        <div className="char-sample-head">
-          <span>音色样本</span>
-          <span className={sampleUsable ? 'char-sample-ok' : 'char-sample-bad'}>
-            {c.voiceSample
-              ? sampleStale
-                ? '需要重生成'
-                : sampleUsable
-                  ? `${c.voiceSample.seconds.toFixed(1)}s · 可用`
-                  : `${c.voiceSample.seconds.toFixed(1)}s · 不可用`
-              : '未生成'}
-          </span>
-        </div>
-        <div className="char-sample-actions">
-          <button
-            className="btn-mini"
-            disabled={sampleBusy || !c.voiceId || voiceProviderMismatch}
-            onClick={() => void generateSample()}
-          >
-            {sampleBusy ? '生成中…' : c.voiceSample ? '重新生成样本' : '生成音色样本'}
-          </button>
-          {c.voiceSample && (
-            <button className="btn-mini ghost" onClick={() => onPersist(patch(c.id, { voiceSample: undefined }))}>
-              删除
+    <div className="char-voice-pane" data-char-voice-pane>
+      <details className="char-voice-status-wrap" open>
+        <summary className="char-voice-status-label">状态</summary>
+        <div
+          className={`char-voice-status tone-${voiceUi.tone}`}
+          data-char-voice-status
+          data-voice-ui-kind={voiceUi.kind}
+        >
+          <p className="char-voice-status-msg">{voiceUi.message}</p>
+          {voiceUi.primaryAction === 'pick_voice' && (
+            <button
+              type="button"
+              className="btn-mini"
+              onClick={() => voiceSelectRef.current?.focus()}
+            >
+              重选音色
             </button>
           )}
-          <button className="btn-mini ghost" onClick={openEdit}>
+          {voiceUi.primaryAction === 'generate_sample' && voiceUi.canGenerateSample && (
+            <button type="button" className="btn-mini" disabled={sampleBusy} onClick={() => void generateSample()}>
+              {sampleBusy ? '生成中…' : '生成试音'}
+            </button>
+          )}
+        </div>
+      </details>
+
+      {engineSwitchHint && (
+        <p className="char-voice-inline-hint">配音引擎已切换，请重新选择音色后再生成试音。</p>
+      )}
+
+      <section className="char-voice-block" data-char-voice-block="engine">
+        <h4 className="char-voice-block-title">配音引擎</h4>
+        <CapModelSelect
+          cap="audio"
+          label="引擎"
+          settings={settings}
+          value={c.voiceModelKey || ''}
+          onChange={setAudioModel}
+          className="char-voice-model wb-field"
+        />
+      </section>
+
+      <section className="char-voice-block" data-char-voice-block="voice">
+        <h4 className="char-voice-block-title">说话音色</h4>
+        {voices.length > 0 ? (
+          <label className="char-voice">
+            <span>音色</span>
+            <select
+              ref={voiceSelectRef}
+              value={c.voiceId ?? ''}
+              onChange={(e) => setVoice(e.target.value)}
+            >
+              <option value="">跟随镜头（试音需固定音色）</option>
+              {c.voiceId && !voices.some((v) => v.id === c.voiceId) && (
+                <option value={c.voiceId}>未知/保留原值 · {c.voiceId}</option>
+              )}
+              {voiceOptions}
+            </select>
+          </label>
+        ) : (
+          <p className="st-hint">当前引擎没有可用音色；请到设置页检查 Key 或更换引擎。</p>
+        )}
+      </section>
+
+      <section className="char-voice-block char-voice-sample gen-box voice-box" data-char-voice-block="sample">
+        <h4 className="char-voice-block-title">试音样本</h4>
+        <p className="char-sample-script">
+          <span className="char-sample-script-text">{samplePreview}</span>
+          <button type="button" className="btn-mini ghost" onClick={openEdit}>
             编辑试音稿
           </button>
-        </div>
-        {!c.voiceId && <span className="char-sample-hint">先选音色</span>}
-        {c.voiceSample && <audio className="char-sample-audio" src={c.voiceSample.url} controls preload="metadata" />}
-        {sampleStale && <div className="gen-warn">音色、音频模型或试音稿已变化，请重新生成样本。</div>}
-        {c.voiceSample && !sampleStale && !isVoiceSampleUsable(c.voiceSample) && (
-          <div className="gen-warn">样本需 2-30 秒才能作为 Seedance 音色参考。</div>
+        </p>
+        {c.voiceSample && (
+          <audio className="char-sample-audio" src={c.voiceSample.url} controls preload="metadata" />
         )}
+        <div className="char-sample-actions">
+          <button
+            type="button"
+            className="btn primary char-sample-generate"
+            data-char-generate-sample
+            disabled={sampleBusy || !voiceUi.canGenerateSample}
+            onClick={() => void generateSample()}
+          >
+            {sampleBusy ? '生成中…' : c.voiceSample ? '重新生成试音' : '生成试音'}
+          </button>
+          {c.voiceSample && (
+            <button
+              type="button"
+              className="btn-mini ghost"
+              onClick={() => onPersist(patch(c.id, { voiceSample: undefined }))}
+            >
+              删除样本
+            </button>
+          )}
+        </div>
         {sampleError && <div className="gen-error">{sampleError}</div>}
-      </div>
+      </section>
+
+      <p className="char-voice-footnote">
+        镜头台词配音在画布选中镜头后的 Inspector「声音」；本页只配置角色声线与 Seedance 试音参考。
+      </p>
     </div>
   )
 
@@ -906,9 +1077,11 @@ export default function CharacterCard({
           role="tab"
           aria-selected={tab === 'voice'}
           className={tab === 'voice' ? 'on' : ''}
+          data-char-tab="voice"
+          data-voice-ready={voiceUi.tabDot}
           onClick={() => setTab('voice')}
         >
-          音色
+          声音
         </button>
       </div>
 
@@ -917,7 +1090,9 @@ export default function CharacterCard({
       </div>
 
       <div className="char-summary">
-        <span>音色：{voiceLabel}</span>
+        <span className="char-voice-summary" title={voiceLabel}>
+          声音：{voiceSummary}
+        </span>
         <span>表情 {expressionDone}/8{!sheet && legacyCount ? '（旧）' : ''}</span>
         <span className="char-budget" title="视频参考最多 4 张；表情默认关闭，开启后只带说话角色一张">
           {selectedShot
@@ -964,6 +1139,21 @@ export default function CharacterCard({
       </details>
 
       {c.state === 'error' && c.error && <div className="gen-error">{c.error}</div>}
+
+      <CharacterImageCropModal
+        open={Boolean(cropPending)}
+        title={
+          cropPending?.kind === 'ref'
+            ? '裁切参考图'
+            : cropPending?.kind === 'promote'
+              ? '裁切后设为三视图'
+              : '裁切三视图'
+        }
+        plan={cropPending?.plan ?? null}
+        busy={cropBusy || refBusy}
+        onConfirm={() => void confirmCropUpload()}
+        onCancel={cancelCrop}
+      />
 
       {editing && (
         <div className="char-drawer-backdrop" onMouseDown={(e) => e.target === e.currentTarget && cancelEdit()}>

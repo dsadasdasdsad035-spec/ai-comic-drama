@@ -4508,6 +4508,45 @@ function seedreamProxy(): Plugin {
             PEXELS_API_KEY: readEnvKey('PEXELS_API_KEY') || '',
             PIXABAY_API_KEY: readEnvKey('PIXABAY_API_KEY') || '',
             OPENVERSE_API_KEY: readEnvKey('OPENVERSE_API_KEY') || '',
+            UNSPLASH_ACCESS_KEY: readEnvKey('UNSPLASH_ACCESS_KEY') || '',
+            COVERR_API_KEY: readEnvKey('COVERR_API_KEY') || '',
+          }
+          /**
+           * 中文关键词翻译：复用设置里已配置的文本模型，超时就降级。
+           * 图库基本只认英文，这一步失败不阻断检索，但会带 translateFailed 让界面提示。
+           */
+          const translateChat = async (text: string, timeoutMs: number) => {
+            const picked = pickModel('text')
+            const entry = picked.entry
+            const provider = picked.provider
+            if (!entry || !provider) throw new Error('没有可用的文本模型')
+            const key = providerKey(provider)
+            if (!key) throw new Error('文本模型缺少 API Key')
+            const base = String(provider.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            const r = await fetch(`${base}/chat/completions`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: entry.model,
+                temperature: 0,
+                max_tokens: 64,
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      '你是图库检索关键词翻译器。把中文影视检索词译成公开图库（Unsplash/Pexels/Mixkit）标签习惯的英文名词短语（2–5 个词）。只输出译文，不要解释、不要引号、不要句号。',
+                  },
+                  { role: 'user', content: String(text) },
+                ],
+              }),
+              signal: AbortSignal.timeout(Math.max(1000, timeoutMs)),
+            })
+            if (!r.ok) throw new Error(`翻译请求失败 ${r.status}`)
+            const raw = await r.text()
+            const j = parseChatBody(raw, r.headers.get('content-type') || '')
+            const out = String((j as any)?.choices?.[0]?.message?.content ?? (j as any)?.reply ?? '')
+            if (!out.trim()) throw new Error('翻译模型没有返回内容')
+            return out
           }
           const fail = (e: any, fallbackStatus = 502) => {
             const isStock = e instanceof StockError
@@ -4543,6 +4582,7 @@ function seedreamProxy(): Plugin {
                 orientation: q.get('orientation') || '',
                 settings: stockSettings,
                 env: stockEnv,
+                chat: translateChat,
               })
               res.end(JSON.stringify({ ok: true, ...result }))
               return

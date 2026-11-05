@@ -4,27 +4,57 @@
 
 ## 来源
 
-| 来源 | 媒体类型 | 鉴权 | 说明 |
-| --- | --- | --- | --- |
-| Pexels | 图片 / 视频 | 需 Key | 图片取原图，视频取 ≤1080p 的最高清变体 |
-| Pixabay | 图片 / 视频 | 需 Key | 检索带 `lang=zh`、`safesearch=true`，中文关键词更友好 |
-| Openverse | 图片 / 音频 | 可选 | 匿名可用但额度很低；CC0/PDM 不要求署名，其余 CC 许可要求署名 |
+| 来源 | 访问方式 | 媒体类型 | 鉴权 | 说明 |
+| --- | --- | --- | --- | --- |
+| Pexels | `api` | 图片 / 视频 | 需 Key | 图片取原图，视频取 ≤1080p 的最高清变体 |
+| Pixabay | `api` | 图片 / 视频 | 需 Key | 检索带 `lang=zh`、`safesearch=true`，中文关键词更友好 |
+| Openverse | `api` | 图片 / 音频 | 可选 | 匿名可用但额度很低；CC0/PDM 不要求署名，其余 CC 许可要求署名 |
+| Unsplash | `api` | 图片 | 需 Key | 只收英文关键词；导入前请求 `links.download_location` 计入作者下载统计 |
+| Coverr | `api` | 视频 | 需 Key | 只收英文关键词；搜索阶段直接过滤 `is_premium` 素材 |
+| Mixkit | `html` | 视频 | 不需要 | 服务端解析检索页与详情页；导入时才抓一次详情页补 720p |
+| VJShi 光厂 | `link` | 图片 / 视频 | 不需要 | 付费素材，只给站内搜索外链，不检索、不导入 |
 
-新增来源只需在 `server/stock.mjs` 加一个适配器并在 `server/stock-settings.mjs` 登记默认地址与环境变量，检索、导入与界面都不改。
+访问方式决定界面形态：`api` 走官方 JSON 接口，`html` 由服务端解析页面，`link` 只渲染「去来源站搜索」按钮。
+新增来源需要在 `server/stock.mjs` 加适配器，并在 `server/stock-settings.mjs` 登记 `kind`、默认地址与环境变量，检索、导入与界面都不改。
 
 ## 配置
 
 设置页「素材库」分区：
 
-- 每个来源有启用开关、API Key、可选 Base URL。
+- `api` 型来源有启用开关、API Key、可选 Base URL；`html` / `link` 型不渲染 Key 输入，`link` 型也没有启用开关（它不产生请求，固定常显）。
 - Key 只存在本地设置库或环境变量；读取设置时只返回「是否已保存」，不回传原文。保存时留空表示沿用已保存的 Key。
-- 环境变量兜底：`PEXELS_API_KEY`、`PIXABAY_API_KEY`、`OPENVERSE_API_KEY`。填了对应环境变量会自动启用该来源，并在设置页标注「来自环境变量」。
+- 环境变量兜底：`PEXELS_API_KEY`、`PIXABAY_API_KEY`、`OPENVERSE_API_KEY`、`UNSPLASH_ACCESS_KEY`、`COVERR_API_KEY`。填了对应环境变量会自动启用该来源，并在设置页标注「来自环境变量」。
 - 「检测可用性」会先保存当前配置，再请求一次来源列表所需的最小信息，只读本地配置与一次轻量查询，不做检索。
 
 ```bash
 # 例：只启用 Pexels
 export PEXELS_API_KEY="your-key"
+# 例：启用 Unsplash（在 https://unsplash.com/developers 申请 Access Key）
+export UNSPLASH_ACCESS_KEY="your-access-key"
 ```
+
+Unsplash 与 Coverr 的 Demo 额度约 50 次/小时，Mixkit 是自己抓页面，所以两类都要收敛翻页：
+
+| 来源 | 每页 | 页码上限 |
+| --- | --- | --- |
+| Unsplash | 20 | 5 |
+| Coverr | 20 | 5 |
+| Mixkit | 24（站点固定） | 3 |
+| Pexels / Pixabay / Openverse | 24 | 100 |
+
+请求超过页码上限时服务端直接返回 `hasMore: false` 与空列表，不请求来源。
+
+## 中文关键词检索
+
+公开图库基本只认英文。实测 Coverr 搜「中国」为 0 条，Mixkit 用中文当 slug 也拿不到真实结果，所以关键词在服务端先翻译：
+
+1. 不含中日韩字符：原样检索。
+2. 命中内置术语表（约 80 条地理、场景、人物、运镜高频词）：直接替换，零延迟、可离线验收。
+3. 未命中且配置了文本模型：请求 `/chat/completions` 翻译，5 秒超时。
+4. 仍失败：按原词检索，但响应带 `translateFailed`，界面必须显示「未能把中文关键词译成英文，按原词检索可能没有结果」。
+
+响应同时返回 `requestedQuery`（用户原词）与 `translated`（`{from,to,via}`），界面据此标注「已把「雨夜」译为 rainy night（术语表）」。缓存键用译后词，所以搜「中国」之后再搜 `china` 会直接命中缓存。
+
 
 ## 检索
 
@@ -45,6 +75,53 @@ export PEXELS_API_KEY="your-key"
 5. 超时 120 秒；任何失败都删除 `.part` 临时文件，不写素材卡与来源记录。
 
 文件落在 `projects/<项目>/assets/stock-<来源>-<条目>.<ext>`，同一项目内重复导入直接复用已有文件（界面标「已存在」），文件被删后会重新下载。不同项目各自保存独立文件。
+
+## 页面解析来源（Mixkit）
+
+Mixkit 没有公开检索接口，`robots.txt` 是 `Allow: /`，但检索入口是**路径式 slug**：
+
+```
+GET https://mixkit.co/free-stock-video/<keyword-slug>/?page=<n>
+```
+
+`/free-stock-video/search/?q=<词>` 对任何关键词都返回同一份默认推荐（24 条固定结果），看着像有结果但与关键词无关，因此代码里不采用该入口。中文词必须先译成英文再转 slug；译不出来时直接返回空结果并带 `translateFailed`，不会把中文拼进路径。
+
+抓取边界（改动时不要越过）：
+
+- 只在用户显式提交检索时请求列表页，不预取、不递归爬库、不并发抓详情页。
+- 导入时最多为这一条素材抓一次详情页，用来补 720p 直链与真实时长；720 被拒（403）自动退回列表页的 360p。
+- 每页 24 条、最多 3 页。
+
+0 条结果分两种语义：页面还有条目网格容器（`masonryWrapper`）说明是正常空结果；连容器都找不到说明站点改版，返回 `kind: 'provider'` 的「页面结构可能已变化」，不会伪装成空结果。验收用 `tests/fixtures/mixkit-search.html`、`tests/fixtures/mixkit-detail.html` 两份真实响应裁剪快照，站点改版时纯函数单测会先红。
+
+## 外链来源（VJShi 光厂）
+
+VJShi 的正版内容需要充值购买，`robots.txt` 明确 `Disallow: /so?*`，检索页还有反爬 JS 挑战，预览带水印、正片按 V 币售卖。因此该来源只作为外链：
+
+- 界面渲染「去 VJShi 光厂 搜索」按钮，跳转 `https://www.vjshi.com/so?wd=<编码后的关键词>`。
+- 常驻提示「需要购买后手动上传」，没有检索框、媒体类型切换与导入按钮。
+- 服务端对 `kind: 'link'` 的检索与导入都直接拒绝（`bad-request`），且不发起任何网络请求。
+
+## 排障
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 「未配置 Key」 | `api` 型来源启用了但既没保存 Key 也没环境变量 | 设置页填 Key，或导出对应环境变量后重启 |
+| 「来源限流或额度不足」 | 来源返回 429 / 额度耗尽（Unsplash、Coverr Demo 约 50 次/小时） | 换来源或等额度恢复；同一关键词 10 分钟内会命中缓存 |
+| 「未能把中文关键词译成英文」 | 术语表未命中且文本模型不可用 | 在设置页配置一个可用的文本模型，或直接输入英文关键词 |
+| 「Mixkit 页面结构可能已变化」 | 站点改版导致解析规则失效 | 用新响应更新 `tests/fixtures/mixkit-*.html` 与 `server/stock-parse.mjs`，跑单测确认 |
+| 「下载地址不被允许」 | 来源把文件指到内网或环回地址 | 属于 SSRF 防护，换一条素材；不要放宽 `assertPublicUrl` |
+
+离线验收（不访问真实图库）：
+
+```bash
+node verify-stock-api.mjs     # 来源注册、翻译、归一化、导入与令牌
+node verify-stock-ui.mjs      # 来源切换、译词标注、外链按钮、设置页
+node verify-skills-unit.mjs   # 解析器与翻译纯函数（含 Mixkit fixture）
+node verify-media-picker.mjs  # 素材选择器回归
+```
+
+真实网络下的手工确认（不影响 CI）：Mixkit 零 Key 检索 + 导入各一次；拿到 Unsplash / Coverr Key 后各确认检索、翻页与导入。
 
 ## 入口
 

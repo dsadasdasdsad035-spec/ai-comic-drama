@@ -25,6 +25,8 @@ const shot = {
   keyframe: '/generated/probe-frame.jpg',
   cast: ['陈默'],
   dialogue: [{ speaker: '陈默', text: '你来了。' }],
+  performance: [{ character: '陈默', emotion: 'calm', intensity: 3, action: '抬头', speaks: true }],
+  dialogue_delivery: [{ pace: 'slow' }],
   refIds: ['char-陈默'],
   refExtras: ['/generated/probe-prop.jpg'],
 }
@@ -248,7 +250,28 @@ const unit = await p.evaluate(async () => {
     fingerprint: basic.fingerprint,
     createdAt: '',
   })
-  return { basic, frames, video, native, neighbor, fpA, fpB, noOverride, stale, same }
+  const withPerf = m.buildShotVideoRequest({
+    data: {
+      ...nodes[0].data,
+      refExtras: [],
+      performance: [
+        { character: '陈默', emotion: 'calm', intensity: 3, action: '抬头', speaks: true },
+      ],
+      dialogue: '陈默：你来了。',
+      dialogueDelivery: [{ pace: 'slow' }],
+    },
+    nodeId: 'n1',
+    nodes,
+    characters: [baseChar],
+    schedule,
+    model: { key: 'v' },
+  })
+  const perfStale = m.effectiveVideoPrompt(withPerf, {
+    text: '手改',
+    fingerprint: basic.fingerprint,
+    createdAt: '',
+  })
+  return { basic, frames, video, native, neighbor, fpA, fpB, noOverride, stale, same, withPerf, perfStale }
 })
 
 const { basic, frames, video, native, neighbor, fpA, fpB } = unit
@@ -327,6 +350,8 @@ check('参考变化会改变指纹', fpA.fingerprint !== fpB.fingerprint)
 check('无手改时使用自动正文', unit.noOverride.source === 'auto' && unit.noOverride.text === basic.prompt)
 check('手改指纹不匹配标记旧快照', unit.stale.source === 'override' && unit.stale.stale === true)
 check('手改指纹匹配不算过期', unit.same.stale === false)
+check('有表演时正文含【表演方向】', unit.withPerf.prompt.includes('【表演方向】') && unit.withPerf.prompt.includes('陈默'), unit.withPerf.prompt.slice(0, 120))
+check('表演变更使旧手改指纹过期', unit.perfStale.stale === true)
 
 // ---------------------------------------------------------------- UI 路径
 await p.locator('.react-flow__node').first().click()
@@ -336,6 +361,8 @@ check('面板在生成按钮上方可见', (await panel.count()) === 1)
 const autoText = await p.locator('[data-video-prompt-text]').innerText()
 check('面板列出当前画面与角色', autoText.includes('[图1]=当前画面构图') && autoText.includes('[图2]=角色「陈默」外观'), autoText.slice(0, 160))
 check('面板列出参考图数量', (await panel.innerText()).includes('参考图 3/4'))
+check('面板摘要含表演人数', (await panel.innerText()).includes('表演 1 人'))
+check('面板自动正文含【表演方向】', autoText.includes('【表演方向】') && autoText.includes('陈默'))
 
 await p.locator('button', { hasText: /生成视频|重出视频/ }).first().click()
 await p.waitForTimeout(1000)

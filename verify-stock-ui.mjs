@@ -73,9 +73,13 @@ const installRoutes = async (page) => {
       body: JSON.stringify({
         ok: true,
         providers: [
-          { id: 'pexels', label: 'Pexels', mediaTypes: ['image', 'video'], needsKey: true, ok: true },
-          { id: 'pixabay', label: 'Pixabay', mediaTypes: ['image', 'video'], needsKey: true, ok: false, reason: '未配置 Key' },
-          { id: 'openverse', label: 'Openverse', mediaTypes: ['image', 'audio'], needsKey: false, ok: true, keyFromEnv: true },
+          { id: 'pexels', label: 'Pexels', kind: 'api', mediaTypes: ['image', 'video'], requiresKey: true, ok: true, searchable: true, importable: true },
+          { id: 'pixabay', label: 'Pixabay', kind: 'api', mediaTypes: ['image', 'video'], requiresKey: true, ok: false, reason: '未配置 Key', searchable: true, importable: true },
+          { id: 'openverse', label: 'Openverse', kind: 'api', mediaTypes: ['image', 'audio'], requiresKey: false, ok: true, keyFromEnv: true, searchable: true, importable: true },
+          { id: 'unsplash', label: 'Unsplash', kind: 'api', mediaTypes: ['image'], requiresKey: true, ok: false, reason: '未配置 Key', searchable: true, importable: true },
+          { id: 'coverr', label: 'Coverr', kind: 'api', mediaTypes: ['video'], requiresKey: true, ok: false, reason: '未配置 Key', searchable: true, importable: true },
+          { id: 'mixkit', label: 'Mixkit', kind: 'html', mediaTypes: ['video'], requiresKey: false, ok: true, searchable: true, importable: true },
+          { id: 'vjshi', label: 'VJShi 光厂', kind: 'link', mediaTypes: ['image', 'video'], requiresKey: false, ok: true, searchable: false, importable: false, externalUrlTemplate: 'https://www.vjshi.com/so?wd={query}' },
         ],
       }),
     }),
@@ -104,19 +108,52 @@ const installRoutes = async (page) => {
       })
     }
     const items = params.page === '2' ? [item(3, type, { title: '第二页素材' })] : page1
+    const base = {
+      ok: true,
+      provider: params.provider,
+      mediaType: type,
+      query: params.q,
+      page: Number(params.page) || 1,
+      perPage: 24,
+      total: 3,
+      hasMore: params.page !== '2',
+      cached: params.page === '1',
+    }
+    if (params.q === 'zh') {
+      // 中文关键词：服务端译成英文再检索，响应带回译词
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...base,
+          query: 'rainy night',
+          requestedQuery: '雨夜',
+          translated: { from: '雨夜', to: 'rainy night', via: 'glossary' },
+          hasMore: false,
+          items: [item(1, type)],
+        }),
+      })
+    }
+    if (params.q === 'fail') {
+      // 翻译失败：按原词检索，但必须显式提示
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...base, translateFailed: true, hasMore: false, items: [item(1, type)] }),
+      })
+    }
+    if (params.q === 'nomore') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...base, hasMore: false, items: [item(1, type)] }),
+      })
+    }
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        ok: true,
-        provider: params.provider,
-        mediaType: type,
-        query: params.q,
-        page: Number(params.page) || 1,
-        perPage: 24,
-        total: 3,
-        hasMore: params.page !== '2',
-        cached: params.page === '1',
+        ...base,
         items,
       }),
     })
@@ -189,7 +226,7 @@ try {
   check('默认未检索时不请求来源', searchCalls.length === 0, `calls=${searchCalls.length}`)
 
   section('来源与检索')
-  check('来源列表含三家', (await page.locator('[data-stock-provider]').count()) === 3)
+  check('来源列表含七家', (await page.locator('[data-stock-provider]').count()) === 7)
   check(
     '不可用来源标注原因',
     (await page.locator('[data-stock-provider="pixabay"]').innerText()).includes('不可用'),
@@ -234,6 +271,69 @@ try {
   await query.press('Enter')
   await page.waitForTimeout(500)
   check('限流显示可读原因', (await page.locator('[data-stock-error]').innerText()).includes('限流'))
+
+  section('中文译词与外链')
+  await page.locator('[data-stock-provider="pexels"]').click()
+  await page.waitForTimeout(250)
+  await page.locator('[data-stock-type="image"]').click()
+  await page.waitForTimeout(200)
+  await query.fill('zh')
+  await query.press('Enter')
+  await page.waitForTimeout(600)
+  check(
+    '显示译词标注',
+    (await page.locator('[data-stock-translated]').innerText()).includes('rainy night'),
+    (await page.locator('[data-stock-translated]').innerText().catch(() => '')),
+  )
+  check(
+    '检索参数仍是原词',
+    searchCalls.at(-1)?.q === 'zh',
+    JSON.stringify(searchCalls.at(-1)),
+  )
+
+  await page.locator('[data-stock-provider="openverse"]').click()
+  await page.waitForTimeout(300)
+  check('切换来源清空译词标注', (await page.locator('[data-stock-translated]').count()) === 0)
+  check('切换来源清空结果', (await page.locator('[data-stock-item]').count()) === 0)
+
+  await page.locator('[data-stock-provider="pexels"]').click()
+  await page.waitForTimeout(250)
+  await page.locator('[data-stock-type="image"]').click()
+  await page.waitForTimeout(200)
+  await query.fill('fail')
+  await query.press('Enter')
+  await page.waitForTimeout(600)
+  check(
+    '翻译失败有显式提示',
+    (await page.locator('[data-stock-translate-failed]').innerText()).includes('可能没有结果'),
+  )
+
+  await query.fill('nomore')
+  await query.press('Enter')
+  await page.waitForTimeout(600)
+  check('hasMore=false 时没有加载更多', (await page.locator('[data-stock-more]').count()) === 0)
+
+  // 外链型来源
+  await page.locator('[data-stock-provider="vjshi"]').click()
+  await page.waitForTimeout(300)
+  check('外链来源没有检索按钮', (await page.locator('[data-stock-search]').count()) === 0)
+  check('外链来源没有媒体类型切换', (await page.locator('[data-stock-type]').count()) === 0)
+  check(
+    '外链来源常驻购买提示',
+    (await page.locator('[data-stock-link-note]').innerText()).includes('手动上传'),
+  )
+  check('外链来源没有导入按钮', (await page.locator('[data-stock-import]').count()) === 0)
+  await query.fill('中国 长城')
+  await page.waitForTimeout(250)
+  const externalHref = await page.locator('[data-stock-external]').getAttribute('href')
+  check(
+    '外链按钮带编码后的关键词',
+    externalHref === `https://www.vjshi.com/so?wd=${encodeURIComponent('中国 长城')}`,
+    String(externalHref),
+  )
+  const callsBeforeLink = searchCalls.length
+  await page.waitForTimeout(300)
+  check('外链来源不会发起检索请求', searchCalls.length === callsBeforeLink, String(searchCalls.length))
 
   // 音频与署名
   section('音频与署名')
@@ -301,7 +401,23 @@ try {
   await page.locator('.st-nav button', { hasText: '素材库' }).click()
   await page.waitForTimeout(400)
   check('设置页有素材库分区', (await page.locator('[data-settings-stock]').count()) === 1)
-  check('三个来源各有配置卡', (await page.locator('[data-stock-provider-card]').count()) === 3)
+  check('七个来源各有配置卡', (await page.locator('[data-stock-provider-card]').count()) === 7)
+  check(
+    '新来源卡片带访问方式',
+    (await page.locator('[data-stock-provider-card="mixkit"]').getAttribute('data-stock-kind')) === 'html' &&
+      (await page.locator('[data-stock-provider-card="vjshi"]').getAttribute('data-stock-kind')) === 'link',
+  )
+  check('无需 Key 的来源不渲染 Key 输入', (await page.locator('[data-stock-key="mixkit"]').count()) === 0)
+  check(
+    '页面解析来源标明不需要 Key',
+    (await page.locator('[data-stock-provider-card="mixkit"]').innerText()).includes('不需要 Key'),
+  )
+  check(
+    '外链来源标明仅外链与购买提示',
+    (await page.locator('[data-stock-provider-card="vjshi"]').innerText()).includes('仅外链') &&
+      (await page.locator('[data-stock-provider-card="vjshi"]').innerText()).includes('需购买后手动上传'),
+  )
+  check('外链来源没有启用开关', (await page.locator('[data-stock-enabled="vjshi"]').count()) === 0)
   const keyInput = page.locator('[data-stock-key="pexels"]')
   check('Key 输入是密码框', (await keyInput.getAttribute('type')) === 'password')
   check('未保存时占位提示环境变量', (await keyInput.getAttribute('placeholder') || '').includes('PEXELS_API_KEY'))

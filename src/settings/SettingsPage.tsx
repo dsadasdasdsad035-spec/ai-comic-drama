@@ -1236,10 +1236,78 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
     }))
   }
 
-  const STOCK_PROVIDERS: Array<{ id: StockProviderId; label: string; hint: string; requiresKey: boolean; envKey: string }> = [
-    { id: 'pexels', label: 'Pexels', hint: '图片 + 视频', requiresKey: true, envKey: 'PEXELS_API_KEY' },
-    { id: 'pixabay', label: 'Pixabay', hint: '图片 + 视频，中文检索更友好', requiresKey: true, envKey: 'PIXABAY_API_KEY' },
-    { id: 'openverse', label: 'Openverse', hint: '图片 + 音频，CC 许可', requiresKey: false, envKey: 'OPENVERSE_API_KEY' },
+  const STOCK_PROVIDERS: Array<{
+    id: StockProviderId
+    label: string
+    hint: string
+    kind: 'api' | 'html' | 'link'
+    requiresKey: boolean
+    envKey: string
+    baseUrl: string
+  }> = [
+    {
+      id: 'pexels',
+      label: 'Pexels',
+      hint: '图片 + 视频',
+      kind: 'api',
+      requiresKey: true,
+      envKey: 'PEXELS_API_KEY',
+      baseUrl: 'https://api.pexels.com',
+    },
+    {
+      id: 'pixabay',
+      label: 'Pixabay',
+      hint: '图片 + 视频，中文检索更友好',
+      kind: 'api',
+      requiresKey: true,
+      envKey: 'PIXABAY_API_KEY',
+      baseUrl: 'https://pixabay.com',
+    },
+    {
+      id: 'openverse',
+      label: 'Openverse',
+      hint: '图片 + 音频，CC 许可',
+      kind: 'api',
+      requiresKey: false,
+      envKey: 'OPENVERSE_API_KEY',
+      baseUrl: 'https://api.openverse.org',
+    },
+    {
+      id: 'unsplash',
+      label: 'Unsplash',
+      hint: '图片，只收英文关键词',
+      kind: 'api',
+      requiresKey: true,
+      envKey: 'UNSPLASH_ACCESS_KEY',
+      baseUrl: 'https://api.unsplash.com',
+    },
+    {
+      id: 'coverr',
+      label: 'Coverr',
+      hint: '视频，只收英文关键词',
+      kind: 'api',
+      requiresKey: true,
+      envKey: 'COVERR_API_KEY',
+      baseUrl: 'https://api.coverr.co',
+    },
+    {
+      id: 'mixkit',
+      label: 'Mixkit',
+      hint: '视频，服务端解析页面，无需 Key',
+      kind: 'html',
+      requiresKey: false,
+      envKey: '',
+      baseUrl: 'https://mixkit.co',
+    },
+    {
+      id: 'vjshi',
+      label: 'VJShi 光厂',
+      hint: '外链：需购买后手动上传',
+      kind: 'link',
+      requiresKey: false,
+      envKey: '',
+      baseUrl: 'https://www.vjshi.com',
+    },
   ]
 
   const patchStock = (id: StockProviderId, patch: Partial<NonNullable<StockSettings['providers'][StockProviderId]>>) =>
@@ -1297,50 +1365,66 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
           const cfg = stock.providers[p.id] || { enabled: false, baseUrl: '', hasApiKey: false }
           const status = stockStatus[p.id]
           return (
-            <div key={p.id} className="st-field st-stock-card" data-stock-provider-card={p.id}>
+            <div key={p.id} className="st-field st-stock-card" data-stock-provider-card={p.id} data-stock-kind={p.kind}>
               <span>
                 {p.label}
                 <em>{p.hint}</em>
               </span>
-              <label className="st-stock-row">
-                <span>启用</span>
-                <select
-                  data-stock-enabled={p.id}
-                  value={cfg.enabled ? 'on' : 'off'}
-                  onChange={(e) => patchStock(p.id, { enabled: e.target.value === 'on' })}
-                >
-                  <option value="off">关闭</option>
-                  <option value="on">启用</option>
-                </select>
-              </label>
-              <label className="st-stock-row">
-                <span>API Key</span>
-                <input
-                  type="password"
-                  data-stock-key={p.id}
-                  value={cfg.hasApiKey ? '' : ''}
-                  placeholder={cfg.hasApiKey ? '已保存（留空保持不变）' : p.requiresKey ? `可留空沿用 ${p.envKey}` : `可选；留空沿用 ${p.envKey}`}
-                  onChange={(e) => patchStock(p.id, { apiKey: e.target.value, hasApiKey: false })}
-                />
-              </label>
+              {p.kind === 'link' ? (
+                <div className="st-stock-row">
+                  <span>启用</span>
+                  <span className="st-status-chip ok">固定开启（只提供外链）</span>
+                </div>
+              ) : (
+                <label className="st-stock-row">
+                  <span>启用</span>
+                  <select
+                    data-stock-enabled={p.id}
+                    value={cfg.enabled ? 'on' : 'off'}
+                    onChange={(e) => patchStock(p.id, { enabled: e.target.value === 'on' })}
+                  >
+                    <option value="off">关闭</option>
+                    <option value="on">启用</option>
+                  </select>
+                </label>
+              )}
+              {p.kind === 'api' ? (
+                <label className="st-stock-row">
+                  <span>API Key</span>
+                  <input
+                    type="password"
+                    data-stock-key={p.id}
+                    value={cfg.hasApiKey ? '' : ''}
+                    placeholder={
+                      cfg.hasApiKey
+                        ? '已保存（留空保持不变）'
+                        : p.requiresKey
+                          ? `可留空沿用 ${p.envKey}`
+                          : `可选；留空沿用 ${p.envKey}`
+                    }
+                    onChange={(e) => patchStock(p.id, { apiKey: e.target.value, hasApiKey: false })}
+                  />
+                </label>
+              ) : (
+                <div className="st-stock-row">
+                  <span>API Key</span>
+                  <span className="st-hint">不需要 Key</span>
+                </div>
+              )}
               <label className="st-stock-row">
                 <span>Base URL</span>
                 <input
                   data-stock-base={p.id}
                   value={cfg.baseUrl || ''}
-                  placeholder={
-                    p.id === 'pexels'
-                      ? 'https://api.pexels.com'
-                      : p.id === 'pixabay'
-                        ? 'https://pixabay.com'
-                        : 'https://api.openverse.org'
-                  }
+                  placeholder={p.baseUrl}
                   onChange={(e) => patchStock(p.id, { baseUrl: e.target.value })}
                 />
               </label>
               <div className="st-status-row">
                 {cfg.hasApiKey ? <span className="st-status-chip ok">已保存 Key</span> : null}
                 {cfg.keyFromEnv ? <span className="st-status-chip ok">来自环境变量</span> : null}
+                {p.kind === 'html' ? <span className="st-status-chip">页面解析</span> : null}
+                {p.kind === 'link' ? <span className="st-status-chip">仅外链</span> : null}
                 {status ? (
                   <span className={`st-status-chip ${status.ok ? 'ok' : 'warn'}`} title={status.reason || '可用'}>
                     {status.ok ? '可用' : `不可用：${status.reason || '未配置'}`}

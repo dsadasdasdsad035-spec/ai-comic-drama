@@ -2,6 +2,10 @@ import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import { audioRefCapabilitiesFor, nativeAudioPrompt, nativeAudioRef } from './nativeAudio'
 import { parseDialogue } from './prompts'
+import {
+  performanceFingerprintPayload,
+  performanceVideoPromptBlock,
+} from './performance'
 import { motionNoteOf, shortHash } from './scheduleGeometry'
 import type { ShotScheduleState } from './scheduleStatus'
 import {
@@ -179,6 +183,7 @@ function fingerprintOf(input: {
       audio: input.audio ? [input.audio.label, input.audio.url] : null,
       videos: input.videos.map((r) => [r.url, r.label]),
       useExpressionRef: Boolean(input.data.useExpressionRef),
+      ...performanceFingerprintPayload(input.data.performance, input.data.dialogueDelivery),
     }),
   )
 }
@@ -256,11 +261,13 @@ export function buildShotVideoRequest(input: {
     ''
   const nativeSound =
     nativeMode && nativeRef?.ok ? nativeAudioPrompt(nativeRef.character, dialogue, true) : ''
+  const performanceBlock = performanceVideoPromptBlock(d.performance, dialogue, d.dialogueDelivery)
   const refHint = buildRefHint(limited, Boolean(primaryVideo))
   const videoHint = buildVideoHint(primaryVideo)
   const prompt =
     (motion || fallback) +
     (liveMotionNote ? `\n【运镜与走位】${liveMotionNote}` : '') +
+    performanceBlock +
     (nativeSound ? `\n\n${nativeSound}` : '') +
     refHint +
     videoHint

@@ -20,6 +20,16 @@ import {
   STOCK_PROVIDER_IDS,
   applyStockEnvDefaults,
 } from './stock-settings.mjs'
+import { translateQuery } from './stock-query.mjs'
+import {
+  parseMixkitDetail,
+  parseMixkitMaxPage,
+  parseMixkitSearch,
+  mixkitPageShape,
+  toSlug,
+  vjshiSearchTemplate,
+  vjshiSearchUrl,
+} from './stock-parse.mjs'
 
 export const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000
 export const SEARCH_CACHE_MAX = 200
@@ -131,6 +141,22 @@ async function requestJson(url, { apiKey, headers = {}, fetchImpl = fetch, provi
   }
 }
 
+/** 取整页 HTML：页面解析型来源用，非 2xx 统一翻译成 StockError */
+async function requestText(url, { headers = {}, fetchImpl = fetch, provider = '', timeoutMs = 30_000 } = {}) {
+  let r
+  try {
+    r = await fetchImpl(url, {
+      headers: { Accept: 'text/html,application/xhtml+xml', ...headers },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (e) {
+    throw new StockError(`${provider}：${e?.message || '网络请求失败'}`, { kind: 'network', provider })
+  }
+  const text = await r.text().catch(() => '')
+  if (!r.ok) throw errorFromResponse(text, r.status, provider)
+  return text
+}
+
 function joinUrl(base, path) {
   return `${String(base || '').replace(/\/+$/, '')}${path}`
 }
@@ -153,6 +179,7 @@ function pexelsAdapter() {
   return {
     id: 'pexels',
     label: 'Pexels',
+    kind: 'api',
     mediaTypes: ['image', 'video'],
     requiresKey: true,
     defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.pexels.baseUrl,
@@ -255,6 +282,7 @@ function pixabayAdapter() {
   return {
     id: 'pixabay',
     label: 'Pixabay',
+    kind: 'api',
     mediaTypes: ['image', 'video'],
     requiresKey: true,
     defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.pixabay.baseUrl,
@@ -366,6 +394,7 @@ function openverseAdapter() {
   return {
     id: 'openverse',
     label: 'Openverse',
+    kind: 'api',
     mediaTypes: ['image', 'audio'],
     requiresKey: false,
     defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.openverse.baseUrl,
@@ -434,10 +463,297 @@ function normalizeOpenverse(h, mediaType) {
   }
 }
 
+// ---------------------------------------------------------------- 新增来源
+
+/** Unsplash 只收英文关键词；orientation 用 squarish 而不是 square */
+const UNSPLASH_ORIENTATION = { square: 'squarish' }
+
+function normalizeUnsplash(p) {
+  const author = str(p?.user?.name)
+  const urls = p?.urls || {}
+  const variants = [
+    ['raw', Number(p?.width) || undefined, Number(p?.height) || undefined],
+    ['full', undefined, undefined],
+    ['regular', undefined, undefined],
+  ]
+    .filter(([k]) => str(urls[k]))
+    .map(([k, width, height]) => ({ url: String(urls[k]), mime: 'image/jpeg', width, height }))
+  return {
+    provider: 'unsplash',
+    itemId: String(p?.id ?? ''),
+    mediaType: 'image',
+    title: str(p?.alt_description) || str(p?.description) || `Unsplash 图片 ${p?.id ?? ''}`,
+    author,
+    authorUrl: str(p?.user?.links?.html),
+    sourceUrl: str(p?.links?.html),
+    license: makeLicense({
+      name: 'Unsplash License',
+      url: 'https://unsplash.com/license',
+      requiresAttribution: false,
+      author,
+      sourceLabel: 'Unsplash',
+    }),
+    thumbnailUrl: str(urls.small) || str(urls.thumb) || str(urls.regular),
+    previewUrl: str(urls.regular) || str(urls.small),
+    variants,
+    width: Number(p?.width) || undefined,
+    height: Number(p?.height) || undefined,
+    // 下载计数的触发地址：不带 Client-ID 打不开，客户端拿到也没用
+    downloadLocation: str(p?.links?.download_location),
+  }
+}
+
+function unsplashAdapter() {
+  return {
+    id: 'unsplash',
+    label: 'Unsplash',
+    kind: 'api',
+    mediaTypes: ['image'],
+    requiresKey: true,
+    defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.unsplash.baseUrl,
+    defaultPerPage: 20,
+    perPageMax: 20,
+    pageMax: 5,
+    async search({ query, page, perPage, orientation, apiKey, baseUrl, fetchImpl }) {
+      const params = new URLSearchParams({ query, page: String(page), per_page: String(perPage) })
+      const o = UNSPLASH_ORIENTATION[orientation] || orientation
+      if (o) params.set('orientation', o)
+      const j = await requestJson(joinUrl(baseUrl, `/search/photos?${params}`), {
+        headers: {
+          Authorization: `Client-ID ${String(apiKey || '')}`,
+          'Accept-Version': 'v1',
+        },
+        fetchImpl,
+        provider: 'Unsplash',
+      })
+      const list = Array.isArray(j?.results) ? j.results : []
+      const totalPages = Number(j?.total_pages) || 0
+      return {
+        items: list.map(normalizeUnsplash),
+        total: Number(j?.total) || undefined,
+        hasMore: totalPages > page,
+      }
+    },
+    /**
+     * Unsplash 的 API 使用条款要求下载走 download_location 以计入作者统计。
+     * 这里先换取真实文件地址，再交给通用下载流水线。
+     */
+    async prepareImport(item, { apiKey, fetchImpl }) {
+      if (!item.downloadLocation) return null
+      const j = await requestJson(item.downloadLocation, {
+        headers: { Authorization: `Client-ID ${String(apiKey || '')}`, 'Accept-Version': 'v1' },
+        fetchImpl,
+        provider: 'Unsplash',
+      })
+      const url = str(j?.url)
+      return url ? { candidates: [{ url, mime: 'image/jpeg' }] } : null
+    },
+  }
+}
+
+function normalizeCoverr(h, index) {
+  const urls = h?.urls && typeof h.urls === 'object' ? h.urls : {}
+  const file = str(urls.mp4_download) || str(urls.mp4) || str(urls.full) || str(urls.mp4_preview)
+  if (!file) return null
+  const author = str(h?.owner?.name) || str(h?.author) || ''
+  const width = Number(h?.max_width) || Number(h?.width) || undefined
+  const height = Number(h?.max_height) || Number(h?.height) || undefined
+  return {
+    provider: 'coverr',
+    itemId: String(h?.id ?? h?.slug ?? index),
+    mediaType: 'video',
+    title: str(h?.title) || str(h?.description) || `Coverr 视频 ${h?.id ?? ''}`,
+    author,
+    authorUrl: str(h?.owner?.profile) || '',
+    sourceUrl: str(h?.url) || (str(h?.slug) ? `https://coverr.co/videos/${h.slug}` : ''),
+    license: makeLicense({
+      name: 'Coverr License',
+      url: 'https://coverr.co/license',
+      requiresAttribution: false,
+      author,
+      sourceLabel: 'Coverr',
+    }),
+    thumbnailUrl: str(urls.poster) || str(urls.thumbnail) || str(h?.poster) || str(h?.thumbnail),
+    previewUrl: str(urls.poster) || str(urls.thumbnail) || str(h?.poster) || str(h?.thumbnail),
+    variants: [{ url: file, mime: 'video/mp4', width, height, duration: Number(h?.duration) || undefined }],
+    width,
+    height,
+    duration: Number(h?.duration) || undefined,
+  }
+}
+
+function coverrAdapter() {
+  return {
+    id: 'coverr',
+    label: 'Coverr',
+    kind: 'api',
+    mediaTypes: ['video'],
+    requiresKey: true,
+    defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.coverr.baseUrl,
+    defaultPerPage: 20,
+    perPageMax: 20,
+    pageMax: 5,
+    async search({ query, page, perPage, apiKey, baseUrl, fetchImpl }) {
+      // Coverr 的 page 从 0 开始
+      const params = new URLSearchParams({
+        query,
+        page: String(Math.max(0, page - 1)),
+        page_size: String(perPage),
+        urls: 'true',
+        sort: 'popular',
+      })
+      const j = await requestJson(joinUrl(baseUrl, `/videos?${params}`), {
+        apiKey,
+        fetchImpl,
+        provider: 'Coverr',
+      })
+      const list = Array.isArray(j?.hits) ? j.hits : []
+      // 付费素材下载会 402，而且条款不允许直接分发，直接过滤掉
+      const items = list
+        .filter((h) => !h?.is_premium)
+        .map(normalizeCoverr)
+        .filter(Boolean)
+      const pages = Number(j?.pages) || 0
+      return {
+        items,
+        total: Number(j?.total) || undefined,
+        hasMore: pages > page,
+      }
+    },
+  }
+}
+
+/** Mixkit 列表页只给 360p 预览；宽高按文件名后缀推算，用于清晰度排序 */
+function mixkitVariant(url, height) {
+  const h = Number(height) || 0
+  return {
+    url,
+    mime: 'video/mp4',
+    ...(h ? { height: h, width: Math.round((h * 16) / 9) } : {}),
+  }
+}
+
+function mixkitAdapter() {
+  return {
+    id: 'mixkit',
+    label: 'Mixkit',
+    kind: 'html',
+    mediaTypes: ['video'],
+    requiresKey: false,
+    defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.mixkit.baseUrl,
+    pageMax: 3,
+    async search({ query, page, baseUrl, fetchImpl }) {
+      const slug = toSlug(query)
+      // 没有可用的 ASCII slug（例如中文没翻出来）就不发请求：
+      // 拼一串中文进路径得不到真实结果，只会把「翻译失败」伪装成「没有素材」
+      if (!slug) return { items: [], hasMore: false }
+      // 路径式检索：?q= 的 /search/ 页会回首页默认推荐，不能用来检索
+      const endpoint = joinUrl(baseUrl, `/free-stock-video/${slug}/${page > 1 ? `?page=${page}` : ''}`)
+      const html = await requestText(endpoint, { fetchImpl, provider: 'Mixkit' })
+      const shape = mixkitPageShape(html)
+      if (shape === 'unknown') {
+        throw new StockError('Mixkit 页面结构可能已变化，暂时无法解析检索结果', {
+          kind: 'provider',
+          provider: 'Mixkit',
+        })
+      }
+      const items = parseMixkitSearch(html).map((row) => {
+        return {
+          provider: 'mixkit',
+          itemId: row.id,
+          mediaType: 'video',
+          title: row.title,
+          author: '',
+          authorUrl: '',
+          sourceUrl: row.detailPath ? joinUrl(baseUrl, row.detailPath) : '',
+          license: makeLicense({
+            name: 'Mixkit License',
+            url: 'https://mixkit.co/license/',
+            requiresAttribution: false,
+            author: '',
+            sourceLabel: 'Mixkit',
+          }),
+          thumbnailUrl: row.thumbnailUrl,
+          previewUrl: row.previewUrl,
+          variants: [mixkitVariant(row.previewUrl, row.height)],
+          height: row.height || undefined,
+          width: row.height ? Math.round((row.height * 16) / 9) : undefined,
+        }
+      })
+      return { items, hasMore: page < parseMixkitMaxPage(html) }
+    },
+    /**
+     * 详情页的 JSON-LD 才有 720p 直链与真实时长。候选按清晰度降序，
+     * 720 被拒（403）时由通用导入流程退回列表页的 360p。
+     */
+    async prepareImport(item, { fetchImpl }) {
+      if (!item.sourceUrl) return null
+      const html = await requestText(item.sourceUrl, { fetchImpl, provider: 'Mixkit' })
+      const detail = parseMixkitDetail(html)
+      if (!detail?.contentUrl) return null
+      const fallback = item.variants?.[0]
+      const candidates = [
+        {
+          url: detail.contentUrl,
+          mime: 'video/mp4',
+          width: 1280,
+          height: 720,
+          duration: detail.duration,
+        },
+        ...(fallback?.url && fallback.url !== detail.contentUrl ? [fallback] : []),
+      ]
+      return {
+        candidates,
+        patch: {
+          ...(detail.duration ? { duration: detail.duration } : {}),
+          ...(detail.author && !item.author ? { author: detail.author } : {}),
+          ...(detail.thumbnailUrl ? { thumbnailUrl: detail.thumbnailUrl } : {}),
+          // 详情页拿到的许可名更准确
+          ...(detail.license
+            ? {
+                license: makeLicense({
+                  name: detail.license,
+                  url: detail.licenseUrl || 'https://mixkit.co/license/',
+                  requiresAttribution: false,
+                  author: item.author || detail.author,
+                  sourceLabel: 'Mixkit',
+                }),
+              }
+            : {}),
+        },
+      }
+    },
+  }
+}
+
+/**
+ * VJShi 光厂：正规内容需要充值购买，robots.txt 禁止抓取检索页，
+ * 站点也不会为爬虫返回可下载地址。这里只暴露站内搜索外链，不检索、不导入。
+ */
+function vjshiAdapter() {
+  return {
+    id: 'vjshi',
+    label: 'VJShi 光厂',
+    kind: 'link',
+    mediaTypes: ['image', 'video'],
+    requiresKey: false,
+    defaultBaseUrl: STOCK_PROVIDER_DEFAULTS.vjshi.baseUrl,
+    externalSearchUrl: (query, baseUrl) => vjshiSearchUrl(query, baseUrl),
+    externalUrlTemplate: (baseUrl) => vjshiSearchTemplate(baseUrl),
+    async search() {
+      throw new StockError('VJShi 光厂需要付费购买，只提供站内搜索外链', { kind: 'bad-request', provider: 'vjshi' })
+    },
+  }
+}
+
 const ADAPTERS = {
   pexels: pexelsAdapter(),
   pixabay: pixabayAdapter(),
   openverse: openverseAdapter(),
+  unsplash: unsplashAdapter(),
+  coverr: coverrAdapter(),
+  mixkit: mixkitAdapter(),
+  vjshi: vjshiAdapter(),
 }
 
 /** 注册表顺序与设置层一致 */
@@ -454,13 +770,24 @@ export function describeProviders(settings, env = process.env) {
   const { settings: applied, fromEnv } = applyStockEnvDefaults(settings, env)
   return listAdapters().map((a) => {
     const p = applied.providers[a.id] || { enabled: false, apiKey: '', baseUrl: a.defaultBaseUrl }
+    const kind = a.kind || 'api'
     const base = {
       id: a.id,
       label: a.label,
+      kind,
       mediaTypes: a.mediaTypes,
       requiresKey: a.requiresKey,
+      // link 型只有站内搜索外链：界面据此不渲染检索框与导入按钮
+      searchable: kind !== 'link',
+      importable: kind !== 'link',
+      // 外链型来源给的是模板：前端把 {query} 换成编码后的关键词
+      ...(typeof a.externalUrlTemplate === 'function'
+        ? { externalUrlTemplate: a.externalUrlTemplate(p.baseUrl || a.defaultBaseUrl) }
+        : {}),
       ...(fromEnv[a.id] ? { keyFromEnv: true } : {}),
     }
+    // 外链型来源不消耗额度、也不需要凭据，永远可用
+    if (kind === 'link') return { ...base, ok: true }
     if (!p.enabled) return { ...base, ok: false, reason: '未启用：在设置页的「素材库」里开启' }
     if (a.requiresKey && !p.apiKey) return { ...base, ok: false, reason: '未配置 Key' }
     return { ...base, ok: true }
@@ -526,6 +853,15 @@ export function readToken(token, now = Date.now()) {
   return entry
 }
 
+/**
+ * 直接签发导入令牌（服务端内部与验收用）。
+ * 正常路径只有 searchStock 会调用它；导出是为了让「外链来源不得导入」这类
+ * 防御性判定能在拿不到检索结果的来源上被验证。
+ */
+export function issueStockToken(item, now = Date.now()) {
+  return issueToken(item, now)
+}
+
 // ---------------------------------------------------------------- 检索
 
 function clamp(n, min, max, fallback) {
@@ -537,20 +873,39 @@ function clamp(n, min, max, fallback) {
 /**
  * 检索一个来源。参数非法直接抛 bad-request（路由层不会为此请求来源），
  * 缓存命中不再请求来源并标记 cached。
+ *
+ * 中文关键词先翻译：英文关键词直接用；命中术语表或模型翻译时把译词一起回传，
+ * 界面据此标注「已翻译」。翻译失败仍按原词检索，但会带 `translateFailed`，
+ * 避免把「来源不支持中文」误读成「没有素材」。
  */
 export async function searchStock(input = {}) {
-  const { settings, env = process.env, fetchImpl = fetch, now = Date.now() } = input
+  const {
+    settings,
+    env = process.env,
+    fetchImpl = fetch,
+    now = Date.now(),
+    chat = null,
+  } = input
   const providerId = str(input.provider)
   const adapter = getAdapter(providerId)
   if (!adapter) throw new StockError(`未知来源：${providerId || '空'}`, { kind: 'bad-request' })
+  if ((adapter.kind || 'api') === 'link') {
+    throw new StockError(`${adapter.label} 需要付费购买，只能在来源网站检索后手动上传`, {
+      kind: 'bad-request',
+      provider: providerId,
+    })
+  }
   const mediaType = str(input.mediaType) || adapter.mediaTypes[0]
   if (!adapter.mediaTypes.includes(mediaType)) {
     throw new StockError(`${adapter.label} 不支持 ${mediaType}`, { kind: 'bad-request' })
   }
-  const query = str(input.query)
-  if (query.length < 2) throw new StockError('关键词至少 2 个字符', { kind: 'bad-request' })
-  const page = clamp(input.page, 1, 100, 1)
-  const perPage = clamp(input.perPage, 1, 50, 24)
+  const requestedQuery = str(input.query)
+  if (requestedQuery.length < 2) throw new StockError('关键词至少 2 个字符', { kind: 'bad-request' })
+  // 额度保护：新来源的分页上限由适配器声明，不能靠客户端传参翻到深页
+  const pageMax = adapter.pageMax || 100
+  const pageRequested = clamp(input.page, 1, 10_000, 1)
+  const page = Math.min(pageRequested, pageMax)
+  const perPage = clamp(input.perPage, 1, adapter.perPageMax || 50, adapter.defaultPerPage || 24)
   const orientation = str(input.orientation)
 
   const availability = providerAvailability(settings, providerId, env)
@@ -561,10 +916,34 @@ export async function searchStock(input = {}) {
     })
   }
 
+  // 超过来源允许的页码：直接收敛，不请求来源，也不消耗翻译额度
+  if (pageRequested > pageMax) {
+    return {
+      provider: providerId,
+      mediaType,
+      query: requestedQuery,
+      requestedQuery,
+      page,
+      perPage,
+      hasMore: false,
+      cached: false,
+      items: [],
+    }
+  }
+
+  const translation = await translateQuery({ text: requestedQuery, chat })
+  const query = translation.query || requestedQuery
+
   const key = cacheKey({ provider: providerId, mediaType, query, page, perPage, orientation })
   const cached = readCache(key, now)
   if (cached) {
-    return { ...cached.payload, cached: true }
+    return {
+      ...cached.payload,
+      requestedQuery,
+      ...(translation.translated ? { translated: translation.translated } : {}),
+      ...(translation.failed ? { translateFailed: true } : {}),
+      cached: true,
+    }
   }
 
   const { settings: applied } = applyStockEnvDefaults(settings, env)
@@ -594,7 +973,12 @@ export async function searchStock(input = {}) {
     items,
   }
   writeCache(key, payload, now)
-  return payload
+  return {
+    ...payload,
+    requestedQuery,
+    ...(translation.translated ? { translated: translation.translated } : {}),
+    ...(translation.failed ? { translateFailed: true } : {}),
+  }
 }
 
 // ---------------------------------------------------------------- 导入
@@ -684,39 +1068,86 @@ export async function importStockItem(input = {}) {
     }
   }
 
-  const variant = pickVariant(item)
-  if (!variant) throw new StockError('这个条目没有可下载的文件', { kind: 'provider', provider: providerId })
-
-  let target
-  try {
-    target = await assertPublic(variant.url)
-  } catch (e) {
-    throw new StockError(`下载地址不被允许：${e?.message || e}`, { kind: 'bad-request', provider: providerId })
+  const adapter = getAdapter(providerId)
+  if ((adapter?.kind || 'api') === 'link') {
+    throw new StockError(`${item.provider} 需要付费购买，不能直接导入`, { kind: 'bad-request', provider: providerId })
   }
 
-  let r
-  try {
-    r = await fetchImpl(target, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
-  } catch (e) {
-    const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError'
-    throw new StockError(`${providerId}：下载${timeout ? '超时' : '失败'}（${e?.message || e}）`, {
-      kind: timeout ? 'network' : 'network',
-      provider: providerId,
-    })
-  }
-  if (!r.ok) throw errorFromResponse(await r.text().catch(() => ''), r.status, providerId)
+  const { settings: applied } = applyStockEnvDefaults(settings, env)
+  const cfg = applied.providers[providerId] || {}
 
-  // 重定向后的最终地址同样必须是公网，避免来源把请求引到内网
-  const finalUrl = str(r.url)
-  if (finalUrl && finalUrl !== String(target)) {
+  // 有的来源导入前要补一步解析：Unsplash 换 download_location，Mixkit 取 720p 直链。
+  // 这一步失败不该让整个导入失败，退回检索结果里的地址即可。
+  let prepared = null
+  if (typeof adapter?.prepareImport === 'function') {
     try {
-      await assertPublic(finalUrl)
+      prepared = await adapter.prepareImport(item, {
+        apiKey: cfg.apiKey || '',
+        baseUrl: cfg.baseUrl || adapter.defaultBaseUrl,
+        fetchImpl,
+      })
+    } catch {
+      prepared = null
+    }
+  }
+  const effective = prepared?.patch ? { ...item, ...prepared.patch } : item
+  const fallbackVariant = pickVariant(effective)
+  const candidates = (Array.isArray(prepared?.candidates) && prepared.candidates.length
+    ? prepared.candidates
+    : [fallbackVariant]
+  )
+    .filter((v) => v && str(v.url))
+    // 只允许换一次更小的档位：既覆盖「720 被拒」也避免被来源拖着反复重试
+    .slice(0, 2)
+  if (!candidates.length) {
+    throw new StockError('这个条目没有可下载的文件', { kind: 'provider', provider: providerId })
+  }
+
+  let r = null
+  let variant = candidates[0]
+  let lastError = null
+  for (const candidate of candidates) {
+    variant = candidate
+    let target
+    try {
+      target = await assertPublic(candidate.url)
     } catch (e) {
-      throw new StockError(`下载被重定向到不允许的地址：${e?.message || e}`, {
-        kind: 'bad-request',
+      throw new StockError(`下载地址不被允许：${e?.message || e}`, { kind: 'bad-request', provider: providerId })
+    }
+
+    let attempt
+    try {
+      attempt = await fetchImpl(target, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
+    } catch (e) {
+      const timeout = e?.name === 'TimeoutError' || e?.name === 'AbortError'
+      throw new StockError(`${providerId}：下载${timeout ? '超时' : '失败'}（${e?.message || e}）`, {
+        kind: 'network',
         provider: providerId,
       })
     }
+    if (!attempt.ok) {
+      // HTTP 层失败（例如 403）才换候选；网络层失败换地址也没意义
+      lastError = errorFromResponse(await attempt.text().catch(() => ''), attempt.status, providerId)
+      continue
+    }
+
+    // 重定向后的最终地址同样必须是公网，避免来源把请求引到内网
+    const finalUrl = str(attempt.url)
+    if (finalUrl && finalUrl !== String(target)) {
+      try {
+        await assertPublic(finalUrl)
+      } catch (e) {
+        throw new StockError(`下载被重定向到不允许的地址：${e?.message || e}`, {
+          kind: 'bad-request',
+          provider: providerId,
+        })
+      }
+    }
+    r = attempt
+    break
+  }
+  if (!r) {
+    throw lastError || new StockError('下载失败', { kind: 'network', provider: providerId })
   }
 
   const limit = MEDIA_LIMITS[item.mediaType] || MEDIA_LIMITS.image
@@ -749,16 +1180,16 @@ export async function importStockItem(input = {}) {
     itemId: item.itemId,
     url: saved.url,
     mediaType: item.mediaType,
-    title: item.title,
-    author: item.author,
-    authorUrl: item.authorUrl,
-    sourceUrl: item.sourceUrl,
-    license: item.license?.name,
-    licenseUrl: item.license?.url,
-    attribution: item.license?.attribution,
-    width: variant.width ?? item.width,
-    height: variant.height ?? item.height,
-    duration: variant.duration ?? item.duration,
+    title: effective.title,
+    author: effective.author,
+    authorUrl: effective.authorUrl,
+    sourceUrl: effective.sourceUrl,
+    license: effective.license?.name,
+    licenseUrl: effective.license?.url,
+    attribution: effective.license?.attribution,
+    width: variant.width ?? effective.width,
+    height: variant.height ?? effective.height,
+    duration: variant.duration ?? effective.duration,
     bytes: saved.bytes,
   })
   return { url: saved.url, provider: providerId, itemId: item.itemId, mediaType: item.mediaType, reused: false, meta }

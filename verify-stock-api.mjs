@@ -27,6 +27,7 @@ import {
   StockError,
   describeProviders,
   importStockItem,
+  issueStockToken,
   pickVariant,
   providerAvailability,
   resetStockState,
@@ -190,24 +191,76 @@ const enabledSettings = {
     pexels: { enabled: true, apiKey: 'px', baseUrl: 'https://mock.example/pexels' },
     pixabay: { enabled: true, apiKey: 'pb', baseUrl: 'https://mock.example/pixabay' },
     openverse: { enabled: true, apiKey: '', baseUrl: 'https://mock.example/openverse' },
+    unsplash: { enabled: true, apiKey: 'us', baseUrl: 'https://mock.example/unsplash' },
+    coverr: { enabled: true, apiKey: 'cv', baseUrl: 'https://mock.example/coverr' },
+    mixkit: { enabled: true, baseUrl: 'https://mock.example/mixkit' },
+    // 显式关闭也不影响外链来源：它不产生请求
+    vjshi: { enabled: false, baseUrl: 'https://mock.example/vjshi' },
   },
 }
 const providers = describeProviders(enabledSettings, {})
+const providerIds = providers.map((p) => p.id).join(',')
 check(
-  '三个来源都可用',
-  providers.length === 3 && providers.every((p) => p.ok),
-  JSON.stringify(providers),
+  '七个来源全部注册',
+  providerIds === 'pexels,pixabay,openverse,unsplash,coverr,mixkit,vjshi',
+  providerIds,
+)
+check('七个来源都可用', providers.every((p) => p.ok), providers.map((p) => `${p.id}:${p.reason || 'ok'}`).join(' / '))
+check(
+  '每个来源都声明 kind',
+  providers.every((p) => ['api', 'html', 'link'].includes(p.kind)),
+  providers.map((p) => `${p.id}:${p.kind}`).join(','),
+)
+check(
+  '原有三个来源仍是 api',
+  ['pexels', 'pixabay', 'openverse'].every((id) => providers.find((p) => p.id === id).kind === 'api'),
+)
+const linkProvider = providers.find((p) => p.id === 'vjshi')
+check(
+  '外链来源不可检索不可导入',
+  linkProvider.searchable === false &&
+    linkProvider.importable === false &&
+    linkProvider.ok === true &&
+    linkProvider.externalUrlTemplate === 'https://mock.example/vjshi/so?wd={query}',
+  JSON.stringify(linkProvider),
+)
+const htmlProvider = providers.find((p) => p.id === 'mixkit')
+check(
+  '页面解析来源不要 Key 也可用',
+  htmlProvider.ok === true && htmlProvider.requiresKey === false && htmlProvider.kind === 'html',
+  JSON.stringify(htmlProvider),
 )
 check(
   '媒体类型声明正确',
   providers.find((p) => p.id === 'pexels').mediaTypes.join(',') === 'image,video' &&
-    providers.find((p) => p.id === 'openverse').mediaTypes.join(',') === 'image,audio',
+    providers.find((p) => p.id === 'openverse').mediaTypes.join(',') === 'image,audio' &&
+    providers.find((p) => p.id === 'unsplash').mediaTypes.join(',') === 'image' &&
+    providers.find((p) => p.id === 'coverr').mediaTypes.join(',') === 'video' &&
+    providers.find((p) => p.id === 'mixkit').mediaTypes.join(',') === 'video',
+)
+check(
+  '可用性快照符合设计表',
+  JSON.stringify(providers.map((p) => [p.id, p.ok, p.searchable])) ===
+    JSON.stringify([
+      ['pexels', true, true],
+      ['pixabay', true, true],
+      ['openverse', true, true],
+      ['unsplash', true, true],
+      ['coverr', true, true],
+      ['mixkit', true, true],
+      ['vjshi', true, false],
+    ]),
+  JSON.stringify(providers.map((p) => [p.id, p.ok, p.searchable])),
 )
 const disabled = describeProviders({}, {})
 check(
-  '未启用来源给原因',
-  disabled.every((p) => !p.ok && /未启用/.test(p.reason)),
-  disabled.map((p) => p.reason).join(' / '),
+  '需要 Key 的来源未启用时给原因',
+  disabled.filter((p) => p.kind === 'api' && p.requiresKey).every((p) => !p.ok && /未启用/.test(p.reason)),
+  disabled.map((p) => `${p.id}:${p.reason || 'ok'}`).join(' / '),
+)
+check(
+  'html / link 型未配置也默认可用',
+  disabled.find((p) => p.id === 'mixkit').ok === true && disabled.find((p) => p.id === 'vjshi').ok === true,
 )
 const noKeyProviders = describeProviders({ providers: { pexels: { enabled: true, apiKey: '' } } }, { PEXELS_API_KEY: '' })
 check('缺 Key 来源不可用', noKeyProviders.find((p) => p.id === 'pexels').reason === '未配置 Key')
@@ -357,6 +410,62 @@ const mockFetch = async (url, init = {}) => {
       ],
     })
   }
+  if (u.pathname === '/unsplash/search/photos') {
+    return json({
+      total: 33,
+      total_pages: 3,
+      results: [
+        {
+          id: 'us-1',
+          width: 4000,
+          height: 3000,
+          alt_description: '雾中森林小屋',
+          description: '',
+          user: { name: 'Gil', links: { html: 'https://unsplash.com/@gil' } },
+          links: {
+            html: 'https://unsplash.com/photos/us-1',
+            download_location: 'https://mock.example/unsplash/photos/us-1/download?ixid=abc',
+          },
+          urls: {
+            raw: 'https://cdn.example/us1-raw.jpg',
+            full: 'https://cdn.example/us1-full.jpg',
+            regular: 'https://cdn.example/us1-regular.jpg',
+            small: 'https://cdn.example/us1-small.jpg',
+          },
+        },
+      ],
+    })
+  }
+  if (u.pathname === '/coverr/videos') {
+    return json({
+      page: 0,
+      pages: 2,
+      page_size: 20,
+      total: 3,
+      hits: [
+        {
+          id: 'cv-1',
+          title: '雨夜城市',
+          duration: 14.5,
+          is_premium: false,
+          max_width: 1920,
+          max_height: 1080,
+          poster: 'https://cdn.example/cv1.jpg',
+          urls: {
+            mp4_download: 'https://cdn.example/cv1-1080.mp4',
+            mp4: 'https://cdn.example/cv1-720.mp4',
+            poster: 'https://cdn.example/cv1.jpg',
+          },
+        },
+        {
+          id: 'cv-premium',
+          title: '付费素材',
+          is_premium: true,
+          urls: { mp4_download: 'https://cdn.example/premium.mp4' },
+        },
+      ],
+    })
+  }
   return json({ error: { message: 'no route' } }, 404)
 }
 
@@ -476,6 +585,532 @@ check(
   'alt_files 也进入变体',
   ovAudio.items[0]?.variants.length === 2 && ovAudio.items[0].variants.some((v) => v.url.endsWith('.ogg')),
 )
+
+// ---------------------------------------------------------------- 中文关键词翻译
+
+section('中文关键词翻译')
+
+resetStockState()
+const zhResult = await searchStock({
+  provider: 'pexels',
+  mediaType: 'image',
+  query: '中国',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check(
+  '中文关键词命中术语表并翻译',
+  zhResult.query === 'china' &&
+    zhResult.requestedQuery === '中国' &&
+    zhResult.translated?.via === 'glossary' &&
+    zhResult.translated?.to === 'china',
+  JSON.stringify({ query: zhResult.query, requestedQuery: zhResult.requestedQuery, translated: zhResult.translated }),
+)
+const pexelsSeen = mockSeen.filter((s) => s.path === '/pexels/v1/search')
+check('来源收到的是译后词', pexelsSeen.at(-1)?.search.get('query') === 'china', pexelsSeen.at(-1)?.search.toString())
+
+// 缓存键用译后词：中英文两种写法命中同一份缓存
+const enAlias = await searchStock({
+  provider: 'pexels',
+  mediaType: 'image',
+  query: 'china',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check('译词与原词共用缓存', enAlias.cached === true, `cached=${enAlias.cached}`)
+check('英文词不产生 translated', enAlias.translated === undefined)
+
+const modelTranslated = await searchStock({
+  provider: 'pexels',
+  mediaType: 'image',
+  query: '量子纠缠',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+  chat: async () => 'quantum entanglement',
+})
+check(
+  '模型兜底翻译成功',
+  modelTranslated.query === 'quantum entanglement' && modelTranslated.translated?.via === 'model',
+  JSON.stringify(modelTranslated.translated),
+)
+check(
+  '模型译词也发给了来源',
+  mockSeen.filter((s) => s.path === '/pexels/v1/search').at(-1)?.search.get('query') === 'quantum entanglement',
+)
+
+const failedTranslation = await searchStock({
+  provider: 'pexels',
+  mediaType: 'image',
+  query: '时空折叠',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+  chat: async () => {
+    throw new Error('模型不可用')
+  },
+})
+check(
+  '翻译失败降级为原词并标记',
+  failedTranslation.translateFailed === true &&
+    failedTranslation.query === '时空折叠' &&
+    failedTranslation.translated === undefined,
+  JSON.stringify({ query: failedTranslation.query, translateFailed: failedTranslation.translateFailed }),
+)
+check(
+  '翻译失败不伪造空结果',
+  failedTranslation.items.length > 0,
+  `items=${failedTranslation.items.length}`,
+)
+
+// ---------------------------------------------------------------- Unsplash
+
+section('Unsplash 检索')
+
+resetStockState()
+const usSearch = await searchStock({
+  provider: 'unsplash',
+  mediaType: 'image',
+  query: 'forest fog',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+const usItem = usSearch.items[0]
+check('Unsplash 返回归一化条目', usSearch.items.length === 1 && usItem?.provider === 'unsplash')
+check(
+  'Unsplash 作者/源页面/许可',
+  usItem?.author === 'Gil' &&
+    usItem?.authorUrl === 'https://unsplash.com/@gil' &&
+    usItem?.sourceUrl === 'https://unsplash.com/photos/us-1' &&
+    usItem?.license.name === 'Unsplash License' &&
+    usItem?.license.requiresAttribution === false,
+  JSON.stringify({ author: usItem?.author, license: usItem?.license }),
+)
+check(
+  'Unsplash variants 非空且按清晰度排列',
+  usItem?.variants.length === 3 && usItem.variants[0].url.endsWith('-raw.jpg'),
+  JSON.stringify(usItem?.variants?.map((v) => v.url)),
+)
+check('Unsplash 带缩略图与预览', Boolean(usItem?.thumbnailUrl) && Boolean(usItem?.previewUrl))
+check(
+  'Unsplash 请求带 Client-ID 与 Accept-Version',
+  mockSeen.some(
+    (s) => s.path === '/unsplash/search/photos' && s.headers.Authorization === 'Client-ID us' && s.headers['Accept-Version'] === 'v1',
+  ),
+  JSON.stringify(mockSeen.find((s) => s.path === '/unsplash/search/photos')?.headers),
+)
+check('Unsplash hasMore 按总页数', usSearch.hasMore === true)
+
+// 额度裁剪：perPage 上限 20
+resetStockState()
+await searchStock({
+  provider: 'unsplash',
+  mediaType: 'image',
+  query: 'forest',
+  perPage: 50,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check(
+  'Unsplash perPage 裁剪到 20',
+  mockSeen.filter((s) => s.path === '/unsplash/search/photos').at(-1)?.search.get('per_page') === '20',
+)
+
+// 超出页码上限：不再请求来源
+resetStockState()
+const beforeOverPage = mockHits
+const overPage = await searchStock({
+  provider: 'unsplash',
+  mediaType: 'image',
+  query: 'forest',
+  page: 99,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check(
+  'Unsplash 超页码不请求来源',
+  overPage.items.length === 0 && overPage.hasMore === false && mockHits === beforeOverPage,
+  `hits=${beforeOverPage}->${mockHits} items=${overPage.items.length}`,
+)
+
+const statusFetch = (status) => async () =>
+  new Response(JSON.stringify({ errors: ['boom'] }), { status, headers: { 'content-type': 'application/json' } })
+let us429 = ''
+try {
+  await searchStock({
+    provider: 'unsplash',
+    mediaType: 'image',
+    query: 'forest',
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: statusFetch(429),
+  })
+} catch (e) {
+  us429 = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('Unsplash 429 映射为 rate-limit', /^rate-limit:/.test(us429), us429)
+
+let us401 = ''
+try {
+  await searchStock({
+    provider: 'unsplash',
+    mediaType: 'image',
+    query: 'forest',
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: statusFetch(401),
+  })
+} catch (e) {
+  us401 = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('Unsplash 401 映射为 auth', /^auth:/.test(us401), us401)
+
+// ---------------------------------------------------------------- Coverr
+
+section('Coverr 检索')
+
+resetStockState()
+const cvSearch = await searchStock({
+  provider: 'coverr',
+  mediaType: 'video',
+  query: 'rain city',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+const cvItem = cvSearch.items[0]
+check('Coverr 返回归一化条目', cvSearch.items.length === 1 && cvItem?.provider === 'coverr')
+check(
+  'Coverr 取 mp4_download 与封面',
+  cvItem?.variants[0]?.url === 'https://cdn.example/cv1-1080.mp4' &&
+    cvItem?.thumbnailUrl === 'https://cdn.example/cv1.jpg' &&
+    cvItem?.duration === 14.5 &&
+    cvItem?.width === 1920,
+  JSON.stringify({ variant: cvItem?.variants?.[0], thumb: cvItem?.thumbnailUrl }),
+)
+check('Coverr 过滤付费素材', !cvSearch.items.some((i) => i.itemId === 'cv-premium'))
+check('Coverr 带导入令牌', typeof cvItem?.token === 'string')
+check(
+  'Coverr page 从 0 开始',
+  mockSeen.filter((s) => s.path === '/coverr/videos').at(-1)?.search.get('page') === '0',
+)
+check(
+  'Coverr 请求带 Key 与 urls=true',
+  mockSeen.filter((s) => s.path === '/coverr/videos').at(-1)?.search.get('urls') === 'true' &&
+    mockSeen.filter((s) => s.path === '/coverr/videos').at(-1)?.headers.Authorization === 'Bearer cv',
+  JSON.stringify(mockSeen.filter((s) => s.path === '/coverr/videos').at(-1)?.headers),
+)
+check('Coverr hasMore 按总页数', cvSearch.hasMore === true)
+
+const cvPage2 = await searchStock({
+  provider: 'coverr',
+  mediaType: 'video',
+  query: 'rain city',
+  page: 2,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check(
+  'Coverr 第二页页码自增且 hasMore 收敛',
+  mockSeen.filter((s) => s.path === '/coverr/videos').at(-1)?.search.get('page') === '1' && cvPage2.hasMore === false,
+)
+
+const beforeCvOver = mockHits
+const cvOver = await searchStock({
+  provider: 'coverr',
+  mediaType: 'video',
+  query: 'rain city',
+  page: 9,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mockFetch,
+})
+check('Coverr 超页码不请求来源', cvOver.items.length === 0 && mockHits === beforeCvOver)
+
+let cv429 = ''
+try {
+  await searchStock({
+    provider: 'coverr',
+    mediaType: 'video',
+    query: 'rain',
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: statusFetch(429),
+  })
+} catch (e) {
+  cv429 = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('Coverr 429 映射为 rate-limit', /^rate-limit:/.test(cv429), cv429)
+
+// ---------------------------------------------------------------- Mixkit
+
+section('Mixkit 页面解析')
+
+const mixkitSearchHtml = fs.readFileSync('tests/fixtures/mixkit-search.html', 'utf8')
+const mixkitDetailHtml = fs.readFileSync('tests/fixtures/mixkit-detail.html', 'utf8')
+// 导入只校验 Content-Type 与大小，这里给一段占位字节
+const mp4Bytes = Buffer.from('fake-mp4-bytes-for-verify')
+const mixkitSeen = []
+/** 导入阶段不做 SSRF 断言：这里验证的是页面解析与变体回退 */
+const mixkitAllowAll = async (u) => new URL(String(u))
+/** 列表页/详情页都回 fixture；mp4 回字节，支持按清晰度单独造错 */
+const mixkitFetch = (opts = {}) => async (url, init = {}) => {
+  const u = new URL(String(url))
+  mixkitSeen.push({ url: String(url), path: u.pathname, headers: init.headers || {} })
+  if (u.pathname.endsWith('.mp4')) {
+    if (opts.forbidden && u.pathname.includes(opts.forbidden)) {
+      return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 })
+    }
+    return new Response(mp4Bytes, {
+      status: 200,
+      headers: { 'content-type': 'video/mp4', 'content-length': String(mp4Bytes.length) },
+    })
+  }
+  if (u.pathname.includes('/free-stock-video/')) {
+    if (opts.detailFails && /-\d+\/$/.test(u.pathname)) return new Response('boom', { status: 500 })
+    return new Response(/-(\d+)\/?$/.test(u.pathname) && opts.detailPage !== false ? mixkitDetailHtml : mixkitSearchHtml, {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    })
+  }
+  return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } })
+}
+
+resetStockState()
+mixkitSeen.length = 0
+const mkSearch = await searchStock({
+  provider: 'mixkit',
+  mediaType: 'video',
+  query: 'rain',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch(),
+})
+check('Mixkit 解析出 24 条', mkSearch.items.length === 24, `count=${mkSearch.items.length}`)
+check(
+  'Mixkit 首条字段齐全',
+  mkSearch.items[0]?.itemId === '25375' &&
+    mkSearch.items[0]?.title === 'Soft rain and sun shine' &&
+    mkSearch.items[0]?.mediaType === 'video' &&
+    mkSearch.items[0]?.variants[0]?.height === 360 &&
+    typeof mkSearch.items[0]?.token === 'string',
+  JSON.stringify(mkSearch.items[0] && { id: mkSearch.items[0].itemId, v: mkSearch.items[0].variants[0] }),
+)
+check(
+  'Mixkit 来源页面是绝对地址',
+  mkSearch.items[0]?.sourceUrl ===
+    'https://mock.example/mixkit/free-stock-video/soft-rain-and-sun-shine-25375/',
+  mkSearch.items[0]?.sourceUrl,
+)
+check(
+  'Mixkit 走路径式 slug 而不是 ?q=',
+  mixkitSeen[0]?.path === '/mixkit/free-stock-video/rain/' && !mixkitSeen[0]?.url.includes('?q='),
+  mixkitSeen[0]?.url,
+)
+check('Mixkit 分页信息按状态页封顶', mkSearch.hasMore === true)
+
+// 中文词先翻译再拼 slug
+resetStockState()
+mixkitSeen.length = 0
+await searchStock({
+  provider: 'mixkit',
+  mediaType: 'video',
+  query: '霓虹',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch(),
+})
+check(
+  '中文词翻译后才拼进 slug',
+  mixkitSeen[0]?.path === '/mixkit/free-stock-video/neon/',
+  mixkitSeen[0]?.url,
+)
+
+// 中文未翻译：不发请求，直接空结果 + translateFailed，不拼中文 slug
+resetStockState()
+mixkitSeen.length = 0
+const mkZhUntranslated = await searchStock({
+  provider: 'mixkit',
+  mediaType: 'video',
+  query: '时空折叠',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch(),
+})
+check(
+  '未翻译的中文不拼成中文 slug 也不请求来源',
+  mkZhUntranslated.items.length === 0 &&
+    mkZhUntranslated.translateFailed === true &&
+    mixkitSeen.length === 0,
+  `items=${mkZhUntranslated.items.length} seen=${mixkitSeen.length}`,
+)
+
+// 0 条目的两种语义
+resetStockState()
+const emptyGridHtml = mixkitSearchHtml.replace(
+  /data-item-grid--video-player-item-id-value="\d+"[\s\S]*?(?=data-item-grid--video-player-item-id-value="|<\/body>)/g,
+  '',
+)
+const mkEmpty = await searchStock({
+  provider: 'mixkit',
+  mediaType: 'video',
+  query: 'rain',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: async () => new Response(emptyGridHtml, { status: 200, headers: { 'content-type': 'text/html' } }),
+})
+check('容器在但无条目 = 正常空结果', mkEmpty.items.length === 0 && mkEmpty.hasMore === false)
+
+resetStockState()
+let mkShapeErr = ''
+try {
+  await searchStock({
+    provider: 'mixkit',
+    mediaType: 'video',
+    query: 'rain',
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: async () => new Response('<html><body><div id="app"></div></body></html>', { status: 200 }),
+  })
+} catch (e) {
+  mkShapeErr = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('容器缺失 = provider 结构错误', /^provider:/.test(mkShapeErr) && /结构/.test(mkShapeErr), mkShapeErr)
+
+// 导入：补 720p、详情失败退回 360、720 被拒退回 360
+createProject(PROJECTS, 'stock-mixkit')
+resetStockState()
+const mkImportSource = await searchStock({
+  provider: 'mixkit',
+  mediaType: 'video',
+  query: 'rain',
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch(),
+})
+const mkToken = mkImportSource.items[0].token
+
+const mk720 = await importStockItem({
+  token: mkToken,
+  project: 'stock-mixkit',
+  root: PROJECTS,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch(),
+  assertPublic: mixkitAllowAll,
+})
+check(
+  'Mixkit 导入取 720p 并补时长',
+  mk720.url.endsWith('stock-mixkit-25375.mp4') && mk720.meta?.height === 720 && mk720.meta?.duration === 23,
+  JSON.stringify({ url: mk720.url, h: mk720.meta?.height, d: mk720.meta?.duration }),
+)
+check(
+  'Mixkit 导入前只抓一次详情页',
+  mixkitSeen.filter((s) => s.path.endsWith('-25375/')).length === 1,
+  String(mixkitSeen.filter((s) => s.path.endsWith('-25375/')).length),
+)
+
+// 720 被拒：退回列表页的 360
+fs.rmSync(path.join(projectMediaDir(PROJECTS, 'stock-mixkit'), 'stock-mixkit-25375.mp4'))
+mixkitSeen.length = 0
+const mkFallback = await importStockItem({
+  token: mkToken,
+  project: 'stock-mixkit',
+  root: PROJECTS,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch({ forbidden: '-720.mp4' }),
+  assertPublic: mixkitAllowAll,
+})
+check(
+  '720 被拒时退回 360',
+  projectMediaExists(PROJECTS, 'stock-mixkit', 'stock-mixkit-25375.mp4') &&
+    mixkitSeen.some((s) => s.path.endsWith('-720.mp4')) &&
+    mixkitSeen.some((s) => s.path.endsWith('-360.mp4')),
+  JSON.stringify(mixkitSeen.map((s) => s.path)),
+)
+
+// 详情页失败：直接用检索结果里的 360
+fs.rmSync(path.join(projectMediaDir(PROJECTS, 'stock-mixkit'), 'stock-mixkit-25375.mp4'))
+mixkitSeen.length = 0
+const mkDetailFail = await importStockItem({
+  token: mkToken,
+  project: 'stock-mixkit',
+  root: PROJECTS,
+  settings: enabledSettings,
+  env: {},
+  fetchImpl: mixkitFetch({ detailFails: true }),
+  assertPublic: mixkitAllowAll,
+})
+check(
+  '详情页失败仍能用 360 落盘',
+  projectMediaExists(PROJECTS, 'stock-mixkit', 'stock-mixkit-25375.mp4') &&
+    mixkitSeen.some((s) => s.path.endsWith('-360.mp4')) &&
+    !mixkitSeen.some((s) => s.path.endsWith('-720.mp4')),
+  JSON.stringify(mixkitSeen.map((s) => s.path)),
+)
+check('详情页失败时导入仍返回站内地址', /^\/project-assets\/stock-mixkit\//.test(mkDetailFail.url))
+
+// ---------------------------------------------------------------- VJShi 外链
+
+section('VJShi 外链来源')
+
+resetStockState()
+let vjFetchHits = 0
+const vjFetch = async () => {
+  vjFetchHits++
+  return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+}
+let vjSearchErr = ''
+try {
+  await searchStock({
+    provider: 'vjshi',
+    mediaType: 'video',
+    query: '中国',
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: vjFetch,
+  })
+} catch (e) {
+  vjSearchErr = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('外链来源检索返回 bad-request', /^bad-request:/.test(vjSearchErr), vjSearchErr)
+check('外链来源检索零请求', vjFetchHits === 0, String(vjFetchHits))
+
+let vjImportErr = ''
+try {
+  await importStockItem({
+    token: issueStockToken({
+      provider: 'vjshi',
+      itemId: 'v-1',
+      mediaType: 'video',
+      title: 't',
+      author: '',
+      authorUrl: '',
+      sourceUrl: 'https://www.vjshi.com/watch/1',
+      license: { name: 'VJShi', url: '', attribution: '', requiresAttribution: false },
+      thumbnailUrl: '',
+      previewUrl: '',
+      variants: [{ url: 'https://cdn.example/v-1.mp4', mime: 'video/mp4' }],
+    }),
+    project: 'stock-a',
+    root: PROJECTS,
+    settings: enabledSettings,
+    env: {},
+    fetchImpl: vjFetch,
+    assertPublic: mixkitAllowAll,
+  })
+} catch (e) {
+  vjImportErr = e instanceof StockError ? `${e.kind}:${e.message}` : String(e)
+}
+check('外链来源导入返回 bad-request', /^bad-request:/.test(vjImportErr), vjImportErr)
+check('外链来源导入零请求', vjFetchHits === 0, String(vjFetchHits))
 
 // ---------------------------------------------------------------- 缓存与令牌
 
@@ -876,6 +1511,54 @@ const resolved = resolveStockProvider({ providers: { pexels: { enabled: true, ap
 check('服务端解析出有效配置', resolved?.apiKey === 'k' && resolved?.baseUrl === 'https://api.pexels.com')
 check('未知来源解析为空', resolveStockProvider({}, 'nope', {}) === null)
 
+// 新增来源的默认地址
+const newDefaults = {
+  unsplash: 'https://api.unsplash.com',
+  coverr: 'https://api.coverr.co',
+  mixkit: 'https://mixkit.co',
+  vjshi: 'https://www.vjshi.com',
+}
+for (const [id, baseUrl] of Object.entries(newDefaults)) {
+  const cfg = resolveStockProvider({}, id, {})
+  check(`${id} 解析出默认地址`, cfg?.baseUrl === baseUrl, JSON.stringify(cfg))
+}
+
+const kindDefaults = normalizeStockSettings({ providers: { mixkit: {}, vjshi: {}, unsplash: {} } })
+check(
+  'html / link 默认开启，需 Key 的来源默认关闭',
+  kindDefaults.providers.mixkit.enabled === true &&
+    kindDefaults.providers.vjshi.enabled === true &&
+    kindDefaults.providers.unsplash.enabled === false,
+  JSON.stringify(kindDefaults),
+)
+const kindExplicitOff = normalizeStockSettings({ providers: { mixkit: { enabled: false } } })
+check('显式关闭的页面解析来源保持关闭', kindExplicitOff.providers.mixkit.enabled === false)
+
+const redactedNoKey = redactStockSettings({}, {})
+check(
+  '脱敏输出 kind 与 requiresKey',
+  redactedNoKey.providers.unsplash.kind === 'api' &&
+    redactedNoKey.providers.unsplash.requiresKey === true &&
+    redactedNoKey.providers.mixkit.kind === 'html' &&
+    redactedNoKey.providers.mixkit.requiresKey === false &&
+    redactedNoKey.providers.vjshi.kind === 'link' &&
+    redactedNoKey.providers.vjshi.requiresKey === false,
+  JSON.stringify(redactedNoKey.providers.mixkit),
+)
+check(
+  '无 Key 来源不输出「未配置 Key」类字段',
+  !Object.prototype.hasOwnProperty.call(redactedNoKey.providers.mixkit, 'reason') &&
+    !/未配置/.test(JSON.stringify(redactedNoKey.providers.mixkit)) &&
+    !/未配置/.test(JSON.stringify(redactedNoKey.providers.vjshi)),
+  JSON.stringify(redactedNoKey.providers.vjshi),
+)
+check(
+  '脱敏永远不回传 Key 原文',
+  !JSON.stringify(redactStockSettings({ providers: { unsplash: { enabled: true, apiKey: 'super-secret' } } }, {})).includes(
+    'super-secret',
+  ),
+)
+
 // ---------------------------------------------------------------- 4. 设置接口（临时 dev server）
 
 section('设置接口（/api/settings）')
@@ -1004,9 +1687,11 @@ try {
     '来源列表带可用性',
     listed.ok === true &&
       Array.isArray(listed.providers) &&
-      listed.providers.length === 3 &&
-      listed.providers.find((p) => p.id === 'pexels')?.ok === false,
-    JSON.stringify(listed.providers?.map((p) => [p.id, p.ok])),
+      listed.providers.length === 7 &&
+      listed.providers.find((p) => p.id === 'pexels')?.ok === false &&
+      listed.providers.find((p) => p.id === 'vjshi')?.searchable === false &&
+      listed.providers.find((p) => p.id === 'mixkit')?.kind === 'html',
+    JSON.stringify(listed.providers?.map((p) => [p.id, p.ok, p.kind])),
   )
 
   // 把 pexels 指到本地 mock，并重新启用

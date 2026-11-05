@@ -1,9 +1,18 @@
 /** server/stock-settings.mjs 的类型声明 */
-export declare type StockProviderId = 'pexels' | 'pixabay' | 'openverse'
+export declare type StockProviderId =
+  | 'pexels'
+  | 'pixabay'
+  | 'openverse'
+  | 'unsplash'
+  | 'coverr'
+  | 'mixkit'
+  | 'vjshi'
+/** api = 官方接口，html = 服务端解析页面，link = 只给外链 */
+export declare type StockProviderKind = 'api' | 'html' | 'link'
 export declare const STOCK_PROVIDER_IDS: StockProviderId[]
 export declare const STOCK_PROVIDER_DEFAULTS: Record<
   StockProviderId,
-  { label: string; baseUrl: string; envKey: string; requiresKey: boolean }
+  { label: string; kind: StockProviderKind; baseUrl: string; envKey: string; requiresKey: boolean }
 >
 export declare type StockProviderSettings = {
   enabled: boolean
@@ -17,7 +26,14 @@ export declare type StockSettingsView = {
   providers: Partial<
     Record<
       StockProviderId,
-      { enabled: boolean; baseUrl: string; hasApiKey: boolean; keyFromEnv?: boolean }
+      {
+        enabled: boolean
+        baseUrl: string
+        hasApiKey: boolean
+        kind: StockProviderKind
+        requiresKey: boolean
+        keyFromEnv?: boolean
+      }
     >
   >
 }
@@ -36,3 +52,4 @@ export declare function resolveStockProvider(
   id: StockProviderId,
   env?: Record<string, string | undefined>,
 ): StockProviderSettings | null
+export declare function stockProviderKind(id: string): StockProviderKind | ''

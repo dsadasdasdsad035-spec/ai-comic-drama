@@ -46,8 +46,11 @@ const project = {
 }
 const settings = {
   providers: [{ id: 'mock', label: 'Mock', kind: 'openai', baseUrl: 'https://mock.invalid', caps: ['image', 'view', 'text'] }],
-  models: [{ key: 'mock-view', label: 'Mock View', cap: 'view', caps: ['view'], provider: 'mock', model: 'mock-view' }],
-  defaults: { view: 'mock-view' }, stageModels: {}, pricing: { image: 0.22 }, agentLimits: {}, agentToolProtocol: 'auto', apiKey: '', rules: {}, lipSync: { provider: 'off' },
+  models: [
+    { key: 'mock-view', label: 'Mock View', cap: 'view', caps: ['view'], provider: 'mock', model: 'mock-view' },
+    { key: 'mock-audio', label: 'Mock TTS', cap: 'audio', caps: ['audio'], provider: 'mock', model: 'mock-tts' },
+  ],
+  defaults: { view: 'mock-view', audio: 'mock-audio' }, stageModels: {}, pricing: { image: 0.22 }, agentLimits: {}, agentToolProtocol: 'auto', apiKey: '', rules: {}, lipSync: { provider: 'off' },
 }
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
 const child = spawn(process.execPath, [path.join(ROOT, 'node_modules/vite/bin/vite.js'), '--port', String(PORT), '--strictPort'], {
@@ -70,7 +73,17 @@ await page.route('**/api/settings**', (route) =>
     : route.continue(),
 )
 await page.route('**/api/voices**', (route) =>
-  route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, provider: 'none', voices: [], capabilities: {} }) }),
+  route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      provider: 'mock',
+      modelKey: 'mock-audio',
+      voices: [{ id: 'mock-v1', label: 'Mock Voice', voiceId: 'mock-v1', provider: 'mock', source: 'preset' }],
+      capabilities: {},
+    }),
+  }),
 )
 await page.route('**/api/project**', async (route) => {
   const req = route.request()
@@ -160,6 +173,19 @@ try {
   check('设为三视图后 image 更新', String(readyChar?.image || '').includes('uploaded-ref-1'), JSON.stringify(readyChar?.image))
   check('设为三视图后进入候选', (readyChar?.candidates || []).includes(readyChar?.image), JSON.stringify(readyChar?.candidates))
   check('参考图列表标「已在候选」', (await readyCard.locator('.char-ref-flag').count()) >= 1)
+
+  // ---- 声音 Tab UX ----
+  await empty.getByRole('tab', { name: '声音' }).click()
+  await page.waitForTimeout(300)
+  check('声音 Tab 存在', (await empty.locator('[data-char-tab="voice"]').count()) === 1)
+  check('状态轨存在', (await empty.locator('[data-char-voice-status]').count()) === 1)
+  check('三块分区', (await empty.locator('[data-char-voice-block]').count()) === 3)
+  check('配音引擎选择', (await empty.locator('[data-cap-model-select="audio"]').count()) === 1)
+  const genBtn = empty.locator('[data-char-generate-sample]')
+  check('无音色时试音按钮禁用', await genBtn.isDisabled())
+  await empty.locator('.char-voice select').selectOption('mock-v1')
+  await page.waitForTimeout(200)
+  check('选音色后可点试音', !(await genBtn.isDisabled()))
 
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
   await page.screenshot({ path: path.join(EVIDENCE, 'character-card-ui.png') })

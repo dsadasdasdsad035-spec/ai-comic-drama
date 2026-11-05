@@ -3,19 +3,37 @@
  * 跑法：node verify-skills-unit.mjs（esbuild 打包后逐个运行）
  */
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { assetMediaType, isAudioUrl, isVideoUrl, pickKind, pickTitle } from '../src/mediaPick'
 import type { PickItem } from '../src/mediaPick'
 import { stockLicenseLabel, stockAttributionText, stockSizeText, stockDurationText } from '../src/stock/stockFormat'
 import type { StockItem, StockLicense } from '../src/stock/types'
+import {
+  detectCjk,
+  lookupGlossary,
+  sanitizeTranslated,
+  translateQuery,
+} from '../server/stock-query.mjs'
+import {
+  mixkitPageShape,
+  parseMixkitDetail,
+  parseMixkitMaxPage,
+  parseMixkitSearch,
+  toSlug,
+  vjshiSearchTemplate,
+  vjshiSearchUrl,
+} from '../server/stock-parse.mjs'
 
 let bad = 0
-function check(name: string, fn: () => void) {
+/** 同时接受「断言函数」与「布尔结果 + 附加信息」两种写法 */
+function check(name: string, arg: (() => void) | boolean, extra = '') {
   try {
-    fn()
+    if (typeof arg === 'function') arg()
+    else assert.ok(arg, extra || '断言不成立')
     console.log(`✅ ${name}`)
   } catch (e) {
     bad++
-    console.log(`❌ ${name}\n   ${(e as Error).message}`)
+    console.log(`❌ ${name}\n   ${(e as Error).message}${extra ? `\n   ${extra}` : ''}`)
   }
 }
 
@@ -101,6 +119,105 @@ check('结果类型可携带三态媒体', () => {
   assert.equal(itemShape({ mediaType: 'audio' }).mediaType, 'audio')
   assert.equal(itemShape({ mediaType: 'video' }).mediaType, 'video')
 })
+
+// ---------------------------------------------------------------- 中文关键词翻译
+
+check('CJK 检测：中文为真', () => assert.equal(detectCjk('中国长城'), true))
+check('CJK 检测：中英混排为真', () => assert.equal(detectCjk('rain 雨夜'), true))
+check('CJK 检测：纯英文为假', () => assert.equal(detectCjk('rainy night street'), false))
+check('CJK 检测：空串为假', () => assert.equal(detectCjk(''), false))
+
+check('术语表命中单字词', () => assert.equal(lookupGlossary('雪'), 'snow'))
+check('术语表忽略空白与标点', () => assert.equal(lookupGlossary(' 雨 夜 '), 'rainy night'))
+check('术语表未命中返回空串', () => assert.equal(lookupGlossary('量子纠缠'), ''))
+
+check('模型输出容忍 JSON', () => assert.equal(sanitizeTranslated('{"en":"neon city"}'), 'neon city'))
+check('模型输出去引号与句号', () => assert.equal(sanitizeTranslated('"Neon City."'), 'neon city'))
+check('模型输出含中文视为失败', () => assert.equal(sanitizeTranslated('霓虹城市'), ''))
+
+const noNeed = await translateQuery({ text: 'rainy night' })
+check('英文关键词不翻译', noNeed.via === 'none' && noNeed.query === 'rainy night' && !noNeed.failed)
+
+const byGlossary = await translateQuery({ text: '长城' })
+check(
+  '术语表优先于模型',
+  byGlossary.via === 'glossary' &&
+    byGlossary.query === 'great wall of china' &&
+    byGlossary.translated?.from === '长城',
+  JSON.stringify(byGlossary),
+)
+
+const byModel = await translateQuery({ text: '量子纠缠', chat: async () => 'quantum entanglement' })
+check(
+  '模型翻译成功',
+  byModel.via === 'model' && byModel.query === 'quantum entanglement' && byModel.translated?.via === 'model',
+  JSON.stringify(byModel),
+)
+
+const modelTimeout = await translateQuery({
+  text: '量子纠缠',
+  chat: () => new Promise((r) => setTimeout(() => r('too late'), 200)),
+  timeoutMs: 30,
+})
+check(
+  '模型超时降级为原词并标记失败',
+  modelTimeout.via === 'none' && modelTimeout.query === '量子纠缠' && modelTimeout.failed === true,
+  JSON.stringify(modelTimeout),
+)
+
+const modelBroken = await translateQuery({ text: '量子纠缠', chat: async () => '量子纠缠' })
+check('模型不按要求翻译也降级', modelBroken.failed === true && modelBroken.via === 'none')
+
+// ---------------------------------------------------------------- 外链来源
+
+check(
+  '外链地址带编码关键词',
+  vjshiSearchUrl('中国 长城', 'https://www.vjshi.com/') ===
+    'https://www.vjshi.com/so?wd=%E4%B8%AD%E5%9B%BD%20%E9%95%BF%E5%9F%8E',
+  vjshiSearchUrl('中国 长城'),
+)
+check('外链无词回首页', vjshiSearchUrl('') === 'https://www.vjshi.com/so')
+check(
+  '外链模板保留占位符原文',
+  vjshiSearchTemplate('https://www.vjshi.com') === 'https://www.vjshi.com/so?wd={query}',
+  vjshiSearchTemplate('https://www.vjshi.com'),
+)
+
+// ---------------------------------------------------------------- Mixkit 解析
+
+check('slug 只留 ASCII', () => assert.equal(toSlug('Great Wall of China'), 'great-wall-of-china'))
+check('slug 空输入为空', () => assert.equal(toSlug(' 中国 '), ''))
+
+const searchHtml = fs.readFileSync('tests/fixtures/mixkit-search.html', 'utf8')
+const mixkitItems = parseMixkitSearch(searchHtml)
+check('fixture 解析出 24 条', mixkitItems.length === 24, `count=${mixkitItems.length}`)
+check(
+  '首条 id 与标题快照',
+  mixkitItems[0]?.id === '25375' && mixkitItems[0]?.title === 'Soft rain and sun shine',
+  JSON.stringify(mixkitItems[0]),
+)
+check(
+  '首条带详情页与 360 预览',
+  mixkitItems[0]?.detailPath === '/free-stock-video/soft-rain-and-sun-shine-25375/' &&
+    mixkitItems[0]?.previewUrl === 'https://assets.mixkit.co/videos/25375/25375-360.mp4' &&
+    mixkitItems[0]?.height === 360,
+  JSON.stringify(mixkitItems[0]),
+)
+check('解析出 4K 标记', mixkitItems.some((x) => x.has4k))
+check('fixture 分页上限封顶 3', parseMixkitMaxPage(searchHtml) === 3)
+check('有条目页形态为 grid', mixkitPageShape(searchHtml) === 'grid')
+check('无结果页形态为 empty', mixkitPageShape('<html><body><h2>No results</h2></body></html>') === 'empty')
+check('缺容器页形态为 unknown', mixkitPageShape('<html><body><div id="app"></div></body></html>') === 'unknown')
+
+const detailHtml = fs.readFileSync('tests/fixtures/mixkit-detail.html', 'utf8')
+const detail = parseMixkitDetail(detailHtml)
+check(
+  '详情页取 720 直链与时长',
+  detail?.contentUrl === 'https://assets.mixkit.co/videos/23662/23662-720.mp4' && detail?.duration === 23,
+  JSON.stringify(detail),
+)
+check('详情页带许可与作者', detail?.license === 'Mixkit Restricted License' && detail?.author === 'FrameStock')
+check('详情页无 VideoObject 返回 null', parseMixkitDetail('<html><body>nope</body></html>') === null)
 
 console.log(bad === 0 ? '\n✅ stock 单元测试全部通过' : `\n❌ ${bad} 项失败`)
 if (bad) process.exit(1)

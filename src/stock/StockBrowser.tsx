@@ -14,6 +14,7 @@ import type {
   StockMediaType,
   StockProviderId,
   StockProviderInfo,
+  StockTranslation,
 } from './types'
 
 const MEDIA_LABEL: Record<StockMediaType, string> = { image: '图片', video: '视频', audio: '音频' }
@@ -50,8 +51,12 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
   const [cached, setCached] = useState(false)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
+  /** 中文关键词的翻译结果：让用户知道实际搜的是什么词 */
+  const [translated, setTranslated] = useState<StockTranslation | null>(null)
+  const [translateFailed, setTranslateFailed] = useState(false)
   const [selected, setSelected] = useState<StockItem | null>(null)
   const [importing, setImporting] = useState(false)
+  /** 已导入结果按「来源 + 条目」记，避免不同来源的 itemId 撞车 */
   const [imported, setImported] = useState<Record<string, StockImportResult>>({})
   const [target, setTarget] = useState<StockImportTarget>('asset')
   const [copied, setCopied] = useState('')
@@ -78,7 +83,15 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
   }, [])
 
   const current = providers.find((p) => p.id === provider)
-  const canSearch = Boolean(provider) && query.trim().length >= 2 && Boolean(current?.ok)
+  /** 外链型来源：只有站内搜索入口，不检索也不导入 */
+  const isLink = current ? current.kind === 'link' || current.searchable === false : false
+  const canSearch =
+    Boolean(provider) && query.trim().length >= 2 && Boolean(current?.ok) && !isLink
+  const externalHref = useMemo(() => {
+    const tpl = current?.externalUrlTemplate || ''
+    const q = query.trim()
+    return tpl && q ? tpl.replace('{query}', encodeURIComponent(q)) : ''
+  }, [current, query])
 
   const selectProvider = (id: StockProviderId) => {
     const next = providers.find((p) => p.id === id)
@@ -89,6 +102,8 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
     setHasMore(false)
     setError('')
     setSubmitted('')
+    setTranslated(null)
+    setTranslateFailed(false)
     if (next) setMediaType(next.mediaTypes[0])
   }
 
@@ -111,6 +126,8 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
         setCached(r.cached)
         setPage(nextPage)
         setSubmitted(keyword.trim())
+        setTranslated(r.translated ?? null)
+        setTranslateFailed(Boolean(r.translateFailed))
         if (nextPage === 1) setSelected(r.items[0] ?? null)
       } catch (e) {
         // 限流/鉴权不是空结果，保留旧列表并显示原因
@@ -144,6 +161,8 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
     setTotal(undefined)
     setError('')
     setSubmitted('')
+    setTranslated(null)
+    setTranslateFailed(false)
   }
 
   const importSelected = async () => {
@@ -151,7 +170,7 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
     setImporting(true)
     try {
       const r = await importStockItem({ project: projectName, token: selected.token })
-      setImported((prev) => ({ ...prev, [selected.itemId]: r }))
+      setImported((prev) => ({ ...prev, [`${selected.provider}:${selected.itemId}`]: r }))
       if (mode === 'picker') onPicked?.(r, selected)
       else onImported?.(r, selected, target)
       toast?.(r.reused ? '已在项目里，复用已有素材' : `已下载到项目：${selected.title}`)
@@ -214,37 +233,87 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
             </button>
           ))}
         </div>
-        <div className="stock-types" role="group" aria-label="媒体类型">
-          {(current?.mediaTypes ?? (['image', 'video', 'audio'] as StockMediaType[])).map((t) => (
-            <button
-              key={t}
-              type="button"
-              data-stock-type={t}
-              className={mediaType === t ? 'on' : ''}
-              onClick={() => changeMediaType(t)}
-            >
-              {MEDIA_LABEL[t]}
-            </button>
-          ))}
-        </div>
+        {isLink ? null : (
+          <div className="stock-types" role="group" aria-label="媒体类型">
+            {(current?.mediaTypes ?? (['image', 'video', 'audio'] as StockMediaType[])).map((t) => (
+              <button
+                key={t}
+                type="button"
+                data-stock-type={t}
+                className={mediaType === t ? 'on' : ''}
+                onClick={() => changeMediaType(t)}
+              >
+                {MEDIA_LABEL[t]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="stock-search-row">
-        <input
-          className="stock-search"
-          data-stock-query
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') submit()
-          }}
-          placeholder="输入关键词后回车检索（至少 2 个字符）"
-          aria-label="在线素材关键词"
-        />
-        <button type="button" className="btn" data-stock-search disabled={!canSearch || searching} onClick={submit}>
-          {searching ? '检索中…' : '搜索'}
-        </button>
-      </div>
+      {isLink ? (
+        <div className="stock-search-row" data-stock-link={current?.id}>
+          <input
+            className="stock-search"
+            data-stock-query
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && externalHref) window.open(externalHref, '_blank', 'noopener')
+            }}
+            placeholder="输入关键词，去来源站检索（购买后手动上传）"
+            aria-label="外链来源关键词"
+          />
+          {externalHref ? (
+            <a
+              className="btn primary"
+              data-stock-external
+              href={externalHref}
+              target="_blank"
+              rel="noreferrer"
+            >
+              去 {current?.label} 搜索
+            </a>
+          ) : (
+            <button type="button" className="btn" disabled title="先输入关键词">
+              去 {current?.label} 搜索
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="stock-search-row">
+          <input
+            className="stock-search"
+            data-stock-query
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit()
+            }}
+            placeholder="输入关键词后回车检索（至少 2 个字符）"
+            aria-label="在线素材关键词"
+          />
+          <button type="button" className="btn" data-stock-search disabled={!canSearch || searching} onClick={submit}>
+            {searching ? '检索中…' : '搜索'}
+          </button>
+        </div>
+      )}
+
+      {isLink ? (
+        <div className="stock-note" data-stock-link-note>
+          {current?.label} 的正版素材需要充值购买，平台不代下载。去来源站检索并购买后，把文件手动上传到项目素材。
+        </div>
+      ) : null}
+      {translated ? (
+        <div className="stock-note" data-stock-translated>
+          已把「{translated.from}」译为 <b>{translated.to}</b>
+          {translated.via === 'model' ? '（模型翻译）' : '（术语表）'}
+        </div>
+      ) : null}
+      {translateFailed ? (
+        <div className="stock-note stock-error" data-stock-translate-failed>
+          未能把中文关键词译成英文，按原词检索可能没有结果
+        </div>
+      ) : null}
 
       {providersError ? <div className="stock-note stock-error">{providersError}</div> : null}
       {current && !current.ok ? (
@@ -260,11 +329,15 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
             <div className="stock-empty">正在检索…</div>
           ) : items.length === 0 ? (
             <div className="stock-empty">
-              {submitted ? '没有匹配的素材，换个关键词试试' : '输入关键词检索在线素材'}
+              {isLink
+                ? `${current?.label || '这个来源'} 只提供站内搜索外链，素材需购买后手动上传`
+                : submitted
+                  ? '没有匹配的素材，换个关键词试试'
+                  : '输入关键词检索在线素材'}
             </div>
           ) : (
             items.map((item) => {
-              const result = imported[item.itemId]
+              const result = imported[`${item.provider}:${item.itemId}`]
               return (
                 <button
                   key={item.itemId}
@@ -306,7 +379,8 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
               <div className="stock-detail-head">
                 <b>{selected.title}</b>
                 <span>
-                  {selected.provider} · {MEDIA_LABEL[selected.mediaType]}
+                  {providers.find((p) => p.id === selected.provider)?.label || selected.provider} ·{' '}
+                  {MEDIA_LABEL[selected.mediaType]}
                 </span>
               </div>
               <div className="stock-preview">
@@ -375,7 +449,11 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
                 onClick={() => void importSelected()}
                 title={projectName ? '' : '先选择项目再导入'}
               >
-                {importing ? '下载中…' : imported[selected.itemId] ? '再次导入（复用）' : '下载到项目'}
+                {importing
+                  ? '下载中…'
+                  : imported[`${selected.provider}:${selected.itemId}`]
+                    ? '再次导入（复用）'
+                    : '下载到项目'}
               </button>
               {!projectName ? <div className="stock-note stock-error">先选择项目再导入</div> : null}
             </>

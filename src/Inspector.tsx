@@ -20,7 +20,7 @@ import NativeAudioPanel from './NativeAudioPanel'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
-import { deliveryForSpeaker, voiceFingerprint } from './performance'
+import { deliveryForSpeaker, performanceVideoEntryCount, voiceFingerprint } from './performance'
 import {
   clampInspectorWidth,
   DEFAULT_INSPECTOR_WIDTH,
@@ -415,6 +415,9 @@ function VideoPromptPanel({
             参考图 {request.refs.length}/4
             {request.omitted.length ? `（省略 ${request.omitted.length}）` : ''}
             {` · 表情参考${data.useExpressionRef ? '开' : '关'}`}
+            {performanceVideoEntryCount(data.performance) > 0
+              ? ` · 表演 ${performanceVideoEntryCount(data.performance)} 人`
+              : ' · 无表演'}
             {request.video ? ' · 参考视频 1' : ''}
             {request.audio ? ' · 音色参考 1' : ''}
           </div>

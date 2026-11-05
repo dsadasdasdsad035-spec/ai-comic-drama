@@ -1,7 +1,15 @@
 /** server/stock.mjs 的类型声明（在线素材检索/导入；协议见 design.md D1–D4） */
 
 export declare type StockMediaType = 'image' | 'video' | 'audio'
-export declare type StockProviderId = 'pexels' | 'pixabay' | 'openverse'
+export declare type StockProviderId =
+  | 'pexels'
+  | 'pixabay'
+  | 'openverse'
+  | 'unsplash'
+  | 'coverr'
+  | 'mixkit'
+  | 'vjshi'
+export declare type StockProviderKind = 'api' | 'html' | 'link'
 
 export declare type StockLicense = {
   name: string
@@ -34,13 +42,27 @@ export declare type StockItem = {
   width?: number
   height?: number
   duration?: number
+  /** Unsplash 下载计数地址：导入前换取真实文件地址 */
+  downloadLocation?: string
   token?: string
+}
+
+export declare type StockTranslation = {
+  from: string
+  to: string
+  via: 'glossary' | 'model'
 }
 
 export declare type StockSearchResult = {
   provider: StockProviderId
   mediaType: StockMediaType
+  /** 实际发给来源的关键词（可能是译词） */
   query: string
+  /** 用户输入的原词 */
+  requestedQuery?: string
+  translated?: StockTranslation
+  /** 中文没翻成英文：界面必须提示可能没有结果 */
+  translateFailed?: boolean
   page: number
   perPage: number
   total?: number
@@ -52,11 +74,16 @@ export declare type StockSearchResult = {
 export declare type StockProviderInfo = {
   id: StockProviderId
   label: string
+  kind: StockProviderKind
   mediaTypes: StockMediaType[]
   requiresKey: boolean
   ok: boolean
   reason?: string
   keyFromEnv?: boolean
+  searchable: boolean
+  importable: boolean
+  /** 外链模板，`{query}` 由前端替换 */
+  externalUrlTemplate?: string
 }
 
 export declare const SEARCH_CACHE_TTL_MS: number
@@ -79,13 +106,19 @@ export declare class StockError extends Error {
 export declare type StockFetch = typeof fetch
 export declare type StockSettingsInput = unknown
 export declare type StockEnv = Record<string, string | undefined>
+/** 中文关键词翻译：由路由层注入已配置的文本模型 */
+export declare type StockTranslateChat = (text: string, timeoutMs: number) => Promise<string>
 
 export declare function listAdapters(): Array<{
   id: StockProviderId
   label: string
+  kind: StockProviderKind
   mediaTypes: StockMediaType[]
   requiresKey: boolean
   defaultBaseUrl: string
+  defaultPerPage?: number
+  perPageMax?: number
+  pageMax?: number
 }>
 export declare function getAdapter(id: string): ReturnType<typeof listAdapters>[number] | null
 export declare function describeProviders(settings: StockSettingsInput, env?: StockEnv): StockProviderInfo[]
@@ -99,6 +132,7 @@ export declare function readToken(
   token: string,
   now?: number,
 ): { item: StockItem; at: number } | null
+export declare function issueStockToken(item: StockItem, now?: number): string
 export declare function searchStock(input: {
   provider: string
   mediaType?: string
@@ -110,6 +144,7 @@ export declare function searchStock(input: {
   env?: StockEnv
   fetchImpl?: StockFetch
   now?: number
+  chat?: StockTranslateChat
 }): Promise<StockSearchResult>
 export declare function pickVariant(item: StockItem): StockVariant | null
 export declare type StockImportResult = {
