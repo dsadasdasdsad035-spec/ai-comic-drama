@@ -212,6 +212,26 @@ function deps(overrides = {}) {
   check('非法参数产生错误工具结果', seen.includes('tool_execution_end'), JSON.stringify(seen))
 }
 
+// ---------------------------------------------------------------- 4.15 full_host 工具注册
+{
+  const session = lib.createSceneAgentSession()
+  const hostDeps = () => ({
+    ...deps(),
+    agentHost: {
+      jobId: 'mock',
+      runBash: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      readFile: async () => '',
+      writeFile: async () => undefined,
+      listDir: async () => [],
+    },
+  })
+  const restricted = lib.createSceneAgentTools(hostDeps(), session, [], { agentHostMode: 'restricted' }).tools
+  const full = lib.createSceneAgentTools(hostDeps(), session, [], { agentHostMode: 'full_host' }).tools
+  check('restricted 无 run_bash', !restricted.some((t) => t.name === 'run_bash'))
+  check('full_host 含 run_bash', full.some((t) => t.name === 'run_bash'))
+  check('full_host 工具数 +4', full.length === restricted.length + 4, `${restricted.length} -> ${full.length}`)
+}
+
 // ---------------------------------------------------------------- 4.2 content 与 details 分离
 {
   const session = lib.createSceneAgentSession()

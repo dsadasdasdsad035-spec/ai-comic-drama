@@ -44,10 +44,19 @@ import { DraftPart, DraftTool } from '@/chat-ui/tools/DraftTools'
 import { sceneDraftClient } from '../sceneDraft'
 import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
 import type { ChatAttachment } from './chatAttachments'
-import { loadChatThread, saveChatThread } from './threads'
+import { clearChatThread, loadChatThread, saveChatThread } from './threads'
 import { getSkill } from '../skills/registry'
 import { buildSkillPrompt } from '../skills/render'
 import type { Skill } from '../skills/types'
+import { isFullHostMode } from './agentHostMode'
+import {
+  agentListDir,
+  agentReadFile,
+  agentRunBash,
+  agentWriteFile,
+  cancelAgentJob,
+  ensureAgentJob,
+} from '../agentHostClient'
 import {
   CodeTool,
   ContextTool,
@@ -315,6 +324,7 @@ export default function SceneAgentChat({
   const [currentCodeHash, setCurrentCodeHash] = useState<string | undefined>(undefined)
   const abortRef = useRef<AbortController | null>(null)
   const sessionRef = useRef<AgentBlenderSession | null>(null)
+  const hostJobIdRef = useRef('')
   const preparedRef = useRef<PreparedCodeContext | null>(null)
   const messageRef = useRef<AgentMessage | null>(null)
   const videoSessionsRef = useRef<Map<string, VideoSession>>(new Map())
@@ -329,11 +339,17 @@ export default function SceneAgentChat({
     source: 'builtin' | 'override'
   } | null>(null)
   const [sceneSkill, setSceneSkill] = useState<Skill | null>(null)
+  const [skillError, setSkillError] = useState('')
+  const [skillLoading, setSkillLoading] = useState(true)
+  const [clearing, setClearing] = useState(false)
   const messagesRef = useRef<AgentMessage[]>([])
   messagesRef.current = messages
   const metaRef = useRef(sceneSkillMeta)
   metaRef.current = sceneSkillMeta
   const userStartedRef = useRef(false)
+  const clearGenRef = useRef(0)
+  const clearingRef = useRef(false)
+  const activeRunGenRef = useRef<number | null>(null)
   /** 附件条的上传入口：真正的落盘与写 context 由宿主负责 */
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -341,14 +357,27 @@ export default function SceneAgentChat({
   useEffect(() => {
     let alive = true
     setThreadLoaded(false)
+    setSkillLoading(true)
+    setSkillError('')
+    setSceneSkill(null)
+    setSceneSkillMeta(null)
     getSkill('scene3d')
       .then((s) => {
         if (alive) {
           setSceneSkillMeta({ id: s.id, version: s.manifest.version, source: s.source })
           setSceneSkill(s)
+          setSkillError('')
         }
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (!alive) return
+        const msg = (e as Error).message || 'scene3d 技能不可用'
+        setSkillError(msg)
+        onToast?.(msg)
+      })
+      .finally(() => {
+        if (alive) setSkillLoading(false)
+      })
     loadChatThread(threadKey)
       .then((thread) => {
         if (!alive) return
@@ -371,11 +400,12 @@ export default function SceneAgentChat({
 
   // 完成一轮后落盘；只存文本、工具摘要和产物引用。
   useEffect(() => {
-    if (!threadLoaded || running || !messages.length) return
+    if (!threadLoaded || running || !messages.length || clearingRef.current) return
     const active = sceneSkillMeta
       ? [{ id: sceneSkillMeta.id, mode: 'host' as const, version: sceneSkillMeta.version, source: sceneSkillMeta.source }]
       : []
     const timer = setTimeout(() => {
+      if (clearingRef.current) return
       void saveChatThread(threadKey, messages, active).catch(() => {})
     }, 500)
     return () => clearTimeout(timer)
@@ -384,6 +414,7 @@ export default function SceneAgentChat({
   // 关闭工作台时把运行中的本轮标记取消并保留已确认内容。
   useEffect(() => {
     return () => {
+      if (clearingRef.current) return
       const msgs = messagesRef.current
       if (!msgs.length) return
       const marked = msgs.map((m) =>
@@ -431,7 +462,50 @@ export default function SceneAgentChat({
     else patchAssistant(apply)
   }
 
+  const clearConversation = async () => {
+    if (!messages.length || clearingRef.current) return
+    if (
+      !window.confirm('清空当前对话？只删除聊天记录，不清场景代码草稿，且不可恢复。')
+    ) {
+      return
+    }
+    clearingRef.current = true
+    setClearing(true)
+    clearGenRef.current += 1
+    activeRunGenRef.current = null
+    abortRef.current?.abort()
+    abortRef.current = null
+    if (hostJobIdRef.current) {
+      void cancelAgentJob(hostJobIdRef.current).catch(() => undefined)
+      hostJobIdRef.current = ''
+    }
+    sessionRef.current?.dispose()
+    sessionRef.current = null
+    messageRef.current = null
+    if (draftIdRef.current) {
+      void sceneDraftClient.discard(draftIdRef.current).catch(() => {})
+      draftIdRef.current = null
+    }
+    try {
+      await clearChatThread(threadKey)
+    } catch (e) {
+      clearingRef.current = false
+      setClearing(false)
+      setRunning(false)
+      onToast?.((e as Error).message || '清空对话失败')
+      return
+    }
+    messagesRef.current = []
+    setMessages([])
+    setInspectorOpen(false)
+    setPreparedSnapshot(null)
+    setRunning(false)
+    clearingRef.current = false
+    setClearing(false)
+  }
+
   const updateEvent = (event: AgentEvent) => {
+    if (activeRunGenRef.current === null || activeRunGenRef.current !== clearGenRef.current) return
     if (event.type === 'code') {
       setCurrentCodeHash(event.codeHash)
       return
@@ -601,14 +675,16 @@ export default function SceneAgentChat({
   }
 
   const run = async (text: string) => {
-    if (running) return
+    if (running || clearingRef.current) return
     if (!sceneSkill) {
-      onToast?.('scene3d 技能不可用，无法启动聊天')
+      onToast?.(skillError || 'scene3d 技能不可用，无法启动聊天')
       return
     }
+    const gen = clearGenRef.current
     userStartedRef.current = true
     const controller = new AbortController()
     abortRef.current = controller
+    activeRunGenRef.current = gen
     setRunning(true)
     const user: AgentMessage = { id: makeId(), role: 'user', parts: [{ type: 'text', text }], status: 'complete' }
     const assistant: AgentMessage = { id: makeId(), role: 'assistant', parts: [], status: 'running' }
@@ -621,6 +697,11 @@ export default function SceneAgentChat({
       const contextText = contextTextOf(manifest, prepared)
       const assets = prepared.assets
       let sessionCode = ''
+      hostJobIdRef.current = ''
+      if (isFullHostMode(settings)) {
+        const { jobId } = await ensureAgentJob(threadKey.project, threadKey.shotId, controller.signal)
+        hostJobIdRef.current = jobId
+      }
       const deps: SceneAgentDeps = {
         getShotContext: () => contextText,
         runTrial: async (code) => {
@@ -652,6 +733,19 @@ export default function SceneAgentChat({
         onEvent: updateEvent,
         draftScope: { project: threadKey.project, shotId: threadKey.shotId },
         signal: controller.signal,
+        ...(isFullHostMode(settings) && hostJobIdRef.current
+          ? {
+              agentHost: {
+                jobId: hostJobIdRef.current,
+                runBash: (command, cwd) =>
+                  agentRunBash(hostJobIdRef.current, command, cwd, 30_000, controller.signal),
+                readFile: (p) => agentReadFile(hostJobIdRef.current, p, controller.signal),
+                writeFile: (p, content) =>
+                  agentWriteFile(hostJobIdRef.current, p, content, controller.signal),
+                listDir: (p) => agentListDir(hostJobIdRef.current, p, controller.signal),
+              },
+            }
+          : {}),
       }
       const requirementsText = requirementsList?.length
         ? `\n验收要求：\n${requirementsList.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
@@ -669,7 +763,9 @@ export default function SceneAgentChat({
         manifestSummary: manifestSummary(manifest),
         signal: controller.signal,
       })
-      if (result.cancelled) {
+      if (clearGenRef.current !== gen) {
+        /* 清空对话后忽略收尾 */
+      } else if (result.cancelled) {
         patchAssistant((m) => ({ ...m, status: 'cancelled' }))
       } else if (result.error) {
         patchAssistant((m) => ({ ...m, status: 'error' }))
@@ -694,7 +790,9 @@ export default function SceneAgentChat({
             requirements: (result.review?.items || []).map((item) => item.label).filter(Boolean),
             signal: controller.signal,
           })
-          if (controller.signal.aborted || video.status === 'cancelled') {
+          if (clearGenRef.current !== gen) {
+            /* 清空后忽略 */
+          } else if (controller.signal.aborted || video.status === 'cancelled') {
             patchAssistant((m) => ({ ...m, status: 'cancelled' }))
             onToast?.('已取消')
           } else {
@@ -710,19 +808,28 @@ export default function SceneAgentChat({
             )
           }
         }
-      } else {
+      } else if (clearGenRef.current === gen) {
         patchAssistant((m) => ({ ...m, status: 'complete' }))
         onToast?.(result.summary || '场景已生成')
       }
     } catch (e) {
-      const msg = (e as Error).name === 'AbortError' ? '已取消' : (e as Error).message || 'agent 失败'
-      patchAssistant((m) => ({ ...m, status: 'error', parts: [...m.parts, { type: 'text', text: msg }] }))
-      onToast?.(msg)
+      if (clearGenRef.current === gen) {
+        const msg = (e as Error).name === 'AbortError' ? '已取消' : (e as Error).message || 'agent 失败'
+        patchAssistant((m) => ({ ...m, status: 'error', parts: [...m.parts, { type: 'text', text: msg }] }))
+        onToast?.(msg)
+      }
     } finally {
-      sessionRef.current?.dispose()
-      sessionRef.current = null
-      abortRef.current = null
-      setRunning(false)
+      if (clearGenRef.current === gen) {
+        if (hostJobIdRef.current) {
+          void cancelAgentJob(hostJobIdRef.current).catch(() => undefined)
+          hostJobIdRef.current = ''
+        }
+        sessionRef.current?.dispose()
+        sessionRef.current = null
+        abortRef.current = null
+        setRunning(false)
+      }
+      if (activeRunGenRef.current === gen) activeRunGenRef.current = null
     }
   }
 
@@ -883,6 +990,10 @@ export default function SceneAgentChat({
       const typed = appendText(message)
       // 3D 的附件是镜头上下文，本来就已随本轮发送；没有文字时仍需要一句话才能发起
       if (!typed && !manifestAttachments.length) return
+      if (!sceneSkill) {
+        onToast?.(skillError || 'scene3d 技能不可用')
+        return
+      }
       await run(typed || '（见当前镜头附件）')
     },
     onCancel: async () => cancel(),
@@ -919,14 +1030,35 @@ export default function SceneAgentChat({
             </>
           }
         >
-          {sceneSkillMeta && (
-            <div className="scene-skill-chip" data-scene-skill>
-              技能：{sceneSkillMeta.id} · {sceneSkillMeta.source} · v{sceneSkillMeta.version}
+          <div className="scene-skill-chip-row flex flex-wrap items-center gap-2">
+            {sceneSkillMeta && (
+              <div className="scene-skill-chip" data-scene-skill>
+                技能：{sceneSkillMeta.id} · {sceneSkillMeta.source} · v{sceneSkillMeta.version}
+              </div>
+            )}
+            <div className="scene-skill-chip" data-tool-protocol>
+              工具协议：{protocolLabel}
+            </div>
+            <button
+              type="button"
+              className="ca-link ml-auto text-[11px]"
+              data-chat-clear
+              disabled={!messages.length || running || clearing}
+              onClick={() => void clearConversation()}
+            >
+              {clearing ? '清空中…' : '清空对话'}
+            </button>
+          </div>
+          {skillLoading && (
+            <div className="scene-skill-chip text-[11px] text-muted-foreground" data-scene-skill-loading>
+              正在加载 scene3d 技能…
             </div>
           )}
-          <div className="scene-skill-chip" data-tool-protocol>
-            工具协议：{protocolLabel}
-          </div>
+          {skillError && (
+            <div className="scene-skill-chip text-[11px] text-destructive" data-scene-skill-error role="alert">
+              技能不可用：{skillError}
+            </div>
+          )}
             {inspectorOpen && (
               <ChatContextInspector
                 manifest={manifest}
@@ -942,8 +1074,20 @@ export default function SceneAgentChat({
             AssistantMessage={AssistantMessage}
             placeholder="例如：生成山、男女双剑对打、环绕镜头…"
             inputLabel="3D agent 聊天输入"
-            disabled={!sceneSkill}
-            hint="Enter 发送 · Shift+Enter 换行"
+            disabled={skillLoading || running || clearing}
+            sendDisabled={!sceneSkill}
+            sendBlockedNote={
+              !sceneSkill && !skillLoading
+                ? skillError || 'scene3d 技能未加载，暂不能发送'
+                : undefined
+            }
+            hint={
+              sceneSkill
+                ? 'Enter 发送 · Shift+Enter 换行'
+                : skillLoading
+                  ? '正在加载技能…'
+                  : '修复技能后可发送'
+            }
             attachments={{
               items: manifestAttachments,
               // 3D 的上限由镜头上下文的素材预算决定（图片 16 / 视频 4），
@@ -989,7 +1133,15 @@ export default function SceneAgentChat({
               ),
               // 空输入时库不允许发送；3D 的附件是镜头上下文，允许直接以它发起一轮
               ...(manifestAttachments.length
-                ? { onSendAttachmentsOnly: () => void run('（见当前镜头附件）') }
+                ? {
+                    onSendAttachmentsOnly: () => {
+                      if (!sceneSkill) {
+                        onToast?.(skillError || 'scene3d 技能不可用')
+                        return
+                      }
+                      void run('（见当前镜头附件）')
+                    },
+                  }
                 : {}),
             }}
           />

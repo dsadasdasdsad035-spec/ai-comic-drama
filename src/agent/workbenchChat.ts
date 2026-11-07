@@ -2,7 +2,7 @@ import type { ProjectData, Stage } from '../api'
 import type { SkillInputs, SkillReference, SkillSource } from '../skills/types'
 import type { ChatThreadKey } from './threads'
 
-export type WorkbenchSurface = 'script' | 'characters' | 'assets' | 'shots' | 'prompts'
+export type WorkbenchSurface = 'script' | 'characters' | 'assets' | 'shots'
 export type WorkbenchSaveMode = 'explicit' | 'auto' | 'immediate'
 export type WorkbenchBuiltinScope = 'episode' | 'script'
 
@@ -128,7 +128,6 @@ export const WORKBENCH_BUILTIN_KEYS: Record<
   characters: ['extract_characters_episode', 'extract_characters_script'],
   assets: ['extract_designs_episode', 'extract_designs_script'],
   shots: [],
-  prompts: ['generate_prompts'],
 }
 
 /** 每个工作台的首屏文案与保存语义；不扩技能 frontmatter。 */
@@ -174,20 +173,11 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
     title: '分镜助手',
     emptyTitle: '把这一集拆成可拍镜头',
     emptyBody:
-      '在对话里说明如何拆镜或改某一镜；模型会读本集场次并写入左侧镜头草稿。左侧表格可手改字段，保存前不会落库。',
-    suggestions: ['拆成 12 个 3 秒镜头', '加两个反应镜', '把 S03 改成近景'],
-    placeholder: '例如：拆成 12 个 3 秒镜头，结尾加一个反应镜…',
+      '在对话里说明如何拆镜或改某一镜；模型会读本集场次并一次写入分镜字段与首帧/视频提示词。左侧表格可手改，保存前不会落库。',
+    suggestions: ['拆成 12 个 3 秒镜头', '加两个反应镜', '只重写 S03 的首帧提示词'],
+    placeholder: '例如：拆成 12 个 3 秒镜头，每镜带好 Seedream/Seedance 提示词…',
     saveMode: 'explicit',
     inputLabels: { style: '画风', aspect: '画幅', brief: '本集摘要', target: '目标时长' },
-  },
-  prompts: {
-    title: '提示词助手',
-    emptyTitle: '给这一集写提示词',
-    emptyBody: '给每镜写首帧和运动提示词，统一风格与角色锚点；也可以直接点下面的「生成提示词」。只改提示词草稿。',
-    suggestions: ['统一成夜景霓虹', '补齐缺失的镜头', '只改第 3、7 镜'],
-    placeholder: '例如：统一成夜景霓虹，角色锚点不要丢…',
-    saveMode: 'explicit',
-    inputLabels: { style: '画风', bible: '角色锚点', briefJson: '镜头摘要' },
   },
 }
 

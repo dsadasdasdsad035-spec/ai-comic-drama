@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import type { DialogueDelivery } from './src/types'
 import tailwindcss from '@tailwindcss/vite'
 import { normalizeAgentLimits, type AgentLimitSettings } from './src/agent/agentLimits'
+import { normalizeAgentHostMode, type AgentHostMode } from './src/agent/agentHostMode'
 import {
   entryOf,
   mergeCustomVoices,
@@ -152,6 +153,14 @@ import {
   shutdownRenderJobs,
   submitRenderJob,
 } from './server/blender.mjs'
+import {
+  ensureAgentJob,
+  agentShell,
+  agentReadFile,
+  agentWriteFile,
+  agentListDir,
+  cancelAgentJob,
+} from './server/agentHost.mjs'
 import {
   MAX_CREATIVE_THREAD_BYTES,
   createSession as createCreativeSession,
@@ -364,6 +373,8 @@ type AppSettings = {
   pricing?: Pricing
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
+  /** 3D agent 宿主权限：restricted | full_host */
+  agentHostMode?: AgentHostMode
   /** 设置库里的自定义音色条目 */
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
@@ -877,6 +888,7 @@ function normalizeSettings(raw: any): AppSettings {
         stageModels: normalizeStageModels(raw.stageModels),
         pricing: raw.pricing || {},
         agentLimits: normalizeAgentLimits(raw.agentLimits),
+        agentHostMode: normalizeAgentHostMode(raw.agentHostMode),
         lipSync: normalizeLipSyncSettings(raw.lipSync),
         customVoices: normalizeCustomVoices(raw.customVoices),
         creative: normalizeCreativeSettings(raw.creative),
@@ -907,6 +919,7 @@ function normalizeSettings(raw: any): AppSettings {
     stageModels: {},
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
+    agentHostMode: 'restricted',
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),
@@ -981,6 +994,10 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
         : normalizeStageModels(cur.stageModels),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
+    agentHostMode:
+      patch.agentHostMode !== undefined
+        ? normalizeAgentHostMode(patch.agentHostMode)
+        : normalizeAgentHostMode(cur.agentHostMode),
     lipSync: patch.lipSync !== undefined ? normalizeLipSyncSettings(patch.lipSync) : normalizeLipSyncSettings(cur.lipSync),
     customVoices: patch.customVoices !== undefined ? normalizeCustomVoices(patch.customVoices) : normalizeCustomVoices(cur.customVoices),
     // 创意配置：请求里带了就以请求为准（可整体覆盖），没带就保留原值。
@@ -4276,6 +4293,50 @@ function seedreamProxy(): Plugin {
             res.end(JSON.stringify({ ok: false, message: '未知的草稿接口' }))
           } catch (e: any) {
             res.statusCode = e?.code === 'not-found' ? 404 : 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 3D Agent 宿主工具（full_host）：job 沙箱内的 shell 与文件 ----
+        if (url.startsWith('/api/agent/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          const action = url.slice('/api/agent/'.length).replace(/\/$/, '')
+          try {
+            const body = await readJson(req)
+            if (action === 'ensure') {
+              res.end(JSON.stringify(ensureAgentJob(root, body)))
+              return
+            }
+            if (action === 'shell') {
+              res.end(JSON.stringify(await agentShell(root, body)))
+              return
+            }
+            if (action === 'read') {
+              res.end(JSON.stringify(agentReadFile(root, body)))
+              return
+            }
+            if (action === 'write') {
+              res.end(JSON.stringify(agentWriteFile(root, body)))
+              return
+            }
+            if (action === 'list') {
+              res.end(JSON.stringify(agentListDir(root, body)))
+              return
+            }
+            if (action === 'cancel') {
+              res.end(JSON.stringify(cancelAgentJob(String(body.jobId || ''))))
+              return
+            }
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的 agent 接口' }))
+          } catch (e: any) {
+            res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
           }
           return

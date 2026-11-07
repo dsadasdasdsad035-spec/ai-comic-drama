@@ -221,11 +221,11 @@ try {
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(1000)
-  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  await page.getByRole('button', { name: '3D 调度', exact: true }).click()
   await page.waitForTimeout(1000)
   await page.waitForTimeout(300)
   await page.waitForTimeout(250)
-  await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
+  await page.locator('.s3d-card').first().getByRole('button', { name: '打开', exact: true }).click()
   await page.locator('.cw-shell').waitFor({ timeout: 15000 })
   await page.waitForTimeout(800)
 

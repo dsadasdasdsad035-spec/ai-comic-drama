@@ -32,6 +32,7 @@ import {
   normalizeAgentLimits,
   type AgentLimitSettings,
 } from '../agent/agentLimits'
+import { normalizeAgentHostMode, type AgentHostMode } from '../agent/agentHostMode'
 import {
   CREATIVE_ANALYSIS_DEPTHS,
   CREATIVE_DEFAULTS,
@@ -132,7 +133,11 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'character', label: '角色（拆角色）', hint: '剧本/分镜 → 角色外观锚点' },
   { stage: 'asset', label: '素材（拆场景/道具）', hint: '剧本/分镜 → 场景空镜与关键道具' },
   { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 文本编排也用它' },
-  { stage: 'prompt', label: '提示词（首帧/视频）', hint: '镜头 → keyframe_prompt / video_prompt' },
+  {
+    stage: 'prompt',
+    label: '提示词（辅助）',
+    hint: '主路径在镜头表拆镜；仅「只刷提示词」与 prompt-intake 导入用',
+  },
   { stage: 'sceneCode', label: '3D 代码（生成/聊天）', hint: '参考内容 → Blender Python 代码；空则沿用文本默认' },
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
   { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
@@ -267,6 +272,7 @@ function cleanHash(input: {
   stageModels: Partial<Record<Stage, string>>
   pricing: Pricing
   agentLimits: Required<AgentLimitSettings>
+  agentHostMode: AgentHostMode
   creative?: CreativeSettings
   stock?: StockSettings
   lipSync: LipSyncSettings
@@ -297,6 +303,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
   const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
+  const [agentHostMode, setAgentHostMode] = useState<AgentHostMode>('restricted')
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
   const [stock, setStock] = useState<StockSettings>({ providers: {} })
   const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
@@ -337,6 +344,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
     stageModels,
     pricing,
     agentLimits,
+    agentHostMode,
     creative,
     stock,
     lipSync,
@@ -376,6 +384,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         setStageModels(s.stageModels || {})
         setPricing(normalizePricing(s.pricing))
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
+        setAgentHostMode(normalizeAgentHostMode(s.agentHostMode))
         setCreative(normalizeCreativeSettings(s.creative))
         setStock({ providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } })
         setLipSync(normalizeLipSyncSettings(s.lipSync))
@@ -392,6 +401,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
             stageModels: s.stageModels || {},
             pricing: normalizePricing(s.pricing),
             agentLimits: normalizeAgentLimits(s.agentLimits),
+            agentHostMode: normalizeAgentHostMode(s.agentHostMode),
             creative: normalizeCreativeSettings(s.creative),
             stock: { providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } },
             lipSync: normalizeLipSyncSettings(s.lipSync),
@@ -483,6 +493,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         stageModels,
         pricing,
         agentLimits,
+        agentHostMode,
         creative,
         stock,
         lipSync,
@@ -497,6 +508,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         stageModels: saved.stageModels || stageModels,
         pricing: normalizePricing(saved.pricing),
         agentLimits: normalizeAgentLimits(saved.agentLimits),
+        agentHostMode: normalizeAgentHostMode(saved.agentHostMode),
         creative: normalizeCreativeSettings(saved.creative),
         stock: { providers: { ...((saved.stock?.providers || {}) as StockSettings['providers']) } },
         lipSync: normalizeLipSyncSettings(saved.lipSync),
@@ -510,6 +522,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
       setStageModels(next.stageModels)
       setPricing(next.pricing)
       setAgentLimits(next.agentLimits)
+      setAgentHostMode(next.agentHostMode)
       setCreative(next.creative as CreativeSettings)
       setStock(next.stock)
       setLipSync(next.lipSync)
@@ -1196,6 +1209,19 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         <label className="st-field">
           <span>聊天工具能力</span>
           <em data-agent-capability>{sceneCapabilityText}</em>
+        </label>
+        <label className="st-field">
+          <span>3D Agent 宿主权限</span>
+          <select
+            value={agentHostMode}
+            onChange={(e) => setAgentHostMode(normalizeAgentHostMode(e.target.value))}
+          >
+            <option value="restricted">restricted（仅代码/渲染工具）</option>
+            <option value="full_host">full_host（含 job 沙箱内 bash/文件）</option>
+          </select>
+          <em>
+            full_host 会在本机执行 shell，仅建议在信任环境开启；写入项目仍须 run_render 与 finish。
+          </em>
         </label>
       </div>
       <h4 className="st-subhead">兼容字段</h4>

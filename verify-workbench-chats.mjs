@@ -323,32 +323,11 @@ try {
   check('切回原集恢复原线程', e01Panel.includes('把这一镜改成雨夜追捕'))
   check('切回原集恢复只读技能', (await page.locator('[data-shots-chat] .skill-chip.readonly').count()) > 0)
 
-  // 提示词
-  await openView('提示词', 'prompts')
-  check('提示词聊天宿主技能', (await page.locator('[data-prompts-chat] .skill-chip.host').textContent())?.includes('prompt'))
-  const promptHeader = await page.locator('[data-prompts-chat] [data-chat-header]').innerText()
-  check('提示词头部身份/范围/模型', promptHeader.includes('提示词助手') && promptHeader.includes('本集') && promptHeader.includes('Mock Text'), promptHeader.slice(0, 120))
-  const promptEmpty = await page.locator('[data-prompts-chat] [data-chat-empty]').innerText()
-  check('提示词空态属于本工作台', promptEmpty.includes('只改提示词草稿') && !promptEmpty.includes('抓帧'), promptEmpty.slice(0, 100))
-  check('提示词空态有三个示例', (await page.locator('[data-prompts-chat] [data-chat-suggestion]').count()) === 3)
-  const promptPlaceholder = await page.getByLabel('prompts 技能聊天输入').getAttribute('placeholder')
-  check('提示词 placeholder 属于本工作台', Boolean(promptPlaceholder?.includes('夜景霓虹') && !promptPlaceholder.includes('第 3 集节奏')), promptPlaceholder || '')
-  await page.screenshot({ path: path.join(EVIDENCE, 'workbench-chat-prompts.png') })
-  await send('prompts', '给这一镜写提示词')
-  await page.locator('[data-chat-tool="submit_prompts"]').waitFor({ timeout: 15000 })
-  const promptValues = await page.locator('.pt-table textarea').evaluateAll((els) => els.map((e) => e.value))
-  check('锚点占位符被展开', promptValues.some((v) => v.includes('scar over left eyebrow')), promptValues.slice(0, 3).join(' | '))
-  check('提示词写入当前集', promptValues.some((v) => v.includes('neon rainy street')))
-
-  await page.locator('[data-prompts-chat] select[aria-label="加载只读技能"]').selectOption('character')
-  check('提示词表可加载只读角色技能', (await page.locator('[data-prompts-chat] .skill-chip.readonly').textContent())?.includes('character'))
-  const callsBeforePromptReadonly = calls.length
-  await send('prompts', '角色锚点够不够')
-  await page.getByText('prompt 完成').first().waitFor({ timeout: 15000 })
-  for (let i = 0; i < 40 && calls.length <= callsBeforePromptReadonly; i++) await page.waitForTimeout(100)
-  const promptReadonlyCall = calls[calls.length - 1]
-  check('提示词只读技能进入 system', systemOf(promptReadonlyCall).includes('【只读技能：character】'), systemOf(promptReadonlyCall).slice(0, 200))
-  check('提示词只读技能无写工具', !String(promptReadonlyCall?.system || '').includes('submit_characters'))
+  check('顶栏无独立提示词视图', (await page.getByRole('button', { name: '提示词', exact: true }).count()) === 0)
+  const shotHeaders = await page.locator('.wb-table thead th').allTextContents()
+  check('镜头表含首帧提示词列', shotHeaders.some((t) => t.includes('首帧提示词')), shotHeaders.join('|'))
+  const shotsEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
+  check('分镜助手空态提及提示词', shotsEmpty.includes('首帧') || shotsEmpty.includes('提示词'), shotsEmpty.slice(0, 120))
 
   check('页面无脚本错误', errors.length === 0, errors.join(' | '))
 } finally {

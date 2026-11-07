@@ -21,7 +21,6 @@ const DATA_ATTRS: Record<string, Record<string, string>> = {
   characters: { 'data-characters-chat': '' },
   assets: { 'data-assets-chat': '' },
   shots: { 'data-shots-chat': '' },
-  prompts: { 'data-prompts-chat': '' },
   // 发布台：断点由 publishChat.css 的 [data-publish-chat] 作用域覆盖为 1200px
   publish: { 'data-publish-chat': '' },
 }

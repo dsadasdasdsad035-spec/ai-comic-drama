@@ -71,10 +71,9 @@ await page.goto(URL, { waitUntil: 'domcontentloaded' })
 await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
 await page.locator('.topbar-project select').selectOption(NAME)
 await page.waitForTimeout(800)
-await page.getByRole('button', { name: '提示词', exact: true }).click()
+await page.getByRole('button', { name: '3D 调度', exact: true }).click()
 await page.waitForTimeout(900)
-// 3D 调度入口在提示词工作台：点该镜所在行的「打开」。
-await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
+await page.locator('.s3d-card').first().getByRole('button', { name: '打开', exact: true }).click()
 for (let i = 0; i < 40; i++) {
   if (await page.locator('[data-chat-scope="scene3d"]').count()) break
   await page.waitForTimeout(300)

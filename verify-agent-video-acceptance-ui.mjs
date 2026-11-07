@@ -132,10 +132,9 @@ try {
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(600)
   await page.getByRole('button', { name: '生成到画布' }).click()
-  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  await page.getByRole('button', { name: '3D 调度', exact: true }).click()
   await page.waitForTimeout(1200)
-  // 3D 调度入口在提示词工作台：点该镜所在行的「打开」。
-  await page.locator('.wb-table tbody tr').first().getByRole('button', { name: '打开', exact: true }).click()
+  await page.locator('.s3d-card').first().getByRole('button', { name: '打开', exact: true }).click()
   await page.locator('.cw-shell').waitFor({ timeout: 15000 })
   const input = page.locator('[data-chat-scope="scene3d"] [data-chat-input]')
   await input.waitFor({ timeout: 10000 })

@@ -230,9 +230,25 @@ export type AgentTrial = {
 
 export type AgentFrame = { t: number; url: string }
 
+export type AgentHostJobClient = {
+  jobId: string
+  runBash: (command: string, cwd?: string) => Promise<{
+    exitCode: number
+    stdout: string
+    stderr: string
+    durationMs?: number
+    timedOut?: boolean
+  }>
+  readFile: (path: string) => Promise<string>
+  writeFile: (path: string, content: string) => Promise<void>
+  listDir: (path?: string) => Promise<string[]>
+}
+
 export type SceneAgentDeps = {
   /** 当前镜头的文本/选择摘要，只读 */
   getShotContext: () => Promise<string> | string
+  /** full_host 时由 SceneAgentChat 注入 */
+  agentHost?: AgentHostJobClient
   /** 渲染试运行；失败返回错误，不覆盖旧代码 */
   runTrial: (code: string) => Promise<AgentTrial>
   /** 抓取关键帧；必须返回至少一帧 */

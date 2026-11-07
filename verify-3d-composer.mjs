@@ -166,12 +166,11 @@ try {
   await page.waitForTimeout(1500)
   await page.locator('.topbar-project select').selectOption(PROJECT)
   await page.waitForTimeout(1200)
-  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  await page.getByRole('button', { name: '3D 调度', exact: true }).click()
   await page.waitForTimeout(1200)
 
-  // 从提示词表打开第一镜的 3D 编辑器
-  const open3d = page.locator('td.state.pt-3d button', { hasText: '打开' }).first()
-  check('提示词表有 3D 打开入口', (await open3d.count()) >= 1)
+  const open3d = page.locator('.s3d-card button', { hasText: '打开' }).first()
+  check('3D 视图有打开入口', (await open3d.count()) >= 1)
   await open3d.click()
   await page.waitForTimeout(1500)
   check('3D 工作台打开', await page.locator('.cw-shell').isVisible())

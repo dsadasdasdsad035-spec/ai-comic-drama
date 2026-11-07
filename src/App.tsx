@@ -33,7 +33,7 @@ import ThemeToggle from './ThemeToggle'
 import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
 import ShotTable from './ShotTable'
-import PromptTable from './PromptTable'
+import Schedule3DBoard from './Schedule3DBoard'
 import EpPicker from './EpisodeBar'
 import ScriptBoard from './ScriptBoard'
 import ProjectSelect from './ProjectSelect'
@@ -360,7 +360,15 @@ function Shell() {
   )
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
   const [view, setView] = useState<
-    'board' | 'chars' | 'assets' | 'table' | 'prompts' | 'script' | 'publish' | 'settings' | 'creative'
+    | 'board'
+    | 'chars'
+    | 'assets'
+    | 'table'
+    | 'schedule3d'
+    | 'script'
+    | 'publish'
+    | 'settings'
+    | 'creative'
   >('board')
   /** 从预览导出成功后带进发布台的成片 id；发布台消费后清空 */
   const [publishTarget, setPublishTarget] = useState<string | null>(null)
@@ -372,9 +380,9 @@ function Shell() {
   const [readyProject, setReadyProject] = useState('')
   /** 剧本页是否有未保存分集：切项目/全剧拆角色前检查 */
   const [scriptDirty, setScriptDirty] = useState(false)
-  const [promptEditorDirty, setPromptEditorDirty] = useState(false)
+  const [schedule3dEditorDirty, setSchedule3dEditorDirty] = useState(false)
   const projectEpochRef = useRef(0)
-  /** 当前集：镜头表 / 提示词共用 */
+  /** 当前集：镜头表 / 3D / 画布等共用 */
   const [epNo, setEpNo] = useState(1)
   /** 工作台保存后自增，用来刷新集栏的镜数 */
   const [epVersion, setEpVersion] = useState(0)
@@ -429,7 +437,7 @@ function Shell() {
     voicesRef.current = voices
   }, [voices])
 
-  // 项目选择必须在 App 层引导：否则先进入「提示词」标签时 projectName 还是空，
+  // 项目选择必须在 App 层引导：否则先进入工作台标签时 projectName 还是空，
   // 工作台加载不到数据、按钮全灰（实测踩到过）
   const reloadProjects = useCallback(async () => {
     try {
@@ -454,16 +462,16 @@ function Shell() {
       if (next === projectName) return
       if (scriptDirty && !window.confirm('剧本页有未保存的分集，切换项目会丢失。继续？')) return
       if (
-        promptEditorDirty &&
-        !window.confirm('提示词页的 3D 编辑器有未保存修改，切换项目会丢失。继续？')
+        schedule3dEditorDirty &&
+        !window.confirm('3D 调度页有未保存的代码修改，切换项目会丢失。继续？')
       ) {
         return
       }
-      setPromptEditorDirty(false)
+      setSchedule3dEditorDirty(false)
       setReadyProject('')
       setProjectName(next)
     },
-    [projectName, scriptDirty, promptEditorDirty],
+    [projectName, scriptDirty, schedule3dEditorDirty],
   )
 
   /**
@@ -486,7 +494,7 @@ function Shell() {
       const ps = await reloadProjects()
       if (gone.has(projectName)) {
         setScriptDirty(false)
-        setPromptEditorDirty(false)
+        setSchedule3dEditorDirty(false)
         setEpNo(1)
         setNodes([])
         setEdges([])
@@ -532,17 +540,17 @@ function Shell() {
         return
       }
       if (
-        view === 'prompts' &&
-        promptEditorDirty &&
-        !window.confirm('提示词页的 3D 编辑器有未保存修改，离开会丢失。继续？')
+        view === 'schedule3d' &&
+        schedule3dEditorDirty &&
+        !window.confirm('3D 调度页有未保存的代码修改，离开会丢失。继续？')
       ) {
         return
       }
       setScriptDirty(false)
-      setPromptEditorDirty(false)
+      setSchedule3dEditorDirty(false)
       setView(next)
     },
-    [view, scriptDirty, promptEditorDirty],
+    [view, scriptDirty, schedule3dEditorDirty],
   )
 
   /** 顶栏发布角标：跟着项目/集轮询运行与失败任务数 */
@@ -3026,11 +3034,12 @@ function Shell() {
               镜头表
             </button>
             <button
-              className={view === 'prompts' ? 'on' : ''}
-              aria-current={view === 'prompts' ? 'page' : undefined}
-              onClick={() => changeView('prompts')}
+              className={view === 'schedule3d' ? 'on' : ''}
+              aria-current={view === 'schedule3d' ? 'page' : undefined}
+              onClick={() => changeView('schedule3d')}
+              title="Blender 预演：按镜代码与调度视频"
             >
-              提示词
+              3D 调度
             </button>
             <button
               className={view === 'board' ? 'on' : ''}
@@ -3126,20 +3135,19 @@ function Shell() {
               window.setTimeout(() => setToast(''), 2800)
             }}
           />
-        ) : view === 'prompts' ? (
-          <PromptTable
+        ) : view === 'schedule3d' ? (
+          <Schedule3DBoard
             projectName={projectName}
             onCanvas={onCanvasIds}
             epNo={epNo}
             settings={appSettings}
             stagePick={stagePick}
             onPickStage={pickStageModel}
-            onPush={pushShotsToCanvas}
             canvasNodes={nodes}
             assets={assets}
             sceneLayouts={sceneLayouts}
             projectAspect={projectAspect}
-            onEditorDirtyChange={setPromptEditorDirty}
+            onEditorDirtyChange={setSchedule3dEditorDirty}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)

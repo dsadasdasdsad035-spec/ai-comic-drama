@@ -56,10 +56,10 @@ check(
     lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.assets[1]].scope === 'script',
 )
 check(
-  '剧本/镜头/提示词动作范围',
+  '剧本/镜头动作范围',
   lib.WORKBENCH_BUILTINS.generate_episodes.scope === 'script' &&
     lib.WORKBENCH_BUILTINS.split_shots.scope === 'episode' &&
-    lib.WORKBENCH_BUILTINS.generate_prompts.scope === 'episode',
+    !('prompts' in lib.WORKBENCH_BUILTIN_KEYS),
 )
 const fakeAction = {
   key: 'x',
@@ -366,43 +366,7 @@ try {
   check('素材顶部按钮不新增聊天回执', (await cardTexts('assets')).length === 1)
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-assets.png') })
 
-  // 提示词：分批 + 取消不落半份
-  await openView('提示词', 'prompts')
-  await page.locator('.wb-field', { hasText: '每批' }).locator('select').selectOption('3')
-  active = 'prompt'
-  await runAction('prompts', '生成提示词')
-  await waitReceipt('prompts')
-  const promptValues = await page.locator('table textarea').evaluateAll((els) => els.map((e) => e.value))
-  check('提示词动作写入当前集', promptValues.includes('mock keyframe S01') && promptValues.includes('mock keyframe S06'), promptValues.slice(0, 6).join(' / '))
-  check('提示词回执包含 2 批', (await cardTexts('prompts')).some((t) => t.includes('2/2 批')))
-  check('提示词回执标明当前集', (await cardTexts('prompts')).some((t) => t.includes('当前集')))
-  await page.getByRole('button', { name: '生成提示词', exact: true }).click()
-  await page.waitForTimeout(1200)
-  const topPromptValues = await page.locator('table textarea').evaluateAll((els) => els.map((e) => e.value))
-  check('提示词顶部按钮结果一致', topPromptValues.includes('mock keyframe S01') && topPromptValues.includes('mock keyframe S06'))
-  check('提示词顶部按钮不新增聊天回执', (await cardTexts('prompts')).length === 1)
-  await page.getByRole('button', { name: '保存到 project.json', exact: true }).click()
-  await page.waitForTimeout(700)
-  const savedPrompts = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.shots
-  check(
-    '提示词动作结果可保存',
-    (savedPrompts || []).some((s) => s.keyframe_prompt === 'mock keyframe S01'),
-    (savedPrompts || []).slice(0, 2).map((s) => s.keyframe_prompt).join(' / '),
-  )
-  const beforeCancel = topPromptValues.slice()
-
-  delayMs = 4000
-  await page.locator('[data-prompts-chat] select[aria-label="运行内置动作"]').selectOption('generate_prompts')
-  const promptStop = page.locator('[data-prompts-chat] button', { hasText: '停止 生成提示词' })
-  await promptStop.waitFor({ timeout: 5000 })
-  await promptStop.click()
-  await page.waitForTimeout(900)
-  const promptCancelCard = (await cardTexts('prompts')).at(-1) || ''
-  check('分批提示词取消回执', promptCancelCard.includes('已取消'), promptCancelCard.slice(0, 160))
-  const afterCancel = await page.locator('table textarea').evaluateAll((els) => els.map((e) => e.value))
-  check('取消不落半份提示词', JSON.stringify(afterCancel) === JSON.stringify(beforeCancel))
-  delayMs = 0
-  await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-prompts.png') })
+  check('镜头表无生成提示词顶栏按钮', (await page.getByRole('button', { name: '生成提示词', exact: true }).count()) === 0)
 
   // 项目隔离：A/B 各跑一次动作，切换后回执不串
   const NAME_B = `${NAME}-b`

@@ -122,13 +122,28 @@ export function selectExpressionReference(input: {
   return { kind: 'none', reason: '没有可用的表情参考' }
 }
 
+/** 无 lookEn、仅靠参考图生成总图时的英文身份句（版式与格位描述仍用 EXPRESSION_SHEET_SUFFIX）。 */
+export const EXPRESSION_REF_ONLY_IDENTITY =
+  'same person as reference image, match reference identity exactly, keep hairstyle outfit accessories and lighting'
+
+export function canGenerateExpressionSheet(
+  character: Pick<CharacterSheet, 'lookEn' | 'image' | 'referenceImages'>,
+  options?: { imageMissing?: boolean },
+): boolean {
+  if (character.lookEn.trim()) return true
+  const imageOk = Boolean(character.image && !options?.imageMissing)
+  const refs = (character.referenceImages ?? []).filter(Boolean)
+  return imageOk || refs.length > 0
+}
+
 export function expressionSheetPrompt(lookEn: string): string {
+  const identity = lookEn.trim() || EXPRESSION_REF_ONLY_IDENTITY
   const cells = EXPRESSION_SHEET_EMOTIONS.map((emotion, i) => {
     const row = Math.floor(i / EXPRESSION_SHEET_COLUMNS) + 1
     const col = (i % EXPRESSION_SHEET_COLUMNS) + 1
     return `row ${row} column ${col}: ${EXPRESSION_PROMPTS[emotion]}`
   }).join('; ')
-  return `${lookEn}, ${EXPRESSION_SHEET_SUFFIX}. ${cells}.`
+  return `${identity}, ${EXPRESSION_SHEET_SUFFIX}. ${cells}.`
 }
 
 export function cropRectPixels(

@@ -86,6 +86,28 @@ check('场次缺失回退当前集第一场', () => {
   assert.equal(r.sceneFallback, 1)
 })
 
+check('buildShotsFromModel 透传提示词列', () => {
+  const r = buildShotsFromModel(
+    [
+      {
+        no: 'S01',
+        scene_no: 1,
+        scene_slug: '街口',
+        seconds: 3,
+        size: '中景',
+        move: '固定',
+        desc: '雨夜',
+        keyframe_prompt: 'KF',
+        video_prompt: 'VP',
+      },
+    ],
+    [{ no: 1, scenes: [{ no: 1, slug: '街口' }] }],
+    1,
+  )
+  assert.equal(r.shots[0].keyframe_prompt, 'KF')
+  assert.equal(r.shots[0].video_prompt, 'VP')
+})
+
 check('提示词按 shot.id 写回，不串到别集同 no', () => {
   const shots = [
     { id: 'E01-S01', episode: 1, no: 'S01', keyframe_prompt: 'old1', video_prompt: 'oldv1' },

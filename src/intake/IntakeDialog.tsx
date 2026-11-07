@@ -17,6 +17,7 @@ import { mergeScriptDraft } from '../agent/drafts'
 import { mergeShotsDraft } from '../shotSync'
 import { describeDiff, diffShots, type IntakeDiff } from './diff'
 import { detectFormat, isTabular, type IntakeFormat } from './format'
+import { validateContract } from '../skills/contracts'
 import { INTAKE_LABEL, runIntake, type IntakeTarget } from './intakeSkill'
 import { rowsFromTable, shotIdOf } from './rows'
 import BundleDialog from './BundleDialog'
@@ -106,9 +107,22 @@ export default function IntakeDialog({
 
     const source = organized ?? (format.kind === 'json' ? format.json : undefined)
 
-    // 镜头表
+    // 镜头表（含纯 prompts-v1 JSON：只更新提示词列）
     if (target === 'shots') {
       if (source) {
+        const promptOnly = validateContract('prompts-v1', source)
+        if (promptOnly.ok) {
+          const j = source as { shots?: { no: string | number; keyframe_prompt?: string; video_prompt?: string }[] }
+          const got = Array.isArray(j.shots) ? j.shots : []
+          if (!got.length) return null
+          const merged = mergePromptDraft(shots, got, epNo, chars, { partial: true })
+          return {
+            shots: merged.shots,
+            summary: `提示词：更新 ${merged.patched} 镜${merged.missing ? ` · ${merged.missing} 镜未匹配` : ''}`,
+            counts: { updated: merged.patched, skipped: merged.missing, unresolved: merged.unresolved },
+            notices: merged.missing ? [`${merged.missing} 个镜号在当前集找不到，已跳过`] : [],
+          }
+        }
         const j = source as { shots?: unknown[] }
         const got = Array.isArray(j.shots) ? j.shots : []
         if (got.length === 0) return null

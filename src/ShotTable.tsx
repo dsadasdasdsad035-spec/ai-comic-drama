@@ -11,7 +11,11 @@ import {
   type Stage,
 } from './api'
 import { StageModelSelect, type StagePick } from './ModelSelect'
-import { dialogueToText, parseDialogue, reconcileDialogueDelivery } from './prompts'
+import { toSheet, type ProjectChar } from './charMap'
+import type { CharacterSheet } from './characters'
+import { expandAnchors, hasUnresolvedAnchor, dialogueToText, parseDialogue, reconcileDialogueDelivery } from './prompts'
+import { auditKeyframePrompt } from './promptAudit'
+import IntakeDialog from './intake/IntakeDialog'
 import { clearHandEdited, mergeGenerated } from './shotSync'
 import PerformanceEditor from './PerformanceEditor'
 import WorkbenchBar from './WorkbenchBar'
@@ -83,6 +87,7 @@ export default function ShotTable({
   onSaved,
 }: Props) {
   const [shots, setShots] = useState<ProjectShot[]>([])
+  const [chars, setChars] = useState<CharacterSheet[]>([])
   const [style, setStyle] = useState('')
   const [aspect, setAspect] = useState('16:9')
   const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
@@ -92,6 +97,7 @@ export default function ShotTable({
   const [dirty, setDirty] = useState(false)
   const [chatRunning, setChatRunning] = useState(false)
   const [perfEdit, setPerfEdit] = useState<string | null>(null)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   /** 待删除的镜头 id：显式删除意图，保存时随 deleteShotIds 提交 */
   const [pendingDelete, setPendingDelete] = useState<string[]>([])
   const [orphanOpen, setOrphanOpen] = useState(false)
@@ -100,8 +106,8 @@ export default function ShotTable({
   /** 聊天里的「从素材选」：复用既有缩略图选择器 */
   const mediaPicker = useMediaPicker(projectName)
 
-  const liveRef = useRef({ shots, style, aspect, episodes, epNo })
-  liveRef.current = { shots, style, aspect, episodes, epNo }
+  const liveRef = useRef({ shots, chars, style, aspect, episodes, epNo })
+  liveRef.current = { shots, chars, style, aspect, episodes, epNo }
   const episodeTarget = useMemo(() => resolveEpisodeTarget(episodes, epNo), [episodes, epNo])
   const saveRef = useRef<() => Promise<void>>(async () => {})
 
@@ -135,16 +141,37 @@ export default function ShotTable({
         const visibleNow = current.filter((s) => (Number(s.episode) || 1) === epNo)
         const beforeIds = new Set(visibleNow.map((s) => s.id))
         const merged = mergeGenerated(visibleNow, built.shots)
-        const added = merged.filter((s) => !beforeIds.has(s.id)).length
-        const updated = merged.length - added
-        const next = [...current.filter((s) => (Number(s.episode) || 1) !== epNo), ...merged]
+        const anchors = liveRef.current.chars.map((c) => ({ name: c.name, lookEn: c.lookEn }))
+        let unresolved = 0
+        const missingPromptCols: string[] = []
+        const withAnchors = merged.map((s) => {
+          const rawKf = String(s.keyframe_prompt ?? '').trim()
+          const rawVp = String(s.video_prompt ?? '').trim()
+          if (!rawKf && !rawVp) return s
+          if (!rawKf || !rawVp) missingPromptCols.push(String(s.no || s.id))
+          const kf = rawKf ? expandAnchors(rawKf, anchors) : s.keyframe_prompt
+          if (kf && hasUnresolvedAnchor(kf)) unresolved++
+          return {
+            ...s,
+            ...(rawKf ? { keyframe_prompt: kf } : {}),
+            ...(rawVp ? { video_prompt: rawVp } : {}),
+          }
+        })
+        const added = withAnchors.filter((s) => !beforeIds.has(s.id)).length
+        const updated = withAnchors.length - added
+        const next = [...current.filter((s) => (Number(s.episode) || 1) !== epNo), ...withAnchors]
         liveRef.current.shots = next
         setShots(next)
         setDirty(true)
+        const promptNote =
+          missingPromptCols.length > 0
+            ? ` · ${missingPromptCols.length} 镜缺首帧或视频提示词：${missingPromptCols.slice(0, 5).join('、')}${missingPromptCols.length > 5 ? '…' : ''}`
+            : ''
+        const anchorNote = unresolved > 0 ? ` · ${unresolved} 条未解析 {{角色名}}` : ''
         return {
           ok: true,
-          summary: `已写入镜头草稿：E${String(epNo).padStart(2, '0')} ${merged.length} 镜（新增 ${added} / 更新 ${updated}），尚未保存`,
-          counts: { total: merged.length, added, updated, sceneFallback: built.sceneFallback },
+          summary: `已写入镜头草稿：E${String(epNo).padStart(2, '0')} ${withAnchors.length} 镜（新增 ${added} / 更新 ${updated}）${promptNote}${anchorNote}，尚未保存`,
+          counts: { total: withAnchors.length, added, updated, sceneFallback: built.sceneFallback, unresolved },
         }
       },
       saveDraft: () => saveRef.current(),
@@ -170,6 +197,7 @@ export default function ShotTable({
       try {
         const p = await getProject(name)
         setShots(p.shots ?? [])
+        setChars(((p.characters ?? []) as ProjectChar[]).map(toSheet))
         setStyle(p.style ?? '')
         setAspect(p.aspect ?? '16:9')
         setEpisodes((p.episodes ?? []) as ProjectEpisode[])
@@ -226,6 +254,38 @@ export default function ShotTable({
     [visible],
   )
   const pushed = useMemo(() => visible.filter((s) => onCanvas.has(s.id)).length, [visible, onCanvas])
+  const audits = useMemo(() => visible.map((s) => auditKeyframePrompt(s, chars)), [visible, chars])
+  const promptStat = useMemo(() => {
+    const empty = audits.filter((a) => a.empty).length
+    const miss = audits.filter((a) => !a.empty && a.missing.length > 0).length
+    const may = audits.filter((a) => !a.empty && a.maybe.length > 0).length
+    const unk = audits.filter((a) => a.unknown.length > 0).length
+    return { empty, miss, may, unk, ok: visible.length - empty - miss }
+  }, [audits, visible.length])
+
+  const fixAnchors = () => {
+    const auditById = new Map(visible.map((s, i) => [s.id, audits[i]]))
+    let fixed = 0
+    setShots((prev) =>
+      prev.map((s) => {
+        const a = auditById.get(s.id)
+        if (!a || a.empty || a.missing.length === 0) return s
+        const add = a.missing
+          .map((name) => chars.find((c) => c.name === name)?.lookEn || '')
+          .filter(Boolean)
+        if (add.length === 0) return s
+        fixed++
+        const hand = new Set([...(s.handEdited ?? []), 'keyframe_prompt'])
+        return {
+          ...s,
+          keyframe_prompt: `${(s.keyframe_prompt || '').trim()}, ${add.join(', ')}`,
+          handEdited: [...hand],
+        }
+      }),
+    )
+    setDirty(true)
+    toast(fixed > 0 ? `已为 ${fixed} 镜补齐角色锚点` : '没有需要补的锚点')
+  }
 
   /**
    * 按 shot.id 定位，不能用行下标：
@@ -337,7 +397,17 @@ export default function ShotTable({
             <span className="ep-chip">E{String(epNo).padStart(2, '0')}</span>
           </>
         }
-        scopeDetail={<>{visible.length} 镜</>}
+        scopeDetail={
+          visible.length === 0 ? (
+            <>{visible.length} 镜</>
+          ) : (
+            <>
+              {visible.length} 镜 · 有首帧提示词 {promptStat.ok} · 缺锚点{' '}
+              <b className={promptStat.miss ? 'over' : ''}>{promptStat.miss}</b> · 空白{' '}
+              <b className={promptStat.empty ? 'over' : ''}>{promptStat.empty}</b>
+            </>
+          )
+        }
         settings={
           <>
             <div className="wb-field">
@@ -384,6 +454,9 @@ export default function ShotTable({
             <button className="btn" onClick={() => load(projectName)} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
+            <button className="btn" disabled={!projectName} onClick={() => setIntakeOpen(true)}>
+              导入
+            </button>
           </>
         }
       />
@@ -422,6 +495,9 @@ export default function ShotTable({
                 <th>描述</th>
                 <th style={{ width: 200 }}>台词</th>
                 <th style={{ width: 150 }}>表演</th>
+                <th>首帧提示词</th>
+                <th style={{ width: 180 }}>视频指令</th>
+                <th style={{ width: 88 }}>锚点</th>
                 <th style={{ width: 78 }}>状态</th>
               </tr>
             </thead>
@@ -434,6 +510,7 @@ export default function ShotTable({
                   : typeof s.dialogue === 'string'
                     ? parseDialogue(s.dialogue)
                     : []
+                const a = audits[i]
                 return (
                   <Fragment key={s.id}>
                   <tr className={s.orphan ? 'orphan' : ''}>
@@ -503,6 +580,39 @@ export default function ShotTable({
                         )}
                       </div>
                     </td>
+                    <td>
+                      <textarea
+                        rows={2}
+                        className={hand.has('keyframe_prompt') ? 'hand' : ''}
+                        value={s.keyframe_prompt ?? ''}
+                        placeholder={s.desc ? s.desc.slice(0, 48) : '拆镜时由 Agent 写入'}
+                        onChange={(e) => edit(s.id, 'keyframe_prompt', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <textarea
+                        rows={2}
+                        className={hand.has('video_prompt') ? 'hand' : ''}
+                        value={s.video_prompt ?? ''}
+                        onChange={(e) => edit(s.id, 'video_prompt', e.target.value)}
+                      />
+                    </td>
+                    <td className="state">
+                      {a.empty ? (
+                        <em className="tag off">空白</em>
+                      ) : a.missing.length > 0 ? (
+                        <em className="tag bad" title={`缺：${a.missing.join('、')}`}>
+                          缺 {a.missing.length}
+                        </em>
+                      ) : (
+                        <em className="tag ok">✓</em>
+                      )}
+                      {a.maybe.length > 0 && (
+                        <em className="tag orphan" title={`疑似画外：${a.maybe.join('、')}`}>
+                          疑 {a.maybe.length}
+                        </em>
+                      )}
+                    </td>
                     <td className="state">
                       {/* 默认什么都不显示：整表都是「在画布」时逐行标注是纯噪音 */}
                       {s.orphan && <em className="tag orphan">孤儿</em>}
@@ -529,7 +639,7 @@ export default function ShotTable({
                   </tr>
                   {perfEdit === s.id && (
                     <tr className="perf-expanded">
-                      <td colSpan={8}>
+                      <td colSpan={11}>
                         <PerformanceEditor
                           cast={s.cast}
                           performance={s.performance}
@@ -645,15 +755,47 @@ export default function ShotTable({
         <button className="btn" onClick={save} disabled={saving || !projectName || !dirty}>
           {saving ? '保存中…' : dirty ? '保存到 project.json' : '已保存'}
         </button>
+        <button className="btn" onClick={fixAnchors} disabled={promptStat.miss === 0}>
+          补齐锚点
+        </button>
         <button
           className="btn primary"
           onClick={() => onPush(visible)}
-          disabled={visible.length === 0}
-          title="按 shot.id 幂等推送：画布上没有的新建，已有的更新，多余的标灰不删"
+          disabled={visible.length === 0 || promptStat.empty > 0}
+          title={
+            promptStat.empty > 0
+              ? `还有 ${promptStat.empty} 镜没有首帧提示词`
+              : '按 shot.id 幂等推送：画布上没有的新建，已有的更新，多余的标灰不删'
+          }
         >
           生成到画布
         </button>
       </div>
+
+      {intakeOpen ? (
+        <IntakeDialog
+          target="shots"
+          projectName={projectName}
+          epNo={epNo}
+          settings={settings}
+          stagePick={stagePick}
+          shots={shots}
+          episodes={episodes}
+          chars={chars}
+          toast={toast}
+          onClose={() => setIntakeOpen(false)}
+          onApply={(result) => {
+            if (result.shots) setShots(result.shots)
+            if (result.episodes) {
+              setEpisodes(result.episodes)
+              setEpisodesDirty(true)
+            }
+            setDirty(true)
+            setIntakeOpen(false)
+            toast(result.summary)
+          }}
+        />
+      ) : null}
     </main>
       <WorkbenchChatAside
         surface="shots"

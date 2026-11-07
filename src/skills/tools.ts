@@ -24,6 +24,11 @@ export const KNOWN_TOOL_IDS = new Set([
   'capture_frames',
   'review_frames',
   'finish',
+  // 3D agent full_host 服务端作业工具（须在技能 manifest 中可声明）
+  'run_bash',
+  'read_file',
+  'write_file',
+  'list_dir',
   // 创意会话：会话读、媒体摄取/分析、产物与生成
   'read_creative_session',
   'read_creative_source',

@@ -15,6 +15,7 @@ import {
 import { cropExpressionSheet } from './expressionCrop'
 import {
   buildExpressionSheetCells,
+  canGenerateExpressionSheet,
   cellForEmotion,
   expressionSheetPrompt,
   isSheetUsable,
@@ -149,6 +150,7 @@ export default function CharacterCard({
   const sheetUsable = isSheetUsable(sheet, identity) && !sheetImageMissing
   const sheetCropCount = sheet?.cells.filter((cell) => Boolean(cell.cropUrl)).length ?? 0
   const hasUsableImage = Boolean(c.image && !imageMissing)
+  const canGenExpressionSheet = canGenerateExpressionSheet(c, { imageMissing })
   const legacyCount = Object.values(c.expressions ?? {}).filter((e) => Boolean(e?.image)).length
   const expressionDone = sheet ? sheetCropCount : legacyCount
   const previewCell = sheet ? cellForEmotion(sheet, previewEmotion) : undefined
@@ -212,7 +214,7 @@ export default function CharacterCard({
           label: sheet ? '重生成表情总图' : '生成表情总图',
           cost: price ? imageCost(price, 1) : 0,
           run: () => void generateSheet(),
-          disabled: sheetBusy || !c.lookEn.trim(),
+          disabled: sheetBusy || !canGenExpressionSheet,
         }
       : {
           label: '发布表情总图到画布',
@@ -308,8 +310,8 @@ export default function CharacterCard({
       setSheetError('先选择项目再生成表情总图')
       return
     }
-    if (!c.lookEn.trim()) {
-      setSheetError('先填英文外观锚点（lookEn）再生成表情总图')
+    if (!canGenerateExpressionSheet(c, { imageMissing })) {
+      setSheetError('先填英文外观锚点（lookEn），或上传/生成三视图及参考图后再生成表情总图')
       return
     }
     setSheetError('')
@@ -320,9 +322,12 @@ export default function CharacterCard({
     })
     try {
       const refs = c.referenceImages ?? []
-      const refNote = refs.length
-        ? '图 1 是当前三视图，其余是同一角色的其他参考；不要把它们当成不同人物。'
-        : ''
+      const refOnly = !c.lookEn.trim()
+      const refNote = refOnly
+        ? '外观以参考图为准；只按格位变化表情，不要换成另一个人。'
+        : refs.length
+          ? '图 1 是当前三视图，其余是同一角色的其他参考；不要把它们当成不同人物。'
+          : ''
       const res = await generateImage({
         prompt: `${expressionSheetPrompt(c.lookEn)}${refNote ? ` ${refNote}` : ''}`,
         ratio: '16:9',
@@ -829,7 +834,7 @@ export default function CharacterCard({
             <span className="char-empty-sub">一张 4×2 图包含 8 个情绪；分镜只取裁出的单格</span>
             <button
               className="char-empty-cta"
-              disabled={sheetBusy || !c.lookEn.trim()}
+              disabled={sheetBusy || !canGenExpressionSheet}
               onClick={() => void generateSheet()}
             >
               生成表情总图{price ? ` · 1 张 · ¥${money(imageCost(price, 1))}` : ''}
@@ -909,7 +914,16 @@ export default function CharacterCard({
           </button>
         </div>
       )}
-      {!c.image && <div className="gen-note">当前没有三视图，生成总图只使用文字锚点，不保证长相一致。</div>}
+      {!c.image && !c.lookEn.trim() && !(c.referenceImages ?? []).length && (
+        <div className="gen-note">没有三视图与参考图时，需先补 lookEn；仅有参考图时可仅凭图生成。</div>
+      )}
+      {!c.image && (c.lookEn.trim() || (c.referenceImages ?? []).length) && (
+        <div className="gen-note">
+          {c.lookEn.trim()
+            ? '当前没有三视图，生成总图只使用文字锚点与参考图，不保证长相一致。'
+            : '未填 lookEn，生成总图以参考图为准。'}
+        </div>
+      )}
       {sheetErrors.length > 0 && <div className="gen-warn">{sheetErrors.join('；')}</div>}
       {sheetError && <div className="gen-error">{sheetError}</div>}
       <input

@@ -139,6 +139,8 @@ const shotsV1 = passthrough({
           .optional(),
         performance: z.array(performanceEntry).optional(),
         cast: z.array(z.string()).optional(),
+        keyframe_prompt: z.string().min(1).optional(),
+        video_prompt: z.string().min(1).optional(),
       }),
     )
     .min(1),

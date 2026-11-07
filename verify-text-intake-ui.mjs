@@ -249,16 +249,11 @@ try {
   const titles = await page.evaluate(() => [...document.querySelectorAll('.sb-ep-title')].map((i) => i.value))
   check('剧本草稿出现整理后的集', titles.includes('整理后的第一集'), JSON.stringify(titles))
 
-  // ---------------------------------------------------------------- 提示词导入
-  await page.getByRole('button', { name: '提示词', exact: true }).click()
+  // ---------------------------------------------------------------- 镜头表导入纯 prompts-v1
+  await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(1800)
-  for (let i = 0; i < 20; i++) {
-    const n = await page.evaluate(() => document.querySelectorAll('.pt-table tbody tr').length)
-    if (n > 0) break
-    await page.waitForTimeout(400)
-  }
   const promptIntake = page.getByRole('button', { name: '导入', exact: true }).first()
-  check('提示词页有导入按钮', (await promptIntake.count()) >= 1)
+  check('镜头表有导入按钮', (await promptIntake.count()) >= 1)
   await promptIntake.click()
   await page.waitForTimeout(700)
   await page.locator('[data-intake-input]').fill(
@@ -274,20 +269,19 @@ try {
     console.log('DEBUG buttons =', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('button')].map((b) => b.textContent?.trim()).filter((t) => t && t.length < 8).slice(0, 24))))
     console.log('DEBUG dialog title =', await page.locator('#intake-title').innerText().catch(() => 'n/a'))
   }
-  check('提示词 JSON 直接预览（零模型）', (await page.locator('[data-intake-plan]').count()) === 1)
+  check('prompts-v1 JSON 直接预览（零模型）', (await page.locator('[data-intake-plan]').count()) === 1)
   const promptPlan = await page.locator('[data-intake-plan]').innerText()
   check('提示词预览显示更新镜数', /更新 \d+ 镜/.test(promptPlan), promptPlan.slice(0, 100))
   await page.locator('[data-intake-apply]').click()
   await page.waitForTimeout(900)
-  const promptCells = await page.locator('.pt-table tbody').innerText()
   const promptValues = await page.evaluate(() =>
-    [...document.querySelectorAll('.pt-table tbody tr')].map((tr) => ({
-      no: (tr.querySelector('.wb-no')?.textContent ?? tr.querySelector('input')?.value ?? '').trim(),
+    [...document.querySelectorAll('.wb-table tbody tr')].map((tr) => ({
+      no: (tr.querySelector('input')?.value ?? '').trim(),
       areas: [...tr.querySelectorAll('textarea')].map((t) => t.value),
     })),
   )
   const hit = promptValues.find((r) => r.no === 'S02')
-  check('提示词已写入表格', Boolean(hit) && hit.areas.some((v) => /导入的首帧提示词/.test(v)), JSON.stringify(hit))
+  check('提示词已写入镜头表', Boolean(hit) && hit.areas.some((v) => /导入的首帧提示词/.test(v)), JSON.stringify(hit))
 } catch (e) {
   check('端到端执行', false, e.message)
 } finally {

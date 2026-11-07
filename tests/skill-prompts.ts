@@ -46,12 +46,17 @@ const sceneCodeChat = parse('scene-code-chat')
 check('script 角色层逐字等于旧 SCRIPT_SYS', () => assert.equal(script.role, SCRIPT_SYS))
 check('character 角色层逐字等于旧 CHARACTER_SYS', () => assert.equal(character.role, CHARACTER_SYS))
 check('asset 角色层逐字等于旧 ASSET_SYS', () => assert.equal(asset.role, ASSET_SYS))
-check('shotlist 角色层逐字等于旧 STORYBOARD_SYS', () => assert.equal(shotlist.role, STORYBOARD_SYS))
+check('shotlist 合并分镜与提示词规则', () => {
+  assert.ok(shotlist.role.includes('keyframe_prompt') && shotlist.role.includes('video_prompt'))
+  assert.ok(shotlist.role.includes('{{角色名}}'))
+  assert.ok(shotlist.tools.includes('read_characters'))
+  assert.equal(shotlist.version, 3)
+})
 check('prompt 角色层逐字等于旧 PROMPT_SYS', () => assert.equal(prompt.role, PROMPT_SYS))
 check('script BASE 未被拆开', () => assert.ok(SCRIPT_BASE.length > 0 && script.role.startsWith(SCRIPT_BASE)))
 check('character BASE 未被拆开', () => assert.ok(CHARACTER_BASE.length > 0 && character.role.startsWith(CHARACTER_BASE)))
 check('asset BASE 未被拆开', () => assert.ok(ASSET_BASE.length > 0 && asset.role.startsWith(ASSET_BASE)))
-check('shotlist BASE 未被拆开', () => assert.ok(STORYBOARD_BASE.length > 0 && shotlist.role.startsWith(STORYBOARD_BASE)))
+check('shotlist 仍含旧分镜硬规则片段', () => assert.ok(shotlist.role.includes('180 度轴线')))
 check('prompt BASE 未被拆开', () => assert.ok(PROMPT_BASE.length > 0 && prompt.role.startsWith(PROMPT_BASE)))
 
 const rendered = (skill: ReturnType<typeof parse>, inputs: Record<string, unknown>) =>
@@ -132,15 +137,11 @@ check('asset 任务模板逐字等于旧 inline prompt', () => {
   )
 })
 
-check('shotlist 任务模板保持稳定', () => {
-  const expected =
-    `画风：S\n画幅：16:9\n\nBRIEF\n\n` +
-    `目标总时长 60 秒。相邻镜头景别要有变化。\n` +
-    `每镜必须带 scene_no（输入场次号）和 scene_slug（场次简称），同一场的镜头用同一个编号。\n` +
-    `另外每镜补一个 cast 字段：该镜画面内真正出现的角色名数组。\n` +
-    `只在台词/描述里被提到、实际在画外的角色不要写进去。\n` +
-    `再补 performance：有台词的角色必须有条目；写看得见的表情/动作/视线，不写心理活动。不要给没有入画的角色编表演。`
-  assert.equal(rendered(shotlist, { style: 'S', aspect: '16:9', brief: 'BRIEF', target: 60 }), expected)
+check('shotlist 任务模板含提示词交付要求', () => {
+  const out = rendered(shotlist, { style: 'S', aspect: '16:9', brief: 'BRIEF', target: 60 })
+  assert.ok(out.includes('画风：S') && out.includes('BRIEF'))
+  assert.ok(out.includes('read_characters'))
+  assert.ok(out.includes('keyframe_prompt') && out.includes('video_prompt'))
 })
 
 check('prompt 任务模板保持稳定', () => {
@@ -297,6 +298,25 @@ check('契约校验：合法镜头表', () => {
         size: '中景',
         move: '固定',
         desc: '...',
+      },
+    ],
+  })
+  assert.equal(r.ok, true)
+})
+
+check('契约校验：镜头表含提示词列', () => {
+  const r = validateContract('shots-v1', {
+    shots: [
+      {
+        no: 'S01',
+        scene_no: 1,
+        scene_slug: '街口',
+        seconds: 3,
+        size: '中景',
+        move: '固定',
+        desc: '...',
+        keyframe_prompt: 'K',
+        video_prompt: 'V',
       },
     ],
   })

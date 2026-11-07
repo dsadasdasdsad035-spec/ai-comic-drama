@@ -97,7 +97,12 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
   }
 
   // 12 个工具的 Agency 外壳由适配层从 zod 生成，不再维护第二份手写参数声明。
-  const { tools: defs, byName: defsByName } = createSceneAgentTools(deps, session, input.requirements)
+  const { tools: defs, byName: defsByName } = createSceneAgentTools(
+    deps,
+    session,
+    input.requirements,
+    input.settings,
+  )
   const tools = toPiTools(defs)
   const byName = new Map(tools.map((tool) => [tool.name, tool]))
   void defsByName

@@ -119,6 +119,10 @@ export function buildShotsFromModel(
       ...(dialogue.delivery ? { dialogue_delivery: dialogue.delivery } : {}),
       ...(performance ? { performance } : {}),
       cast: Array.isArray(s.cast) ? (s.cast as unknown[]).map(String) : undefined,
+      ...(String(s.keyframe_prompt ?? '').trim()
+        ? { keyframe_prompt: String(s.keyframe_prompt).trim() }
+        : {}),
+      ...(String(s.video_prompt ?? '').trim() ? { video_prompt: String(s.video_prompt).trim() } : {}),
     }
   })
   for (const shot of shots) {

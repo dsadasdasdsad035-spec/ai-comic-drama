@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { checkSceneCode } from '../sceneCodeSanitize'
 import { codeHashOf } from '../sceneCodeFingerprint'
 import { sceneDraftClient, type DraftScope, type DraftState } from '../sceneDraft'
+import { isFullHostMode } from './agentHostMode'
+import type { AppSettings } from '../api'
 import {
   DEFAULT_AGENT_LIMITS,
   DUEL_REQUIREMENTS,
@@ -91,12 +93,13 @@ async function withTimeout<T>(p: Promise<T>, ms: number, signal?: AbortSignal): 
 
 /**
  * 工具集只通过 SceneAgentDeps 操作当前镜头的渲染/视觉。
- * 不提供 shell、网络、保存、渲染或其他镜头写入。
+ * restricted 不提供 shell；full_host 在 agent job 沙箱内提供 bash/文件工具。
  */
 export function createSceneAgentTools(
   deps: SceneAgentDeps,
   session: SceneAgentSession,
   defaultRequirements: string[] = ['画面主体可见', '构图与镜头符合用户描述'],
+  settings?: AppSettings | null,
 ): {
   tools: ToolDef[]
   byName: Map<string, ToolDef>
@@ -549,6 +552,77 @@ export function createSceneAgentTools(
     },
   })
 
+  const hostTools: ToolDef[] = []
+  if (isFullHostMode(settings) && deps.agentHost) {
+    const host = deps.agentHost
+    hostTools.push(
+      defineTool({
+        name: 'run_bash',
+        description:
+          '在 agent job 沙箱目录执行 shell 命令（探索用）；不得替代 run_render。stdout/stderr 有长度上限。',
+        schema: z.object({
+          command: z.string().min(1).max(4000),
+          cwd: z.string().max(256).optional().describe('相对 job 根的路径，默认 .'),
+        }),
+        run: async ({ command, cwd }) => {
+          try {
+            const out = await withTimeout(
+              host.runBash(command, cwd || '.'),
+              DEFAULT_AGENT_LIMITS.toolMs,
+              deps.signal,
+            )
+            return resultOk(out)
+          } catch (e) {
+            if ((e as Error).name === 'AbortError') throw e
+            return fail(errMessage(e))
+          }
+        },
+      }),
+      defineTool({
+        name: 'read_file',
+        description: '读取 agent job 目录内的文本文件（相对路径）。',
+        schema: z.object({ path: z.string().min(1).max(512) }),
+        run: async ({ path: filePath }) => {
+          try {
+            const content = await host.readFile(filePath)
+            return resultOk({ path: filePath, content, summary: `已读取 ${filePath}` })
+          } catch (e) {
+            return fail(errMessage(e))
+          }
+        },
+      }),
+      defineTool({
+        name: 'write_file',
+        description: '写入 agent job 目录内的文本文件；不影响项目数据。',
+        schema: z.object({
+          path: z.string().min(1).max(512),
+          content: z.string().max(512 * 1024),
+        }),
+        run: async ({ path: filePath, content }) => {
+          try {
+            await host.writeFile(filePath, content)
+            return resultOk({ path: filePath, summary: `已写入 ${filePath}` })
+          } catch (e) {
+            return fail(errMessage(e))
+          }
+        },
+      }),
+      defineTool({
+        name: 'list_dir',
+        description: '列出 agent job 目录下的条目。',
+        schema: z.object({ path: z.string().max(512).optional() }),
+        run: async ({ path: dirPath }) => {
+          try {
+            const entries = await host.listDir(dirPath || '.')
+            return resultOk({ path: dirPath || '.', entries, summary: `${entries.length} 项` })
+          } catch (e) {
+            return fail(errMessage(e))
+          }
+        },
+      }),
+    )
+  }
+
   const tools = [
     getShotContext,
     beginSceneDraft,
@@ -562,6 +636,7 @@ export function createSceneAgentTools(
     captureFrames,
     reviewFrames,
     finish,
+    ...hostTools,
   ]
   return { tools, byName: new Map(tools.map((t) => [t.name, t])) }
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { composeSkillBody, parseSkillText } from '../src/skills/parse'
 import { parseSkillRecords } from '../src/skills/validate'
 import type { SkillTextRecord } from '../src/skills/types'
@@ -150,6 +152,12 @@ check('未知工具被拒绝', () => {
   const r = parseSkillRecords([record('demo', skillText({ tools: '[nope]' }))])
   assert.equal(r.skills.size, 0)
   assert.ok(r.issues.some((x) => x.message.includes('未知工具')))
+})
+
+check('内置 scene3d 技能可加载', () => {
+  const text = fs.readFileSync(path.join(process.cwd(), 'skills', 'scene3d', 'SKILL.md'), 'utf8')
+  const r = parseSkillRecords([record('scene3d', text, 'builtin', text)])
+  assert.ok(r.skills.has('scene3d'), r.issues.map((x) => x.message).join('；'))
 })
 
 check('坏的用户覆盖退回内置并报错', () => {

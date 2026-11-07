@@ -94,5 +94,12 @@ const merged = lib.mergeGenerated([{ id: 's1', use_expression_ref: true }], [{ i
 check('重新拆镜保留开关', merged[0].use_expression_ref === true)
 check('开关进入业务签名', lib.bizSignature({ ...shot, useExpressionRef: true }) !== lib.bizSignature({ ...shot, useExpressionRef: false }))
 
+check('无 lookEn 无图不能生成总图', !lib.canGenerateExpressionSheet({ lookEn: '', image: '', referenceImages: [] }))
+check('仅三视图可生成总图', lib.canGenerateExpressionSheet({ lookEn: '', image: '/t.png', referenceImages: [] }))
+check('仅参考图可生成总图', lib.canGenerateExpressionSheet({ lookEn: '', image: '', referenceImages: ['/r.png'] }))
+check('三视图缺失时参考图仍可', lib.canGenerateExpressionSheet({ lookEn: '', image: '/missing.png', referenceImages: ['/r.png'] }, { imageMissing: true }))
+const refOnlyPrompt = lib.expressionSheetPrompt('')
+check('无 lookEn 用参考图身份句', refOnlyPrompt.includes('reference image') && refOnlyPrompt.includes('expression sheet'))
+
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

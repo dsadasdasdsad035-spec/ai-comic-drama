@@ -1230,6 +1230,8 @@ export type AppSettings = {
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
+  /** 3D agent 宿主权限：restricted（默认）| full_host */
+  agentHostMode?: import('./agent/agentHostMode').AgentHostMode
   /** 口型 provider；默认关闭，Key 只存设置库 */
   lipSync?: LipSyncSettings
   /** 设置库里的自定义音色条目 */

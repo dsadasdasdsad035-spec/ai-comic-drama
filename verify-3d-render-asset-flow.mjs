@@ -1,7 +1,7 @@
 /**
  * 真实 3D 渲染 → 素材选择器验收（需要本机 Blender）：
  * 1) 复制一个已有 scene_code 的项目镜头，避免改动用户项目
- * 2) 从提示词工作台打开 3D，真实渲染 MP4
+ * 2) 从顶栏 3D 视图打开，真实渲染 MP4
  * 3) 确认新 MP4 落在 /videos，并出现在 /api/media 的视频列表
  * 跑法：APP_URL=http://127.0.0.1:5280 node verify-3d-render-asset-flow.mjs
  */
@@ -82,13 +82,16 @@ const ep = shot.episode || 1
 await p.locator('.epbar-trigger').click()
 await p.locator('.epbar-tab', { hasText: `E${String(ep).padStart(2, '0')}` }).click()
 await p.waitForTimeout(700)
-await p.getByRole('button', { name: '提示词', exact: true }).click()
+await p.getByRole('button', { name: '3D 调度', exact: true }).click()
 await p.waitForTimeout(900)
 
-const row = p.locator('.pt-table tbody tr', { hasText: shot.no || shot.id }).first()
-const cell = row.locator('.pt-3d')
-check('目标镜在提示词表', (await row.count()) === 1, shot.no || shot.id)
-await cell.locator('button', { hasText: '打开' }).click()
+await p.locator('.shotbar-trigger').click()
+await p.waitForTimeout(200)
+await p.locator(`.shotbar-tab[data-shot-id="${shot.id}"]`).click()
+await p.waitForTimeout(400)
+const card = p.locator(`.s3d-card[data-shot-id="${shot.id}"]`)
+check('目标镜卡片', (await card.count()) === 1, shot.no || shot.id)
+await card.getByRole('button', { name: '打开', exact: true }).click()
 const dialog = p.locator('[aria-label="3D 代码工作台"]')
 await dialog.waitFor({ state: 'visible', timeout: 15000 })
 check('3D 工作台打开', (await dialog.count()) === 1)
