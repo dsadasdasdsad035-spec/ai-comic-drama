@@ -1,10 +1,13 @@
+import type { CanvasProdMode } from './canvasProdMode'
 import {
   PERFORMANCE_EMOTION_LABELS,
   type PerformanceEntry,
 } from './types'
 
-export type ShotInspectorTab = 'visual' | 'video' | 'audio' | 'more'
-export type InspectorTabPreference = 'auto' | ShotInspectorTab
+export type ShotInspectorTab = 'visual' | 'video' | 'more'
+/** @deprecated 偏好里可能仍存 audio，加载时映射到 more */
+export type LegacyShotInspectorTab = ShotInspectorTab | 'audio'
+export type InspectorTabPreference = 'auto' | LegacyShotInspectorTab
 export type CollapsibleSection = 'shotParams' | 'performance' | 'schedule' | 'refs' | 'advanced'
 
 export type InspectorPrefs = {
@@ -25,7 +28,7 @@ export const DEFAULT_INSPECTOR_WIDTH = 360
 export const MIN_INSPECTOR_WIDTH = 320
 export const MAX_INSPECTOR_WIDTH = 520
 
-const TABS: InspectorTabPreference[] = ['auto', 'visual', 'video', 'audio', 'more']
+const TABS: InspectorTabPreference[] = ['auto', 'visual', 'video', 'more']
 const SECTIONS: CollapsibleSection[] = ['shotParams', 'performance', 'schedule', 'refs', 'advanced']
 
 export function defaultInspectorPrefs(): InspectorPrefs {
@@ -62,9 +65,11 @@ function normalizePrefs(input: unknown): InspectorPrefs {
   }
   return {
     width: clampInspectorWidth(raw.width),
-    tab: TABS.includes(raw.tab as InspectorTabPreference)
-      ? (raw.tab as InspectorTabPreference)
-      : 'auto',
+    tab: (() => {
+      const t = raw.tab as InspectorTabPreference
+      if (t === 'audio') return 'more'
+      return TABS.includes(t) ? t : 'auto'
+    })(),
     collapsed,
   }
 }
@@ -86,9 +91,21 @@ export function saveInspectorPrefs(prefs: InspectorPrefs): void {
   }
 }
 
-/** 有画面才能直接看出片提示词；没有画面先把人送到画面页 */
-export function defaultTabForShot(hasImage: boolean): ShotInspectorTab {
-  return hasImage ? 'video' : 'visual'
+/** 出图模式先进画面；出片模式先进视频 */
+export function defaultTabForShot(mode: CanvasProdMode, _hasImage: boolean): ShotInspectorTab {
+  return mode === 'image' ? 'visual' : 'video'
+}
+
+export function coerceShotTab(
+  mode: CanvasProdMode,
+  pref: InspectorTabPreference,
+  hasImage: boolean,
+): ShotInspectorTab {
+  let tab: ShotInspectorTab =
+    pref === 'auto' ? defaultTabForShot(mode, hasImage) : pref === 'audio' ? 'more' : pref
+  const allowed = mode === 'image' ? ['visual', 'more'] : ['video', 'more']
+  if (!allowed.includes(tab)) tab = mode === 'image' ? 'visual' : 'video'
+  return tab
 }
 
 export function performanceSummary(performance?: PerformanceEntry[]): string {
@@ -107,10 +124,6 @@ export function shotStatusChips(input: {
   candidateCount: number
   hasVideo: boolean
   seconds: number
-  voiceUrl?: string
-  voiceSeconds?: number
-  voiceOver?: boolean
-  voiceStale?: boolean
   promptSource?: 'auto' | 'override'
   promptStale?: boolean
   nativeAudio?: boolean
@@ -133,14 +146,6 @@ export function shotStatusChips(input: {
       label: `视频 ${input.hasVideo ? `${Math.max(1, Math.round(input.seconds))}s` : '未出'}`,
       tone: input.hasVideo ? 'ok' : 'muted',
       tab: 'video',
-    },
-    {
-      id: 'voice',
-      label: `配音 ${
-        input.voiceUrl ? `${(input.voiceSeconds ?? 0).toFixed(1)}s` : '未生成'
-      }`,
-      tone: input.voiceStale || input.voiceOver ? 'warn' : input.voiceUrl ? 'ok' : 'muted',
-      tab: 'audio',
     },
     {
       id: 'prompt',

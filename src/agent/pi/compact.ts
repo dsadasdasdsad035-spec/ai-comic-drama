@@ -120,7 +120,7 @@ export function compactPiHistory(messages: AgentMessage[]): AgentMessage[] {
     .join('，')
   const summary: AgentMessage = {
     role: 'system',
-    content: `[场景草稿] ${details}。草稿文件仍在；需要查看细节或修改时先 read_scene_draft。`,
+    content: `[场景草稿历史] ${details}（旧版草稿工具调用已折叠，仅供参考）。`,
     timestamp: Date.now(),
   }
 

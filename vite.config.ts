@@ -919,7 +919,7 @@ function normalizeSettings(raw: any): AppSettings {
     stageModels: {},
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
-    agentHostMode: 'restricted',
+    agentHostMode: 'full_host',
     lipSync: normalizeLipSyncSettings(raw?.lipSync),
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),

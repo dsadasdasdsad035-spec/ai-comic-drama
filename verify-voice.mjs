@@ -46,6 +46,8 @@ await page.waitForTimeout(1500)
 // S01
 await page.locator('.react-flow__node').nth(0).click()
 await page.waitForTimeout(500)
+await page.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await page.waitForTimeout(300)
 
 const box = page.locator('.voice-box')
 console.log('配音块存在:', await box.count())
@@ -57,8 +59,8 @@ console.log(
 )
 await page.screenshot({ path: `${OUT}/50-voice-idle.png` })
 
-// 生成单镜配音
-await box.getByRole('button', { name: '生成配音' }).click()
+// 生成单镜配音（Inspector 声音 Tab 吸底）
+await page.locator('[data-shot-footer] button', { hasText: '生成配音' }).click()
 await page.waitForTimeout(4000)
 const one = await page.evaluate(() => {
   const a = document.querySelector('.voice-audio')
@@ -71,14 +73,27 @@ await page.screenshot({ path: `${OUT}/51-voice-one.png` })
 // 卡片上的 ♪ 角标
 console.log('卡片♪角标:', await page.locator('.shot-voice').count())
 
-// 批量配音
-await page.getByRole('button', { name: '批量配音' }).click()
-for (let i = 0; i < 30; i++) {
-  await page.waitForTimeout(700)
-  const n = await page.locator('.shot-voice').count()
-  if (n >= 4) break
+// 画布无批量配音：操作菜单不应出现该入口
+await page.locator('.bm .tm-btn').click()
+await page.waitForTimeout(300)
+const batchVoiceItems = await page.getByRole('button', { name: '批量配音' }).count()
+const batchVidItems = await page.getByRole('button', { name: '批量出片' }).count()
+console.log('批量配音菜单项数（应为 0）:', batchVoiceItems)
+console.log('批量出片菜单项数（应为 0）:', batchVidItems)
+await page.keyboard.press('Escape')
+await page.waitForTimeout(200)
+
+// 逐镜 Inspector 配音（替代原批量菜单）
+for (let i = 0; i < 4; i++) {
+  await page.locator('.react-flow__node').nth(i).click()
+  await page.waitForTimeout(350)
+  await page.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+  await page.waitForTimeout(200)
+  const btn = page.locator('[data-shot-footer] button', { hasText: /生成配音|重新配音/ })
+  if ((await btn.count()) > 0 && (await btn.isEnabled())) await btn.click()
+  await page.waitForTimeout(2200)
 }
-console.log('批量后带配音镜头数:', await page.locator('.shot-voice').count())
+console.log('逐镜配音后带♪镜头数:', await page.locator('.shot-voice').count())
 await page.screenshot({ path: `${OUT}/52-voice-batch.png` })
 
 // 连播 + 导出（应带音轨）

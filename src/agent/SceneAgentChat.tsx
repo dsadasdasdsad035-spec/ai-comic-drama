@@ -40,7 +40,6 @@ import { ChatContextPart } from '@/chat-ui/ChatContextPart'
 import { SCENE_CODE_LIMITS } from '../types'
 import { ChatText } from '@/chat-ui/ChatText'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
-import { DraftPart, DraftTool } from '@/chat-ui/tools/DraftTools'
 import { sceneDraftClient } from '../sceneDraft'
 import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
 import type { ChatAttachment } from './chatAttachments'
@@ -68,6 +67,7 @@ import {
   VideoReviewPart,
   VideoUiContext,
 } from '@/chat-ui/tools'
+import { DraftPart } from '@/chat-ui/tools/DraftTools'
 import '@/chat-ui/chat.css'
 
 const AgentUiContext = createContext<{ openCode: () => void }>({ openCode: () => {} })
@@ -123,14 +123,7 @@ type VideoSession = {
   result?: AgentVideoAcceptanceResult
 }
 
-const DRAFT_TOOL_NAMES = new Set([
-  'begin_scene_draft',
-  'append_scene_draft',
-  'read_scene_draft',
-  'patch_scene_draft',
-  'commit_scene_draft',
-  'discard_scene_draft',
-])
+const CODE_ARG_TOOLS = new Set(['set_scene_code', 'adopt_scene_from_job'])
 
 function convertMessage(message: AgentMessage): ThreadMessageLike {
   type Part = Exclude<ThreadMessageLike['content'], string>[number]
@@ -158,7 +151,7 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         // 草稿分片是代码正文，不放进聊天运行时/线程文件。
-        ...(part.args && !DRAFT_TOOL_NAMES.has(part.toolName) ? { args: part.args as never } : {}),
+        ...(part.args && !CODE_ARG_TOOLS.has(part.toolName) ? { args: part.args as never } : {}),
         ...(part.result !== undefined ? { result: part.result } : {}),
         ...(part.isError ? { isError: true } : {}),
       })
@@ -199,6 +192,14 @@ const SetSceneCodeUI = makeAssistantToolUI({
   },
 })
 
+const AdoptSceneFromJobUI = makeAssistantToolUI({
+  toolName: 'adopt_scene_from_job',
+  render: ({ status, result }) => {
+    const { openCode } = useContext(AgentUiContext)
+    return <CodeTool running={status.type === 'running'} result={result} onOpenCode={openCode} />
+  },
+})
+
 const CaptureFramesUI = makeAssistantToolUI({
   toolName: 'capture_frames',
   render: ({ status, result }) => <FramesTool running={status.type === 'running'} result={result} />,
@@ -213,22 +214,6 @@ const GetContextUI = makeAssistantToolUI({
   toolName: 'get_shot_context',
   render: ({ status }) => <ContextTool running={status.type === 'running'} />,
 })
-
-function draftToolUi(toolName: string) {
-  return makeAssistantToolUI({
-    toolName,
-    render: ({ status, result }) => (
-      <DraftTool tool={toolName} running={status.type === 'running'} result={result} />
-    ),
-  })
-}
-
-const DraftBeginUI = draftToolUi('begin_scene_draft')
-const DraftAppendUI = draftToolUi('append_scene_draft')
-const DraftReadUI = draftToolUi('read_scene_draft')
-const DraftPatchUI = draftToolUi('patch_scene_draft')
-const DraftCommitUI = draftToolUi('commit_scene_draft')
-const DraftDiscardUI = draftToolUi('discard_scene_draft')
 
 const FinishUI = makeAssistantToolUI({
   toolName: 'finish',
@@ -339,6 +324,17 @@ export default function SceneAgentChat({
     source: 'builtin' | 'override'
   } | null>(null)
   const [sceneSkill, setSceneSkill] = useState<Skill | null>(null)
+  const inspectorSystemPrompt = sceneSkill
+    ? buildSkillPrompt(
+        sceneSkill,
+        {
+          requirements: requirementsList?.length
+            ? `\n验收要求：\n${requirementsList.map((x, i) => `${i + 1}. ${x}`).join('\n')}`
+            : '',
+        },
+        'inline',
+      ).system
+    : ''
   const [skillError, setSkillError] = useState('')
   const [skillLoading, setSkillLoading] = useState(true)
   const [clearing, setClearing] = useState(false)
@@ -752,6 +748,34 @@ export default function SceneAgentChat({
         : ''
       const prompt = buildSkillPrompt(sceneSkill, { requirements: requirementsText }, 'inline')
       const skillSystem = `${prompt.system}\n${prompt.task}`.trim()
+      const sendSummary = manifestSummary(manifest)
+      patchMessage(assistant.id, (m) => ({
+        ...m,
+        parts: [
+          {
+            type: 'context',
+            turn: 1,
+            keys: sendSummary.attachmentKeys,
+            counts: sendSummary.counts,
+            metadata: {
+              title: sendSummary.metadata.title,
+              ...(sendSummary.metadata.shot
+                ? {
+                    shot: {
+                      no: sendSummary.metadata.shot.no,
+                      duration: sendSummary.metadata.shot.duration,
+                      aspect: sendSummary.metadata.shot.aspect,
+                    },
+                  }
+                : {}),
+            },
+            systemPrompt: skillSystem,
+            userPrompt: text,
+            contextPayload: contextText,
+          },
+          ...m.parts,
+        ],
+      }))
       const result = await runSceneAgent({
         prompt: text,
         deps,
@@ -1020,12 +1044,7 @@ export default function SceneAgentChat({
               <CaptureFramesUI />
               <ReviewFramesUI />
               <GetContextUI />
-              <DraftBeginUI />
-              <DraftAppendUI />
-              <DraftReadUI />
-              <DraftPatchUI />
-              <DraftCommitUI />
-              <DraftDiscardUI />
+              <AdoptSceneFromJobUI />
               <FinishUI />
             </>
           }
@@ -1063,9 +1082,7 @@ export default function SceneAgentChat({
               <ChatContextInspector
                 manifest={manifest}
                 prepared={preparedSnapshot}
-                systemPrompt={
-                  sceneSkill ? buildSkillPrompt(sceneSkill, { requirements: '' }, 'inline').system : ''
-                }
+                systemPrompt={inspectorSystemPrompt || ''}
                 onClose={() => setInspectorOpen(false)}
               />
             )}

@@ -1,11 +1,10 @@
 import type { ShotData } from './types'
-import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES, VOICE_RATES } from './types'
+import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from './types'
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
-import type { VoiceOption } from './api'
 import type { AppSettings, Cap } from './api'
 import { listVideoFiles, type VideoFile } from './api'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import type { CharacterSheet } from './characters'
 import { CapModelSelect } from './ModelSelect'
@@ -15,16 +14,17 @@ import type { StockImportMeta } from './stock/types'
 import { pickKind, pickTitle, type PickItem } from './mediaPick'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import PerformanceEditor from './PerformanceEditor'
-import LipSyncPanel from './LipSyncPanel'
 import NativeAudioPanel from './NativeAudioPanel'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
-import { deliveryForSpeaker, performanceVideoEntryCount, voiceFingerprint } from './performance'
+import { performanceVideoEntryCount } from './performance'
+import type { CanvasProdMode } from './canvasProdMode'
+import { visibleShotTabs } from './canvasProdMode'
 import {
   clampInspectorWidth,
+  coerceShotTab,
   DEFAULT_INSPECTOR_WIDTH,
-  defaultTabForShot,
   loadInspectorPrefs,
   performanceSummary,
   saveInspectorPrefs,
@@ -281,9 +281,7 @@ type Props = {
   setVidRes: (v: '480p' | '720p') => void
   onGenerateVideo: (id: string) => void
   projectAspect: string
-  onVoice: (id: string) => void
-  voices: VoiceOption[]
-  voiceProvider: string
+  canvasProdMode: CanvasProdMode
   /** 设置页的渠道+模型表，用于生成时选模型 */
   settings: AppSettings | null
   /** 当前手动选的模型（键），空 = 用设置页默认 */
@@ -525,13 +523,6 @@ function VideoPromptPanel({
 
 type BodyProps = Props & { node: ShotNodeType }
 
-const SHOT_TABS: { id: ShotInspectorTab; label: string }[] = [
-  { id: 'visual', label: '画面' },
-  { id: 'video', label: '视频' },
-  { id: 'audio', label: '声音' },
-  { id: 'more', label: '更多' },
-]
-
 /** 分镜 Inspector 的可折叠区块；summary 点击由偏好控制，避免原生 details 状态和 React 状态打架。 */
 function InspectorSection({
   id,
@@ -598,9 +589,7 @@ function InspectorBody({
   setVidRes,
   onGenerateVideo,
   projectAspect,
-  onVoice,
-  voices,
-  voiceProvider,
+  canvasProdMode,
   settings,
   pick,
   onPick,
@@ -644,21 +633,7 @@ function InspectorBody({
       handEdited: (d.handEdited ?? []).filter((f) => f !== 'performance' && f !== 'dialogue_delivery'),
     })
   }
-  const setLipSync = (patch: Partial<ShotData>) => {
-    set({
-      ...patch,
-      handEdited: [...new Set([...(d.handEdited ?? []), 'lip_sync'])],
-    })
-  }
-  const voiceLines = parseDialogue(d.dialogue)
-  const voiceDeliveries = voiceLines.map((line, i) =>
-    deliveryForSpeaker(d.performance, line.speaker, d.dialogueDelivery, i),
-  )
-  const voiceStale = Boolean(
-    d.voiceUrl &&
-      d.voiceMeta?.fingerprint &&
-      d.voiceMeta.fingerprint !== voiceFingerprint(d.dialogue.trim(), voiceDeliveries),
-  )
+  const shotTabs = useMemo(() => visibleShotTabs(canvasProdMode), [canvasProdMode])
   const videoModelFamily = (settings?.models ?? []).filter(
     (m) => m.cap === 'video' || m.cap === 'videoRef',
   )
@@ -687,8 +662,7 @@ function InspectorBody({
   }, [prefs])
 
   const hasImage = Boolean(d.refImage || (d.candidates?.length ?? 0))
-  const effectiveTab: ShotInspectorTab =
-    prefs.tab === 'auto' ? defaultTabForShot(hasImage) : prefs.tab
+  const effectiveTab: ShotInspectorTab = coerceShotTab(canvasProdMode, prefs.tab, hasImage)
   const updatePrefs = (patch: Partial<InspectorPrefs>) => {
     setPrefs((prev) => {
       const next = { ...prev, ...patch }
@@ -713,6 +687,13 @@ function InspectorBody({
     const scroll = root?.querySelector<HTMLElement>('.si-scroll')
     if (scroll) scroll.scrollTop = 0
   }, [effectiveTab])
+
+  useEffect(() => {
+    const coerced = coerceShotTab(canvasProdMode, prefs.tab, hasImage)
+    if (coerced === effectiveTab) return
+    selectTab(coerced)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅随生产模式校正 tab
+  }, [canvasProdMode])
 
   useEffect(() => {
     const root = panelRef.current
@@ -762,15 +743,15 @@ function InspectorBody({
   const resetWidth = () => updatePrefs({ width: DEFAULT_INSPECTOR_WIDTH })
 
   const onTabKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
-    const idx = SHOT_TABS.findIndex((tab) => tab.id === effectiveTab)
+    const idx = shotTabs.findIndex((tab) => tab.id === effectiveTab)
     let next = -1
-    if (e.key === 'ArrowRight') next = (idx + 1) % SHOT_TABS.length
-    else if (e.key === 'ArrowLeft') next = (idx - 1 + SHOT_TABS.length) % SHOT_TABS.length
+    if (e.key === 'ArrowRight') next = (idx + 1) % shotTabs.length
+    else if (e.key === 'ArrowLeft') next = (idx - 1 + shotTabs.length) % shotTabs.length
     else if (e.key === 'Home') next = 0
-    else if (e.key === 'End') next = SHOT_TABS.length - 1
+    else if (e.key === 'End') next = shotTabs.length - 1
     if (next < 0) return
     e.preventDefault()
-    const tab = SHOT_TABS[next].id
+    const tab = shotTabs[next].id
     selectTab(tab)
     requestAnimationFrame(() => document.getElementById(`si-tab-${tab}`)?.focus())
   }
@@ -792,30 +773,11 @@ function InspectorBody({
     candidateCount: d.candidates?.length ?? 0,
     hasVideo: Boolean(d.videoUrl),
     seconds: d.seconds,
-    voiceUrl: d.voiceUrl,
-    voiceSeconds: d.voiceSeconds,
-    voiceOver: (d.voiceSeconds ?? 0) > d.seconds + 0.2,
-    voiceStale,
     promptSource: activeVideoPrompt?.source ?? 'auto',
     promptStale: activeVideoPrompt?.stale ?? false,
     nativeAudio: d.audioMode === 'native',
   })
   const imageReason = !String(d.prompt ?? '').trim() ? '先填写画面提示词' : ''
-  const voiceReason = !String(d.dialogue ?? '').trim()
-    ? '先填写台词'
-    : voices.length === 0
-      ? '没有可用音色'
-      : ''
-  const voiceEngineLabel =
-    voiceProvider === 'elevenlabs'
-      ? 'ElevenLabs'
-      : voiceProvider === 'minimax'
-        ? 'MiniMax'
-        : voiceProvider === 'volc-tts'
-          ? '火山 Seed TTS'
-          : voiceProvider === 'macos-say'
-            ? 'macOS TTS'
-            : '无可用引擎'
   const videoReason = videoRequest?.blocking[0]?.message ?? ''
 
   return (
@@ -890,7 +852,7 @@ function InspectorBody({
       </header>
 
       <nav className="si-tabs" role="tablist" aria-label="镜头检查器">
-        {SHOT_TABS.map((tab) => (
+        {shotTabs.map((tab) => (
           <button
             key={tab.id}
             id={`si-tab-${tab.id}`}
@@ -1006,121 +968,6 @@ function InspectorBody({
               </button>
             )}
           </div>
-        </div>
-
-        <label className="field" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
-          <span>台词 / 音效</span>
-          <textarea rows={2} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
-        </label>
-
-        <InspectorSection
-          id="performance"
-          title="表演"
-          summary={performanceSummary(d.performance)}
-          tab="audio"
-          hidden={effectiveTab !== 'audio'}
-          open={!prefs.collapsed.performance}
-          onToggle={() => toggleSection('performance')}
-        >
-          <div className="field perf-inspector">
-            <span>
-              表演
-              <i className="hint-inline" title="按角色写情绪、动作、视线和台词表演；会进入提示词与配音">
-                表演方向
-              </i>
-            </span>
-            <PerformanceEditor
-              cast={d.cast}
-              performance={d.performance}
-              dialogue={parseDialogue(d.dialogue)}
-              delivery={d.dialogueDelivery}
-              onChange={setPerformance}
-            />
-            {(d.handEdited ?? []).some((f) => f === 'performance' || f === 'dialogue_delivery') && (
-              <button className="btn-mini ghost" onClick={clearPerformanceHand}>
-                恢复模型建议
-              </button>
-            )}
-          </div>
-        </InspectorSection>
-
-        <div className="gen-box voice-box" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
-          <div className="gen-head">
-            <span>台词配音</span>
-            <span className="gen-cost">
-              {d.voiceUrl ? `${(d.voiceSeconds ?? 0).toFixed(1)}s · ` : ''}
-              {voiceEngineLabel}
-            </span>
-          </div>
-        <div className="gen-controls">
-          <select
-            value={d.voiceName ?? voices[0]?.id ?? ''}
-            onChange={(e) => set({ voiceName: e.target.value })}
-            title="发音人"
-            disabled={voices.length === 0}
-          >
-            {voices.length === 0 ? (
-              <option value="">（无可用音色）</option>
-            ) : (
-              voices.map((v) => (
-                <option key={v.id} value={v.id}>{v.label}</option>
-              ))
-            )}
-          </select>
-          <select
-            value={d.voiceRate ?? 180}
-            onChange={(e) => set({ voiceRate: Number(e.target.value) })}
-            title="语速"
-          >
-            {VOICE_RATES.map((r) => (
-              <option key={r} value={r}>
-                {r === 150 ? '慢' : r === 180 ? '中' : '快'}
-              </option>
-            ))}
-          </select>
-        </div>
-
-          <p className="st-hint voice-model-hint" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
-            配音模型按说话角色绑定；在「角色」工作台为每个角色选择配音模型与音色。本镜未映射到角色时使用设置页默认配音模型。
-          </p>
-          <label className="field expression-ref-toggle" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
-            <span>表情参考</span>
-            <span className="switch-row">
-              <input
-                type="checkbox"
-                checked={Boolean(d.useExpressionRef)}
-                onChange={(e) => set({ useExpressionRef: e.target.checked })}
-              />
-              带说话角色表情参考
-            </span>
-            <em>默认关；视频最多 4 张参考图，表情只在预算有富余时加入，身份/场景优先。</em>
-          </label>
-          {voiceStale && (
-            <div className="gen-warn">
-              台词或表演已变化，配音需要重生成；旧音频仍保留。
-            </div>
-          )}
-        {(d.voiceMeta?.unsupported?.length ?? 0) > 0 && (
-          <div className="gen-note">当前引擎未应用：{d.voiceMeta?.unsupported?.join('、')}</div>
-        )}
-        {d.voiceUrl && <audio className="voice-audio" src={d.voiceUrl} controls preload="metadata" />}
-          {(d.voiceSeconds ?? 0) > d.seconds + 0.2 && (
-            <div className="gen-warn">
-              配音 {(d.voiceSeconds ?? 0).toFixed(1)}s 超过镜头 {d.seconds.toFixed(1)}s，成片会被截断 ——
-              要么拉长镜头时长，要么缩短台词
-            </div>
-          )}
-        </div>
-
-        <div className="field lip-sync-field" data-shot-tab="audio" hidden={effectiveTab !== 'audio'}>
-          <span>
-            口型
-            <i className="hint-inline" title="默认关闭；prompt 只改提示词；provider 需要手动确认并调用外部口型服务">
-              唇形同步
-            </i>
-          </span>
-          <LipSyncPanel data={d} onPatch={setLipSync} settings={settings} projectName={projectName} nativeAudio={d.audioMode === 'native'} />
-          <div className="gen-note">原生音频在「视频」tab 的出片设置里。</div>
         </div>
 
         <label className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual'}>
@@ -1399,6 +1246,50 @@ function InspectorBody({
         </button>
       </div>
 
+      <label className="field" data-shot-tab="more" hidden={effectiveTab !== 'more'}>
+        <span>台词 / 音效</span>
+        <textarea rows={3} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
+        <em className="st-hint">供字幕与出片提示词使用；有声成片依赖视频音轨（含原生音频）。</em>
+      </label>
+
+      <InspectorSection
+        id="performance"
+        title="表演"
+        summary={performanceSummary(d.performance)}
+        tab="more"
+        hidden={effectiveTab !== 'more'}
+        open={!prefs.collapsed.performance}
+        onToggle={() => toggleSection('performance')}
+      >
+        <div className="field perf-inspector">
+          <PerformanceEditor
+            cast={d.cast}
+            performance={d.performance}
+            dialogue={parseDialogue(d.dialogue)}
+            delivery={d.dialogueDelivery}
+            onChange={setPerformance}
+          />
+          {(d.handEdited ?? []).some((f) => f === 'performance' || f === 'dialogue_delivery') && (
+            <button className="btn-mini ghost" onClick={clearPerformanceHand}>
+              恢复模型建议
+            </button>
+          )}
+        </div>
+      </InspectorSection>
+
+      <label className="field expression-ref-toggle" data-shot-tab="more" hidden={effectiveTab !== 'more'}>
+        <span>表情参考</span>
+        <span className="switch-row">
+          <input
+            type="checkbox"
+            checked={Boolean(d.useExpressionRef)}
+            onChange={(e) => set({ useExpressionRef: e.target.checked })}
+          />
+          带说话角色表情参考
+        </span>
+        <em>默认关；视频最多 4 张参考图，表情只在预算有富余时加入，身份/场景优先。</em>
+      </label>
+
       <div className="field si-more" data-shot-tab="more" hidden={effectiveTab !== 'more'}>
         <span>镜头信息</span>
         <div className="si-kv">
@@ -1468,27 +1359,6 @@ function InspectorBody({
                 '先处理上方出片提示词里的阻止项'
               ) : (
                 `约 ¥${money(videoCost(price, Math.round(d.seconds), vidRes))} / 次`
-              )}
-            </div>
-          </>
-        )}
-        {effectiveTab === 'audio' && (
-          <>
-            <button
-              className="btn primary block"
-              disabled={d.voiceState === 'running' || !d.dialogue.trim() || voices.length === 0}
-              onClick={() => onVoice(node.id)}
-              title={d.dialogue.trim() ? '根据台词合成配音' : '先填台词'}
-            >
-              {d.voiceState === 'running' ? '配音中…' : d.voiceUrl ? '重新配音' : '生成配音'}
-            </button>
-            <div className="si-foot-note">
-              {d.voiceState === 'error' && d.voiceError ? (
-                <span className="si-foot-error">{d.voiceError}</span>
-              ) : voiceReason ? (
-                voiceReason
-              ) : (
-                `配音 · ${voiceEngineLabel}`
               )}
             </div>
           </>

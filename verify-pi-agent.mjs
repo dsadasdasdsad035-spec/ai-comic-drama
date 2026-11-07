@@ -139,7 +139,7 @@ function deps(overrides = {}) {
   check('抓帧 5 张 + 验收通过', result.frames?.length === 5 && result.review?.passed === true, JSON.stringify({ frames: result.frames?.length, passed: result.review?.passed }))
   check('finish 后不再请求模型', asks.length === 6, String(asks.length))
   check('轨迹带工具协议事件', result.events.some((e) => e.type === 'custom' && e.name === 'tool_protocol' && e.value?.protocol === 'native'))
-  check('模型请求带工具声明', asks[0]?.tools?.length === 12 && asks[0]?.toolChoice === 'auto', String(asks[0]?.tools?.length))
+  check('模型请求带工具声明', asks[0]?.tools?.length === 6 && asks[0]?.toolChoice === 'auto', String(asks[0]?.tools?.length))
 }
 
 // ---------------------------------------------------------------- 4.5 顺序：抓帧不早于试运行
@@ -227,9 +227,21 @@ function deps(overrides = {}) {
   })
   const restricted = lib.createSceneAgentTools(hostDeps(), session, [], { agentHostMode: 'restricted' }).tools
   const full = lib.createSceneAgentTools(hostDeps(), session, [], { agentHostMode: 'full_host' }).tools
+  const draftNames = [
+    'begin_scene_draft',
+    'append_scene_draft',
+    'read_scene_draft',
+    'patch_scene_draft',
+    'commit_scene_draft',
+    'discard_scene_draft',
+  ]
   check('restricted 无 run_bash', !restricted.some((t) => t.name === 'run_bash'))
+  check('restricted 无 adopt', !restricted.some((t) => t.name === 'adopt_scene_from_job'))
+  check('restricted 无 scene-draft', !restricted.some((t) => draftNames.includes(t.name)))
   check('full_host 含 run_bash', full.some((t) => t.name === 'run_bash'))
-  check('full_host 工具数 +4', full.length === restricted.length + 4, `${restricted.length} -> ${full.length}`)
+  check('full_host 含 adopt_scene_from_job', full.some((t) => t.name === 'adopt_scene_from_job'))
+  check('full_host 无 scene-draft', !full.some((t) => draftNames.includes(t.name)))
+  check('full_host 工具数 +5', full.length === restricted.length + 5, `${restricted.length} -> ${full.length}`)
 }
 
 // ---------------------------------------------------------------- 4.2 content 与 details 分离
@@ -355,12 +367,13 @@ function deps(overrides = {}) {
   check('超时后循环结束', Date.now() - started < 4000, String(Date.now() - started))
 }
 
-// ---------------------------------------------------------------- 5.6 修复上限
+// ---------------------------------------------------------------- 5.6 试跑失败不因次数提前停止
 {
   let tries = 0
   const result = await lib.runSceneAgent({
     prompt: '一直失败',
     settings,
+    limits: { totalMs: 2500 },
     ask: scriptedAsk([{ calls: [{ name: 'set_scene_code', args: { code: CODE } }, { name: 'run_render', args: {} }] }]),
     deps: deps({
       runTrial: async () => {
@@ -369,7 +382,8 @@ function deps(overrides = {}) {
       },
     }),
   })
-  check('修复上限停止', String(result.error || '').includes('代码修复达到 3 次上限') && tries === 3, JSON.stringify({ error: result.error, tries }))
+  check('试跑失败不因 3 次停止', !String(result.error || '').includes('代码修复达到 3 次上限'), JSON.stringify({ error: result.error, tries }))
+  check('多次试跑仍被总时长收口', tries > 3, String(tries))
 }
 
 
@@ -480,7 +494,7 @@ function deps(overrides = {}) {
   }
   const result = await lib.runSceneAgent({
     prompt: '隔离验收',
-    settings,
+    settings: { ...settings, agentHostMode: 'restricted' },
     ask: scriptedAsk([
       {
         calls: [

@@ -44,7 +44,7 @@ const st1 = await page.evaluate(() => {
     duration: Number(v?.duration?.toFixed?.(2)),
     readyState: v?.readyState,
     vidTag: n?.querySelector('.vid-tag')?.textContent || null,
-    btn: n?.querySelector('.shot-vid')?.textContent || null,
+    cardVidBtn: n?.querySelector('.shot-vid')?.textContent || null,
     toggle: n?.querySelector('.vid-btn')?.textContent || null,
   }
 })
@@ -81,12 +81,10 @@ const insp = await page.evaluate(() => {
 console.log('Inspector:', JSON.stringify(insp))
 await page.screenshot({ path: `${OUT}/22-vid-inspector.png` })
 
-// 出片按钮点击后立刻进入 running 态（提示词为空时的兜底也应正常）
-const btnState = await page.evaluate(() => {
-  const b = document.querySelectorAll('.react-flow__node')[1]?.querySelector('.shot-vid')
-  return { text: b?.textContent, disabled: b?.disabled }
-})
-console.log('卡片按钮:', JSON.stringify(btnState))
+const cardVidCount = await page.locator('.shot-vid').count()
+console.log('卡脚出片按钮数（应为 0）:', cardVidCount)
+const inspVidBtn = page.locator('[data-shot-footer] button', { hasText: /生成视频|重出视频/ })
+console.log('Inspector 出片按钮:', await inspVidBtn.innerText(), '| disabled:', await inspVidBtn.isDisabled())
 
 console.log('--- errors ---')
 console.log(logs.filter((l) => /pageerror|\[error\]/i.test(l)).slice(0, 6).join('\n') || '(none)')

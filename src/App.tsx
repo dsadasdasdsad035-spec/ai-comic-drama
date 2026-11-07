@@ -41,6 +41,11 @@ import ProjectMenu from './project/ProjectMenu'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
+import {
+  loadCanvasProdMode,
+  saveCanvasProdMode,
+  type CanvasProdMode,
+} from './canvasProdMode'
 import TransitionPanel from './TransitionPanel'
 import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
@@ -398,9 +403,12 @@ function Shell() {
   const [refMode, setRefMode] = useState(false)
   const [marksAsGuide, setMarksAsGuide] = useState(true)
   const [candCount, setCandCount] = useState(1)
+  const [canvasProdMode, setCanvasProdMode] = useState<CanvasProdMode>(() => loadCanvasProdMode())
+  const setCanvasProdModePersist = useCallback((mode: CanvasProdMode) => {
+    setCanvasProdMode(mode)
+    saveCanvasProdMode(mode)
+  }, [])
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
-  const [vbatch, setVbatch] = useState<{ total: number; done: number } | null>(null)
-  const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
@@ -1616,46 +1624,40 @@ function Shell() {
   /** 当前选中的卡片（⌘/Shift 点选 或 Shift 框选） */
   const selectedNodes = useMemo(() => shownNodes.filter((n) => n.selected), [shownNodes])
   const [selBusy, setSelBusy] = useState('')
-  const [selKind, setSelKind] = useState<'image' | 'video' | 'voice' | null>(null)
   /** 运行中的出图请求：同一镜只允许一个在途请求 */
   const activeImgRef = useRef<Map<string, { token: number; controller: AbortController; taskId: string }>>(new Map())
   const imgTokenRef = useRef(0)
   const batchAbortRef = useRef<AbortController | null>(null)
 
   /** 对选中的卡片批量执行 */
-  const runOnSelected = async (kind: 'image' | 'video' | 'voice') => {
+  const runOnSelected = async () => {
     if (selBusy) return
     const list = nodesRef.current.filter((n) => n.selected)
     if (list.length === 0) return
-    const label = { image: '出图', video: '出片', voice: '配音' }[kind]
-    const ac = kind === 'image' ? new AbortController() : null
+    const ac = new AbortController()
     batchAbortRef.current = ac
-    setSelKind(kind)
-    setSelBusy(`${label} 0/${list.length}`)
+    setSelBusy(`出图 0/${list.length}`)
     let i = 0
     let cancelled = false
     try {
       for (const n of list) {
-        if (ac?.signal.aborted) {
+        if (ac.signal.aborted) {
           cancelled = true
           break
         }
-        if (kind === 'image') await generateOne(n.id, { signal: ac?.signal })
-        else if (kind === 'video') await generateVideoOne(n.id)
-        else await generateVoiceOne(n.id)
-        if (ac?.signal.aborted) {
+        await generateOne(n.id, { signal: ac.signal })
+        if (ac.signal.aborted) {
           cancelled = true
           break
         }
         i += 1
-        setSelBusy(`${label} ${i}/${list.length}`)
+        setSelBusy(`出图 ${i}/${list.length}`)
       }
     } finally {
       batchAbortRef.current = null
-      setSelKind(null)
       setSelBusy('')
     }
-    setToast(cancelled ? '已取消批量出图' : `已对 ${list.length} 张执行${label}`)
+    setToast(cancelled ? '已取消批量出图' : `已对 ${list.length} 张执行出图`)
     window.setTimeout(() => setToast(''), 2400)
   }
 
@@ -2736,34 +2738,6 @@ function Shell() {
     [patch, appSettings],
   )
 
-  const voiceAll = async () => {
-    if (vbatch) return
-    const list = nodesRef.current.filter((n) => n.data.dialogue.trim())
-    if (list.length === 0) {
-      setToast('没有带台词的镜头')
-      window.setTimeout(() => setToast(''), 2000)
-      return
-    }
-    setVbatch({ total: list.length, done: 0 })
-    for (const n of list) {
-      const tid = startTask('voice', `${n.data.no} 配音`, {
-        retry: () => void generateVoiceOne(n.id),
-      })
-      try {
-        await generateVoiceOne(n.id)
-        const after = nodesRef.current.find((x) => x.id === n.id)
-        endTask(tid, after?.data.voiceState === 'error' ? after.data.voiceError || '配音失败' : undefined)
-      } catch (e: any) {
-        endTask(tid, String(e?.message || e))
-      }
-      setVbatch((b) => (b ? { ...b, done: b.done + 1 } : b))
-      await new Promise((r) => setTimeout(r, 120))
-    }
-    setVbatch(null)
-    setToast(`配音完成 ${list.length} 镜`)
-    window.setTimeout(() => setToast(''), 2200)
-  }
-
   const generateAll = async () => {
     if (batch) return
     const list = nodesRef.current
@@ -2776,26 +2750,6 @@ function Shell() {
       await new Promise((r) => setTimeout(r, 350))
     }
     setBatch(null)
-  }
-
-  /** 批量出片：只挑「有画面、还没视频」的镜头 */
-  const generateVideoAll = async () => {
-    if (vidBatch) return
-    const list = nodesRef.current.filter((n) => n.data.refImage && !n.data.videoUrl)
-    if (list.length === 0) {
-      setToast('没有可出片的镜头（要先有画面）')
-      window.setTimeout(() => setToast(''), 2200)
-      return
-    }
-    setVidBatch({ total: list.length, done: 0 })
-    for (const n of list) {
-      await generateVideoOne(n.id)
-      setVidBatch((b) => (b ? { ...b, done: b.done + 1 } : b))
-      await new Promise((r) => setTimeout(r, 400))
-    }
-    setVidBatch(null)
-    setToast(`出片完成 ${list.length} 镜`)
-    window.setTimeout(() => setToast(''), 2200)
   }
 
   /** 画面轨换序：把某镜移到目标下标（时间线上拖动触发） */
@@ -2913,7 +2867,7 @@ function Shell() {
       openTransition,
       generate: generateOne,
       cancelGenerate,
-      generateVideo: generateVideoOne,
+      canvasProdMode,
     }),
     [
       tool,
@@ -2926,7 +2880,7 @@ function Shell() {
       openTransition,
       generateOne,
       cancelGenerate,
-      generateVideoOne,
+      canvasProdMode,
     ],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
@@ -3257,14 +3211,10 @@ function Shell() {
                 perImage={money(price.image)}
                 canGen={hasKey !== false}
                 batch={batch}
-                vidBatch={vidBatch}
-                vbatch={vbatch}
                 charsOn={charsOn}
                 diagOn={diagOn}
                 onAddShot={addShot}
                 onGenAll={generateAll}
-                onGenVideoAll={generateVideoAll}
-                onVoiceAll={voiceAll}
                 onUnifyTransitions={unifyTransitions}
                 onFit={() => fitView({ padding: 0.2, duration: 400 })}
                 onToggleChars={toggleChars}
@@ -3285,6 +3235,22 @@ function Shell() {
               >
                 ▶ 连播
               </button>
+              <div className="prod-mode-toggle" role="group" aria-label="画布生产模式">
+                <button
+                  type="button"
+                  className={`btn-mini ${canvasProdMode === 'image' ? 'on' : ''}`}
+                  onClick={() => setCanvasProdModePersist('image')}
+                >
+                  出图
+                </button>
+                <button
+                  type="button"
+                  className={`btn-mini ${canvasProdMode === 'video' ? 'on' : ''}`}
+                  onClick={() => setCanvasProdModePersist('video')}
+                >
+                  出片
+                </button>
+              </div>
             </div>
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
             {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
@@ -3301,20 +3267,14 @@ function Shell() {
             {selectedNodes.length > 0 && (
               <div className="selbar">
                 <b>{selectedNodes.length} 张已选</b>
-                <button className="btn-mini" onClick={() => runOnSelected('image')} disabled={!!selBusy}>
+                <button className="btn-mini" onClick={() => void runOnSelected()} disabled={!!selBusy}>
                   出图
                 </button>
-                {selBusy && selKind === 'image' && (
+                {selBusy && (
                   <button className="btn-mini" onClick={cancelBatch}>
                     取消出图
                   </button>
                 )}
-                <button className="btn-mini" onClick={() => runOnSelected('video')} disabled={!!selBusy}>
-                  出片
-                </button>
-                <button className="btn-mini" onClick={() => runOnSelected('voice')} disabled={!!selBusy}>
-                  配音
-                </button>
                 <button className="btn-mini" onClick={deleteSelected} disabled={!!selBusy}>
                   删除
                 </button>
@@ -3543,9 +3503,7 @@ function Shell() {
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
-            onVoice={generateVoiceOne}
-            voices={voices}
-            voiceProvider={voiceProvider}
+            canvasProdMode={canvasProdMode}
           />
           )}
         </main>

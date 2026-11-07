@@ -361,6 +361,19 @@ kbd {
   }
 }
 
+.prod-mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--line-2);
+}
+
+.prod-mode-toggle .btn-mini.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ---------- shot card ---------- */
 .react-flow__node {
   background: transparent;
@@ -2204,35 +2217,6 @@ body.si-resizing {
 .shot-dialogue {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.shot-vid {
-  flex: 0 0 auto;
-  padding: 1px 6px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: var(--fs-2xs);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.shot-vid:hover:not(:disabled) {
-  color: var(--accent-ink);
-  border-color: var(--accent);
-}
-
-.shot-vid:disabled {
-  opacity: 0.42;
-  cursor: default;
-}
-
-.shot-vid.has {
-  color: var(--accent-ink);
-  border-color: rgba(56, 189, 248, 0.45);
-  background: rgba(56, 189, 248, 0.08);
 }
 
 .vid-error {

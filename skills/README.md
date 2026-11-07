@@ -78,7 +78,7 @@ version: 1
 | `asset` | 素材 | `designs-v1` |
 | `shotlist` | 镜头表 | `shots-v1` |
 | `prompt` | 提示词 | `prompts-v1` |
-| `scene3d` | 3D 场景聊天 | `scene3d-code-v1` |
+| `scene3d` | 3D 场景聊天（含 DCC 预演技能包摘要；全文见 `scene3d/dcc-previs-pack.md`） | `scene3d-code-v1` |
 | `scene-code` | 一次性 3D 代码生成（非聊天） | `scene3d-code-v1` |
 | `scene-code-chat` | 一次性 3D 代码改写（非聊天） | `scene3d-code-v1` |
 

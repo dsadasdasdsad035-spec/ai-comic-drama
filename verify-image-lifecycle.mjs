@@ -144,6 +144,16 @@ await selbar.getByRole('button', { name: '取消出图', exact: true }).click()
 await p.waitForTimeout(700)
 check('批量取消停止后续提交', imagePosts <= 1, String(imagePosts))
 check('批量取消后进度复位', (await p.locator('.selbusy').count()) === 0)
+check(
+  '多选栏无出片配音',
+  (await selbar.getByRole('button', { name: '出片', exact: true }).count()) === 0 &&
+    (await selbar.getByRole('button', { name: '配音', exact: true }).count()) === 0,
+)
+await p.locator('.bm .tm-btn').click()
+await p.waitForTimeout(250)
+check('操作菜单无批量出片', (await p.getByRole('button', { name: '批量出片' }).count()) === 0)
+check('操作菜单无批量配音', (await p.getByRole('button', { name: '批量配音' }).count()) === 0)
+await p.keyboard.press('Escape')
 
 // 5) 正常成功路径
 hold = false

@@ -33,7 +33,8 @@ function useImage(src?: string) {
 }
 
 function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, cancelGenerate, generateVideo, charImages } = useContext(CanvasCtx)
+  const { tool, guides, color, patch, generate, cancelGenerate, charImages, canvasProdMode } =
+    useContext(CanvasCtx)
   const { colors } = useTheme()
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
@@ -171,8 +172,10 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
         </span>
         <button
           className="shot-gen nodrag"
-          title="用这条提示词生成画面"
-          disabled={data.genState === 'running'}
+          title={
+            canvasProdMode === 'video' ? '出片模式下请在侧栏出片；切到出图模式可在卡片上生成' : '用这条提示词生成画面'
+          }
+          disabled={data.genState === 'running' || canvasProdMode === 'video'}
           onClick={(e) => {
             e.stopPropagation()
             generate(id)
@@ -430,21 +433,6 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
             {voiceOver ? '♪⚠' : '♪'}
           </span>
         )}
-        <button
-          className={`shot-vid nodrag ${hasVideo ? 'has' : ''}`}
-          title={
-            data.refImage
-              ? '以当前画面为首帧生成动态视频（Seedance 图生视频）'
-              : '先生成画面，才能出片'
-          }
-          disabled={vidRunning || !data.refImage}
-          onClick={(e) => {
-            e.stopPropagation()
-            generateVideo(id)
-          }}
-        >
-          {vidRunning ? '出片中' : hasVideo ? '重出片' : '出片'}
-        </button>
       </div>
 
       {data.vidState === 'error' && data.vidError && (

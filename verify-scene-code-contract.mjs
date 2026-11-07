@@ -72,10 +72,11 @@ check('合法代码通过', checkSceneCode(GOOD).ok)
 
 check('缺少 build 被拒绝', !checkSceneCode('def pose(t, mode):\n    pass\n').ok)
 check('缺少 pose 被拒绝', !checkSceneCode('def build(ctx):\n    pass\n').ok)
-check('import os 被拒绝', !checkSceneCode(GOOD.replace('import bpy', 'import bpy\nimport os')).ok)
+check('import os 允许', checkSceneCode(GOOD.replace('import bpy', 'import bpy\nimport os')).ok)
 check('subprocess 被拒绝', !checkSceneCode(GOOD.replace('import bpy', 'import bpy\nfrom subprocess import run')).ok)
 check('bpy.ops.wm 被拒绝', !checkSceneCode(GOOD.replace('def pose', 'bpy.ops.wm.save_as_mainfile(filepath="x")\ndef pose')).ok)
-check('open() 被拒绝', !checkSceneCode(GOOD.replace('def pose', 'open("/tmp/x", "w")\ndef pose')).ok)
+check('open() 允许', checkSceneCode(GOOD.replace('def pose', 'open("/tmp/x", "w")\ndef pose')).ok)
+check('capsule_add 允许', checkSceneCode(GOOD.replace('primitive_cube_add', 'primitive_capsule_add')).ok)
 check('eval 被拒绝', !checkSceneCode(GOOD.replace('def pose', 'eval("1")\ndef pose')).ok)
 check('超长代码被拒绝', !checkSceneCode(GOOD + '\n# x'.repeat(120000)).ok)
 

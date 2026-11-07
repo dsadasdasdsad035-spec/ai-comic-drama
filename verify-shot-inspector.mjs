@@ -141,34 +141,58 @@ const layout = await p.evaluate(async () => {
     min: m.clampInspectorWidth(100),
     max: m.clampInspectorWidth(999),
     mid: m.clampInspectorWidth(400),
-    noImage: m.defaultTabForShot(false),
-    image: m.defaultTabForShot(true),
+    imageModeNoImg: m.defaultTabForShot('image', false),
+    videoModeHasImg: m.defaultTabForShot('video', true),
     chips: m.shotStatusChips({
       hasImage: true,
       candidateCount: 2,
       hasVideo: false,
       seconds: 5,
-      voiceUrl: undefined,
       promptSource: 'auto',
       nativeAudio: true,
     }),
   }
 })
 check('宽度夹取 320–520', layout.min === 320 && layout.max === 520 && layout.mid === 400, JSON.stringify(layout))
-check('默认 tab 按画面状态推导', layout.noImage === 'visual' && layout.image === 'video', JSON.stringify(layout))
 check(
-  '状态 chip 推导',
-  layout.chips.map((c) => c.label).join('|') === '画面 1/2|视频 未出|配音 未生成|提示词 自动|原生音频',
+  '默认 tab 随生产模式',
+  layout.imageModeNoImg === 'visual' && layout.videoModeHasImg === 'video',
+  JSON.stringify(layout),
+)
+check(
+  '状态 chip 推导（无镜头配音）',
+  layout.chips.map((c) => c.label).join('|') === '画面 1/2|视频 未出|提示词 自动|原生音频',
   JSON.stringify(layout.chips),
 )
 
 // 默认页 + 出片提示词
 await selectShot('S01')
-check('四个 tab 都在', (await p.locator('.si-tabs [role="tab"]').count()) === 4)
-check('有画面的镜头默认视频页', (await activeTab()) === '视频', await activeTab())
+check('分镜卡无卡脚出片按钮', (await p.locator('.shot-vid').count()) === 0)
+check('分镜卡保留卡头出图', (await p.locator('.shot-gen').count()) >= 1)
+await shotNode('S01').click()
+await shotNode('S02').click({ modifiers: ['Shift'] })
+await p.waitForTimeout(200)
+const selbar = p.locator('.selbar')
+if ((await selbar.count()) > 0) {
+  check('多选栏无出片', (await selbar.getByRole('button', { name: '出片', exact: true }).count()) === 0)
+  check('多选栏无配音', (await selbar.getByRole('button', { name: '配音', exact: true }).count()) === 0)
+}
+await p.locator('.bm .tm-btn').click()
+await p.waitForTimeout(200)
+check('操作菜单无批量出片', (await p.getByRole('button', { name: '批量出片' }).count()) === 0)
+check('操作菜单无批量配音', (await p.getByRole('button', { name: '批量配音' }).count()) === 0)
+await p.keyboard.press('Escape')
+await selectShot('S01')
+check('出图模式仅画面与更多 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 2)
+check('出图模式默认画面页', (await activeTab()) === '画面', await activeTab())
+await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
+await p.waitForTimeout(300)
+check('出片模式仅视频与更多 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 2)
+await selectShot('S01')
+check('出片模式默认视频页', (await activeTab()) === '视频', await activeTab())
 check('视频页直接看到出片提示词', (await p.locator('[data-video-prompt-panel]').count()) === 1)
 await selectShot('S02')
-check('无画面的镜头默认画面页', (await activeTab()) === '画面', await activeTab())
+check('出片模式无画面仍默认视频页', (await activeTab()) === '视频', await activeTab())
 check('无画面时提示词面板不占视频页外空间', !(await p.locator('[data-video-prompt-panel]').isVisible().catch(() => false)))
 await p.locator('.si-chip', { hasText: '提示词' }).click()
 await p.waitForTimeout(300)
@@ -178,9 +202,8 @@ await selectShot('S01')
 check('手动选页后切镜头保持', (await activeTab()) === '视频', await activeTab())
 
 // chip 路由
-await p.locator('.si-chip', { hasText: '配音' }).click()
+await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
 await p.waitForTimeout(250)
-check('配音 chip 切到声音页', (await activeTab()) === '声音', await activeTab())
 await p.locator('.si-chip', { hasText: '画面' }).click()
 await p.waitForTimeout(250)
 check('画面 chip 切到画面页', (await activeTab()) === '画面', await activeTab())
@@ -227,7 +250,7 @@ check(
 check('视频主操作在吸底栏', (await footer.innerText()).includes('视频') || (await footer.locator('button').innerText()).length > 0)
 
 // 折叠 + 持久化
-await p.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(250)
 const perf = p.locator('[data-section="performance"]')
 check('表演默认折叠', (await perf.evaluate((el) => el.open)) === false)
@@ -240,7 +263,7 @@ await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
 await p.waitForTimeout(250)
 await p.locator('[data-video-prompt-panel] button', { hasText: '编辑' }).click()
 await p.locator('.vp-textarea').fill('这是一份没有保存的草稿')
-await p.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(200)
 await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
 await p.waitForTimeout(250)
@@ -262,7 +285,7 @@ const playStarted = await p
   .catch(() => false)
 await p.waitForTimeout(300)
 const vidPaused = await p.locator('.si-video-preview video').evaluate((el) => el.paused).catch(() => null)
-await p.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(250)
 const vidPausedAfter = await p.locator('.si-video-preview video').evaluate((el) => el.paused).catch(() => null)
 check(
@@ -272,6 +295,8 @@ check(
 )
 
 // 拖宽 + 持久化
+await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
+await p.waitForTimeout(200)
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.waitForTimeout(200)
 const beforeWidth = await width()
@@ -293,7 +318,7 @@ await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
 await selectShot('S01')
 check('刷新后宽度保留', Math.abs((await width()) - afterWidth) < 3, JSON.stringify({ afterWidth, now: await width() }))
-await p.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(250)
 check('刷新后表演折叠状态保留', (await p.locator('[data-section="performance"]').evaluate((el) => el.open)) === true)
 
@@ -327,6 +352,8 @@ check('素材卡显示原面板', (await p.locator('.inspector .panel-head').inn
 
 // 截图
 await selectShot('S01')
+await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
+await p.waitForTimeout(200)
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(300)
@@ -342,10 +369,10 @@ if (box3) {
 }
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.screenshot({ path: '/tmp/si-day-480.png' })
-await p.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(250)
-await p.screenshot({ path: '/tmp/si-audio-480.png' })
+await p.screenshot({ path: '/tmp/si-more-dialogue-480.png' })
 await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(250)

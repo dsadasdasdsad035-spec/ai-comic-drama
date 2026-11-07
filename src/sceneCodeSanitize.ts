@@ -12,7 +12,7 @@ export type SceneCodeCheck = {
  * 真正的隔离边界见 design.md「安全：如实降级」：本机进程 + 一次性工作目录 + 只读素材。
  */
 const BANNED_IMPORTS =
-  /(^|\n)[ \t]*(?:import|from)[ \t]+(os|sys|subprocess|socket|shutil|urllib|http|httpx|requests|ctypes|importlib|pkgutil|pathlib|glob|tempfile|webbrowser|ftplib|telnetlib|smtplib|multiprocessing|pty|resource)\b/
+  /(^|\n)[ \t]*(?:import|from)[ \t]+(sys|subprocess|socket|shutil|urllib|http|httpx|requests|ctypes|importlib|pkgutil|pathlib|glob|tempfile|webbrowser|ftplib|telnetlib|smtplib|multiprocessing|pty|resource)\b/
 
 const BLOCKED: { re: RegExp; message: string }[] = [
   { re: BANNED_IMPORTS, message: '不允许导入进程、网络或文件系统模块' },
@@ -20,7 +20,6 @@ const BLOCKED: { re: RegExp; message: string }[] = [
   { re: /\beval\s*\(/, message: '不允许 eval' },
   { re: /\bexec\s*\(/, message: '不允许 exec' },
   { re: /\bcompile\s*\(/, message: '不允许 compile' },
-  { re: /\bopen\s*\(/, message: '不允许直接打开文件；素材请用 ctx.asset(key)' },
   { re: /\binput\s*\(/, message: '不允许交互式输入' },
   { re: /\b__builtins__\b|\b__globals__\b|\b__subclasses__\b|\b__class__\b/, message: '不允许访问解释器内部对象' },
   { re: /\bbpy\.ops\.wm\./, message: '不允许调用 bpy.ops.wm（保存/打开工程）' },
@@ -31,10 +30,6 @@ const BLOCKED: { re: RegExp; message: string }[] = [
   { re: /\bbpy\.path\b/, message: '不允许访问 bpy.path' },
   { re: /\bsys\.exit\b/, message: '不允许退出渲染进程' },
   { re: /\b(?:http|https):\/\//i, message: '不允许在代码中出现网络地址' },
-  {
-    re: /\bbpy\.ops\.mesh\.primitive_capsule_add\b/,
-    message: 'Blender 4.2–6.0 没有 primitive_capsule_add；四肢请用 primitive_cylinder_add（或 uv_sphere）组合',
-  },
   {
     re: /\bprimitive_cube_add\s*\([^)]*\bsize\s*=\s*\(/,
     message: 'primitive_cube_add 的 size 只能是数字；要长方体请用 size=1 再设 obj.scale',

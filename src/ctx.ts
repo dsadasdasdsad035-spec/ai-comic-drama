@@ -1,4 +1,5 @@
 import { createContext } from 'react'
+import type { CanvasProdMode } from './canvasProdMode'
 import type { Relation, ShotData, Tool } from './types'
 
 export type CanvasApi = {
@@ -15,7 +16,7 @@ export type CanvasApi = {
   openTransition: (id: string) => void
   generate: (id: string) => void
   cancelGenerate: (id: string) => void
-  generateVideo: (id: string) => void
+  canvasProdMode: CanvasProdMode
 }
 
 export const CanvasCtx = createContext<CanvasApi>({
@@ -29,5 +30,5 @@ export const CanvasCtx = createContext<CanvasApi>({
   openTransition: () => {},
   generate: () => {},
   cancelGenerate: () => {},
-  generateVideo: () => {},
+  canvasProdMode: 'image',
 })

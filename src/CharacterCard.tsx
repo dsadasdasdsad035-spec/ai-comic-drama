@@ -1040,7 +1040,7 @@ export default function CharacterCard({
       </section>
 
       <p className="char-voice-footnote">
-        镜头台词配音在画布选中镜头后的 Inspector「声音」；本页只配置角色声线与 Seedance 试音参考。
+        镜头台词在分镜 Inspector「更多」编辑；有声成片依赖视频音轨。本页配置角色声线与试音参考。
       </p>
     </div>
   )

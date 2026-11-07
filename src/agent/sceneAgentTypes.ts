@@ -8,12 +8,11 @@ import type { BuiltinResult } from './workbenchChat'
 export type AgentToolName =
   | 'get_shot_context'
   | 'set_scene_code'
-  | 'begin_scene_draft'
-  | 'append_scene_draft'
-  | 'read_scene_draft'
-  | 'patch_scene_draft'
-  | 'commit_scene_draft'
-  | 'discard_scene_draft'
+  | 'adopt_scene_from_job'
+  | 'run_bash'
+  | 'read_file'
+  | 'write_file'
+  | 'list_dir'
   | 'run_render'
   | 'capture_frames'
   | 'review_frames'
@@ -52,6 +51,12 @@ export type AgentContextPart = {
   counts: { image: number; video: number; text: number }
   /** 作用域头：title 通用；shot 只在镜头场景下存在 */
   metadata: { title: string; shot?: { no: string; duration: number; aspect: string } }
+  /** 本轮完整 system（技能 + ABI + 验收要求） */
+  systemPrompt?: string
+  /** 用户本轮消息 */
+  userPrompt?: string
+  /** get_shot_context / 代码侧读到的附件与镜头文本 */
+  contextPayload?: string
 }
 /** 本轮图片是送出还是占位。只记标签和原因，不记图片字节。 */
 export type AgentImageContextPart = {

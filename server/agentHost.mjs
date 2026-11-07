@@ -7,6 +7,8 @@ import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 
 const JOBS_DIR = '.agent-jobs'
+const BLENDER_SKILLS_REL = ['skills', 'scene3d', 'blender-skills']
+const PREVIS_PACK_REL = ['skills', 'scene3d', 'dcc-previs-pack.md']
 const MAX_IO_CHARS = 64 * 1024
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_TIMEOUT_MS = 120_000
@@ -44,6 +46,34 @@ function getJob(jobId) {
   return job
 }
 
+/** 在 job 内挂上只读 DCC 技能库，供 read_file / list_dir 使用。 */
+function seedJobDccLibrary(repoRoot, jobDir) {
+  const skillsSrc = path.join(repoRoot, ...BLENDER_SKILLS_REL)
+  if (fs.existsSync(skillsSrc)) {
+    const dst = path.join(jobDir, 'dcc-skills')
+    if (!fs.existsSync(dst)) {
+      try {
+        const type = process.platform === 'win32' ? 'junction' : 'dir'
+        fs.symlinkSync(skillsSrc, dst, type)
+      } catch {
+        /* 无权限或重复创建时忽略 */
+      }
+    }
+  }
+  const previsSrc = path.join(repoRoot, ...PREVIS_PACK_REL)
+  if (fs.existsSync(previsSrc)) {
+    const previsDst = path.join(jobDir, 'dcc-previs-pack.md')
+    if (!fs.existsSync(previsDst)) {
+      try {
+        const type = process.platform === 'win32' ? 'file' : 'file'
+        fs.symlinkSync(previsSrc, previsDst, type)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 export function ensureAgentJob(root, { project, shotId }) {
   const projectName = String(project || '').trim()
   const sid = String(shotId || '').trim()
@@ -51,6 +81,7 @@ export function ensureAgentJob(root, { project, shotId }) {
   const id = crypto.randomUUID()
   const dir = path.join(jobsRoot(root), id)
   fs.mkdirSync(dir, { recursive: true })
+  seedJobDccLibrary(root, dir)
   fs.writeFileSync(
     path.join(dir, '.meta.json'),
     JSON.stringify({ project: projectName, shotId: sid, createdAt: Date.now() }, null, 0),

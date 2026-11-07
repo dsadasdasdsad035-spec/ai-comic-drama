@@ -6,14 +6,10 @@ type Props = {
   /** 有 ARK key 才能批量出图 */
   canGen: boolean
   batch: { total: number; done: number } | null
-  vidBatch: { total: number; done: number } | null
-  vbatch: { total: number; done: number } | null
   charsOn: boolean
   diagOn: boolean
   onAddShot: () => void
   onGenAll: () => void
-  onGenVideoAll: () => void
-  onVoiceAll: () => void
   onUnifyTransitions: () => void
   onFit: () => void
   onToggleChars: () => void
@@ -29,14 +25,10 @@ export default function BoardMenu({
   perImage = '0.22',
   canGen,
   batch,
-  vidBatch,
-  vbatch,
   charsOn,
   diagOn,
   onAddShot,
   onGenAll,
-  onGenVideoAll,
-  onVoiceAll,
   onUnifyTransitions,
   onFit,
   onToggleChars,
@@ -62,15 +54,8 @@ export default function BoardMenu({
     }
   }, [open])
 
-  const running = batch ?? vidBatch ?? vbatch
-  const busy = Boolean(running)
-  const progText = batch
-    ? `生成中 ${batch.done}/${batch.total}`
-    : vidBatch
-      ? `出片中 ${vidBatch.done}/${vidBatch.total}`
-      : vbatch
-        ? `配音 ${vbatch.done}/${vbatch.total}`
-        : ''
+  const busy = Boolean(batch)
+  const progText = batch ? `生成中 ${batch.done}/${batch.total}` : ''
 
   const act = (fn: () => void) => () => {
     fn()
@@ -82,7 +67,7 @@ export default function BoardMenu({
       <button
         className={`tm-btn ${busy ? 'on' : ''}`}
         onClick={() => setOpen((v) => !v)}
-        title="批量生成 / 出片 / 配音 / 视图 / 清理"
+        title="批量生成画面 / 视图 / 清理"
       >
         操作
         {busy ? <span className="bm-prog">{progText}</span> : <span className="tm-cur">批量 · 视图 · 清理</span>}
@@ -100,24 +85,6 @@ export default function BoardMenu({
           >
             批量生成画面
             <span className="bm-hint">{batch ? `${batch.done}/${batch.total}` : `¥${perImage}/张`}</span>
-          </button>
-          <button
-            className="bm-item"
-            onClick={act(onGenVideoAll)}
-            disabled={busy}
-            title="给所有已有画面、还没视频的镜头批量出片"
-          >
-            批量出片
-            <span className="bm-hint">{vidBatch ? `${vidBatch.done}/${vidBatch.total}` : 'Seedance'}</span>
-          </button>
-          <button
-            className="bm-item"
-            onClick={act(onVoiceAll)}
-            disabled={busy}
-            title="为所有带台词的镜头生成配音（macOS TTS）"
-          >
-            批量配音
-            <span className="bm-hint">{vbatch ? `${vbatch.done}/${vbatch.total}` : 'TTS'}</span>
           </button>
           <button
             className="bm-item"

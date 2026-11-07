@@ -7,7 +7,8 @@ import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '.verify-agent-shell-' + Date.now())
+const repoRoot = path.dirname(fileURLToPath(import.meta.url))
+const root = path.join(repoRoot, '.verify-agent-shell-' + Date.now())
 fs.mkdirSync(root, { recursive: true })
 
 const lib = await import('./server/agentHost.mjs')
@@ -18,8 +19,14 @@ const check = (n, c, e = '') => {
   if (!c) bad++
 }
 
-const { jobId } = lib.ensureAgentJob(root, { project: 'P', shotId: 'E01-S01' })
+const { jobId } = lib.ensureAgentJob(repoRoot, { project: 'P', shotId: 'E01-S01' })
 check('创建 job', Boolean(jobId), jobId)
+
+const jobDir = path.join(repoRoot, '.agent-jobs', jobId)
+const skillIndex = path.join(jobDir, 'dcc-skills', 'INDEX.zh-CN.md')
+check('job 挂载 dcc-skills', fs.existsSync(skillIndex), skillIndex)
+const previs = path.join(jobDir, 'dcc-previs-pack.md')
+check('job 挂载 dcc-previs-pack', fs.existsSync(previs))
 
 lib.agentWriteFile(root, { jobId, path: 'notes.txt', content: 'hello agent' })
 const read = lib.agentReadFile(root, { jobId, path: 'notes.txt' })
@@ -36,5 +43,10 @@ try {
 }
 check('拒绝路径逃逸', escaped)
 
+try {
+  fs.rmSync(path.join(repoRoot, '.agent-jobs', jobId), { recursive: true, force: true })
+} catch {
+  /* ignore */
+}
 fs.rmSync(root, { recursive: true, force: true })
 process.exit(bad ? 1 : 0)

@@ -17,74 +17,13 @@ def build(ctx):    # 建场景、材质、灯光、相机；至少添加一个�
 def pose(t, mode): # t 是 0..duration 秒；只改场景状态，不渲染、不写文件
 def dispose():     # 释放自定义数据块/节点组/临时贴图
 
-硬约束：
-- 只允许 import bpy、math、random、mathutils、colorsys；禁止 os/sys/subprocess/socket/urllib/pathlib/open/eval/exec/compile。
-- 禁止 bpy.ops.wm / bpy.ops.export / bpy.ops.import / bpy.data.libraries / bpy.app / bpy.utils / bpy.path。
-- 不要在模块顶层引用 ctx 或调用 build(ctx)：宿主加载代码后才调用 build(ctx)，再逐帧调用 pose(t)。需要在 build 和 pose 之间共享的对象请存进模块级 _state。
-- 创建可见几何必须有顶点（bpy.ops.mesh.primitive_*_add 或 mesh.from_pydata）；不要用空 mesh 当物体，否则什么都看不见。
-- Blender 4.2–6.0 没有 primitive_capsule_add；人物四肢用 primitive_cylinder_add 组合（圆柱两端可再叠 uv_sphere）。
-- primitive_cube_add 的 size 只接受数字；要做长方体用 size=1，再设 obj.scale。
-- bpy.ops.mesh.primitive_*_add 创建的对象已经自动链接到当前 collection；不要再 link() 同一个对象，否则会报 already in collection。
-- 动画必须由 t 决定；不要读墙钟、不要用未固定种子的随机数表达运动；同一 t 必须产生同一画面。
-- 素材只通过 ctx.asset(key) 取路径；用 bpy.data.images.load() 载入并接进材质；没有素材时用程序化材质兜底。
-- 相机必须朝向主体；相机由宿主创建，代码只需改 ctx.camera.location / rotation_euler / ctx.camera_data.lens。
-- 单位是米；默认相机焦距 45mm；画面比例由宿主设置，不要改分辨率或帧率。
-- 渲染设置（引擎、采样、分辨率、帧率、输出路径）由宿主拥有，代码 MUST NOT 修改。
-- 只输出 JSON，不要 Markdown 围栏。
+隔离与入口（预演摘要见 job 内 dcc-previs-pack.md；专业流程用 read_file 读 dcc-skills/ 下 blender-* SKILL.md，须仍符合本 ABI）：
+- 允许 bpy、math、mathutils、colorsys、random、os 等；禁止 subprocess/socket/urllib/eval/exec 与 bpy.ops.wm·import/export·libraries·app。
+- 勿在模块顶层使用 ctx；共享状态放 _state。动画只随 t 变化。
+- 可见 mesh 必存在；相机对准主体；素材优先 ctx.asset；勿改渲染分辨率/FPS/引擎。
+- 一次性 JSON 输出时不要 Markdown 围栏。
 
-相机对准目标的常用写法：
-from mathutils import Vector
-def _look_at(obj, target):
-    d = Vector(target) - obj.location
-    obj.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
-
-素材贴图的常用写法：
-img = bpy.data.images.load(path)
-tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
-tex.image = img
-mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
-
-最小可用结构（内容可替换，但结构必须保留）：
-import bpy
-from mathutils import Vector
-
-_state = {}
-
-def _look_at(obj, target):
-    d = Vector(target) - obj.location
-    obj.rotation_euler = d.to_track_quat('-Z', 'Y').to_euler()
-
-def build(ctx):
-    bpy.ops.mesh.primitive_plane_add(size=12, location=(0, 0, 0))
-    bpy.ops.mesh.primitive_cube_add(size=1.2, location=(0, 0, 0.6))
-    box = bpy.context.active_object
-    mat = bpy.data.materials.new('Subject')
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get('Principled BSDF')
-    if bsdf:
-        bsdf.inputs['Base Color'].default_value = (0.14, 0.55, 0.48, 1)
-        bsdf.inputs['Roughness'].default_value = 0.5
-    box.data.materials.append(mat)
-
-    key = bpy.data.objects.new('Key', bpy.data.lights.new('Key', type='AREA'))
-    key.data.energy = 600
-    key.data.size = 4
-    ctx.scene.collection.objects.link(key)
-    key.location = (4, -5, 6)
-    _look_at(key, (0, 0, 1))
-
-    ctx.camera.location = (0, -7, 2.4)
-    _look_at(ctx.camera, (0, 0, 1))
-    ctx.camera_data.lens = 45
-    _state['box'] = box
-
-def pose(t, mode):
-    box = _state.get('box')
-    if box:
-        box.rotation_euler[2] = t * 0.6
-
-def dispose():
-    pass`
+最小结构：import bpy · def build(ctx) · def pose(t, mode) · def dispose()；build 内至少一个可见对象并设置 ctx.camera。`
 
 export type SceneCodePromptInput = {
   shot: ShotData

@@ -73,7 +73,7 @@ export function buildPlaylist(nodes: ShotNodeType[], edges: ShotEdgeType[] = [])
     }
     const n = x.node!
     const video = activeVideoUrl(n.data)
-    const audio = n.data.audioMode === 'native' ? 'native' : n.data.voiceUrl ? 'tts' : 'none'
+    const audio = n.data.audioMode === 'native' ? 'native' : 'none'
     return {
       id: n.id,
       no: n.data.no,
@@ -89,7 +89,7 @@ export function buildPlaylist(nodes: ShotNodeType[], edges: ShotEdgeType[] = [])
       size: n.data.size,
       move: n.data.move,
       audio,
-      voice: audio === 'tts' ? n.data.voiceUrl : undefined,
+      voice: undefined,
       voiceSeconds: Number(n.data.voiceSeconds) || 0,
       voiceOffset: Number(n.data.voiceOffset) || 0,
       joinIn: x.joinIn,
@@ -623,11 +623,9 @@ export default function Preview({
 
   const audioLabel =
     current?.kind === 'shot'
-      ? current.audio === 'tts'
-        ? `TTS ${current.voiceSeconds.toFixed(1)}s`
-        : current.audio === 'native'
-          ? '原生音轨'
-          : '无配音'
+      ? current.audio === 'native'
+        ? '原生音轨'
+        : '无独立配音轨'
       : ''
   const captionLabel = captionPreviewOn
     ? activeCaption?.estimated

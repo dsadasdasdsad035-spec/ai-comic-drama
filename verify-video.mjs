@@ -32,13 +32,15 @@ const node = page.locator('.react-flow__node').nth(1)
 await node.click()
 await page.waitForTimeout(300)
 
-const btn = node.locator('.shot-vid')
-console.log('出片按钮:', await btn.innerText(), '| disabled:', await btn.isDisabled())
+const checkNoCardVid = await page.locator('.shot-vid').count()
+console.log('卡脚出片按钮数（应为 0）:', checkNoCardVid)
+const videoBtn = page.locator('[data-shot-footer] button', { hasText: /生成视频|重出视频/ })
+console.log('Inspector 出片:', await videoBtn.innerText(), '| disabled:', await videoBtn.isDisabled())
 await page.screenshot({ path: `${OUT}/10-vid-idle.png` })
 
-await btn.click()
+await videoBtn.click()
 await page.waitForTimeout(2500)
-console.log('点击后:', await btn.innerText())
+console.log('点击后吸底文案:', await page.locator('[data-shot-footer]').innerText())
 await page.screenshot({ path: `${OUT}/11-vid-running.png` })
 
 // 轮询直到出现视频或报错
@@ -73,7 +75,7 @@ const detail = await page.evaluate(() => {
     currentTime: v?.currentTime,
     error: n?.querySelector('.vid-error')?.textContent || null,
     barTag: n?.querySelector('.vid-tag')?.textContent || null,
-    btn: n?.querySelector('.shot-vid')?.textContent || null,
+    cardVidBtn: n?.querySelector('.shot-vid')?.textContent || null,
   }
 })
 console.log('结果:', JSON.stringify(detail))

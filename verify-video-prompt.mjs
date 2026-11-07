@@ -39,7 +39,9 @@ await p.evaluate(() => {
 })
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1500)
-await p.locator('.shot-vid').first().click()
+await p.locator('.react-flow__node').first().click()
+await p.waitForTimeout(400)
+await p.locator('[data-shot-footer] button', { hasText: /生成视频|重出视频/ }).click()
 await p.waitForTimeout(2500)
 
 console.log('出片请求数:', bodies.length)

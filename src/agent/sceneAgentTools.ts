@@ -211,185 +211,25 @@ export function createSceneAgentTools(
       const codeSummary = session.code
         ? `【当前代码】hash ${(session.codeHash || '').slice(0, 10)}，${session.code.split('\n').length} 行`
         : '【当前代码】无'
-      const draftSummary = session.draft
-        ? `【当前草稿】${session.draft.id.slice(0, 8)}，${session.draft.lines} 行 / ${session.draft.chars} 字符，${session.draft.committedAt ? '已提交' : '未提交'}`
-        : '【当前草稿】无'
+      const draftSummary =
+        session.draft && !isFullHostMode(settings)
+          ? `【服务端草稿】${session.draft.id.slice(0, 8)}，${session.draft.lines} 行`
+          : ''
       return resultOk({ context: [base, codeSummary, draftSummary].filter(Boolean).join('\n\n') })
-    },
-  })
-
-  const beginSceneDraft = defineTool({
-    name: 'begin_scene_draft',
-    description:
-      '为当前镜头创建或重置一个服务端草稿（不用也不能传路径）。长代码先 begin，再用 append 分片写入；短代码可直接 set_scene_code。',
-    schema: z.object({}),
-    run: async () => {
-      try {
-        const scope = scopeOf()
-        const state = await draftClient.begin(scope)
-        session.draft = {
-          id: state.id,
-          project: scope.project,
-          shotId: scope.shotId,
-          lines: state.lines,
-          chars: state.chars,
-          updatedAt: Date.now(),
-        }
-        session.codeDraftId = undefined
-        emit(session, deps, {
-          type: 'draft_started',
-          draftId: state.id,
-          lines: state.lines,
-          chars: state.chars,
-        })
-        return resultOk({
-          draftId: state.id,
-          lines: state.lines,
-          chars: state.chars,
-          summary: '草稿已创建（0 行），可以开始 append 分片',
-        })
-      } catch (e) {
-        return fail(errMessage(e))
-      }
-    },
-  })
-
-  const appendSceneDraft = defineTool({
-    name: 'append_scene_draft',
-    description: '向当前草稿末尾追加一段代码（单次建议不超过 2000 字符；JSON 协议下过长容易截断）。大代码按 import/常量、build、pose、dispose 分段写入。',
-    schema: z.object({
-      chunk: z.string().min(1).max(8000).describe('要追加的代码片段；单次最多 8000 字符，建议 1500 以内'),
-    }),
-    run: async ({ chunk }) => {
-      if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
-      try {
-        const state = await draftClient.append(session.draft.id, chunk)
-        const draft = updateDraft(state)
-        emit(session, deps, {
-          type: 'draft_progress',
-          draftId: draft.id,
-          lines: draft.lines,
-          chars: draft.chars,
-          op: 'append',
-        })
-        return resultOk({
-          draftId: draft.id,
-          lines: draft.lines,
-          chars: draft.chars,
-          summary: `已追加，草稿现在 ${draft.lines} 行 / ${draft.chars} 字符`,
-        })
-      } catch (e) {
-        return fail(errMessage(e))
-      }
-    },
-  })
-
-  const readSceneDraft = defineTool({
-    name: 'read_scene_draft',
-    description:
-      '按 1-based 行范围读取当前草稿（最多 200 行/8KB）。patch 前先读要改的片段，返回带行号的文本和总行数。',
-    schema: z.object({
-      startLine: z.number().int().min(1).optional().describe('起始行，1-based，含'),
-      endLine: z.number().int().min(2).optional().describe('结束行，不含；省略时最多读 200 行'),
-    }),
-    run: async ({ startLine, endLine }) => {
-      if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
-      try {
-        const result = await draftClient.read(session.draft.id, startLine, endLine)
-        session.draft.lines = result.lines
-        session.draft.chars = result.chars
-        emit(session, deps, {
-          type: 'draft_progress',
-          draftId: session.draft.id,
-          lines: result.lines,
-          chars: result.chars,
-          op: 'read',
-        })
-        return resultOk({
-          draftId: session.draft.id,
-          text: result.text,
-          totalLines: result.totalLines,
-          startLine: result.startLine,
-          endLine: result.endLine,
-        })
-      } catch (e) {
-        return fail(errMessage(e))
-      }
-    },
-  })
-
-  const patchSceneDraft = defineTool({
-    name: 'patch_scene_draft',
-    description:
-      '替换当前草稿的一个行范围：startLine 1-based 含，endLine 不含；一次只做一处编辑，避免多个范围互相错位。',
-    schema: z.object({
-      startLine: z.number().int().min(1),
-      endLine: z.number().int().min(1),
-      text: z.string().describe('替换后的内容；传空字符串表示删除该范围'),
-    }),
-    run: async ({ startLine, endLine, text }) => {
-      if (!session.draft) return fail('当前没有草稿；先调用 begin_scene_draft')
-      try {
-        const state = await draftClient.patch(session.draft.id, startLine, endLine, text)
-        const draft = updateDraft(state)
-        emit(session, deps, {
-          type: 'draft_progress',
-          draftId: draft.id,
-          lines: draft.lines,
-          chars: draft.chars,
-          op: 'patch',
-        })
-        return resultOk({
-          draftId: draft.id,
-          lines: draft.lines,
-          chars: draft.chars,
-          summary: `已替换第 ${startLine}-${Math.max(startLine, endLine - 1)} 行，草稿现在 ${draft.lines} 行`,
-        })
-      } catch (e) {
-        return fail(errMessage(e))
-      }
-    },
-  })
-
-  const commitSceneDraft = defineTool({
-    name: 'commit_scene_draft',
-    description:
-      '读取整份草稿并做静态准入，通过后设为当前 agent 代码（仍不会覆盖工作台草稿）。提交后必须 run_render 试运行。',
-    schema: z.object({}),
-    run: async () => commitCurrentDraft(),
-  })
-
-  const discardSceneDraft = defineTool({
-    name: 'discard_scene_draft',
-    description: '删除当前草稿。已提交的 session.code 不变；不会修改工作台草稿。',
-    schema: z.object({}),
-    run: async () => {
-      const draft = session.draft
-      if (!draft) return fail('当前没有草稿')
-      try {
-        await draftClient.discard(draft.id)
-      } catch {
-        /* 已经清理或网络失败都不阻塞会话；服务端启动时还会 sweep */
-      }
-      if (session.codeDraftId === draft.id) session.codeDraftId = undefined
-      session.draft = undefined
-      emit(session, deps, { type: 'draft_discarded', draftId: draft.id, reason: 'agent discard' })
-      return resultOk({ summary: '草稿已删除' })
     },
   })
 
   const setSceneCode = defineTool({
     name: 'set_scene_code',
-    description:
-      '提交完整短代码的快捷方式（等价于写入临时草稿并立即 commit）。提交后必须运行渲染试运行；失败代码不会成为当前草稿。' +
-      '代码必须定义 build(ctx)/pose(t, mode)/dispose，使用 ctx.scene 和 ctx.camera，并把可见对象加入 ctx.scene。长代码请用 begin_scene_draft/append_scene_draft/commit_scene_draft。',
+    description: isFullHostMode(settings)
+      ? '提交完整短代码（restricted 档主路径；full_host 下优先在 job 写文件后 adopt_scene_from_job）。提交后必须 run_render。'
+      : '提交完整场景代码（长代码经服务端分片缓冲）。提交后必须 run_render。',
     schema: z.object({
       code: z.string().min(1).describe('完整 Blender Python 代码，必须定义 build/pose/dispose'),
     }),
     run: async ({ code }) => {
       const normalized = normalizeSceneCodeArg(code)
-      // 短代码快捷方式：没有草稿作用域（例如单测/旧调用）时直接走同一套准入。
-      if (!deps.draftScope) return applyCode(normalized)
+      if (!deps.draftScope || isFullHostMode(settings)) return applyCode(normalized)
       try {
         const scope = scopeOf()
         const state = await draftClient.begin(scope)
@@ -433,7 +273,13 @@ export function createSceneAgentTools(
     description: '用本机 Blender 渲染当前代码草稿的开头与结尾帧（试运行），返回能否渲染。',
     schema: z.object({}),
     run: async () => {
-      if (!session.code) return fail('还没有提交代码；先用 commit_scene_draft 或 set_scene_code')
+      if (!session.code) {
+        return fail(
+          isFullHostMode(settings)
+            ? '还没有提交代码；先在 job 内写好脚本并 adopt_scene_from_job，或使用 set_scene_code'
+            : '还没有提交代码；请先 set_scene_code',
+        )
+      }
       const trialDraftId =
         session.draft && session.codeDraftId === session.draft.id ? session.draft.id : undefined
       session.attempts++
@@ -580,7 +426,8 @@ export function createSceneAgentTools(
       }),
       defineTool({
         name: 'read_file',
-        description: '读取 agent job 目录内的文本文件（相对路径）。',
+        description:
+          '读取 agent job 目录内的文本文件（相对路径）。DCC 外置技能在 dcc-skills/<blender-*>/SKILL.md；索引 dcc-skills/INDEX.zh-CN.md；预演摘要 dcc-previs-pack.md。',
         schema: z.object({ path: z.string().min(1).max(512) }),
         run: async ({ path: filePath }) => {
           try {
@@ -609,7 +456,7 @@ export function createSceneAgentTools(
       }),
       defineTool({
         name: 'list_dir',
-        description: '列出 agent job 目录下的条目。',
+        description: '列出 agent job 目录下的条目（含 dcc-skills/ 外置 Blender 技能子目录）。',
         schema: z.object({ path: z.string().max(512).optional() }),
         run: async ({ path: dirPath }) => {
           try {
@@ -620,17 +467,35 @@ export function createSceneAgentTools(
           }
         },
       }),
+      defineTool({
+        name: 'adopt_scene_from_job',
+        description:
+          '从 agent job 目录读取相对路径下的场景脚本，静态准入后设为当前会话代码；不写项目。写完后须 run_render。',
+        schema: z.object({
+          path: z.string().min(1).max(512).describe('相对 job 根的路径，例如 scene/main.py'),
+        }),
+        run: async ({ path: filePath }) => {
+          try {
+            const content = await host.readFile(filePath)
+            const applied = await applyCode(normalizeSceneCodeArg(content))
+            if (!applied.ok) return fail(applied.error)
+            return {
+              ok: true as const,
+              path: filePath,
+              codeHash: applied.codeHash,
+              lineCount: applied.lineCount,
+              summary: `已从 ${filePath} 采纳 ${applied.lineCount} 行代码，等待渲染试运行`,
+            }
+          } catch (e) {
+            return fail(errMessage(e))
+          }
+        },
+      }),
     )
   }
 
   const tools = [
     getShotContext,
-    beginSceneDraft,
-    appendSceneDraft,
-    readSceneDraft,
-    patchSceneDraft,
-    commitSceneDraft,
-    discardSceneDraft,
     setSceneCode,
     runSandbox,
     captureFrames,

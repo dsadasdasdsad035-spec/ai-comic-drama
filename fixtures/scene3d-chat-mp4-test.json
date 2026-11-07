@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "description": "3D 聊天 → 代码门禁 → finish → MP4 验收 的固定测试镜头",
+  "projectAspect": "16:9",
+  "shotId": "E01-S01",
+  "seconds": 4,
+  "sceneCodeFixture": "fixtures/agent-duel-scene.py",
+  "userPrompt": "帮我做一段 4 秒预演：远处有山体背景，一男一女持剑对打，镜头缓慢环绕两人中点，始终让人物都在画面里。不要讲原理，直接出图。",
+  "requirements": [
+    "画面有山体或地形背景",
+    "画面有两个人物",
+    "两名人物可区分男女",
+    "两人各持一把剑",
+    "两人处于对打或攻防姿态",
+    "镜头位置随时间有环绕变化",
+    "镜头始终朝向两人，两人都在画面内"
+  ],
+  "mockAgentSummary": "山体、男女双剑对打与环绕镜头预演已完成",
+  "shot": {
+    "id": "E01-S01",
+    "episode": 1,
+    "no": "S01",
+    "scene_no": 1,
+    "scene_slug": "山顶对决",
+    "seconds": 4,
+    "size": "全景",
+    "move": "环绕",
+    "cast": ["陆青", "白露"],
+    "dialogue": "陆青：接招！\n白露：来！",
+    "keyframe_prompt": "远山环抱的山顶，蓝衣男子与红衣女子各持长剑对峙，环绕镜头",
+    "video_prompt": "4 秒环绕预演，剑击交锋，镜头绕两人中点旋转",
+    "shot_3d_context": {
+      "version": 1,
+      "characterIds": [],
+      "designIds": [],
+      "assetUrls": [],
+      "imageUrls": [],
+      "videoUrls": [],
+      "sceneKeys": ["E01-SC01"],
+      "text": {
+        "prompt": true,
+        "videoPrompt": true,
+        "dialogue": "all",
+        "cast": true,
+        "marks": false,
+        "sizeMove": true
+      }
+    }
+  },
+  "episodes": [
+    {
+      "no": 1,
+      "title": "MP4 聊天验收",
+      "scenes": [
+        {
+          "no": 1,
+          "slug": "山顶对决",
+          "place": "山顶",
+          "time": "黄昏",
+          "characters": ["陆青", "白露"]
+        }
+      ]
+    }
+  ]
+}

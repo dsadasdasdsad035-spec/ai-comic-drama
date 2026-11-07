@@ -1,9 +1,13 @@
 /**
+ * @deprecated 场景草稿工具已移除；请改用 node verify-scene3d-adopt.mjs（mock）或完整 3D 链路验收。
+ *
  * 长代码草稿 Playwright 验收：分片 begin/append → commit → 只读预览 → 真实试运行 →
  * 试运行通过后工作台代码更新 → 取消清理草稿。
  * 需要 dev server 与本机 Blender：
  *   APP_URL=http://127.0.0.1:5274 node verify-agent-draft.mjs
  */
+console.log('⏭ verify-agent-draft 已废弃（scene-draft 工具已下线）。请运行：node verify-scene3d-adopt.mjs')
+process.exit(0)
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'

@@ -17,7 +17,7 @@ type Props = {
   onOpenTransition?: (edgeId: string) => void
 }
 
-type Kind = 'voice' | 'sub'
+type Kind = 'sub'
 
 type Clip = {
   id: string
@@ -123,11 +123,6 @@ export default function Timeline({
     return out
   }, [total, zoom])
 
-  const overflow = useMemo(
-    () => clips.filter((c) => c.voiceUrl && c.voiceSec > c.dur + 0.2).length,
-    [clips],
-  )
-
   const startDrag = (e: React.PointerEvent, clip: Clip, kind: Kind) => {
     e.stopPropagation()
     e.preventDefault()
@@ -158,14 +153,8 @@ export default function Timeline({
     const clip = clips.find((c) => c.id === d.id)
     if (!clip || Math.abs(deltaSec) < 0.1) return
 
-    if (d.kind === 'voice') {
-      // 允许负偏移（台词提前），但不能跑到 0 之前
-      const next = Math.max(-clip.start, snap(clip.voiceOffset + deltaSec))
-      onPatch(clip.id, { voiceOffset: next })
-    } else {
-      const next = Math.max(-clip.start, snap(clip.subOffset + deltaSec))
-      onPatch(clip.id, { subOffset: next })
-    }
+    const next = Math.max(-clip.start, snap(clip.subOffset + deltaSec))
+    onPatch(clip.id, { subOffset: next })
   }, [live, clips, zoom, onPatch])
 
   if (clips.length === 0) return null
@@ -185,7 +174,6 @@ export default function Timeline({
           {clips.length} 镜{edit.transitions ? ` · ${edit.transitions} 转场` : ''} · <b>{total.toFixed(1)}s</b>
         </span>
         <span className="ntl-order" title="播放顺序按镜号，拖动不改顺序">按镜号</span>
-        {overflow > 0 && <span className="ntl-warn">{overflow} 条配音超出镜头</span>}
         {edit.inactive.length > 0 && (
           <span className="ntl-warn">{edit.inactive.length} 条转场未参与</span>
         )}
@@ -210,7 +198,7 @@ export default function Timeline({
       {open && <div className="ntl-body">
         <div className="ntl-labels">
           <div className="ntl-ruler-gap" />
-          {['画面', '配音', '字幕', '角色', '提示词'].map((t) => (
+          {['画面', '字幕', '角色', '提示词'].map((t) => (
             <div key={t} className="ntl-label" style={{ height: TRACK_H }}>
               {t}
             </div>
@@ -271,36 +259,6 @@ export default function Timeline({
                   <span className="ntl-clip-t">转场</span>
                 </button>
               ))}
-            </div>
-
-            {/* 配音轨：宽度是音频真实时长，可左右拖改偏移 */}
-            <div className="ntl-track" style={{ height: TRACK_H }}>
-              {clips
-                .filter((c) => c.voiceUrl)
-                .map((c) => {
-                  const shift = live?.kind === 'voice' && live.id === c.id ? live.dx : 0
-                  return (
-                    <button
-                      key={c.id}
-                      className={`ntl-clip voice ${c.voiceSec > c.dur + 0.2 ? 'over' : ''} ${
-                        activeId === c.id ? 'on' : ''
-                      }`}
-                      style={{
-                        left: px(Math.max(0, c.start + c.voiceOffset), zoom) + shift,
-                        width: Math.max(14, px(c.voiceSec || 1, zoom)),
-                      }}
-                      onPointerDown={(e) => startDrag(e, c, 'voice')}
-                      onPointerMove={onDragMove}
-                      onPointerUp={endDrag}
-                      onPointerCancel={endDrag}
-                      title={`${c.no} 配音 ${c.voiceSec.toFixed(1)}s${
-                        c.voiceOffset ? ` · 偏移 ${c.voiceOffset}s` : ''
-                      }（左右拖动改偏移）`}
-                    >
-                      <span className="ntl-clip-t">{c.voiceSec.toFixed(1)}s</span>
-                    </button>
-                  )
-                })}
             </div>
 
             {/* 字幕轨：每条 cue 一个块；拖动仍作为整镜 subOffset */}

@@ -303,7 +303,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
   const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
-  const [agentHostMode, setAgentHostMode] = useState<AgentHostMode>('restricted')
+  const [agentHostMode, setAgentHostMode] = useState<AgentHostMode>('full_host')
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
   const [stock, setStock] = useState<StockSettings>({ providers: {} })
   const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
@@ -1216,11 +1216,11 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
             value={agentHostMode}
             onChange={(e) => setAgentHostMode(normalizeAgentHostMode(e.target.value))}
           >
-            <option value="restricted">restricted（仅代码/渲染工具）</option>
-            <option value="full_host">full_host（含 job 沙箱内 bash/文件）</option>
+            <option value="full_host">full_host（默认：job 沙箱 bash/文件 + adopt）</option>
+            <option value="restricted">restricted（仅 set_scene_code，无 shell）</option>
           </select>
           <em>
-            full_host 会在本机执行 shell，仅建议在信任环境开启；写入项目仍须 run_render 与 finish。
+            full_host 在本机 job 沙箱执行 shell；写入项目仍须 adopt（或 set_scene_code）与 run_render、finish。
           </em>
         </label>
       </div>

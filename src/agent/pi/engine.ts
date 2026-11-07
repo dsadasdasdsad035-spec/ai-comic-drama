@@ -179,10 +179,7 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
       if (session.finished || session.terminalError) return { action: 'end' }
       if (turns >= MAX_TURNS) return { action: 'end' }
       if (turn.message.stopReason === 'error' || turn.message.stopReason === 'aborted') return undefined
-      if (session.attempts >= DEFAULT_AGENT_LIMITS.maxCodeAttempts && !session.trial?.ok) {
-        session.terminalError = `代码修复达到 ${DEFAULT_AGENT_LIMITS.maxCodeAttempts} 次上限`
-        return { action: 'end' }
-      }
+      // 试跑次数仅作审计；不因 maxCodeAttempts 提前结束，避免尚未修完就停（总时长与 MAX_TURNS 仍兜底）。
       if (
         session.reviewAttempts >= DEFAULT_AGENT_LIMITS.maxReviewAttempts &&
         session.review &&
