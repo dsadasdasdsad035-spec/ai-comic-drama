@@ -118,7 +118,6 @@ export function buildVideoPayload({
   const refs = (Array.isArray(referenceImages) ? referenceImages : [])
     .map(String)
     .filter(Boolean)
-    .slice(0, 4)
   const vids = (Array.isArray(referenceVideos) ? referenceVideos : [])
     .map(String)
     .filter(Boolean)

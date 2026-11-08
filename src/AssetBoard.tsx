@@ -18,6 +18,13 @@ import {
   pickExtractedDesigns,
 } from './designExtract'
 import { CapModelSelect, hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
+import { CharacterImageCropModal } from './CharacterImageCropModal'
+import type { MaterialCropPlan } from './imageMaterialCrop'
+import {
+  materialUploadGateFromFile,
+  materialUploadGateFromUrl,
+  releaseMaterialCropPlan,
+} from './materialImageGate'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
 import {
@@ -91,6 +98,13 @@ export default function AssetBoard({
   const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [cropPending, setCropPending] = useState<{
+    designId: string
+    plan: MaterialCropPlan
+    pendingUrls?: string[]
+    candIdx?: number
+  } | null>(null)
+  const [cropBusy, setCropBusy] = useState(false)
   const designsRef = useRef(designs)
   const savedSigRef = useRef('')
   const epochRef = useRef(0)
@@ -437,12 +451,17 @@ export default function AssetBoard({
         project: projectName,
       })
       const urls = res.urls?.length ? res.urls : [res.url]
+      const gate = await materialUploadGateFromUrl(urls[0], 'design-gen')
+      if (gate.mode === 'crop') {
+        setCropPending({ designId: d.id, plan: gate.plan, pendingUrls: urls })
+        endTask(tid)
+        return
+      }
       const next = designsRef.current.map((x) =>
         x.id === d.id ? { ...x, candidates: urls, activeIdx: 0, image: urls[0] } : x,
       )
       designsRef.current = next
       setDesigns(next)
-      // 立即落库：生成后马上刷新也不会丢；失败时保留防抖重试
       const sig = JSON.stringify(next)
       patchProject(projectName, { designs: next })
         .then(() => {
@@ -463,9 +482,15 @@ export default function AssetBoard({
     }
   }
 
-  const chooseCandidate = (d: DesignSheet, idx: number) => {
+  const chooseCandidate = async (d: DesignSheet, idx: number) => {
     const url = d.candidates?.[idx]
-    if (url) updateDesign(d.id, { activeIdx: idx, image: url })
+    if (!url) return
+    const gate = await materialUploadGateFromUrl(url, 'design-cand')
+    if (gate.mode === 'crop') {
+      setCropPending({ designId: d.id, plan: gate.plan, candIdx: idx })
+      return
+    }
+    updateDesign(d.id, { activeIdx: idx, image: url })
   }
 
   /**
@@ -473,7 +498,7 @@ export default function AssetBoard({
    * 不依赖英文锚点 —— 手上已经有参考图的人不该被迫先生成一张。
    * 只有保存成功才写状态；失败时卡片保持原样，不留空图占位。
    */
-  const uploadDesignImage = async (d: DesignSheet, file: File) => {
+  const finishDesignUpload = async (d: DesignSheet, file: File) => {
     if (!projectName) {
       setErrors((x) => ({ ...x, [d.id]: '先选择项目再上传图片' }))
       return
@@ -505,6 +530,61 @@ export default function AssetBoard({
       toast(`已上传${KIND_LABEL[d.kind]}图：${d.name}`)
     } catch (e) {
       setErrors((x) => ({ ...x, [d.id]: (e as Error).message || '上传失败' }))
+    }
+  }
+
+  const uploadDesignImage = async (d: DesignSheet, file: File) => {
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      setErrors((x) => ({ ...x, [d.id]: gate.reason }))
+      return
+    }
+    if (gate.mode === 'crop') {
+      setCropPending({ designId: d.id, plan: gate.plan })
+      return
+    }
+    await finishDesignUpload(d, gate.file)
+  }
+
+  const persistDesignImageUrl = (designId: string, url: string, candidates: string[], activeIdx: number) => {
+    const next = designsRef.current.map((x) =>
+      x.id === designId ? { ...x, candidates, activeIdx, image: url } : x,
+    )
+    designsRef.current = next
+    setDesigns(next)
+    const sig = JSON.stringify(next)
+    patchProject(projectName, { designs: next })
+      .then(() => {
+        savedSigRef.current = sig
+      })
+      .catch((e) => toast((e as Error).message || '保存设定图失败'))
+  }
+
+  const confirmDesignCrop = async () => {
+    if (!cropPending || !projectName) return
+    const { designId, plan, pendingUrls, candIdx } = cropPending
+    const d = designsRef.current.find((x) => x.id === designId)
+    if (!d) return
+    setCropBusy(true)
+    try {
+      const file = plan.croppedFile
+      const url = await uploadImageFile(file, { project: projectName, prefix: `design-${d.kind}` })
+      if (pendingUrls) {
+        persistDesignImageUrl(designId, url, [url, ...pendingUrls.slice(1)], 0)
+        toast(`已裁切并保存${KIND_LABEL[d.kind]}图：${d.name}`)
+      } else if (candIdx !== undefined) {
+        const prev = [...(d.candidates ?? [])]
+        if (candIdx >= 0 && candIdx < prev.length) prev[candIdx] = url
+        persistDesignImageUrl(designId, url, prev, candIdx)
+      } else {
+        await finishDesignUpload(d, file)
+      }
+      releaseMaterialCropPlan(plan)
+      setCropPending(null)
+    } catch (e) {
+      setErrors((x) => ({ ...x, [designId]: (e as Error).message || '裁切上传失败' }))
+    } finally {
+      setCropBusy(false)
     }
   }
 
@@ -763,6 +843,23 @@ export default function AssetBoard({
           <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
         )}
       </WorkbenchChatAside>
+      <CharacterImageCropModal
+        open={Boolean(cropPending)}
+        title={
+          cropPending?.pendingUrls
+            ? '裁切生成的设定图'
+            : cropPending?.candIdx !== undefined
+              ? '裁切设定图候选'
+              : '裁切设定图'
+        }
+        plan={cropPending?.plan ?? null}
+        busy={cropBusy}
+        onConfirm={() => void confirmDesignCrop()}
+        onCancel={() => {
+          releaseMaterialCropPlan(cropPending?.plan)
+          setCropPending(null)
+        }}
+      />
       {mediaPicker.node}
     </div>
   )

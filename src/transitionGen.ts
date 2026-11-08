@@ -1,7 +1,7 @@
 import { extractFrames, type ModelEntry } from './api'
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
-import type { TransitionBoundary, TransitionGenerated } from './types'
+import type { TransitionBoundary, TransitionBridging, TransitionGenerated } from './types'
 import { assetMediaType } from './mediaPick'
 import { collectShotReferences, currentShotImage } from './shotReferences'
 import { normalizeGenerated } from './transition'
@@ -15,24 +15,24 @@ export type TransitionRef = {
 
 const frameCache = new Map<string, { start?: string; end?: string }>()
 
-/** 视频首帧/尾帧；同一 URL 只抽一次，失败不缓存硬错误 */
+/** 尾帧用负时间表示距片尾秒数（/api/frames → ffmpeg -sseof），避免按 duration seek 落空。 */
+const TAIL_FRAME_SSEOF_SEC = -0.1
+
+/** 视频首帧/尾帧；同一 URL 只抽一次；只缓存首尾都成功的结果，避免尾帧失败后永久回退静帧。 */
 async function videoFrames(url: string): Promise<{ start?: string; end?: string }> {
   const hit = frameCache.get(url)
-  if (hit) return hit
+  if (hit?.start && hit?.end) return hit
   try {
     const first = await extractFrames(url, 2, undefined, [0])
     let end: string | undefined
     try {
-      const dur = Number(first.duration) || 0
-      if (dur > 0.1) {
-        const last = await extractFrames(url, 2, undefined, [Math.max(0, dur - 0.05)])
-        end = last.urls[0]
-      }
+      const last = await extractFrames(url, 2, undefined, [TAIL_FRAME_SSEOF_SEC])
+      end = last.urls[0]
     } catch {
       end = undefined
     }
     const out = { start: first.urls[0], end }
-    frameCache.set(url, out)
+    if (out.start && out.end) frameCache.set(url, out)
     return out
   } catch {
     return {}
@@ -61,14 +61,21 @@ export async function ensureTransitionBoundary(
       outAt = undefined
     } else {
       warnings.push('上一镜尾帧抽取失败，暂用当前画面')
+      // 有成片时不沿用上次关键帧缓存的静帧，否则会一直显示 refImage
+      if (!outAt) out = undefined
     }
   }
   if (!out) out = currentShotImage(source.data)
 
   if (target.data.videoUrl) {
     const f = await videoFrames(String(target.data.videoUrl))
-    if (f.start) inn = f.start
-    else warnings.push('下一镜首帧抽取失败，暂用当前画面')
+    if (f.start) {
+      inn = f.start
+      inAt = undefined
+    } else {
+      warnings.push('下一镜首帧抽取失败，暂用当前画面')
+      if (!inAt) inn = undefined
+    }
   }
   if (!inn) inn = currentShotImage(target.data)
 
@@ -207,17 +214,150 @@ export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeTy
   )
 }
 
-export function transitionVideoPrompt(
+export function transitionSoundBlock(soundPrompt: string | undefined): string {
+  const t = String(soundPrompt || '').trim()
+  if (!t) return ''
+  return (
+    `\n\n声音：\n${t}\n` +
+    '（转场出片当前不支持音色参考音频；环境声仅靠上述描述，成片旁白请用「效果」叠化保留。）'
+  )
+}
+
+export function autoTransitionVideoPrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
   const g = normalizeGenerated(generated)
   const base = g.prompt.trim() || defaultTransitionPrompt(source, target)
-  return (
-    `${base}\n\n这是两个镜头之间的过渡片段：从上镜的落点自然过渡到下镜的起点，` +
-    '人物外观、服装、场景与光线保持一致，运动连续，不出现字幕、文字与水印。'
-  )
+  const tail =
+    g.bridging === 'morph'
+      ? '这是两个镜头之间的过渡片段：画面从上一镜结束瞬间变形到下一镜开始瞬间。' +
+        '允许环境明显变化（天气、光线、降水、雾气等），但角色外观、服装与空间逻辑需连贯；运动连续自然，不出现字幕、文字与水印。'
+      : '这是两个镜头之间的过渡片段：从上镜的落点自然过渡到下镜的起点，人物外观、服装、场景与光线保持一致，运动连续，不出现字幕、文字与水印。'
+  return `${base}\n\n${tail}${transitionSoundBlock(g.soundPrompt)}`
+}
+
+/** @deprecated 用 autoTransitionVideoPrompt / effectiveTransitionVideoPrompt */
+export function transitionVideoPrompt(
+  source: ShotNodeType,
+  target: ShotNodeType,
+  generated: TransitionGenerated | undefined,
+): string {
+  return autoTransitionVideoPrompt(source, target, generated)
+}
+
+export function effectiveTransitionVideoPrompt(
+  source: ShotNodeType,
+  target: ShotNodeType,
+  generated: TransitionGenerated | undefined,
+): { text: string; source: 'auto' | 'override' } {
+  const g = normalizeGenerated(generated)
+  const override = g.videoPromptOverride?.trim()
+  if (override) return { text: override, source: 'override' }
+  return { text: autoTransitionVideoPrompt(source, target, g), source: 'auto' }
+}
+
+export type TransitionAttachmentRole = 'first_frame' | 'last_frame' | 'keyframe'
+
+export type TransitionVideoPreviewAttachment = {
+  role: TransitionAttachmentRole
+  label: string
+  url?: string
+  purpose: string
+}
+
+export type TransitionVideoPreview = {
+  bridging: TransitionBridging
+  seconds: number
+  requestSeconds: number
+  trimTo?: number
+  supportsLastFrame: boolean
+  modelLabel?: string
+  attachments: TransitionVideoPreviewAttachment[]
+  audio: {
+    mode: 'none'
+    label: string
+    detail: string
+  }
+  visualPrompt: string
+  soundPrompt: string
+  prompt: string
+  promptSource: 'auto' | 'override'
+  blocking: string[]
+  warnings: string[]
+}
+
+export function buildTransitionVideoPreview(input: {
+  source: ShotNodeType
+  target: ShotNodeType
+  generated: TransitionGenerated | undefined
+  model?: { label?: string; model?: string; features?: { lastFrame?: boolean } } | null
+}): TransitionVideoPreview {
+  const g = normalizeGenerated(input.generated)
+  const supportsLastFrame = Boolean(input.model?.features?.lastFrame)
+  const req = transitionRequestSeconds(g.targetSeconds, input.model?.model, supportsLastFrame)
+  const effective = effectiveTransitionVideoPrompt(input.source, input.target, g)
+  const legacyKeyframe =
+    g.bridging === 'keyframe' ? g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0] : undefined
+  const bridging = legacyKeyframe ? 'keyframe' : 'morph'
+  const attachments: TransitionVideoPreviewAttachment[] = []
+  const blocking: string[] = []
+  const warnings: string[] = []
+
+  if (bridging === 'morph') {
+    if (g.boundary?.out) {
+      attachments.push({
+        role: 'first_frame',
+        label: '首帧 · 上一镜尾帧',
+        url: g.boundary.out,
+        purpose: '锁定过渡起点',
+      })
+    }
+    if (g.boundary?.in) {
+      attachments.push({
+        role: 'last_frame',
+        label: '尾帧 · 下一镜首帧',
+        url: g.boundary.in,
+        purpose: '锁定过渡终点',
+      })
+    }
+    if (!g.boundary?.out || !g.boundary?.in) {
+      blocking.push('缺少上一镜尾帧或下一镜首帧，请刷新边界或先给两镜出成片/静帧')
+    }
+    if (!supportsLastFrame) {
+      blocking.push('当前出片模型不支持尾帧，无法首尾直变（请选 Seedance 2.5 或 Kling v3）')
+    }
+  } else if (legacyKeyframe) {
+    attachments.push({
+      role: 'keyframe',
+      label: '首帧 · 旧版过渡关键帧',
+      url: legacyKeyframe,
+      purpose: '历史项目兼容',
+    })
+    warnings.push('当前为旧版关键帧首帧模式，新转场建议删除关键帧并改用首尾直变')
+  }
+
+  return {
+    bridging,
+    seconds: g.targetSeconds,
+    requestSeconds: req.seconds,
+    ...(req.trimTo ? { trimTo: req.trimTo } : {}),
+    supportsLastFrame,
+    modelLabel: input.model?.label,
+    attachments,
+    audio: {
+      mode: 'none',
+      label: '无参考音频',
+      detail: '转场出片与原生音色参考互斥；环境声请写在「声音描述」里',
+    },
+    visualPrompt: g.prompt,
+    soundPrompt: g.soundPrompt ?? '',
+    prompt: effective.text,
+    promptSource: effective.source,
+    blocking,
+    warnings,
+  }
 }
 
 /** 与 server/video.mjs 的 videoCapsFor 对齐的客户端下限（用于请求时长与提示） */
@@ -246,14 +386,19 @@ export function transitionRequestSeconds(
   return { seconds: Math.max(min, Math.ceil(target + 0.6)), trimTo: target }
 }
 
-/** 关键帧提示词：面板留空时用上一镜/下一镜的提示词兜底 */
+/** 关键帧提示词：面板留空时用上一镜/下一镜的提示词兜底；边界帧由文案描述，不拼进参考图 */
 export function keyframePrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
   const g = normalizeGenerated(generated)
-  return g.prompt.trim() || defaultTransitionPrompt(source, target)
+  const custom = g.prompt.trim()
+  if (custom) return custom
+  const base = defaultTransitionPrompt(source, target)
+  return (
+    `${base}\n单幅过渡画面，不要分屏或左右拼接；从上一镜结束态自然衔接到下一镜开始态。`
+  )
 }
 
 /** 关键帧参考上限（Seedream 多图参考 10 张） */

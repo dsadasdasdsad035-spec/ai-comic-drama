@@ -298,10 +298,8 @@ export function collectVideoReferences(input: {
     if (!rid.startsWith('asset-')) continue
     const asset = input.nodes.find((n) => n.id === rid)
     const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-    if (!d) {
-      addMissing(missing, rid, `素材「${rid}」`, '素材节点不存在')
-      continue
-    }
+    // 图片类素材走 collectShotReferences；删卡后 refIds 常残留，此处不因悬空 id 阻止出片
+    if (!d) continue
     if (assetMediaType((d.kind || 'image') as never, String(d.url || '')) !== 'video') continue
     const title = d.title || '未命名'
     if (!d.url) {

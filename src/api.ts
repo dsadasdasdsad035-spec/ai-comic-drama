@@ -174,6 +174,8 @@ export type VideoOpts = {
     boundaryOut?: string
     boundaryIn?: string
     keyframe?: string
+    /** keyframe | morph；morph 时首帧=上一镜尾、尾帧=下一镜首 */
+    bridging?: 'keyframe' | 'morph'
   }
   prompt: string
   seconds: number

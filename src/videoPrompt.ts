@@ -17,6 +17,7 @@ import {
   type ResolvedVideoReference,
 } from './shotReferences'
 import type { ShotData, VideoPromptOverride } from './types'
+import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
 
 export type VideoRequestMode = 'first' | 'ref' | 'video' | 'native'
 
@@ -46,7 +47,7 @@ export type ShotVideoRequest = {
   firstFrame: { url: string; label: string; purpose: string } | null
   video: VideoAttachment | null
   audio: VideoAttachment | null
-  /** 超过 4 张额度而被省略的图片 */
+  /** 超过客户端上限而被省略的图片（默认不限） */
   omitted: { label: string; reason: string }[]
   /** 首期只使用第一条视频素材，其余在这里说明 */
   omittedVideos: { label: string; reason: string }[]
@@ -83,7 +84,7 @@ function purposeOf(ref: ResolvedShotReference): string {
   return '参考外观'
 }
 
-/** 当前画面优先，再按共享解析器顺序；调度关键帧不再进入图片参考。 */
+/** 仅解析画布连线（角色/素材/相邻/手工）；镜上静帧预览不参与视频参考。 */
 function collectComposerRefs(input: {
   data: ShotData
   nodeId: string
@@ -108,10 +109,6 @@ function collectComposerRefs(input: {
     seen.add(ref.url)
     refs.push(ref)
   }
-  if (input.data.refImage) {
-    push({ url: input.data.refImage, label: '当前画面构图', kind: 'current', purpose: '画风/构图' })
-  }
-
   // 表情默认不参与视频；显式开启时只取说话角色一张，放在身份/场景之后。
   const speaker = (input.data.performance ?? []).find((p) => p.speaks)?.character
   const expression = input.data.useExpressionRef && speaker
@@ -172,7 +169,6 @@ function fingerprintOf(input: {
       mode: input.mode,
       refs: input.candidates.map((r) => [r.kind, r.url, r.label]),
       used: input.refs.map((r) => r.url),
-      current: input.data.refImage || '',
       motion: input.motion,
       textSource: input.textSource,
       motionNote: input.motionNote,
@@ -240,10 +236,14 @@ export function buildShotVideoRequest(input: {
     label: r.label,
     reason: '首期只使用第一条视频素材',
   }))
-  const limited = candidates.slice(0, 4)
-  const omitted = candidates.slice(4).map((r) => ({
+  const cap = VIDEO_REFERENCE_IMAGE_LIMIT
+  const { used: limited, omitted: omittedRaw } = limitVideoReferenceImages(candidates, cap)
+  const omitted = omittedRaw.map((r) => ({
     label: r.label,
-    reason: r.kind === 'expression' ? '表情参考因参考图 4 张上限省略' : '超过参考图 4 张上限',
+    reason:
+      r.kind === 'expression'
+        ? `表情参考因参考图已达上限（${videoRefLimitLabel(cap)}）省略`
+        : `超过参考图上限（${videoRefLimitLabel(cap)}）`,
   }))
 
   const motion = (d.videoPrompt || d.prompt).trim()
@@ -280,11 +280,7 @@ export function buildShotVideoRequest(input: {
         ? 'ref'
         : 'first'
 
-  // 原生音频没有参考图时，原逻辑会用当前画面兜底成一个 reference_image。
-  const effective = nativeMode && limited.length === 0 && d.refImage
-    ? [{ url: d.refImage, label: '当前画面构图', kind: 'current' as const, purpose: '画风/构图' }]
-    : limited
-  const refs: VideoAttachment[] = effective.map((r, i) => ({
+  const refs: VideoAttachment[] = limited.map((r, i) => ({
     slot: 'image',
     index: i + 1,
     url: r.url,
@@ -292,10 +288,7 @@ export function buildShotVideoRequest(input: {
     purpose: r.purpose,
     source: r.kind,
   }))
-  const firstFrame =
-    !nativeMode && !primaryVideo && refs.length === 0 && d.refImage
-      ? { url: d.refImage, label: '当前画面构图', purpose: '画风/构图' }
-      : null
+  const firstFrame = null
   const video: VideoAttachment | null = primaryVideo
     ? {
         slot: 'video',
@@ -319,6 +312,16 @@ export function buildShotVideoRequest(input: {
       : null
 
   const warnings: VideoRequestIssue[] = []
+  const orphanAssets = (d.refIds ?? []).filter(
+    (rid) => rid.startsWith('asset-') && !input.nodes.some((n) => n.id === rid),
+  )
+  if (orphanAssets.length) {
+    warnings.push({
+      code: 'ref-orphan-asset',
+      level: 'warn',
+      message: `有 ${orphanAssets.length} 条素材连线指向已删除的素材卡，已忽略；选中镜头后删参考连线或保存项目前清理 refIds`,
+    })
+  }
   const blocking: VideoRequestIssue[] = []
   for (const m of videoCollection.missing) {
     blocking.push({
@@ -349,16 +352,6 @@ export function buildShotVideoRequest(input: {
     })
   }
 
-  const identityCount = candidates.filter((r) => r.kind === 'character').length
-  const currentCount = candidates.filter((r) => r.kind === 'current').length
-  if (identityCount + currentCount > 4) {
-    blocking.push({
-      code: 'reference-overflow-identity',
-      level: 'error',
-      message: `当前画面 + ${identityCount} 张角色身份图超过 4 张参考上限，请减少入画角色或拆镜`,
-    })
-  }
-
   const invalidNeighbor = missing.find((m) => m.token === SHOT_PREV || m.token === SHOT_NEXT)
   if (invalidNeighbor) {
     blocking.push({
@@ -381,14 +374,14 @@ export function buildShotVideoRequest(input: {
     blocking.push({
       code: 'no-image',
       level: 'error',
-      message: '先出画面，或在画布上连线一张参考图/视频素材',
+      message: '在画布上为分镜连线角色或图片素材，或连线视频素材后再出片',
     })
   }
   if (nativeMode && refs.length === 0) {
     blocking.push({
       code: 'native-no-image',
       level: 'error',
-      message: '原生音频需要一张关键帧/参考图',
+      message: '原生音频需要至少一张连线参考图（角色、素材或相邻镜）',
     })
   }
 

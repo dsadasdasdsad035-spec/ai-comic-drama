@@ -9,6 +9,8 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { buildVideoPayload } from './server/video.mjs'
 import {
   FileError,
@@ -263,7 +265,35 @@ const eTimeout = await capture(async () =>
 )
 check('轮询超时', eTimeout instanceof FileError && eTimeout.kind === 'timeout', eTimeout?.message)
 
+// ---- 4. 拼装器：镜上静帧不进 reference_image ----
+const rootDir = path.dirname(fileURLToPath(import.meta.url))
+const vpTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-vp-'))
+const vpEntry = path.join(vpTmp, 'vp.ts')
+fs.writeFileSync(vpEntry, `export * from ${JSON.stringify(path.join(rootDir, 'src/videoPrompt.ts'))}`)
+const vpBundle = path.join(vpTmp, 'vp.mjs')
+execFileSync(path.join(rootDir, 'node_modules/.bin/esbuild'), [
+  vpEntry,
+  '--bundle',
+  '--platform=node',
+  '--format=esm',
+  `--outfile=${vpBundle}`,
+  '--log-level=error',
+])
+const vp = await import(vpBundle)
+const sched = { scene: null, blocking: null, duration: 5, ready: false, status: '', reason: '' }
+const data = { no: 'S01', seconds: 5, size: '中景', move: '固定', dialogue: '', prompt: '', marks: [], refImage: '/x.png', refIds: [] }
+const vpReq = vp.buildShotVideoRequest({
+  data,
+  nodeId: 'n',
+  nodes: [{ id: 'n', type: 'shot', data }],
+  characters: [],
+  schedule: sched,
+})
+check('仅 refImage 时无 current 槽位', !vpReq.refs.some((r) => r.label.includes('当前画面')))
+fs.rmSync(vpTmp, { recursive: true, force: true })
+
 await new Promise((resolve) => server.close(resolve))
 fs.rmSync(tmp, { recursive: true, force: true })
+
 console.log(bad === 0 ? '\n全部通过' : `\n${bad} 项失败`)
 process.exit(bad === 0 ? 0 : 1)

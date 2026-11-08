@@ -185,9 +185,18 @@ export type TransitionVideo = {
   at?: number
 }
 
+/** keyframe：过渡关键帧→下一镜首帧；morph：上一镜尾帧→下一镜首帧（天气变化等大跨度） */
+export type TransitionBridging = 'keyframe' | 'morph'
+
 export type TransitionGenerated = {
   targetSeconds: number
   prompt: string
+  /** 环境/天气/音效描述，拼进出片正文（无 reference audio 时的唯一声音控制） */
+  soundPrompt?: string
+  /** 手改后的完整出片正文；有值时优先于自动拼装 */
+  videoPromptOverride?: string
+  /** 生成转场视频的锚点策略，默认 keyframe */
+  bridging?: TransitionBridging
   /** 默认继承相邻两镜已连的角色/素材参考 */
   inheritRefs: boolean
   /** 额外补充的参考 token（char-* / asset-* / extra:*） */

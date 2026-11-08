@@ -96,7 +96,7 @@ import {
 } from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
-import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, resolveNeighborToken, SHOT_NEXT, SHOT_PREV } from './shotReferences'
+import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, SHOT_NEXT, SHOT_PREV } from './shotReferences'
 import { resolveShotSchedule } from './scheduleStatus'
 import { buildShotVideoRequest, effectiveVideoPrompt, type VideoModelInput } from './videoPrompt'
 import { type Ask } from './scheduleAI'
@@ -119,13 +119,10 @@ import {
   transitionSummary,
 } from './transition'
 import {
-  clampKeyframeRefs,
-  effectiveTransitionRefs,
   ensureTransitionBoundary,
-  keyframePrompt,
   modelSupportsLastFrame,
+  effectiveTransitionVideoPrompt,
   transitionRequestSeconds,
-  transitionVideoPrompt,
 } from './transitionGen'
 
 const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
@@ -771,6 +768,38 @@ function Shell() {
    * 角色 id 就是名字 → 改名/删除时连线要跟着迁移。
    * 画布只加载了当前集的卡片，所以除了改内存节点，还得改后端 shots 上的 refIds。
    */
+  /** 从全部镜头 refIds 移除引用（画布内存 + 项目 shots 落库） */
+  const purgeRefIds = useCallback(
+    async (tokens: string[]) => {
+      const drop = new Set(tokens.filter(Boolean))
+      if (!drop.size) return
+      setNodes((ns) =>
+        ns.map((n) => {
+          const cur = (n.data as unknown as { refIds?: string[] }).refIds
+          if (!cur?.some((x) => drop.has(x))) return n
+          return {
+            ...n,
+            data: { ...n.data, refIds: cur.filter((x) => !drop.has(x)) },
+          } as typeof n
+        }),
+      )
+      setSelRef(null)
+      try {
+        const p = await getProject(projectName)
+        const changed = (p.shots ?? [])
+          .filter((s) => (s.refIds ?? []).some((x) => drop.has(x)))
+          .map((s) => ({
+            ...s,
+            refIds: (s.refIds ?? []).filter((x) => !drop.has(x)),
+          }))
+        if (changed.length) await mergeProjectShots(projectName, changed)
+      } catch {
+        /* 落库失败不阻塞删卡；下次打开仍可从 refIds 看到旧值 */
+      }
+    },
+    [projectName],
+  )
+
   const migrateCharRefs = useCallback(
     async (from: string, to: string | null, dropTokens: string[] = []) => {
       const rid = `char-${from}`
@@ -1264,6 +1293,13 @@ function Shell() {
   }
 
   const removeShot = (id: string) => {
+    const node = nodesRef.current.find((n) => n.id === id)
+    const isAsset = (node as unknown as { type?: string })?.type === 'asset'
+    if (isAsset) {
+      void purgeRefIds([id])
+      setToast('已删除素材卡，相关镜头参考连线已解除')
+      window.setTimeout(() => setToast(''), 2600)
+    }
     setNodes((ns) => ns.filter((n) => n.id !== id))
     setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
     setSelId(null)
@@ -1562,7 +1598,7 @@ function Shell() {
         headSub: '点选画布中的卡片作为参考图',
         sectionTitle: '参考画布里的卡片',
         emptyText: '画布上还没有可用作参考的图：先加素材卡，或给角色生成图',
-        hint: '上一镜/下一镜只取当前画面；多选可叠加，再点一次取消。「首帧」= 直接用这张图出片。',
+        hint: '上一镜/下一镜取邻镜静帧；多选可叠加，再点一次取消。出片仅认连线，不自动用本镜预览图。',
         items: [
           ...neighborReferenceItems(node as ShotNodeType, shownNodes as ShotNodeType[]).map((c) => ({
             ...c,
@@ -1581,7 +1617,7 @@ function Shell() {
       headSub: '点选镜头即建立参考连线',
       sectionTitle: '连到画布里的镜头',
       emptyText: '画布上还没有分镜卡',
-      hint: '连线后，生成画面 / 出片都会带上这张图。',
+      hint: '连线后，出片与出图（多参考）会使用该图；须先连线再出片。',
       items: shownNodes.map((n) => ({
         id: n.id,
         title: `${n.data.no}${n.data.size ? ' · ' + n.data.size : ''}`,
@@ -1604,20 +1640,22 @@ function Shell() {
     [patch],
   )
 
-  /** 直接用这张图当首帧（出片参考），省掉手填 URL */
+  /** 右键「连线」：把该参考写入分镜 refIds（出片只认连线，不写 refImage） */
   const useAsFirstFrame = useCallback(
     (shotNodeId: string, sourceId: string) => {
-      const node = nodesRef.current.find((n) => n.id === shotNodeId)
-      const neighbor = node ? resolveNeighborToken(node, shownNodes as ShotNodeType[], sourceId) : null
-      const card = neighbor
-        ? { title: neighbor.label, img: neighbor.url }
-        : refCards.find((c) => c.id === sourceId)
-      if (!card?.img) return
-      patch(shotNodeId, { refImage: card.img, videoUrl: undefined, vidState: 'idle' } as never)
-      setToast(`已用「${card.title}」做首帧`)
+      const t = nodesRef.current.find((n) => n.id === shotNodeId)
+      if (!t) return
+      const cur = (t.data as unknown as { refIds?: string[] }).refIds ?? []
+      if (cur.includes(sourceId)) {
+        setToast('该参考已连线')
+        window.setTimeout(() => setToast(''), 2000)
+        return
+      }
+      toggleRef(shotNodeId, sourceId)
+      setToast('已加入视频出片参考连线')
       window.setTimeout(() => setToast(''), 2000)
     },
-    [patch, refCards, shownNodes],
+    [toggleRef],
   )
 
   /** 其他集各有多少张卡：当前集为空时用来提示「不是丢了，是切集了」 */
@@ -2141,6 +2179,10 @@ function Shell() {
         patch(id, { genState: 'error', genError: '请先填写画面提示词' })
         return
       }
+      if (!projectName) {
+        patch(id, { genState: 'error', genError: '先选择项目再生成图片' })
+        return
+      }
       if (opts.signal?.aborted) return
       const controller = new AbortController()
       const onExternalAbort = () => controller.abort()
@@ -2166,7 +2208,7 @@ function Shell() {
             ref = node.data.refImage
           }
         }
-        // 角色/相邻分镜/素材统一由共享解析器排序；当前画面由 ref 单独占图1。
+        // 角色/相邻分镜/素材统一由共享解析器排序；当前镜预览 ref 仅作 Seedream 输入，不占视频 slot。
         const collected = collectShotReferences({
           node,
           nodes: nodesRef.current,
@@ -2197,6 +2239,7 @@ function Shell() {
           refImages: extraRefs,
           n: candCount,
           modelKey: modelPick.image,
+          project: projectName,
         }, { signal: controller.signal })
         if (!current()) return
         const urls = res.urls?.length ? res.urls : [res.url]
@@ -2231,7 +2274,7 @@ function Shell() {
         if (current()) activeImgRef.current.delete(id)
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia, cancelGenerate],
+    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia, cancelGenerate, projectName],
   )
 
   /**
@@ -2269,7 +2312,7 @@ function Shell() {
       }
       const omittedNotes = [
         request.omitted.length
-          ? `参考图最多 4 张，已省略：${request.omitted.map((r) => r.label).join('、')}`
+          ? `部分参考图未送出，已省略：${request.omitted.map((r) => r.label).join('、')}`
           : '',
         request.omittedVideos.length
           ? `首期只使用第一条视频素材，已忽略：${request.omittedVideos.map((r) => r.label).join('、')}`
@@ -2393,118 +2436,33 @@ function Shell() {
     [edges],
   )
 
-  const generateTransitionKeyframe = useCallback(
+  const refreshTransitionBoundary = useCallback(
     async (edgeId: string) => {
       const pair = transitionPair(edgeId)
       if (!pair) return
       const { source, target, to } = pair
       const base = normalizeTransitionOut(source.data.transitionOut, to)
       const g = normalizeGenerated(base.generated)
-      if (g.keyframe?.state === 'running') return
-      if (!source.data.shotId) {
-        setToast('这张镜头卡没有业务 ID，转场配置只存在画布，无法写回项目')
-        window.setTimeout(() => setToast(''), 3600)
-      }
-      writeTransition(source.id, to, (cur) => ({
-        ...cur,
-        mode: 'generated',
-        generated: {
-          ...normalizeGenerated(cur.generated),
-          keyframe: {
-            ...(cur.generated?.keyframe ?? { candidates: [] }),
-            state: 'running',
-            error: undefined,
-          },
-        },
-      }))
-      const tid = startTask('image', '转场关键帧', { cost: imageCost(price, 1) })
       try {
         const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
-        const missing = [
-          ...collectShotReferences({ node: source, nodes: nodesRef.current, characters, missingMedia }).missing,
-          ...collectShotReferences({ node: target, nodes: nodesRef.current, characters, missingMedia }).missing,
-        ].map((m) => `${m.label}：${m.reason}`)
-        const refs = effectiveTransitionRefs(
-          source,
-          target,
-          nodesRef.current,
-          characters,
-          missingMedia,
-          g,
-        )
-        const limited = clampKeyframeRefs([
-          boundary.out || '',
-          boundary.in || '',
-          ...refs.map((r) => r.url),
-        ])
-        if (limited.urls.length === 0) throw new Error('没有可用的参考图，先给相邻镜头出画面')
-        const prompt = keyframePrompt(source, target, g)
-        const res = await generateImage({
-          prompt,
-          ratio: projectAspect,
-          refImages: limited.urls,
-          n: 1,
-          modelKey: modelPick.image,
-          ...(projectName ? { project: projectName } : {}),
-        })
-        const urls = res.urls?.length ? res.urls : [res.url]
-        const keyframe = {
-          candidates: urls,
-          activeIdx: 0,
-          image: urls[0],
-          prompt,
-          state: 'idle' as const,
-        }
-        writeTransition(source.id, to, (cur) => {
-          const generated = { ...normalizeGenerated(cur.generated), boundary, keyframe }
-          return {
-            ...cur,
-            mode: 'generated',
-            generated,
-            meta: {
-              fingerprint: transitionFingerprint(source.data, target.data, generated),
-              modelKey: modelPick.image,
-              createdAt: new Date().toISOString(),
-            },
-          }
-        })
-        endTask(tid)
-        if (missing.length) {
-          setToast(`参考图缺失：${missing.slice(0, 3).join('；')}`)
-          window.setTimeout(() => setToast(''), 4200)
-        } else if (warnings.length) {
-          setToast(warnings.join('；'))
-          window.setTimeout(() => setToast(''), 4200)
-        } else if (limited.omitted > 0) {
-          setToast(`参考图超过 10 张，已省略 ${limited.omitted} 张`)
-          window.setTimeout(() => setToast(''), 3200)
-        }
-      } catch (e) {
-        const message = (e as Error).message || '关键帧生成失败'
         writeTransition(source.id, to, (cur) => ({
           ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            keyframe: {
-              ...(cur.generated?.keyframe ?? { candidates: [] }),
-              state: 'error',
-              error: message,
-            },
-          },
+          mode: 'generated',
+          generated: { ...normalizeGenerated(cur.generated), boundary, bridging: 'morph' },
         }))
-        endTask(tid, message)
+        if (warnings.length) {
+          setToast(warnings.join('；'))
+          window.setTimeout(() => setToast(''), 4200)
+        } else {
+          setToast('已刷新上下镜边界帧')
+          window.setTimeout(() => setToast(''), 2200)
+        }
+      } catch (e) {
+        setToast((e as Error).message || '边界帧刷新失败')
+        window.setTimeout(() => setToast(''), 3600)
       }
     },
-    [
-      transitionPair,
-      writeTransition,
-      characters,
-      missingMedia,
-      projectAspect,
-      modelPick,
-      projectName,
-      price,
-    ],
+    [transitionPair, writeTransition],
   )
 
   const generateTransitionVideo = useCallback(
@@ -2514,12 +2472,7 @@ function Shell() {
       const { source, target, to } = pair
       const base = normalizeTransitionOut(source.data.transitionOut, to)
       const g = normalizeGenerated(base.generated)
-      const keyframe = g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0]
-      if (!keyframe) {
-        setToast('先生成并确认关键帧，再生成转场视频')
-        window.setTimeout(() => setToast(''), 2600)
-        return
-      }
+      const legacyKeyframe = g.bridging === 'keyframe' ? g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0] : undefined
       if (g.video?.state === 'running') return
       const videoKey = modelPick.video || appSettings?.defaults?.video || ''
       const entry = appSettings?.models.find((m) => m.key === videoKey)
@@ -2546,13 +2499,18 @@ function Shell() {
       })
       try {
         const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
+        const bridging = legacyKeyframe ? 'keyframe' : 'morph'
+        if (bridging === 'morph' && (!boundary.out || !boundary.in)) {
+          throw new Error('需要两镜边界画面；请先有成片或静帧，或点「刷新边界帧」')
+        }
         const res = await startVideo({
           transition: {
             boundaryOut: boundary.out,
             boundaryIn: boundary.in,
-            keyframe,
+            ...(legacyKeyframe ? { keyframe: legacyKeyframe } : {}),
+            bridging,
           },
-          prompt: transitionVideoPrompt(source, target, g),
+          prompt: effectiveTransitionVideoPrompt(source, target, g).text,
           seconds: req.seconds,
           ratio: projectAspect,
           resolution: vidRes,
@@ -3160,7 +3118,7 @@ function Shell() {
               selectedVideoRequest
                 ? {
                     used: selectedVideoRequest.refs.length,
-                    max: 4,
+                    max: null,
                     expression: Boolean(selected?.data.useExpressionRef),
                     omitted: selectedVideoRequest.omitted.length,
                   }
@@ -3461,9 +3419,6 @@ function Shell() {
               edge={selEdge}
               source={selEdgeSource}
               target={selEdgeTarget}
-              nodes={episodeShots}
-              characters={characters}
-              missingMedia={missingMedia}
               settings={appSettings}
               pick={modelPick}
               projectName={projectName}
@@ -3473,7 +3428,7 @@ function Shell() {
               onPatch={patch}
               onSetRelation={setEdgeRelation}
               onClose={() => setSelEdgeId(null)}
-              onGenerateKeyframe={generateTransitionKeyframe}
+              onRefreshBoundary={refreshTransitionBoundary}
               onGenerateVideo={generateTransitionVideo}
             />
           ) : (

@@ -12,6 +12,9 @@ import {
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockItem } from './stock/types'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
+import { CharacterImageCropModal } from './CharacterImageCropModal'
+import type { MaterialCropPlan } from './imageMaterialCrop'
+import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialImageGate'
 
 type Tab = 'project' | 'generated' | 'video' | 'audio' | 'stock' | 'manual'
 
@@ -175,6 +178,8 @@ export default function MediaPicker({
   const [uploaded, setUploaded] = useState<PickItem[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [cropPending, setCropPending] = useState<MaterialCropPlan | null>(null)
+  const [cropBusy, setCropBusy] = useState(false)
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -424,7 +429,7 @@ export default function MediaPicker({
    * 本地上传：先落成项目媒体文件，再作为一条「项目图片」条目插入并选中。
    * 与既有语义一致——点选只预览，仍需点「使用这张」才写回素材卡。
    */
-  const uploadFromDisk = async (file: File) => {
+  const uploadFromDiskFile = async (file: File) => {
     setUploadError('')
     setUploading(true)
     try {
@@ -451,6 +456,32 @@ export default function MediaPicker({
       setUploadError((e as Error).message || '上传失败')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const uploadFromDisk = async (file: File) => {
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      setUploadError(gate.reason)
+      return
+    }
+    if (gate.mode === 'crop') {
+      setCropPending(gate.plan)
+      return
+    }
+    await uploadFromDiskFile(gate.file)
+  }
+
+  const confirmCropUpload = async () => {
+    if (!cropPending) return
+    const file = cropPending.croppedFile
+    URL.revokeObjectURL(cropPending.previewUrl)
+    setCropPending(null)
+    setCropBusy(true)
+    try {
+      await uploadFromDiskFile(file)
+    } finally {
+      setCropBusy(false)
     }
   }
 
@@ -740,6 +771,17 @@ export default function MediaPicker({
           )}
         </footer>
       </div>
+      <CharacterImageCropModal
+        open={Boolean(cropPending)}
+        title="裁切素材图"
+        plan={cropPending}
+        busy={cropBusy || uploading}
+        onConfirm={() => void confirmCropUpload()}
+        onCancel={() => {
+          releaseMaterialCropPlan(cropPending)
+          setCropPending(null)
+        }}
+      />
     </div>
   )
 }

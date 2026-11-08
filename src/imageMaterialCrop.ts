@@ -1,6 +1,9 @@
 /** 视频 reference_image / 首帧素材在上游的宽高比约束（宽/高） */
 export const MATERIAL_MIN_ASPECT = 0.4
 export const MATERIAL_MAX_ASPECT = 2.5
+/** APIMart 实测 0.40 会被拒，裁切目标落在安全区内 */
+export const MATERIAL_SAFE_MIN = 0.41
+export const MATERIAL_SAFE_MAX = 2.49
 
 export type MaterialCropRect = { sx: number; sy: number; sw: number; sh: number }
 
@@ -11,14 +14,14 @@ export function materialAspectRatio(width: number, height: number): number {
 
 export function needsMaterialAspectCrop(width: number, height: number): boolean {
   const r = materialAspectRatio(width, height)
-  return r < MATERIAL_MIN_ASPECT || r > MATERIAL_MAX_ASPECT
+  return r < MATERIAL_SAFE_MIN || r > MATERIAL_SAFE_MAX
 }
 
 /** 将当前比例钳到合法区间（用于展示目标比例） */
 export function clampedMaterialAspect(width: number, height: number): number {
   const r = materialAspectRatio(width, height)
-  if (r < MATERIAL_MIN_ASPECT) return MATERIAL_MIN_ASPECT
-  if (r > MATERIAL_MAX_ASPECT) return MATERIAL_MAX_ASPECT
+  if (r < MATERIAL_SAFE_MIN) return MATERIAL_SAFE_MIN
+  if (r > MATERIAL_SAFE_MAX) return MATERIAL_SAFE_MAX
   return r
 }
 

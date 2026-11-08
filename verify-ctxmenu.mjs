@@ -121,14 +121,11 @@ await p.locator(`.ctx-row[data-ref="${sceneId}"] .ctx-main`).click()
 await p.waitForTimeout(500)
 check('再点取消连线', (await p.locator(`.react-flow__edge[data-id^="ref-${sceneId}-${shotNodeId}"]`).count()) === 0)
 
-// ---- 3. 「首帧」按钮：把素材图设为该镜 refImage ----
+// ---- 3. 「连线」按钮：把素材写入 refIds（不写 refImage） ----
 await p.locator(`.ctx-row[data-ref="${sceneId}"] .ctx-act`).click()
 await p.waitForTimeout(600)
-const firstFrame = await p.evaluate((nid) => {
-  const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1') || '{}')
-  return (s.nodes || []).find((x) => x.id === nid)?.data?.refImage ?? null
-}, shotNodeId)
-check('首帧已换成素材图', firstFrame === imgUrl, String(firstFrame))
+const linked = await shotRefIds(shotNodeId)
+check('快捷连线写入 refIds', linked?.includes(sceneId), String(linked))
 
 // ---- 4. 素材卡右击 → 连到镜头 ----
 await p.keyboard.press('Escape')

@@ -16,6 +16,7 @@ version: 3
 - size（景别）：远景 / 全景 / 中景 / 近景 / 特写 / 大特写，必须有节奏变化，不要连续三个同景别。
 - move（运镜）：固定 / 推 / 拉 / 摇 / 移 / 跟 / 升降 / 手持。对话戏以固定和中近景为主，情绪转折才用推。
 - seconds：单镜 2.0-6.0 秒；一集总时长以本轮任务里的目标秒数为准（通常 45-90 秒区间）。
+- 有声生产（Seedance 原生音轨）：凡 dialogue 非空且 performance 里 `speaks: true` 的镜，`seconds` 必须 **大于 4**（不含 4.0；建议 4.5–5 起），避免 provider 与四舍五入踩线。
 - desc：画面描述，写「谁 在 哪 做 什么，什么光，什么景深」，30-60 字，只写可拍的东西。
 - dialogue：该镜头内的台词/旁白，没有就空数组。
 - 连续性：遵守 180 度轴线；相邻镜头人物站位不要跳跃；道具/服装与上一镜一致。
@@ -43,7 +44,7 @@ version: 3
 {
   "shots": [
     {"no": "S01", "scene_no": 1, "scene_slug": "场景简称",
-     "seconds": 3.5, "size": "中景", "move": "固定",
+     "seconds": 4.5, "size": "中景", "move": "固定",
      "desc": "...",
      "dialogue": [{"speaker": "角色名", "text": "...", "emotion": "angry", "intensity": 4, "pace": "slow", "volume": "soft"}],
      "performance": [

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { generateImage, generateVoice, listVoicesCached, type AppSettings, type VoiceOption } from './api'
-import { ACCEPT_ATTR, pickImageFile, uploadImageFile } from './mediaUpload'
+import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import {
   DEFAULT_VOICE_SAMPLE_TEXT,
   TURNAROUND_SUFFIX,
@@ -31,7 +31,12 @@ import {
 } from './voiceCatalog'
 import { CapModelSelect } from './ModelSelect'
 import { CharacterImageCropModal } from './CharacterImageCropModal'
-import { planMaterialCropForFile, planMaterialCropForUrl, type MaterialCropPlan } from './imageMaterialCrop'
+import type { MaterialCropPlan } from './imageMaterialCrop'
+import {
+  materialUploadGateFromFile,
+  materialUploadGateFromUrl,
+  releaseMaterialCropPlan,
+} from './materialImageGate'
 import {
   resolveVoiceUiState,
   voiceIdInCatalog,
@@ -41,7 +46,10 @@ import {
 
 type CropPending = {
   plan: MaterialCropPlan
-  kind: 'ref' | 'turnaround' | 'promote'
+  kind: 'ref' | 'turnaround' | 'promote' | 'sheet' | 'generated'
+  /** 生成三视图返回的多张候选；裁切确认后写回 */
+  pendingUrls?: string[]
+  candIdx?: number
 }
 
 type Props = {
@@ -296,6 +304,13 @@ export default function CharacterCard({
         ...(refs.length ? { refImages: refs } : {}),
       })
       const urls = res.urls?.length ? res.urls : [res.url]
+      const gate = await materialUploadGateFromUrl(urls[0], 'char-gen')
+      if (gate.mode === 'crop') {
+        setCropPending({ plan: gate.plan, kind: 'generated', pendingUrls: urls })
+        patch(c.id, { state: 'idle' })
+        endTask(tid)
+        return
+      }
       const next = patch(c.id, { candidates: urls, activeIdx: 0, image: urls[0], state: 'idle' })
       onPersist(next)
       endTask(tid)
@@ -374,7 +389,7 @@ export default function CharacterCard({
   }
 
   const releaseCropPlan = (plan: MaterialCropPlan | null | undefined) => {
-    if (plan?.previewUrl.startsWith('blob:')) URL.revokeObjectURL(plan.previewUrl)
+    releaseMaterialCropPlan(plan)
   }
 
   const cancelCrop = () => {
@@ -409,22 +424,16 @@ export default function CharacterCard({
   }
 
   const uploadTurnaround = async (file: File) => {
-    const check = pickImageFile(file)
-    if (!check.ok) {
-      patch(c.id, { state: 'error', error: check.reason })
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      patch(c.id, { state: 'error', error: gate.reason })
       return
     }
-    try {
-      const plan = await planMaterialCropForFile(file)
-      if (plan) {
-        setCropPending({ plan, kind: 'turnaround' })
-        return
-      }
-    } catch (e) {
-      patch(c.id, { state: 'error', error: (e as Error).message })
+    if (gate.mode === 'crop') {
+      setCropPending({ plan: gate.plan, kind: 'turnaround' })
       return
     }
-    await uploadTurnaroundFile(file)
+    await uploadTurnaroundFile(gate.file)
   }
 
   const persistReferenceUrl = (url: string) => {
@@ -451,32 +460,48 @@ export default function CharacterCard({
   }
 
   const uploadReference = async (file: File) => {
-    const check = pickImageFile(file)
-    if (!check.ok) {
-      setRefError(check.reason)
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      setRefError(gate.reason)
       return
     }
-    try {
-      const plan = await planMaterialCropForFile(file)
-      if (plan) {
-        setCropPending({ plan, kind: 'ref' })
-        return
-      }
-    } catch (e) {
-      setRefError((e as Error).message || '图片读取失败')
+    if (gate.mode === 'crop') {
+      setCropPending({ plan: gate.plan, kind: 'ref' })
       return
     }
-    await uploadReferenceFile(file)
+    await uploadReferenceFile(gate.file)
   }
 
   const confirmCropUpload = async () => {
     if (!cropPending) return
-    const { plan, kind } = cropPending
+    const { plan, kind, pendingUrls, candIdx } = cropPending
     setCropBusy(true)
     try {
       const file = plan.croppedFile
       if (kind === 'ref') {
         await uploadReferenceFile(file)
+      } else if (kind === 'sheet') {
+        await persistExpressionSheetUpload(file)
+      } else if (kind === 'generated') {
+        if (!projectName) {
+          patch(c.id, { state: 'error', error: '先选择项目' })
+          return
+        }
+        const url = await uploadImageFile(file, { project: projectName, prefix: 'char' })
+        const rest = pendingUrls?.slice(1) ?? []
+        onPersist(
+          patch(c.id, { candidates: [url, ...rest], activeIdx: 0, image: url, state: 'idle', error: undefined }),
+        )
+      } else if (kind === 'turnaround' && candIdx !== undefined) {
+        if (!projectName) {
+          patch(c.id, { state: 'error', error: '先选择项目' })
+          return
+        }
+        const url = await uploadImageFile(file, { project: projectName, prefix: 'char' })
+        const prev = [...(c.candidates ?? [])]
+        if (candIdx >= 0 && candIdx < prev.length) prev[candIdx] = url
+        else prev.push(url)
+        onPersist(patch(c.id, { image: url, candidates: prev, activeIdx: candIdx, state: 'idle', error: undefined }))
       } else if (kind === 'turnaround') {
         await uploadTurnaroundFile(file)
       } else {
@@ -494,6 +519,7 @@ export default function CharacterCard({
     } catch (e) {
       const msg = (e as Error).message || '上传失败'
       if (kind === 'ref') setRefError(msg)
+      else if (kind === 'sheet') setSheetError(msg)
       else patch(c.id, { state: 'error', error: msg })
     } finally {
       setCropBusy(false)
@@ -503,14 +529,10 @@ export default function CharacterCard({
 
   /** 设为三视图：该图成为当前 image 并进入候选；参考图列表保留它作为输入记录 */
   const promoteReference = async (url: string) => {
-    try {
-      const plan = await planMaterialCropForUrl(url, 'char-promote')
-      if (plan) {
-        setCropPending({ plan, kind: 'promote' })
-        return
-      }
-    } catch {
-      /* 跨域或加载失败时仍允许原图升格 */
+    const gate = await materialUploadGateFromUrl(url, 'char-promote')
+    if (gate.mode === 'crop') {
+      setCropPending({ plan: gate.plan, kind: 'promote' })
+      return
     }
     const candidates = [...new Set([...(c.candidates ?? []), url])]
     onPersist(
@@ -524,14 +546,9 @@ export default function CharacterCard({
     )
   }
 
-  const uploadSheet = async (file: File) => {
+  const persistExpressionSheetUpload = async (file: File) => {
     if (!projectName) {
       setSheetError('先选择项目再上传表情总图')
-      return
-    }
-    const check = pickImageFile(file)
-    if (!check.ok) {
-      setSheetError(check.reason)
       return
     }
     setSheetError('')
@@ -567,6 +584,28 @@ export default function CharacterCard({
     } finally {
       setSheetBusy(false)
     }
+  }
+
+  const uploadSheet = async (file: File) => {
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      setSheetError(gate.reason)
+      return
+    }
+    if (gate.mode === 'crop') {
+      setCropPending({ plan: gate.plan, kind: 'sheet' })
+      return
+    }
+    await persistExpressionSheetUpload(gate.file)
+  }
+
+  const selectTurnaroundCandidate = async (url: string, i: number) => {
+    const gate = await materialUploadGateFromUrl(url, 'char-cand')
+    if (gate.mode === 'crop') {
+      setCropPending({ plan: gate.plan, kind: 'turnaround', candIdx: i })
+      return
+    }
+    onPersist(patch(c.id, { activeIdx: i, image: url }))
   }
 
   const generateSample = async () => {
@@ -803,7 +842,7 @@ export default function CharacterCard({
               <button
                 key={url}
                 className={`cand-dot ${i === activeIdx ? 'on' : ''}`}
-                onClick={() => onPersist(patch(c.id, { activeIdx: i, image: url }))}
+                onClick={() => void selectTurnaroundCandidate(url, i)}
                 title={`候选 ${i + 1}`}
               />
             ))}
@@ -1108,10 +1147,10 @@ export default function CharacterCard({
           声音：{voiceSummary}
         </span>
         <span>表情 {expressionDone}/8{!sheet && legacyCount ? '（旧）' : ''}</span>
-        <span className="char-budget" title="视频参考最多 4 张；表情默认关闭，开启后只带说话角色一张">
+        <span className="char-budget" title="视频参考图随连线提交；表情默认关闭，开启后只带说话角色一张">
           {selectedShot
             ? selectedBudget
-              ? `本镜 ${selectedShot.no} · 参考 ${selectedBudget.used}/${selectedBudget.max} · 表情${selectedBudget.expression ? '开' : '关'}${selectedBudget.omitted ? ` · 省略 ${selectedBudget.omitted}` : ''}`
+              ? `本镜 ${selectedShot.no} · 参考 ${selectedBudget.used}${selectedBudget.max != null ? `/${selectedBudget.max}` : ''} · 表情${selectedBudget.expression ? '开' : '关'}${selectedBudget.omitted ? ` · 省略 ${selectedBudget.omitted}` : ''}`
               : `本镜 ${selectedShot.no} · 视频表情默认关`
             : '未选中镜头'}
         </span>
@@ -1161,7 +1200,11 @@ export default function CharacterCard({
             ? '裁切参考图'
             : cropPending?.kind === 'promote'
               ? '裁切后设为三视图'
-              : '裁切三视图'
+              : cropPending?.kind === 'sheet'
+                ? '裁切表情总图'
+                : cropPending?.kind === 'generated'
+                  ? '裁切生成的三视图'
+                  : '裁切三视图'
         }
         plan={cropPending?.plan ?? null}
         busy={cropBusy || refBusy}

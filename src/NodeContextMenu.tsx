@@ -23,7 +23,7 @@ type Props = {
   items: CtxItem[]
   /** 点行主体：切换参考关系 */
   onClickItem: (id: string) => void
-  /** 点「首帧」：用这张图当本镜首帧（视频参考） */
+  /** 点「连线」：写入分镜 refIds，供视频出片参考 */
   onFirstFrame?: (id: string) => void
   /** 额外动作（生成调度、重出参考图等） */
   actions?: { key: string; label: string; hint?: string; onClick: () => void }[]
@@ -101,9 +101,9 @@ export default function NodeContextMenu(p: Props) {
                   <button
                     className="ctx-act"
                     onClick={() => p.onFirstFrame!(it.id)}
-                    title="用这张图当本镜首帧（出片参考）"
+                    title="加入本镜视频出片参考连线"
                   >
-                    首帧
+                    连线
                   </button>
                 )}
               </div>

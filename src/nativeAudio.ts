@@ -13,7 +13,7 @@ export type AudioRefCapabilities = {
   source: string
 }
 
-/** 真实 APIMart 探测结果：单个 audio_url 字符串；2 秒视频被拒绝，最短 4 秒。 */
+/** 真实 APIMart 探测结果：单个 audio_url 字符串；2 秒视频被拒绝。产品门禁：名义镜头须大于 4 秒（不含 4）。 */
 export const APIMART_SEEDANCE_AUDIO_CAPS: AudioRefCapabilities = {
   supported: true,
   audioRefField: 'audio_url',
@@ -60,8 +60,8 @@ export function nativeAudioRef(input: {
   seconds: number
 }): NativeAudioRefResult {
   if (!input.caps?.supported) return { ok: false, reason: '当前视频模型没有通过音频参考探测' }
-  if (Number(input.seconds) < input.caps.minVideoSeconds) {
-    return { ok: false, reason: `原生音频最短 ${input.caps.minVideoSeconds} 秒，当前镜头 ${input.seconds}s` }
+  if (Number(input.seconds) <= input.caps.minVideoSeconds) {
+    return { ok: false, reason: `原生音频须大于 ${input.caps.minVideoSeconds} 秒，当前镜头 ${input.seconds}s` }
   }
   const speakers = speakingNames(input.dialogue, input.performance)
   if (speakers.length === 0) return { ok: false, reason: '这一镜没有台词，不能使用音色参考' }

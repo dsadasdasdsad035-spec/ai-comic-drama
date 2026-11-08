@@ -1,6 +1,6 @@
 /**
  * 视频参考预算：表情默认关；开启后只带说话角色一张，排在身份/场景之后；
- * 4 张不够先省略表情；当前画面 + 身份本身超 4 张时阻止。
+ * 表情默认关；开启后只带说话角色；参考图张数默认不限。
  * 跑法：node verify-video-expression-budget.mjs
  */
 import fs from 'node:fs'
@@ -61,12 +61,12 @@ const build = (data, characters = [A], nodes = []) =>
 
 const off = build(base)
 check('默认不发表情', off.refs.every((r) => r.source !== 'expression'))
-check('关闭时不显示表情占用', off.refs.length === 2, off.refs.map((r) => r.source).join(','))
-check('默认开关不进请求指纹以外', off.prompt.includes('当前画面构图'))
+check('关闭时不发表情仅角色', off.refs.length === 1 && off.refs[0]?.source === 'character', off.refs.map((r) => r.source).join(','))
+check('不含镜上静帧图注', !off.prompt.includes('当前画面构图'))
 
 const on = build({ ...base, useExpressionRef: true })
 check('开启后带说话角色单格', on.refs.some((r) => r.source === 'expression' && r.purpose === '表情参考'), on.refs.map((r) => r.label).join(','))
-check('单格排身份之后', on.refs.map((r) => r.source).join(',') === 'current,character,expression', on.refs.map((r) => r.source).join(','))
+check('单格排身份之后', on.refs.map((r) => r.source).join(',') === 'character,expression', on.refs.map((r) => r.source).join(','))
 check('单格不发送总图', on.refs.every((r) => !r.url.startsWith('/sheet-')))
 check('开关改变指纹', on.fingerprint !== off.fingerprint)
 
@@ -75,9 +75,9 @@ const two = { ...base, cast: ['A', 'B'], refIds: ['char-A', 'char-B', 'asset-sce
   { character: 'B', emotion: 'sad', intensity: 2, speaks: false },
 ] }
 const twoReq = build(two, [A, B], [sceneNode])
-check('预算满时先省略表情', twoReq.omitted.some((o) => o.label.includes('A') && o.reason.includes('表情')), JSON.stringify(twoReq.omitted))
-check('场景保留', twoReq.refs.some((r) => r.source === 'asset'), twoReq.refs.map((r) => r.source).join(','))
-check('身份不被表情挤掉', twoReq.refs.filter((r) => r.source === 'character').length === 2)
+check('多角色时可带上场景与表情', twoReq.refs.some((r) => r.source === 'asset'), twoReq.refs.map((r) => r.source).join(','))
+check('身份图不丢', twoReq.refs.filter((r) => r.source === 'character').length === 2)
+check('开启表情时可进请求', twoReq.refs.some((r) => r.source === 'expression'))
 
 const room = { ...base, cast: ['A', 'B'], useExpressionRef: true, performance: [
   { character: 'A', emotion: 'angry', intensity: 3, speaks: true },
@@ -96,8 +96,8 @@ check('无有效格给出提示', staleReq.warnings.some((w) => w.code === 'expr
 const four = Array.from({ length: 4 }, (_, i) => makeChar(`C${i}`))
 const many = { ...base, cast: four.map((c) => c.name), performance: [], useExpressionRef: false }
 const manyReq = build(many, four)
-check('画面+身份超 4 张阻止', manyReq.blocking.some((b) => b.code === 'reference-overflow-identity'), JSON.stringify(manyReq.blocking))
-check('阻止时不静默截断身份', manyReq.blocking[0]?.message.includes('4 张'))
+check('多身份一并提交', manyReq.refs.filter((r) => r.source === 'character').length === 4, String(manyReq.refs.length))
+check('不因张数阻止出片', !manyReq.blocking.some((b) => b.code === 'reference-overflow-identity'), JSON.stringify(manyReq.blocking))
 
 const PORT = 5356
 const APP = `http://127.0.0.1:${PORT}`

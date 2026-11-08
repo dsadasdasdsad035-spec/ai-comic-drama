@@ -53,11 +53,15 @@ export function normalizeEffect(input?: Partial<TransitionEffect> | null): Trans
 
 export function normalizeGenerated(input?: Partial<TransitionGenerated> | null): TransitionGenerated {
   const target = Number(input?.targetSeconds)
+  const bridging = input?.bridging === 'keyframe' ? 'keyframe' : 'morph'
   return {
     targetSeconds: Number.isFinite(target)
       ? Math.min(MAX_GENERATED_TARGET, Math.max(MIN_GENERATED_TARGET, target))
       : DEFAULT_GENERATED_SECONDS,
     prompt: String(input?.prompt || ''),
+    soundPrompt: String(input?.soundPrompt || ''),
+    ...(input?.videoPromptOverride?.trim() ? { videoPromptOverride: String(input.videoPromptOverride) } : {}),
+    bridging,
     inheritRefs: input?.inheritRefs !== false,
     refIds: Array.isArray(input?.refIds) ? input!.refIds!.filter(Boolean) : [],
     excludeRefIds: Array.isArray(input?.excludeRefIds) ? input!.excludeRefIds!.filter(Boolean) : [],
@@ -135,6 +139,9 @@ export function transitionFingerprint(
       boundaryOut: localPath(g?.boundary?.out) ?? '',
       boundaryIn: localPath(g?.boundary?.in) ?? '',
       prompt: g?.prompt ?? '',
+      sound: g?.soundPrompt ?? '',
+      videoPromptOverride: g?.videoPromptOverride ?? '',
+      bridging: g?.bridging ?? 'morph',
       target: g?.targetSeconds ?? 0,
       model: g?.video?.modelKey ?? '',
     }),

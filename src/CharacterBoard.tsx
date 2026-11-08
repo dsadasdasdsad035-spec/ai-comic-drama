@@ -30,7 +30,7 @@ type Props = {
   characters: CharacterSheet[]
   patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   selectedShot: { id: string; no: string } | null
-  selectedShotBudget?: { used: number; max: number; expression: boolean; omitted: number } | null
+  selectedShotBudget?: { used: number; max: number | null; expression: boolean; omitted: number } | null
   onInject: (charId: string) => void
   onAdd: () => void
   onDelete: (charId: string) => void

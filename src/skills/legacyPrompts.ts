@@ -23,7 +23,7 @@ export const STORYBOARD_BASE = `你是分镜师。把一集剧本拆成可直接
 {
   "shots": [
     {"no": "S01", "scene_no": 1, "scene_slug": "场景简称",
-     "seconds": 3.5, "size": "中景", "move": "固定",
+     "seconds": 4.5, "size": "中景", "move": "固定",
      "desc": "...",
      "dialogue": [{"speaker": "角色名", "text": "...", "emotion": "angry", "intensity": 4, "pace": "slow", "volume": "soft"}],
      "performance": [

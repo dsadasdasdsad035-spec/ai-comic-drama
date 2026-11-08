@@ -1,6 +1,6 @@
 /**
  * 出片提示词预览/手改验收：
- * 1) 拼装器单测：参考顺序、4 张上限、调度帧去冲突、视频参考、原生音频、指纹、阻止项
+ * 1) 拼装器单测：参考顺序、调度帧去冲突、视频参考、原生音频、指纹、阻止项
  * 2) UI：面板可见、预览与请求逐字一致、手改保存/刷新保留/旧快照/重新拼装、来源记录
  * 跑法：node verify-video-prompt-preview.mjs
  */
@@ -329,17 +329,12 @@ check('后端 dryRun 仍走多参考图模式', dry.ok === true && dry.mode === 
 const dryRefs = (dry.request?.content ?? []).filter((c) => c.type === 'image_url')
 check('后端参考图仍用 reference_image', dryRefs.length === 2 && dryRefs.every((c) => c.role === 'reference_image'), JSON.stringify(dryRefs.map((c) => c.role)))
 
-check(
-  '无手改正文与旧拼装逐字一致',
-  basic.prompt ===
-    '画面\n\n参考图：[图1]=当前画面构图，[图2]=角色「陈默」外观，[图3]=手工参考图，[图4]=手工参考图。主体外观、场景与道具必须与参考图一致。',
-  JSON.stringify(basic.prompt),
-)
-check('参考顺序：当前画面优先', basic.refs[0]?.label === '当前画面构图', JSON.stringify(basic.refs[0]))
-check('角色参考带身份标签', basic.refs[1]?.label === '角色「陈默」外观', basic.refs[1]?.label)
-check('参考图上限 4 张', basic.refs.length === 4, String(basic.refs.length))
-check('超限参考进入省略列表', basic.omitted.length === 3, JSON.stringify(basic.omitted.map((x) => x.label)))
-check('图注按 [图N] 指代', /\[图1\]=当前画面构图/.test(basic.prompt) && /\[图2\]=角色「陈默」外观/.test(basic.prompt))
+check('正文含参考图注', basic.prompt.includes('[图1]=角色「陈默」外观') && basic.prompt.includes('手工参考'), basic.prompt.slice(0, 200))
+check('参考顺序：不含镜上静帧', basic.refs.every((r) => !r.label.includes('当前画面构图')), JSON.stringify(basic.refs[0]))
+check('角色参考带身份标签', basic.refs.some((r) => r.label === '角色「陈默」外观'), basic.refs.map((r) => r.label).join(','))
+check('连线参考图全部送出', basic.refs.length === 6, String(basic.refs.length))
+check('默认不省略参考', basic.omitted.length === 0, JSON.stringify(basic.omitted.map((x) => x.label)))
+check('图注按 [图N] 指代', /\[图1\]=角色「陈默」外观/.test(basic.prompt) && /\[图2\]=/.test(basic.prompt))
 check('调度帧不再进入参考图', !frames.refs.some((r) => r.url === '/s1.jpg') && frames.prompt.includes('主体外观、场景与道具必须与参考图一致'), frames.prompt)
 check('旧 3D 视频开关不再产生视频参考', video.mode !== 'video' && video.video === null && !video.prompt.includes('@视频1'), video.prompt)
 check('旧 3D 视频开关不再警告视频参考', !video.warnings.some((w) => w.code === 'video-ref-unsupported'), JSON.stringify(video.warnings))
@@ -359,8 +354,8 @@ await p.waitForTimeout(600)
 const panel = p.locator('[data-video-prompt-panel]')
 check('面板在生成按钮上方可见', (await panel.count()) === 1)
 const autoText = await p.locator('[data-video-prompt-text]').innerText()
-check('面板列出当前画面与角色', autoText.includes('[图1]=当前画面构图') && autoText.includes('[图2]=角色「陈默」外观'), autoText.slice(0, 160))
-check('面板列出参考图数量', (await panel.innerText()).includes('参考图 3/4'))
+check('面板列出连线角色参考', autoText.includes('[图1]=角色「陈默」外观'), autoText.slice(0, 160))
+check('面板列出参考图数量', (await panel.innerText()).includes('参考图 3'))
 check('面板摘要含表演人数', (await panel.innerText()).includes('表演 1 人'))
 check('面板自动正文含【表演方向】', autoText.includes('【表演方向】') && autoText.includes('陈默'))
 
@@ -413,7 +408,7 @@ await p.waitForTimeout(300)
 check('参考变化后显示旧快照', (await p.locator('[data-video-prompt-panel]').innerText()).includes('旧快照'))
 check('旧快照正文仍是手改版本', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
 const panelText = await p.locator('[data-video-prompt-panel]').innerText()
-check('超限参考在面板显式省略', panelText.includes('参考图 4/4（省略 2）') && panelText.includes('省略'), panelText.slice(0, 220))
+check('新增参考后全部列出', panelText.includes('参考图 6') && !panelText.includes('省略 2'), panelText.slice(0, 220))
 
 await p.locator('[data-video-prompt-panel] button', { hasText: '重新拼装' }).click()
 await p.waitForTimeout(500)

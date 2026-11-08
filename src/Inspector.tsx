@@ -13,10 +13,14 @@ import { fetchStockMeta } from './stock/api'
 import type { StockImportMeta } from './stock/types'
 import { pickKind, pickTitle, type PickItem } from './mediaPick'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
+import { CharacterImageCropModal } from './CharacterImageCropModal'
+import type { MaterialCropPlan } from './imageMaterialCrop'
+import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialImageGate'
 import PerformanceEditor from './PerformanceEditor'
 import NativeAudioPanel from './NativeAudioPanel'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
+import { videoRefLimitLabel } from './videoRefLimits'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
 import { performanceVideoEntryCount } from './performance'
 import type { CanvasProdMode } from './canvasProdMode'
@@ -52,6 +56,8 @@ function AssetPanel({
   const [metaMissing, setMetaMissing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [cropPending, setCropPending] = useState<MaterialCropPlan | null>(null)
+  const [cropBusy, setCropBusy] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
 
@@ -59,7 +65,7 @@ function AssetPanel({
    * 本地上传：保存成功才写地址。素材卡会落库，所以不能像参考图那样先塞 dataURL。
    * 类型沿用既有规则（pickKind）：场景/道具卡保持原类型，其余回落图片。
    */
-  const uploadFromDisk = async (file: File) => {
+  const uploadFromDiskFile = async (file: File) => {
     setUploadError('')
     setUploading(true)
     try {
@@ -73,6 +79,32 @@ function AssetPanel({
       setUploadError((e as Error).message || '上传失败')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const uploadFromDisk = async (file: File) => {
+    const gate = await materialUploadGateFromFile(file)
+    if (!gate.ok) {
+      setUploadError(gate.reason)
+      return
+    }
+    if (gate.mode === 'crop') {
+      setCropPending(gate.plan)
+      return
+    }
+    await uploadFromDiskFile(gate.file)
+  }
+
+  const confirmCropUpload = async () => {
+    if (!cropPending) return
+    const file = cropPending.croppedFile
+    URL.revokeObjectURL(cropPending.previewUrl)
+    setCropPending(null)
+    setCropBusy(true)
+    try {
+      await uploadFromDiskFile(file)
+    } finally {
+      setCropBusy(false)
     }
   }
 
@@ -258,6 +290,17 @@ function AssetPanel({
           onClose={() => setPickerOpen(false)}
         />
       )}
+      <CharacterImageCropModal
+        open={Boolean(cropPending)}
+        title="裁切素材图"
+        plan={cropPending}
+        busy={cropBusy || uploading}
+        onConfirm={() => void confirmCropUpload()}
+        onCancel={() => {
+          releaseMaterialCropPlan(cropPending)
+          setCropPending(null)
+        }}
+      />
     </aside>
   )
 }
@@ -410,7 +453,8 @@ function VideoPromptPanel({
             {VIDEO_MODE_LABEL[request.mode]} · {request.seconds}s
             {request.resolution ? ` · ${request.resolution}` : ''} · 正文来自{sourceLabel}
             <br />
-            参考图 {request.refs.length}/4
+            参考图 {request.refs.length}
+            {videoRefLimitLabel() !== '不限' ? `/${videoRefLimitLabel()}` : ' 张'}
             {request.omitted.length ? `（省略 ${request.omitted.length}）` : ''}
             {` · 表情参考${data.useExpressionRef ? '开' : '关'}`}
             {performanceVideoEntryCount(data.performance) > 0
@@ -980,7 +1024,9 @@ function InspectorBody({
           title="参考"
           summary={
             videoRequest
-              ? `视频出片 ${videoRequest.refs.length}/4${
+              ? `视频出片 ${videoRequest.refs.length}${
+                  videoRefLimitLabel() !== '不限' ? `/${videoRefLimitLabel()}` : ' 张'
+                }${
                   videoRequest.omitted.length ? ` · 省略 ${videoRequest.omitted.length}` : ''
                 }`
               : `${d.refIds?.length ?? 0} 项`
@@ -1002,7 +1048,7 @@ function InspectorBody({
             </ul>
           ) : (
             <div className="refx-empty">
-              还没有参考。右击画布卡片选择角色、场景或道具；生成画面和出片都会使用。
+              还没有参考。右击画布卡片连线角色、场景或道具；出片只认连线，出图可多参考。
             </div>
           )}
           {videoRequest?.omitted.length ? (
@@ -1011,10 +1057,10 @@ function InspectorBody({
             </div>
           ) : null}
           <div className="gen-note">右击画布卡片添加或移除参考；手工 URL 在「更多」。</div>
-          <div className="gen-note">画面生成最多 10 张；视频出片最多 4 张。</div>
+          <div className="gen-note">画面生成最多 10 张；视频出片参考图张数随连线提交（不限默认上限）。</div>
           {(d.refIds?.length ?? 0) > 0 && (
             <div className="gen-note">
-              画布连线 {d.refIds!.length} 项；视频出片最多 4 张，具体使用见上。
+              画布连线 {d.refIds!.length} 项；视频出片使用见上。
             </div>
           )}
         </InspectorSection>
@@ -1204,15 +1250,15 @@ function InspectorBody({
 
 
         <p className="vid-note">
-          连线了参考图就走<b>多参考图模式</b>（reference_image，最多 4 张）；连线了视频素材则同时送
-          <b> reference_video</b>（首期只取第一条）。都没连线才回落到首帧图生视频。时长取镜头时长（2~12
+          连线了参考图就走<b>多参考图模式</b>（reference_image）；连线了视频素材则同时送
+          <b> reference_video</b>（首期只取第一条）。未连线参考图时无法出片。时长取镜头时长（2~12
           秒），按 tokens 计费。
         </p>
         {(videoRequest?.refs.length ?? 0) > 0 && (
           <p className="vid-refs">参考图 {videoRequest!.refs.length} 张（画布连线）· 多图模式</p>
         )}
         {hasNeighborReference(d.refIds) && (
-          <p className="vid-refs">已选相邻分镜参考：本次出片使用参考图模式，图片最多 4 张。</p>
+          <p className="vid-refs">已选相邻分镜参考：本次出片使用参考图模式。</p>
         )}
         {videos.length > 0 && (
           <div className="vid-pick">
@@ -1287,7 +1333,7 @@ function InspectorBody({
           />
           带说话角色表情参考
         </span>
-        <em>默认关；视频最多 4 张参考图，表情只在预算有富余时加入，身份/场景优先。</em>
+        <em>默认关；表情参考在排序中靠后，身份/场景/连线素材优先。</em>
       </label>
 
       <div className="field si-more" data-shot-tab="more" hidden={effectiveTab !== 'more'}>
@@ -1348,7 +1394,7 @@ function InspectorBody({
               className="btn primary block"
               disabled={d.vidState === 'running' || Boolean(videoRequest?.blocking.length)}
               onClick={() => onGenerateVideo(node.id)}
-              title={d.refImage ? '' : '无画面时用连线的参考图作首帧'}
+              title={d.refImage ? '' : '静帧预览与出片无关；出片须画布连线参考'}
             >
               {d.vidState === 'running' ? '出片中…' : d.videoUrl ? '重出视频' : '生成视频'}
             </button>

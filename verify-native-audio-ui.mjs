@@ -87,7 +87,7 @@ try {
   await page.locator('.react-flow__node').nth(1).click()
   await page.locator('[data-native-audio]').waitFor({ timeout: 10000 })
   check('2 秒镜头禁用 native', await page.locator('[data-native-audio] input[type=checkbox]').isDisabled())
-  check('显示 4 秒原因', (await page.locator('[data-native-audio]').innerText()).includes('4 秒'))
+  check('显示大于 4 秒原因', (await page.locator('[data-native-audio]').innerText()).includes('大于 4'))
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
   await page.screenshot({ path: path.join(EVIDENCE, 'native-audio-ui.png') })
 } finally {

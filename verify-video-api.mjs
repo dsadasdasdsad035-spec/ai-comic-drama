@@ -155,7 +155,7 @@ const pRef = buildVideoPayload({
   referenceImages: refs,
 })
 const refItems = pRef.content.filter((c) => c.type === 'image_url')
-check('参考图最多 4 张', refItems.length === 4, String(refItems.length))
+check('参考图全部进入 payload', refItems.length === 5, String(refItems.length))
 check('参考图角色正确', refItems.every((c) => c.role === 'reference_image'))
 check('参考图模式没有尾帧角色', !refItems.some((c) => c.role === 'last_frame'))
 

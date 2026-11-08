@@ -32,10 +32,12 @@ const other = lib.audioRefCapabilitiesFor({ providerKind: 'ark', model: 'seedanc
 
 check('APIMart Seedance 2.5 能力', caps?.audioRefField === 'audio_url' && caps.maxRefAudios === 1 && caps.minVideoSeconds === 4)
 check('其他渠道不开放', other === null)
-let r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 4 })
+let r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 4.5 })
 check('单说话人可用', r.ok && r.character === '陈默' && r.url === sample.url)
+r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 4 })
+check('4 秒整禁用', !r.ok && r.reason.includes('大于 4'))
 r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 2 })
-check('2 秒禁用', !r.ok && r.reason.includes('4 秒'))
+check('2 秒禁用', !r.ok && r.reason.includes('大于 4'))
 r = lib.nativeAudioRef({ dialogue: [...dialogue, { speaker: '林岚', text: '我不该来。' }], characters, caps, seconds: 5 })
 check('双说话人禁用', !r.ok && r.reason.includes('单说话人'))
 r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample: { ...sample, stale: true } }], caps, seconds: 5 })
@@ -62,7 +64,7 @@ try {
     family: 'seedance-2.5',
     model: 'seedance-2.5',
     prompt: 'test',
-    seconds: 4,
+    seconds: 5,
     resolution: '480p',
     ratio: '16:9',
     referenceImages: ['https://example.com/a.jpg'],
@@ -82,7 +84,7 @@ try {
   })
   check('2 秒 native 被拒绝', false)
 } catch (e) {
-  check('2 秒 native 被拒绝', String(e.message).includes('4 秒'), e.message)
+  check('2 秒 native 被拒绝', String(e.message).includes('大于 4'), e.message)
 }
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

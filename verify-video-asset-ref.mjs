@@ -130,7 +130,7 @@ const native = build({ ...baseShot, audioMode: 'native' })
 check('原生音频与视频素材冲突', native.blocking.some((x) => x.code === 'native-video-conflict'), JSON.stringify(native.blocking))
 
 const withImages = build({ ...baseShot, refExtras: ['/b.jpg', '/c.jpg', '/d.jpg', '/e.jpg', '/f.jpg'] })
-check('图片仍限 4 张', withImages.refs.length === 4, String(withImages.refs.length))
+check('图片参考不限张数', withImages.refs.length === 7, String(withImages.refs.length))
 check('图片与视频并存', withImages.video?.url === '/videos/a.mp4', JSON.stringify(withImages.video))
 
 const onlyV1 = build({ ...baseShot, refIds: ['asset-v1', 'asset-img'] })

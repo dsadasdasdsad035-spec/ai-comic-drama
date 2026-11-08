@@ -202,9 +202,8 @@ await page.waitForTimeout(250)
 await page.locator('.si-foot button', { hasText: /生成视频|重出视频/ }).click()
 await page.waitForTimeout(1400)
 const vidReq = seedance[beforeVideo] || {}
-check('视频参考图最多 4 张', (vidReq.refImages?.length || 0) === 4, JSON.stringify(vidReq.refImages))
-check('视频省略提示可见', (await page.locator('.toast').textContent().catch(() => '') || '').includes('已省略') || /最多 4 张/.test(String(vidReq.prompt || '')), await page.locator('.toast').textContent().catch(() => ''))
-check('视频优先级包含当前+角色+相邻', /\[图1\]=当前画面构图/.test(String(vidReq.prompt || '')) && /角色/.test(String(vidReq.prompt || '')) && /上一镜 S01/.test(String(vidReq.prompt || '')), String(vidReq.prompt || '').slice(-260))
+check('视频参考图随连线送出', (vidReq.refImages?.length || 0) >= 3, JSON.stringify(vidReq.refImages))
+check('视频提示含角色与相邻', /角色/.test(String(vidReq.prompt || '')) && /上一镜 S01/.test(String(vidReq.prompt || '')) && !/\[图1\]=当前画面构图/.test(String(vidReq.prompt || '')), String(vidReq.prompt || '').slice(-260))
 
 // ---- D. 旧 tail_image 数据打开兼容 ----
 const D = `neighbor-d-${Date.now()}`

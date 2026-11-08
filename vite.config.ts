@@ -4467,14 +4467,21 @@ function seedreamProxy(): Plugin {
             const urls: string[] = []
             const usedTimes: number[] = []
             for (const [i, t] of times.entries()) {
-              const safeT = Math.max(0, Math.min(Number(t) || 0, Math.max(0, (dur || 3) - 0.05)))
+              const tn = Number(t) || 0
               const name = `sched-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}.jpg`
               const out = path.join(dir, name)
+              const args =
+                tn < 0
+                  ? ['-y', '-sseof', String(tn), '-i', local, '-frames:v', '1', '-q:v', '2', out]
+                  : (() => {
+                      const safeT = Math.max(0, Math.min(tn, Math.max(0, (dur || 3) - 0.05)))
+                      return ['-y', '-ss', String(safeT), '-i', local, '-frames:v', '1', '-q:v', '2', out]
+                    })()
               try {
-                await runFfmpeg(['-y', '-ss', String(safeT), '-i', local, '-frames:v', '1', '-q:v', '2', out])
+                await runFfmpeg(args)
                 if (fs.existsSync(out) && fs.statSync(out).size > 512) {
                   urls.push(`/generated/${name}`)
-                  usedTimes.push(Math.round(safeT * 100) / 100)
+                  usedTimes.push(Math.round(tn * 100) / 100)
                 }
               } catch {
                 /* 时间点可能落在最后一帧之后；跳过这一帧，别让整次抽帧失败 */
@@ -5764,9 +5771,9 @@ function seedreamProxy(): Plugin {
           try {
             const body = await readJson(req)
             let image = String(body.image || '')
-            // 参考图（reference_image）模式：1~4 张，多了截断（方舟上限）
+            // 参考图（reference_image）模式：张数由前端拼装，服务端不默认截断
             const refImages: string[] = Array.isArray(body.refImages)
-              ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean).slice(0, 4)
+              ? body.refImages.map((x: unknown) => String(x || '')).filter(Boolean)
               : []
             // 3D 调度视频参考（reference_video）：1~3 段
             const refVideos: string[] = Array.isArray(body.refVideos)
@@ -5777,7 +5784,6 @@ function seedreamProxy(): Plugin {
             // 原生音频与首尾帧互斥：关键帧改走 reference_image，保持参考模式。
             if (generateAudio && image) {
               refImages.unshift(image)
-              refImages.splice(4)
               image = ''
             }
             // 转场：关键帧是必填；边界帧由服务端按模型能力决定用不用
@@ -5787,9 +5793,13 @@ function seedreamProxy(): Plugin {
                   keyframe: String(rawTransition.keyframe || ''),
                   boundaryOut: String(rawTransition.boundaryOut || ''),
                   boundaryIn: String(rawTransition.boundaryIn || ''),
+                  bridging: rawTransition.bridging === 'morph' ? 'morph' : 'keyframe',
                 }
               : null
-            const transitionMode = Boolean(transition?.keyframe)
+            const morphTransition = transition?.bridging === 'morph'
+            const transitionMode = morphTransition
+              ? Boolean(transition?.boundaryOut && transition?.boundaryIn)
+              : Boolean(transition?.keyframe)
             if (generateAudio && transitionMode) {
               res.statusCode = 400
               res.end(JSON.stringify({ ok: false, message: '原生音频与首尾帧/生成转场互斥，请改用参考图模式或关闭原生音频', kind: 'bad-request' }))
@@ -5801,7 +5811,15 @@ function seedreamProxy(): Plugin {
             const referenceMode = refMode || videoRefMode
             if (rawTransition && !transitionMode) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: '生成转场视频前必须有已确认的关键帧', kind: 'bad-request' }))
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: morphTransition
+                    ? '首尾直变需要上一镜尾帧与下一镜首帧，请确认两镜已有画面或成片'
+                    : '生成转场视频前必须有已确认的关键帧',
+                  kind: 'bad-request',
+                }),
+              )
               return
             }
             if (!image && !referenceMode && !transitionMode) {
@@ -5876,9 +5894,9 @@ function seedreamProxy(): Plugin {
                 res.end(JSON.stringify({ ok: false, message: '当前 APIMart 视频族未接入原生音频参考', kind: 'unsupported' }))
                 return
               }
-              if (generateAudio && seconds < 4) {
+              if (generateAudio && seconds <= 4) {
                 res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, message: 'Seedance 2.5 原生音频最短 4 秒', kind: 'bad-request' }))
+                res.end(JSON.stringify({ ok: false, message: 'Seedance 2.5 原生音频须大于 4 秒', kind: 'bad-request' }))
                 return
               }
               if (generateAudio && !audioRefInput) {
@@ -5901,20 +5919,33 @@ function seedreamProxy(): Plugin {
               const skipped: string[] = []
               const refUrls: string[] = []
               const refVideoUrls: string[] = []
-              // 转场分流：关键帧永远作首帧；首尾帧模型再把 B 首帧当尾帧。
+              // 转场分流：关键帧模式用关键帧作首帧；首尾直变用上镜尾帧作首帧、下镜首帧作尾帧。
               // Seedance 2.5 上游禁止尾帧与 reference_image 混用，所以转场不送参考图。
               const tKeyframe = transition?.keyframe || ''
+              const tOut = transition?.boundaryOut || ''
               const tIn = transition?.boundaryIn || ''
               const useLastFrame =
                 Boolean(transition) &&
                 (family === 'kling-v3' || family === 'seedance-2.5') &&
                 Boolean(tIn)
-              const firstSource = transition ? tKeyframe : image
-              const lastSource = transition
-                ? useLastFrame
-                  ? tIn
-                  : ''
-                : String(body.lastFrame || '')
+              const firstSource = transition
+                ? morphTransition
+                  ? tOut
+                  : tKeyframe
+                : image
+              const lastSource = transition ? (useLastFrame ? tIn : '') : String(body.lastFrame || '')
+              if (morphTransition && (!firstSource || !useLastFrame)) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message:
+                      '首尾直变须使用支持首尾帧的模型（如 Seedance 2.5 / Kling v3），且两镜边界帧齐全',
+                    kind: 'unsupported',
+                  }),
+                )
+                return
+              }
               const refSources = transition ? [] : refImages
               const effRefMode = transition ? false : refMode
               const effVideoRefMode = transition ? false : videoRefMode
@@ -6061,8 +6092,12 @@ function seedreamProxy(): Plugin {
             const refVideoUrls: string[] = []
             const skipped: string[] = []
             const tempVideos: string[] = []
-            // 方舟没有尾帧：转场用关键帧当首帧，生成后由成片裁到目标时长
-            const arkImage = transition ? transition.keyframe : image
+            // 方舟没有尾帧：转场用关键帧/上一镜尾帧当首帧，生成后由成片裁到目标时长
+            const arkImage = transition
+              ? morphTransition
+                ? transition.boundaryOut || transition.keyframe
+                : transition.keyframe
+              : image
             try {
               if (refMode) {
                 for (const r of refImages) {
