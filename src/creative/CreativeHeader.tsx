@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { cn } from '@/chat-ui/lib/utils'
 import type { AppSettings, Stage } from '../api'
 import { StageModelSelect, type StagePick } from '../ModelSelect'
-import type { Skill } from '../skills/types'
 import type { CreativeMode } from './sessionStore'
 
 const MODES: Array<{ id: CreativeMode; label: string; hint: string }> = [
@@ -23,16 +22,20 @@ export function CreativeHeader({
   hostSkillId,
   skillChoices,
   onHostSkillChange,
-  readonlySkills,
-  availableReadonly,
-  onLoadReadonly,
-  onRemoveReadonly,
+  skillFollowsMode,
+  onSkillFollowsModeChange,
+  inspectOpen,
+  canInspect,
+  onToggleInspect,
   skillError,
   running,
   sources,
   artifacts,
   onOpenList,
   onRefresh,
+  onOpenAllSkills,
+  hostSkillOptions,
+  totalSkillsCount,
   capabilityTray,
 }: {
   mode: CreativeMode
@@ -45,16 +48,20 @@ export function CreativeHeader({
   hostSkillId: string
   skillChoices: Array<{ id: string; label: string }>
   onHostSkillChange: (id: string) => void
-  readonlySkills: Skill[]
-  availableReadonly: Skill[]
-  onLoadReadonly: (id: string) => void
-  onRemoveReadonly: (id: string) => void
+  skillFollowsMode: boolean
+  onSkillFollowsModeChange: (on: boolean) => void
+  inspectOpen: boolean
+  canInspect: boolean
+  onToggleInspect: () => void
   skillError: string
   running: boolean
   sources: number
   artifacts: number
   onOpenList: () => void
   onRefresh: () => void
+  onOpenAllSkills?: () => void
+  hostSkillOptions?: number
+  totalSkillsCount?: number
   capabilityTray?: ReactNode
 }) {
   return (
@@ -100,10 +107,11 @@ export function CreativeHeader({
             <label className="creative-meta-item flex items-center gap-1">
               <span className="sr-only">宿主技能</span>
               <select
+                data-creative-host-skill
                 value={hostSkillId}
                 onChange={(e) => onHostSkillChange(e.target.value)}
                 title="宿主技能；正文用 read_skill 读取"
-                className="max-w-[140px] truncate rounded border border-border bg-transparent text-[11px]"
+                className="max-w-[200px] truncate rounded border border-border bg-transparent text-[11px]"
               >
                 {skillChoices.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -112,35 +120,27 @@ export function CreativeHeader({
                 ))}
               </select>
             </label>
-            <span aria-hidden="true" className="creative-meta-sep">
-              ·
-            </span>
-            <select
-              value=""
-              onChange={(e) => {
-                const id = e.target.value
-                if (id) onLoadReadonly(id)
-              }}
-              title="挂只读参考技能"
-              className="max-w-[120px] rounded border border-border bg-transparent text-[10px] text-muted-foreground"
-            >
-              <option value="">+ 只读技能</option>
-              {availableReadonly
-                .filter((s) => !readonlySkills.some((r) => r.id === s.id))
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.id}
-                  </option>
-                ))}
-            </select>
-            {readonlySkills.map((s) => (
-              <span key={s.id} className="skill-chip readonly text-[10px]">
-                参考：{s.id}
-                <button type="button" onClick={() => onRemoveReadonly(s.id)} aria-label={`卸载 ${s.id}`}>
-                  ×
+            {onOpenAllSkills ? (
+              <>
+                <span aria-hidden="true" className="creative-meta-sep">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  className="creative-meta-item creative-meta-btn"
+                  data-creative-action="all-skills"
+                  onClick={onOpenAllSkills}
+                  title={
+                    totalSkillsCount
+                      ? `可选全部 tools 技能（${hostSkillOptions ?? skillChoices.length}/${totalSkillsCount}）。已选项目时，项目类技能可读写镜头/角色等；未选项目时主要靠创意会话工具与 read_skill。`
+                      : '在设置中查看全部技能目录'
+                  }
+                >
+                  全部技能
+                  {totalSkillsCount ? ` (${totalSkillsCount})` : ''}
                 </button>
-              </span>
-            ))}
+              </>
+            ) : null}
             <span aria-hidden="true" className="creative-meta-sep">
               ·
             </span>
@@ -164,6 +164,27 @@ export function CreativeHeader({
               title="重新读取会话的源与产物"
             >
               刷新
+            </button>
+            <label className="creative-meta-item flex cursor-pointer items-center gap-1" title="开启后切换策划/反推/复刻会同步推荐宿主技能">
+              <input
+                type="checkbox"
+                checked={skillFollowsMode}
+                onChange={(e) => onSkillFollowsModeChange(e.target.checked)}
+                aria-label="跟随模式"
+                className="size-3"
+              />
+              跟随模式
+            </label>
+            <button
+              type="button"
+              className="creative-meta-item creative-meta-btn"
+              onClick={onToggleInspect}
+              disabled={!canInspect}
+              aria-expanded={inspectOpen}
+              aria-controls="workbench-chat-inspector"
+              title="查看下一轮会发给模型的内容"
+            >
+              {inspectOpen ? '收起将发送' : '查看将发送'}
             </button>
             {capabilityTray}
           </div>

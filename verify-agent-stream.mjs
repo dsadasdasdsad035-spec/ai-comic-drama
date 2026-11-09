@@ -52,6 +52,11 @@ async function load(entry) {
   err.push('data: {"error":{"message":"boom"}}\n')
   check('服务端：错误对象', err.error === 'boom')
 
+  const arkHeartbeat = new ChatStreamParser()
+  arkHeartbeat.push('data: {"code":0,"message":"success"}\n')
+  arkHeartbeat.push('data: {"code":0,"data":{"choices":[{"delta":{"content":"能力列表"}}]}}\n')
+  check('服务端：code 0 心跳不误判', !arkHeartbeat.error && arkHeartbeat.text.includes('能力'), JSON.stringify({ error: arkHeartbeat.error, text: arkHeartbeat.text }))
+
   const think = new ChatStreamParser()
   think.push('data: {"choices":[{"delta":{"content":"<think>秘密</think>答案"}}]}\n')
   check('服务端：think 标签过滤', think.text === '答案', JSON.stringify(think.text))

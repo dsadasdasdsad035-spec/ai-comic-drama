@@ -48,7 +48,7 @@ import {
 import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
 import NodeContextMenu from './NodeContextMenu'
-import Settings from './Settings'
+import Settings, { type SettingsInitialSection } from './Settings'
 import CreativeStudio from './creative/CreativeStudio'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
@@ -399,6 +399,9 @@ function Shell() {
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
   const [readyProject, setReadyProject] = useState('')
   const [schedule3dEditorDirty, setSchedule3dEditorDirty] = useState(false)
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsInitialSection | undefined>(
+    undefined,
+  )
   const projectEpochRef = useRef(0)
   /** 当前集：镜头表 / 3D / 画布等共用 */
   const [epNo, setEpNo] = useState(1)
@@ -548,8 +551,8 @@ function Shell() {
   )
 
   const changeView = useCallback(
-    (next: typeof view) => {
-      if (next === view) return
+    (next: typeof view, opts?: { settingsSection?: SettingsInitialSection }) => {
+      if (next === view && !opts?.settingsSection) return
       if (
         view === 'schedule3d' &&
         schedule3dEditorDirty &&
@@ -558,6 +561,11 @@ function Shell() {
         return
       }
       setSchedule3dEditorDirty(false)
+      if (next === 'settings') {
+        setSettingsInitialSection(opts?.settingsSection)
+      } else {
+        setSettingsInitialSection(undefined)
+      }
       setView(next)
     },
     [view, schedule3dEditorDirty],
@@ -3245,6 +3253,9 @@ function Shell() {
               void reloadProjects()
               setEpVersion((v) => v + 1)
             }}
+            onOpenAllSkills={() => changeView('settings', { settingsSection: 'skills' })}
+            projectName={readyProject === projectName ? projectName : ''}
+            epNo={epNo}
           />
         ) : view === 'table' ? (
           <ShotTable
@@ -3295,6 +3306,7 @@ function Shell() {
         ) : view === 'settings' ? (
           <Settings
             currentProjectName={projectName}
+            initialSection={settingsInitialSection}
             onSaved={reloadSettings}
             onProjectsDeleted={applyProjectDeletion}
             toast={(m) => {

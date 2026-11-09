@@ -5,15 +5,30 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
-import { generateImage, generateVoice, saveSettings, startVideo, waitVideo, type AppSettings, type Stage } from '../api'
+import {
+  generateImage,
+  generateVoice,
+  getProject,
+  saveSettings,
+  startVideo,
+  waitVideo,
+  type AppSettings,
+  type ProjectData,
+  type Stage,
+} from '../api'
 import { stageModelKey, type StagePick } from '../ModelSelect'
-import { buildPiAgentSystem } from '../agent/workbenchChat'
+import { ChatThreadBody, ChatThreadShell } from '../agent/ChatThreadShell'
+import { WorkbenchInspector } from '../chat-ui/WorkbenchInspector'
+import {
+  buildCreativeTurnPayload,
+  creativeTaskView,
+  CREATIVE_INSPECT_PROFILE,
+} from './creativeTurnPayload'
 import { loadSkills } from '../skills/registry'
 import type { Skill } from '../skills/types'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
 import { ChatText } from '@/chat-ui/ChatText'
 import { ChatStep } from '@/chat-ui/ChatStep'
-import { ChatThreadBody, ChatThreadShell } from '../agent/ChatThreadShell'
 import { CreativeToolUis } from './CreativeToolUis'
 import { useAgentMessages } from '../agent/useAgentMessages'
 import { runStageAgent } from '../agent/pi/stageRunner'
@@ -28,7 +43,15 @@ import type { CostPrompt } from './CreativeMessageParts'
 import { CreativeArtifacts } from './CreativeArtifacts'
 import { CostConfirmDialog } from './CostConfirmDialog'
 import { PromoteDialog } from './PromoteDialog'
-import { bindCreativeTools, createCreativeToolSet, creativeModelFor, type CostRequest, type CreativeSnapshot } from './tools'
+import {
+  bindCreativeHostTools,
+  createCreativeToolSet,
+  creativeModelFor,
+  type CostRequest,
+  type CreativeSnapshot,
+} from './tools'
+import { canUseProjectStage, createCreativeProjectAdapter } from './projectStageAdapter'
+import { createStageToolSet } from '../agent/stageTools'
 import {
   autoTitle,
   createCreativeSession,
@@ -180,6 +203,11 @@ export type CreativeStudioProps = {
   onPickStage?: (stage: Stage, key: string) => void
   onToast?: (message: string) => void
   onProjectDataChanged?: () => void
+  /** 打开设置 → 技能（全量目录） */
+  onOpenAllSkills?: () => void
+  /** 顶栏当前已加载项目；有值时可挂载项目技能读/写工具 */
+  projectName?: string
+  epNo?: number
 }
 
 /**
@@ -194,6 +222,9 @@ export default function CreativeStudio({
   onPickStage,
   onToast,
   onProjectDataChanged,
+  onOpenAllSkills,
+  projectName = '',
+  epNo = 1,
 }: CreativeStudioProps) {
   const { messages, setMessages, running, setRunning, abortRef, begin, updateEvent, patchAssistant } = useAgentMessages()
 
@@ -210,8 +241,10 @@ export default function CreativeStudio({
   const [hostSkill, setHostSkill] = useState<Skill | null>(null)
   const [hostSkillId, setHostSkillId] = useState(MODE_SKILL.plan)
   const [skillCatalog, setSkillCatalog] = useState<Skill[]>([])
-  const [toolSkills, setToolSkills] = useState<Skill[]>([])
-  const [readonlySkills, setReadonlySkills] = useState<Skill[]>([])
+  const [totalSkillsCount, setTotalSkillsCount] = useState(0)
+  const [skillFollowsMode, setSkillFollowsMode] = useState(true)
+  const [inspectOpen, setInspectOpen] = useState(false)
+  const [composerDraft, setComposerDraft] = useState('')
   const [skillError, setSkillError] = useState('')
   const [creativeOverride, setCreativeOverride] = useState(() => normalizeCreativeSettings(settings?.creative))
   const creative = useMemo(() => normalizeCreativeSettings({ ...creativeOverride }), [creativeOverride])
@@ -234,6 +267,7 @@ export default function CreativeStudio({
   const skipConfirmRef = useRef(new Set<string>())
 
   const modelKey = stageModelKey(settings, 'creative', stagePick)
+  const modelLabel = settings?.models?.find((m) => m.key === modelKey)?.label || modelKey || ''
 
   // 首次进入：恢复最近一条会话，没有就新建
   useEffect(() => {
@@ -260,7 +294,7 @@ export default function CreativeStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 技能目录：宿主默认随模式；可手选。只读技能参考 SkillChat 过滤。
+  // 技能目录：与设置页一致，全部 tools 运行时技能（不含 scene3d 一次性）。
   useEffect(() => {
     let alive = true
     ;(async () => {
@@ -268,13 +302,11 @@ export default function CreativeStudio({
         const { skills, issues } = await loadSkills()
         if (!alive) return
         const all = [...skills.values()]
-        const creative = all.filter((s) => s.manifest.stage === 'creative')
-        setSkillCatalog(creative.length ? creative : all.filter((s) => s.manifest.runtime === 'tools'))
-        setToolSkills(
-          all.filter(
-            (s) => s.manifest.runtime === 'tools' && s.manifest.tools.some((t) => t.startsWith('read_')),
-          ),
-        )
+        setTotalSkillsCount(all.length)
+        const catalog = all
+          .filter((s) => s.manifest.runtime === 'tools' || (s.manifest.runtime as string) === 'json-tools')
+          .sort((a, b) => (a.manifest.name || a.id).localeCompare(b.manifest.name || b.id, 'zh'))
+        setSkillCatalog(catalog)
         const skill = skills.get(hostSkillId)
         if (!skill) {
           setSkillError(issues.find((x) => x.id === hostSkillId)?.message || `技能「${hostSkillId}」不可用`)
@@ -292,10 +324,6 @@ export default function CreativeStudio({
       alive = false
     }
   }, [hostSkillId])
-
-  useEffect(() => {
-    setHostSkillId(MODE_SKILL[mode])
-  }, [mode])
 
   // 卸载时立刻落盘：切项目/切视图会让组件卸载，防抖计时器没机会跑
   useEffect(() => {
@@ -329,6 +357,8 @@ export default function CreativeStudio({
         const [summary, thread] = await Promise.all([getCreativeSession(id), loadCreativeThread(id)])
         setSession(summary)
         setMode(summary.mode)
+        setSkillFollowsMode(true)
+        setHostSkillId(MODE_SKILL[summary.mode] || MODE_SKILL.plan)
         setMessages(
           (thread.messages || []).map((m) => ({
             ...m,
@@ -408,25 +438,9 @@ export default function CreativeStudio({
     }
   }
 
-  const loadReadonlySkill = (id: string) => {
-    if (!id || id === hostSkillId) return
-    if (readonlySkills.some((s) => s.id === id)) return
-    if (readonlySkills.length >= 1) {
-      onToast?.('最多挂 1 个只读技能，请先卸载')
-      return
-    }
-    void loadSkills().then(({ skills }) => {
-      const skill = skills.get(id)
-      if (!skill) {
-        onToast?.(`技能「${id}」不可用`)
-        return
-      }
-      setReadonlySkills((prev) => [...prev, skill])
-    })
-  }
-
   const changeMode = async (next: CreativeMode) => {
     setMode(next)
+    if (skillFollowsMode) setHostSkillId(MODE_SKILL[next])
     const id = sessionRef.current?.id
     if (!id) return
     try {
@@ -490,14 +504,11 @@ export default function CreativeStudio({
     paidCallsRef.current = { count: 0, max: creative.limits?.maxPaidCallsPerTurn ?? 8 }
     frameCache.current = new Map()
 
-    const system = buildPiAgentSystem(
-      hostSkill,
-      [
-        `创意模式：${mode}（${MODE_HINT[mode]}）`,
-        `会话：${session.id}`,
-      ],
-      readonlySkills,
-    )
+    const turn = buildCreativeTurnPayload({
+      host: hostSkill,
+      messages,
+      draftText: text,
+    })
 
     const set = createCreativeToolSet({
       sessionId: session.id,
@@ -532,11 +543,37 @@ export default function CreativeStudio({
       onSourceChanged: () => void refreshSession(),
       onArtifactChanged: () => void refreshSession(),
     })
-    const tools = bindCreativeTools(set, [
-      { skill: hostSkill, mode: 'host' },
-      ...readonlySkills.map((s) => ({ skill: s, mode: 'readonly' as const })),
-    ])
-    const userForModel = text
+    let projectSnap: ProjectData | null = null
+    if (projectName && canUseProjectStage(hostSkill)) {
+      try {
+        projectSnap = await getProject(projectName)
+      } catch {
+        projectSnap = null
+      }
+    }
+    const projectStageCtx = {
+      projectName,
+      epNo,
+      getSnapshot: () => projectSnap,
+      setSnapshot: (p: ProjectData) => {
+        projectSnap = p
+      },
+      onProjectDataChanged: onProjectDataChanged,
+    }
+    const projectAdapter =
+      projectSnap && canUseProjectStage(hostSkill)
+        ? createCreativeProjectAdapter(hostSkill, projectStageCtx)
+        : null
+    let stageSet: ReturnType<typeof createStageToolSet> | null = null
+    if (projectAdapter) {
+      try {
+        stageSet = createStageToolSet(projectAdapter)
+      } catch {
+        stageSet = null
+      }
+    }
+    const tools = bindCreativeHostTools(set, hostSkill, stageSet)
+    const { system } = turn
     const history = threadTranscript(messages)
 
     begin(text)
@@ -545,7 +582,7 @@ export default function CreativeStudio({
     setRunning(true)
     try {
       const result = await runStageAgent({
-        userText: userForModel,
+        userText: text,
         system,
         tools,
         history,
@@ -706,6 +743,25 @@ export default function CreativeStudio({
 
   const canSend = Boolean(session && hostSkill && modelKey) && !running && !loading
 
+  const taskView = useMemo(() => {
+    if (!hostSkill) return null
+    const payload = buildCreativeTurnPayload({
+      host: hostSkill,
+      messages,
+      draftText: composerDraft,
+    })
+    return creativeTaskView(hostSkill, payload, modelLabel)
+  }, [hostSkill, messages, composerDraft, modelLabel])
+
+  const onComposerDraftChange = useCallback((text: string) => {
+    setComposerDraft(text)
+  }, [])
+
+  const pickHostSkill = useCallback((id: string) => {
+    setSkillFollowsMode(false)
+    setHostSkillId(id)
+  }, [])
+
   return (
     <CreativeChatContext.Provider value={{ creative, confirmCost, refreshSession }}>
       <div className="creative-studio" data-creative-studio data-mode={mode}>
@@ -729,18 +785,28 @@ export default function CreativeStudio({
             onPickStage={onPickStage}
             modelKey={modelKey}
             hostSkillId={hostSkillId}
-            skillChoices={skillCatalog.map((s) => ({ id: s.id, label: s.manifest.name || s.id }))}
-            onHostSkillChange={setHostSkillId}
-            readonlySkills={readonlySkills}
-            availableReadonly={toolSkills.filter((s) => s.id !== hostSkillId)}
-            onLoadReadonly={loadReadonlySkill}
-            onRemoveReadonly={(id) => setReadonlySkills((prev) => prev.filter((s) => s.id !== id))}
+            skillChoices={skillCatalog.map((s) => ({
+              id: s.id,
+              label: `${s.manifest.name || s.id} · ${s.manifest.stage}`,
+            }))}
+            onHostSkillChange={pickHostSkill}
+            skillFollowsMode={skillFollowsMode}
+            onSkillFollowsModeChange={(on) => {
+              setSkillFollowsMode(on)
+              if (on) setHostSkillId(MODE_SKILL[mode])
+            }}
+            inspectOpen={inspectOpen}
+            canInspect={Boolean(hostSkill) && !loadError}
+            onToggleInspect={() => setInspectOpen((v) => !v)}
             skillError={skillError}
             running={running}
             sources={session?.sources.length || 0}
             artifacts={session?.artifacts.length || 0}
             onOpenList={() => setListOpen(true)}
             onRefresh={() => void refreshSession()}
+            onOpenAllSkills={onOpenAllSkills}
+            hostSkillOptions={skillCatalog.length}
+            totalSkillsCount={totalSkillsCount}
             capabilityTray={
               <CapabilityTray
                 settings={settings}
@@ -782,9 +848,18 @@ export default function CreativeStudio({
                 </div>
               ) : null}
               <ChatThreadShell runtime={runtime} running={running} toolUis={<CreativeToolUis />}>
+                {inspectOpen && taskView ? (
+                  <WorkbenchInspector
+                    view={taskView}
+                    profile={CREATIVE_INSPECT_PROFILE}
+                    onClose={() => setInspectOpen(false)}
+                    onToast={onToast}
+                  />
+                ) : (
                 <div className="creative-body">
                   <div className="creative-conversation">
                     <ChatThreadBody
+                      onComposerDraftChange={onComposerDraftChange}
                       UserMessage={UserMessage}
                       AssistantMessage={AssistantMessage}
                       empty={
@@ -841,6 +916,7 @@ export default function CreativeStudio({
                     onPromote={(a) => setPromoteArtifact(a)}
                   />
                 </div>
+                )}
               </ChatThreadShell>
 
             </>

@@ -11,6 +11,22 @@
 const OPEN_TAGS = ['<think>', '<thinking>']
 const CLOSE_TAGS = ['</think>', '</thinking>']
 
+/** 国内/APIMart 常见业务码：0 与 200 均表示成功 */
+export function isBizSuccessCode(code) {
+  if (code === undefined || code === null) return true
+  if (code === 0 || code === 200 || code === '0' || code === '200') return true
+  const n = Number(code)
+  return Number.isFinite(n) && (n === 0 || n === 200)
+}
+
+function isBizFailureEnvelope(json) {
+  const code = json?.code
+  if (isBizSuccessCode(code)) return false
+  if (code === undefined || code === null) return false
+  if (json?.data != null && typeof json.data === 'object') return false
+  return true
+}
+
 export class ChatStreamParser {
   constructor() {
     this.buffer = ''
@@ -72,8 +88,9 @@ export class ChatStreamParser {
       this.error = String(error.message || error)
       return null
     }
-    if (typeof json?.code === 'number' && json.code !== 200 && !json?.data) {
-      this.error = String(json.message || `上游返回 code ${json.code}`)
+    if (isBizFailureEnvelope(json)) {
+      const bizCode = json?.code
+      this.error = String(json.message || `上游返回 code ${bizCode}`)
       return null
     }
     if (body?.usage && typeof body.usage === 'object') this.usage = body.usage
@@ -86,10 +103,12 @@ export class ChatStreamParser {
     // 原生工具调用参数先于文本判断处理：工具调用时 content 通常为空。
     if (Array.isArray(delta.tool_calls)) {
       for (const call of delta.tool_calls) this.consumeToolCall(call)
+      if (delta.tool_calls.length) this.error = ''
     }
     const content = normalizeContent(delta.content)
     if (!content) return null
     const visible = this.consumeContent(content)
+    if (visible) this.error = ''
     if (!visible) return null
     this.text += visible
     return visible

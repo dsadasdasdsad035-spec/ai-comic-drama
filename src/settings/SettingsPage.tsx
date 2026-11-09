@@ -50,6 +50,19 @@ import type { StockProviderId, StockSettings } from '../stock/types'
 import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
 import ProjectManagerDialog from '../project/ProjectManagerDialog'
 
+export type SettingsInitialSection =
+  | 'providers'
+  | 'models'
+  | 'routing'
+  | 'agent'
+  | 'creative'
+  | 'stock'
+  | 'pricing'
+  | 'lipsync'
+  | 'voices'
+  | 'skills'
+  | 'data'
+
 type Props = {
   toast: (m: string) => void
   onSaved?: () => void
@@ -57,8 +70,10 @@ type Props = {
   currentProjectName?: string
   /** 项目删除成功：父级刷新项目列表与全局上下文 */
   onProjectsDeleted?: (names: string[]) => void | Promise<void>
+  /** 进入设置页时自动展开的分组（例如从创意工作室跳转技能目录） */
+  initialSection?: SettingsInitialSection
 }
-type Section =
+type Section = SettingsInitialSection
   | 'providers'
   | 'models'
   | 'routing'
@@ -294,7 +309,13 @@ function providerKeyPlaceholder(kind: ProviderKind): string {
   return '留空 = 沿用 .env 的 OPENAI_API_KEY'
 }
 
-export default function SettingsPage({ toast, onSaved, onProjectsDeleted, currentProjectName = '' }: Props) {
+export default function SettingsPage({
+  toast,
+  onSaved,
+  onProjectsDeleted,
+  currentProjectName = '',
+  initialSection,
+}: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
@@ -328,6 +349,9 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
   const [tested, setTested] = useState<Record<string, ProviderTestResult>>({})
   const [baseline, setBaseline] = useState('')
   const [section, setSection] = useState<Section>('providers')
+  useEffect(() => {
+    if (initialSection) setSection(initialSection)
+  }, [initialSection])
   const [addMenu, setAddMenu] = useState(false)
   const [catalogProvider, setCatalogProvider] = useState<Provider | null>(null)
   const [modelSearch, setModelSearch] = useState('')
@@ -1994,7 +2018,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
   }
 
   const renderSkills = () => (
-    <section className="st-sec">
+    <section className="st-sec" data-settings-section="skills">
       <header className="st-sec-head">
         <h3>技能</h3>
         <span className="st-hint">
@@ -2003,6 +2027,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         </span>
       </header>
       <p className="st-hint" style={{ margin: '0 0 8px' }}>
+        创意工作室顶栏列出全部 <code>runtime: tools</code> 技能；选项目后可使用工作台读/写工具，完整目录见下方。
         聊天里额外加载的技能只读，不会获得写工具；旧规则包只迁移一次成用户覆盖，恢复默认会删除覆盖。
       </p>
       <div className="st-rules">

@@ -82,6 +82,7 @@ import { FileError, ensureUploadedVideo } from './server/files.mjs'
 import { runSyncLabs } from './server/lipsync.mjs'
 import { analyzeLipSync } from './server/lipsyncQa.mjs'
 import { ChatStreamParser } from './server/text-stream.mjs'
+import { explainTextFetchError, isMockTextProvider, mockAssistantReply } from './server/mock-text.mjs'
 import { isRunnableModel, modelHasCap } from './src/modelCaps'
 import {
   normalizeChatMessages,
@@ -3913,6 +3914,8 @@ function seedreamProxy(): Plugin {
             res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
             return
           }
+          let textProvider: { id?: string; label?: string; kind?: string; baseUrl?: string } | undefined
+          let textBase = ''
           try {
             const body = await readJson(req)
             const system = String(body.system || '')
@@ -3969,6 +3972,8 @@ function seedreamProxy(): Plugin {
               assertChatToolsObjectParameters(tools, { providerId: provider?.id, providerKind: kind })
             }
             const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            textProvider = provider
+            textBase = base
 
             const messages = convertChatMessages(
               chatMessages.length
@@ -4019,6 +4024,50 @@ function seedreamProxy(): Plugin {
                   messages: messages.length,
                 }),
               )
+            }
+
+            const proxyMeta = {
+              model,
+              modelKey: entry.key,
+              modelLabel: entry.label,
+              provider: provider?.label || kind,
+            }
+            if (isMockTextProvider(provider, entry)) {
+              const text = mockAssistantReply({ messages, prompt, toolMode })
+              if (body.stream) {
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream; charset=utf-8',
+                  'Cache-Control': 'no-cache, no-transform',
+                  Connection: 'keep-alive',
+                  'X-Accel-Buffering': 'no',
+                })
+                res.flushHeaders?.()
+                res.write(`data: ${JSON.stringify({ type: 'meta', ...proxyMeta })}\n\n`)
+                res.write(
+                  `data: ${JSON.stringify({ type: 'done', text, toolCalls: [], finishReason: 'stop', ...proxyMeta })}\n\n`,
+                )
+                res.end()
+                return
+              }
+              let parsedJson: unknown
+              if (wantJson && text.trim()) {
+                try {
+                  parsedJson = extractJson(text)
+                } catch {
+                  parsedJson = undefined
+                }
+              }
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  text,
+                  toolCalls: [],
+                  finishReason: 'stop',
+                  ...(wantJson ? { json: parsedJson } : {}),
+                  ...proxyMeta,
+                }),
+              )
+              return
             }
 
             // ---- 流式：只发进度与最终结果；JSON 模式不把原始片段发给客户端
@@ -4124,13 +4173,13 @@ function seedreamProxy(): Plugin {
                 }
                 // 放出被 think 标签检测扣住的尾巴；未闭合的 think 块会被丢弃。
                 parser.flush()
-                if (parser.error) {
+                const text = parser.text.trim()
+                const toolCalls = parser.finalToolCalls()
+                if (parser.error && !text && !toolCalls.length) {
                   send({ type: 'error', message: parser.error.slice(0, 600) })
                   res.end()
                   return
                 }
-                const text = parser.text.trim()
-                const toolCalls = parser.finalToolCalls()
                 if (!text && !toolCalls.length) {
                   send({
                     type: 'error',
@@ -4159,7 +4208,7 @@ function seedreamProxy(): Plugin {
                 res.end()
               } catch (e: any) {
                 if (!closed) {
-                  send({ type: 'error', message: (e?.message || String(e)).slice(0, 600) })
+                  send({ type: 'error', message: explainTextFetchError(e, textProvider, textBase) })
                   res.end()
                 }
               }
@@ -4219,7 +4268,7 @@ function seedreamProxy(): Plugin {
             )
           } catch (e: any) {
             res.statusCode = 500
-            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+            res.end(JSON.stringify({ ok: false, message: explainTextFetchError(e, textProvider, textBase) }))
           }
           return
         }

@@ -4,6 +4,7 @@ import { askVision, type AppSettings, type Cap } from '../api'
 import { isRunnableModel, modelHasCap } from '../modelCaps'
 import { getContractSchema, validateContract } from '../skills/contracts'
 import type { Skill } from '../skills/types'
+import { bindSkillTools, createStageToolSet, type StageToolSet } from '../agent/stageTools'
 import { boundJson } from '../agent/workbenchChat'
 import { getSkill } from '../skills/registry'
 import type { CreativeArtifact, CreativeSessionSummary, CreativeShot, CreativeSource } from './sessionStore'
@@ -595,6 +596,21 @@ export function bindCreativeTools(
   const readSkillTool = set.byName.get('read_skill')
   if (readSkillTool) out.set('read_skill', readSkillTool)
   return [...out.values()]
+}
+
+/** 创意宿主：会话工具 +（可选）当前项目的工作台工具，按工具名去重 */
+export function bindCreativeHostTools(
+  creativeSet: ReturnType<typeof createCreativeToolSet>,
+  host: Skill,
+  stageSet?: StageToolSet | null,
+): ToolDef[] {
+  const fromCreative = bindCreativeTools(creativeSet, [{ skill: host, mode: 'host' }])
+  if (!stageSet) return fromCreative
+  const fromStage = bindSkillTools(stageSet, [{ skill: host, mode: 'host' }])
+  const byName = new Map<string, ToolDef>()
+  for (const t of fromCreative) byName.set(t.name, t)
+  for (const t of fromStage) byName.set(t.name, t)
+  return [...byName.values()]
 }
 
 /** 通过产物路由保存反推结果（服务端负责落库与契约二次校验） */

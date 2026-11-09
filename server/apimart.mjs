@@ -9,6 +9,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { isBizSuccessCode } from './text-stream.mjs'
 
 const DEFAULT_BASE = 'https://api.apimart.ai/v1'
 const CATALOG_TIMEOUT_MS = 30_000
@@ -867,7 +868,7 @@ export function normalizeSseChunk(raw) {
     const msg = typeof obj.error === 'string' ? obj.error : obj.error.message
     throw new ApimartError(String(msg || '上游返回错误'), { kind: 'api' })
   }
-  if (typeof obj.code === 'number' && obj.code !== 200 && !obj.data) {
+  if (!isBizSuccessCode(obj.code) && obj.code != null && !(obj.data != null && typeof obj.data === 'object')) {
     throw new ApimartError(String(obj.message || `上游返回 code ${obj.code}`), { kind: 'api', code: String(obj.code) })
   }
   if (Array.isArray(obj.choices)) return obj

@@ -126,6 +126,7 @@ export function ChatThreadBody({
   hint,
   attachments,
   composerTop,
+  onComposerDraftChange,
   cancelLabel = '取消',
   emptyAlign = 'top',
 }: {
@@ -145,6 +146,8 @@ export function ChatThreadBody({
    * 与 attachments 同属输入区，但不表示「逐轮附件」——它编辑的是宿主自己的数据。
    */
   composerTop?: ReactNode
+  /** 实时同步输入框草稿（未发送文字） */
+  onComposerDraftChange?: (text: string) => void
   cancelLabel?: string
   emptyAlign?: 'top' | 'bottom'
 }) {
@@ -177,6 +180,8 @@ export function ChatThreadBody({
           className="flex max-h-[180px] min-h-[44px] w-full resize-none overflow-y-auto rounded-md border border-input bg-background px-3 py-2 text-[13px] leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           placeholder={placeholder || '输入消息…'}
           aria-label={inputLabel || '聊天输入'}
+          onInput={(e) => onComposerDraftChange?.(e.currentTarget.value)}
+          onChange={(e) => onComposerDraftChange?.(e.currentTarget.value)}
         />
         <div data-chat-actions className="flex items-center gap-2 pt-1.5">
           <span className="mr-auto text-[11px] text-muted-foreground">
