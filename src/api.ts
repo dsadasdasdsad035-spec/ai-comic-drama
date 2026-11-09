@@ -255,6 +255,24 @@ export async function waitVideo(
   }
 }
 
+export type { TransitionSuggestion } from './transitionSuggest'
+
+/** 两镜转场智能建议（规则 + 食谱索引，不触发出片） */
+export async function fetchTransitionSuggest(body: {
+  source: import('./types').ShotData
+  target: import('./types').ShotData
+  transitionOut?: import('./types').TransitionOut | null
+}) {
+  const r = await fetch('/api/transition/suggest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '转场建议失败')
+  return { suggestion: j.suggestion as import('./transitionSuggest').TransitionSuggestion }
+}
+
 // ---------- animatic 合成 ----------
 
 export type ExportSegment = {

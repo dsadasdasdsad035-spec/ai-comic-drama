@@ -1,10 +1,47 @@
 import { extractFrames, type ModelEntry } from './api'
+import { parseDialogue } from './prompts'
+import { audioRefCapabilitiesFor, nativeAudioPrompt, nativeAudioRef } from './nativeAudio'
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
-import type { TransitionBoundary, TransitionBridging, TransitionGenerated } from './types'
+import type { ShotData, TransitionBoundary, TransitionBridging, TransitionGenerated } from './types'
 import { assetMediaType } from './mediaPick'
-import { collectShotReferences, currentShotImage } from './shotReferences'
-import { normalizeGenerated } from './transition'
+import {
+  collectShotReferences,
+  collectVideoReferences,
+  currentShotImage,
+  SHOT_NEXT,
+  SHOT_PREV,
+  type MissingShotReference,
+  type ResolvedShotReference,
+  type ResolvedVideoReference,
+} from './shotReferences'
+import {
+  type VideoAttachment,
+  type VideoRequestIssue,
+  buildReferenceImagesPromptHint,
+  buildVideoReferencePromptHint,
+  purposeOfShotReference,
+} from './videoPrompt'
+import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT } from './videoRefLimits'
+import { shortHash } from './scheduleGeometry'
+import { localPath } from './shotSync'
+import { coerceTransitionVideoPromptOverride, normalizeGenerated, transitionOverrideText } from './transition'
+
+/** 画布派生「转场参考」边 id：ref-tr|{转场边 id}|{素材/角色节点 id} */
+export const transitionRefEdgeId = (edgeId: string, refSourceId: string) =>
+  `ref-tr|${edgeId}|${refSourceId}`
+
+export const parseTransitionRefEdgeId = (
+  id: string,
+): { edgeId: string; refSourceId: string } | null => {
+  if (!id.startsWith('ref-tr|')) return null
+  const parts = id.split('|')
+  if (parts.length !== 3) return null
+  const edgeId = parts[1]
+  const refSourceId = parts[2]
+  if (!edgeId || !refSourceId) return null
+  return { edgeId, refSourceId }
+}
 
 export type TransitionRef = {
   token: string
@@ -86,32 +123,28 @@ export async function ensureTransitionBoundary(
 
 const isRefSource = (s: string) => s === 'character' || s === 'asset' || s === 'extra'
 
+/** 占位角色节点不可作转场 dedicated 参考 */
+export const isTransitionDedicatedRefToken = (token: string) => !token.startsWith('char-miss')
+
 /**
  * 转场关键帧的参考清单：
  * 结构参考（尾帧/首帧）由调用方放最前；这里只按「两镜继承 → 显式补充」给出人/景/道具参考。
  */
+/** 转场手动补充参考候选：角色表 + 画布素材 + 两镜手工 URL（不自动选中，仅解析 refIds） */
 export function transitionRefCandidates(
   source: ShotNodeType,
   target: ShotNodeType,
   nodes: ShotNodeType[],
   characters: CharacterSheet[],
-  missingMedia: Set<string>,
+  _missingMedia: Set<string>,
 ): TransitionRef[] {
   const out = new Map<string, TransitionRef>()
   for (const node of [source, target]) {
-    const collected = collectShotReferences({ node, nodes, characters, missingMedia })
-    for (const r of collected.refs) {
-      if (!isRefSource(r.source)) continue
-      if (out.has(r.url)) continue
-      out.set(r.url, {
-        token: r.token,
-        label: r.label,
-        url: r.url,
-        source: r.source === 'character' ? 'character' : r.source === 'asset' ? 'asset' : 'extra',
-      })
+    for (const url of node.data.refExtras ?? []) {
+      if (!url || out.has(url)) continue
+      out.set(url, { token: `extra:${url}`, label: '手工参考图', url, source: 'extra' })
     }
   }
-  // 所有可用角色/素材也列出来，方便面板补充；没连线的默认不选
   for (const c of characters) {
     if (!c.image) continue
     const token = `char-${c.id}`
@@ -158,6 +191,7 @@ export function effectiveTransitionRefs(
     }
   }
   for (const token of g.refIds ?? []) {
+    if (!isTransitionDedicatedRefToken(token)) continue
     const hit = byToken.get(token)
     if (!hit || seen.has(hit.url)) continue
     seen.add(hit.url)
@@ -178,18 +212,169 @@ function collectInherited(
   for (const node of [source, target]) {
     const collected = collectShotReferences({ node, nodes, characters, missingMedia })
     for (const r of collected.refs) {
-      if (!isRefSource(r.source)) continue
+      if (r.source !== 'asset' && r.source !== 'extra') continue
       if (seen.has(r.url)) continue
       seen.add(r.url)
       out.push({
         token: r.token,
         label: r.label,
         url: r.url,
-        source: r.source === 'character' ? 'character' : r.source === 'asset' ? 'asset' : 'extra',
+        source: r.source === 'asset' ? 'asset' : 'extra',
       })
     }
   }
   return out
+}
+
+/** 首尾直变 + 尾帧：reference_image 与尾帧互斥 */
+export function transitionRefSubmitAllowed(
+  bridging: TransitionBridging,
+  supportsLastFrame: boolean,
+  hasBoundaryIn: boolean,
+): boolean {
+  return !(bridging === 'morph' && supportsLastFrame && hasBoundaryIn)
+}
+
+/** 转场若开启 inherit（已废弃，normalize 恒 false）：只继承素材/手工 URL，不用 cast 与表情 */
+function composeShotRefsForVideoMerge(
+  node: ShotNodeType,
+  nodes: ShotNodeType[],
+  characters: CharacterSheet[],
+  missingMedia: Set<string>,
+): {
+  refs: ResolvedShotReference[]
+  missing: MissingShotReference[]
+  expressionWarnings: string[]
+} {
+  const collected = collectShotReferences({ node, nodes, characters, missingMedia })
+  const refs: ResolvedShotReference[] = []
+  const seen = new Set<string>()
+  const push = (ref: ResolvedShotReference) => {
+    if (!ref.url || seen.has(ref.url)) return
+    seen.add(ref.url)
+    refs.push(ref)
+  }
+  for (const ref of collected.refs) {
+    if (ref.source === 'asset' || ref.source === 'extra') push(ref)
+  }
+  return { refs: refs, missing: collected.missing, expressionWarnings: [] }
+}
+
+export function mergedTransitionShotReferences(input: {
+  source: ShotNodeType
+  target: ShotNodeType
+  nodes: ShotNodeType[]
+  characters: CharacterSheet[]
+  missingMedia: Set<string>
+  generated: TransitionGenerated | undefined
+}): {
+  used: ResolvedShotReference[]
+  omitted: ResolvedShotReference[]
+  missing: MissingShotReference[]
+  warnings: string[]
+  videos: ResolvedVideoReference[]
+  omittedVideos: { label: string; reason: string }[]
+  supplementalTokens: string[]
+} {
+  const g = normalizeGenerated(input.generated)
+  const excluded = new Set(g.excludeRefIds ?? [])
+  const merged: ResolvedShotReference[] = []
+  const missing: MissingShotReference[] = []
+  const warnings: string[] = []
+  const urlSeen = new Set<string>()
+
+  const pushMerged = (ref: ResolvedShotReference) => {
+    if (excluded.has(ref.token)) return
+    if (!ref.url || urlSeen.has(ref.url)) return
+    urlSeen.add(ref.url)
+    merged.push(ref)
+  }
+
+  if (g.inheritRefs === true) {
+    for (const node of [input.source, input.target]) {
+      const pack = composeShotRefsForVideoMerge(
+        node,
+        input.nodes,
+        input.characters,
+        input.missingMedia,
+      )
+      warnings.push(...pack.expressionWarnings)
+      missing.push(...pack.missing)
+      for (const ref of pack.refs) pushMerged(ref)
+    }
+  }
+
+  const candidates = transitionRefCandidates(
+    input.source,
+    input.target,
+    input.nodes,
+    input.characters,
+    input.missingMedia,
+  )
+  const byToken = new Map(candidates.map((r) => [r.token, r]))
+  const supplementalTokens: string[] = []
+  for (const token of g.refIds ?? []) {
+    if (!isTransitionDedicatedRefToken(token)) continue
+    const hit = byToken.get(token)
+    if (!hit) continue
+    supplementalTokens.push(token)
+    pushMerged({
+      token: hit.token,
+      source: hit.source === 'character' ? 'character' : hit.source === 'asset' ? 'asset' : 'extra',
+      url: hit.url,
+      label: hit.label,
+    })
+  }
+
+  const { used, omitted } = limitVideoReferenceImages(merged, VIDEO_REFERENCE_IMAGE_LIMIT)
+
+  const videoMerged: ResolvedVideoReference[] = []
+  const videoSeen = new Set<string>()
+  for (const node of [input.source, input.target]) {
+    const vc = collectVideoReferences({
+      node,
+      nodes: input.nodes,
+      missingMedia: input.missingMedia,
+    })
+    missing.push(...vc.missing)
+    for (const v of vc.refs) {
+      if (videoSeen.has(v.url)) continue
+      videoSeen.add(v.url)
+      videoMerged.push(v)
+    }
+  }
+  const videos = videoMerged.slice(0, 1)
+  const omittedVideos = videoMerged.slice(1).map((r) => ({
+    label: r.label,
+    reason: '首期只使用第一条视频素材',
+  }))
+
+  const neighborMissing = missing.filter((m) => m.token === SHOT_PREV || m.token === SHOT_NEXT)
+  for (const m of neighborMissing) {
+    warnings.push(`${m.label}：${m.reason}`)
+  }
+
+  return { used, omitted, missing, warnings, videos, omittedVideos, supplementalTokens }
+}
+
+export function transitionStyleRefTokens(
+  source: ShotNodeType,
+  target: ShotNodeType,
+  nodes: ShotNodeType[],
+  characters: CharacterSheet[],
+  missingMedia: Set<string>,
+  generated: TransitionGenerated | undefined,
+): string[] {
+  return mergedTransitionShotReferences({
+    source,
+    target,
+    nodes,
+    characters,
+    missingMedia,
+    generated,
+  }).used
+    .map((r) => r.token)
+    .sort()
 }
 
 export function inheritedTransitionRefs(
@@ -202,10 +387,75 @@ export function inheritedTransitionRefs(
   return collectInherited(source, target, nodes, characters, missingMedia)
 }
 
+const cutPromptSnippet = (s: string) => (s.length > 90 ? `${s.slice(0, 90)}…` : s)
+
+const CAMERA_HEIGHT: Record<'low' | 'eye' | 'high', string> = {
+  low: '低机位',
+  eye: '眼平',
+  high: '高机位',
+}
+
+/** 景别：visualBrief.shotSize 优先于镜头 size */
+function shotSizeForTransition(data: ShotData): string {
+  const brief = String(data.visualBrief?.shotSize || '').trim()
+  if (brief) return brief
+  return String(data.size || '').trim()
+}
+
+function cameraHintLine(data: ShotData): string {
+  const h = data.visualBrief?.cameraHint
+  if (!h) return ''
+  const parts: string[] = []
+  if (h.height && CAMERA_HEIGHT[h.height]) parts.push(CAMERA_HEIGHT[h.height])
+  const ang = String(h.angle || '').trim()
+  if (ang) parts.push(ang)
+  return parts.join('、')
+}
+
+/** 由两镜已有字段拼衔接约束；缺字段则省略对应句 */
+export function transitionContinuityBlock(source: ShotNodeType, target: ShotNodeType): string {
+  const lines: string[] = []
+  const aSize = shotSizeForTransition(source.data)
+  const bSize = shotSizeForTransition(target.data)
+  if (aSize || bSize) {
+    const parts = [
+      aSize ? `上一镜 ${aSize}` : '',
+      bSize ? `下一镜 ${bSize}` : '',
+    ].filter(Boolean)
+    lines.push(`景别：${parts.join('，')}；过渡时景别变化需自然，避免无理由跳切。`)
+  }
+  const aMove = String(source.data.move || '').trim()
+  const bMove = String(target.data.move || '').trim()
+  if (aMove || bMove) {
+    const parts = [
+      aMove ? `上一镜「${aMove}」` : '',
+      bMove ? `下一镜「${bMove}」` : '',
+    ].filter(Boolean)
+    lines.push(`运镜：${parts.join('，')}；机位与运动方向需连贯。`)
+  }
+  const aCam = cameraHintLine(source.data)
+  const bCam = cameraHintLine(target.data)
+  if (aCam || bCam) {
+    const parts = [aCam ? `上一镜 ${aCam}` : '', bCam ? `下一镜 ${bCam}` : ''].filter(Boolean)
+    lines.push(`机位：${parts.join('；')}。`)
+  }
+  const aAct = cutPromptSnippet(String(source.data.videoPrompt || source.data.prompt || '').trim())
+  const bAct = cutPromptSnippet(String(target.data.videoPrompt || target.data.prompt || '').trim())
+  if (aAct || bAct) {
+    const lead = [
+      aAct ? `上一镜结束于「${aAct}」` : '',
+      bAct ? `下一镜起始于「${bAct}」` : '',
+    ].filter(Boolean)
+    lines.push(`动作衔接：${lead.join('，')}；动作与视线连续。`)
+  }
+  if (!lines.length) return ''
+  return `\n\n衔接：\n${lines.join('\n')}`
+}
+
 export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeType): string {
   const a = String(source.data.videoPrompt || source.data.prompt || '').trim()
   const b = String(target.data.videoPrompt || target.data.prompt || '').trim()
-  const cut = (s: string) => (s.length > 90 ? `${s.slice(0, 90)}…` : s)
+  const cut = cutPromptSnippet
   if (!a && !b) return '两个镜头之间的过渡瞬间：保持同一空间、同一人物与同一光线，画面自然衔接。'
   return (
     '两个镜头之间的过渡瞬间，保持人物外观、服装、场景与光线一致。' +
@@ -214,13 +464,21 @@ export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeTy
   )
 }
 
-export function transitionSoundBlock(soundPrompt: string | undefined): string {
+export function transitionSoundBlock(soundPrompt: string | undefined, nativeAudio?: boolean): string {
   const t = String(soundPrompt || '').trim()
   if (!t) return ''
-  return (
-    `\n\n声音：\n${t}\n` +
-    '（转场出片当前不支持音色参考音频；环境声仅靠上述描述，成片旁白请用「效果」叠化保留。）'
-  )
+  const foot = nativeAudio
+    ? '（环境声可写在上述描述；对白音色由 Seedance 原生音频参考。）'
+    : '（未开启原生声音时环境声仅靠上述描述，成片旁白请用「效果」叠化保留。）'
+  return `\n\n声音：\n${t}\n${foot}`
+}
+
+/** 合并相邻两镜台词，供转场原生音频解析说话人 */
+export function transitionDialogueText(source: ShotNodeType, target: ShotNodeType): string {
+  return [source.data.dialogue, target.data.dialogue]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join('\n')
 }
 
 export function autoTransitionVideoPrompt(
@@ -235,7 +493,8 @@ export function autoTransitionVideoPrompt(
       ? '这是两个镜头之间的过渡片段：画面从上一镜结束瞬间变形到下一镜开始瞬间。' +
         '允许环境明显变化（天气、光线、降水、雾气等），但角色外观、服装与空间逻辑需连贯；运动连续自然，不出现字幕、文字与水印。'
       : '这是两个镜头之间的过渡片段：从上镜的落点自然过渡到下镜的起点，人物外观、服装、场景与光线保持一致，运动连续，不出现字幕、文字与水印。'
-  return `${base}\n\n${tail}${transitionSoundBlock(g.soundPrompt)}`
+  const continuity = transitionContinuityBlock(source, target)
+  return `${base}${continuity}\n\n${tail}${transitionSoundBlock(g.soundPrompt, g.audioMode === 'native')}`
 }
 
 /** @deprecated 用 autoTransitionVideoPrompt / effectiveTransitionVideoPrompt */
@@ -247,15 +506,56 @@ export function transitionVideoPrompt(
   return autoTransitionVideoPrompt(source, target, generated)
 }
 
+export function transitionVideoPromptFingerprint(
+  source: ShotNodeType,
+  target: ShotNodeType,
+  generated: TransitionGenerated | undefined,
+  styleRefTokens: string[],
+): string {
+  const g = normalizeGenerated(generated)
+  return shortHash(
+    JSON.stringify({
+      boundaryOut: localPath(g.boundary?.out) ?? '',
+      boundaryIn: localPath(g.boundary?.in) ?? '',
+      prompt: g.prompt,
+      sound: g.soundPrompt ?? '',
+      bridging: g.bridging ?? 'morph',
+      inheritRefs: g.inheritRefs === true,
+      excludeRefIds: [...(g.excludeRefIds ?? [])].sort(),
+      refIds: [...(g.refIds ?? [])].sort(),
+      styleRefTokens: [...styleRefTokens].sort(),
+      outMove: String(source.data.move || '').trim(),
+      inMove: String(target.data.move || '').trim(),
+      outDialogue: String(source.data.dialogue || '').trim(),
+      inDialogue: String(target.data.dialogue || '').trim(),
+      audioMode: g.audioMode ?? 'off',
+      audioRef: localPath(g.audioRef?.url) ?? '',
+    }),
+  )
+}
+
+export type EffectiveTransitionVideoPrompt = {
+  text: string
+  source: 'auto' | 'override'
+  stale: boolean
+}
+
 export function effectiveTransitionVideoPrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
-): { text: string; source: 'auto' | 'override' } {
+  styleRefTokens: string[] = [],
+): EffectiveTransitionVideoPrompt {
   const g = normalizeGenerated(generated)
-  const override = g.videoPromptOverride?.trim()
-  if (override) return { text: override, source: 'override' }
-  return { text: autoTransitionVideoPrompt(source, target, g), source: 'auto' }
+  const auto = autoTransitionVideoPrompt(source, target, g)
+  const fp = transitionVideoPromptFingerprint(source, target, g, styleRefTokens)
+  const override = coerceTransitionVideoPromptOverride(g.videoPromptOverride)
+  if (!override?.text) return { text: auto, source: 'auto', stale: false }
+  return {
+    text: override.text,
+    source: 'override',
+    stale: Boolean(override.fingerprint && override.fingerprint !== fp),
+  }
 }
 
 export type TransitionAttachmentRole = 'first_frame' | 'last_frame' | 'keyframe'
@@ -267,6 +567,107 @@ export type TransitionVideoPreviewAttachment = {
   purpose: string
 }
 
+/** 首尾直变 + 尾帧模型：风格参考图不进 API（与 Seedance 2.5 上游互斥） */
+export const OMIT_REASON_MORPH_REF_MUTEX = 'morph-last-frame-ref-mutex'
+
+/** 任意转场对象请求下服务端暂不附带 reference_image */
+export const OMIT_REASON_TRANSITION_NO_REFS = 'transition-mode-no-style-refs'
+
+export const OMIT_REASON_LABELS: Record<string, string> = {
+  [OMIT_REASON_MORPH_REF_MUTEX]:
+    '首尾直变占用首尾帧槽位，当前模型不支持同时提交风格参考图',
+  [OMIT_REASON_TRANSITION_NO_REFS]: '转场出片走首尾帧通道，风格参考图本次不提交',
+  ref_limit: '超过参考图上限，未提交',
+}
+
+const transitionBlock = (code: string, message: string): VideoRequestIssue => ({
+  code,
+  message,
+  level: 'error',
+})
+
+const transitionWarn = (code: string, message: string): VideoRequestIssue => ({
+  code,
+  message,
+  level: 'warn',
+})
+
+/** 首尾帧 / 关键帧在正文中的槽位说明（与分镜参考图 hint 同构） */
+function buildTransitionStructurePromptHint(attachments: TransitionVideoPreviewAttachment[]): string {
+  const parts: string[] = []
+  for (const a of attachments) {
+    if (!a.url) continue
+    const slot = a.role === 'first_frame' ? '首帧' : a.role === 'last_frame' ? '尾帧' : '关键帧'
+    parts.push(`[${slot}]=${a.label}`)
+  }
+  if (!parts.length) return ''
+  return `\n\n结构锚点：${parts.join('，')}。过渡片段须与首尾画面对齐。`
+}
+
+/** 自动拼装正文追加参考描述；手改正文不篡改（与分镜 effectiveVideoPrompt 一致） */
+function finalizeTransitionPromptText(
+  base: string,
+  source: 'auto' | 'override',
+  attachments: TransitionVideoPreviewAttachment[],
+  refs: VideoAttachment[],
+  video: VideoAttachment | null,
+): string {
+  if (source === 'override') return base
+  return (
+    base +
+    buildTransitionStructurePromptHint(attachments) +
+    buildReferenceImagesPromptHint(refs, Boolean(video)) +
+    buildVideoReferencePromptHint(video ?? undefined)
+  )
+}
+
+export type TransitionPromptPanelRefPrefix = {
+  key: string
+  bold: string
+  label: string
+  purpose: string
+}
+
+/** 转场「本次出片提示词」面板摘要与 vp-refs 前缀（结构首尾帧） */
+export function transitionPreviewToPromptPanelModel(
+  preview: TransitionVideoPreview,
+  vidRes: string,
+): {
+  summaryLine: string
+  textSourceLabel: string
+  refPrefix: TransitionPromptPanelRefPrefix[]
+} {
+  const bridgingLabel = preview.bridging === 'morph' ? '首尾直变' : '关键帧首帧'
+  const res = vidRes ? ` · ${vidRes}` : ''
+  const trim = preview.trimTo ? ` · 裁到 ${preview.trimTo.toFixed(1)}s` : ''
+  const summaryLine = `${bridgingLabel} · ${preview.seconds}s（请求 ${preview.requestSeconds}s${trim}）${res} · 正文来自${
+    preview.promptSource === 'override' ? '手改正文' : '画面与过渡/声音描述'
+  } · 表情参考无 · 无表演 · 无音色参考`
+  const textSourceLabel = preview.promptSource === 'override' ? '手改正文' : '画面与过渡/声音描述'
+  const refPrefix: TransitionPromptPanelRefPrefix[] = preview.attachments.map((a) => ({
+    key: `${a.role}-${a.label}`,
+    bold: a.role === 'first_frame' ? '首帧' : a.role === 'last_frame' ? '尾帧' : '关键帧',
+    label: a.label,
+    purpose: a.purpose,
+  }))
+  return { summaryLine, textSourceLabel, refPrefix }
+}
+
+export type TransitionStyleRefLine = {
+  token: string
+  label: string
+  url: string
+  kind: 'inherited' | 'added'
+  submitted: boolean
+  omittedReason?: string
+}
+
+export type TransitionStyleOmitted = {
+  token: string
+  label: string
+  reason: string
+}
+
 export type TransitionVideoPreview = {
   bridging: TransitionBridging
   seconds: number
@@ -275,35 +676,135 @@ export type TransitionVideoPreview = {
   supportsLastFrame: boolean
   modelLabel?: string
   attachments: TransitionVideoPreviewAttachment[]
+  /** 与分镜 VideoPromptPanel 同构的参考图槽位 */
+  refs: VideoAttachment[]
+  video: VideoAttachment | null
+  omitted: { label: string; reason: string }[]
+  omittedVideos: { label: string; reason: string }[]
+  styleRefs: TransitionStyleRefLine[]
+  styleOmitted: TransitionStyleOmitted[]
+  submittedStyleCount: number
   audio: {
-    mode: 'none'
+    mode: 'none' | 'native'
     label: string
     detail: string
+    url?: string
+    character?: string
   }
   visualPrompt: string
   soundPrompt: string
+  continuityPreview: string
   prompt: string
   promptSource: 'auto' | 'override'
-  blocking: string[]
-  warnings: string[]
+  promptStale: boolean
+  promptFingerprint: string
+  blocking: VideoRequestIssue[]
+  warnings: VideoRequestIssue[]
+}
+
+export type TransitionVideoRequest = TransitionVideoPreview & {
+  /** 与 /api/seedance 一致的 reference_image 列表 */
+  refImages: string[]
+  refVideos: string[]
+  styleRefOmitReason: string | undefined
+}
+
+export function styleRefOmitReason(
+  bridging: TransitionBridging,
+  supportsLastFrame: boolean,
+  hasBoundaryIn: boolean,
+): string {
+  if (bridging === 'morph' && supportsLastFrame && hasBoundaryIn) return OMIT_REASON_MORPH_REF_MUTEX
+  return OMIT_REASON_TRANSITION_NO_REFS
+}
+
+export function buildTransitionVideoRequest(input: {
+  source: ShotNodeType
+  target: ShotNodeType
+  generated: TransitionGenerated | undefined
+  model?: {
+    label?: string
+    model?: string
+    providerKind?: string
+    features?: { lastFrame?: boolean; audioOut?: boolean }
+  } | null
+  nodes?: ShotNodeType[]
+  characters?: CharacterSheet[]
+  missingMedia?: Set<string>
+}): TransitionVideoRequest {
+  const preview = buildTransitionVideoPreview(input)
+  const g = normalizeGenerated(input.generated)
+  const hasIn = Boolean(g.boundary?.in)
+  const submitStyle = transitionRefSubmitAllowed(preview.bridging, preview.supportsLastFrame, hasIn)
+  const omitCode = styleRefOmitReason(preview.bridging, preview.supportsLastFrame, hasIn)
+  const refImages = submitStyle ? preview.refs.map((r) => r.url) : []
+  const refVideos = submitStyle && preview.video ? [preview.video.url] : []
+  return {
+    ...preview,
+    refImages,
+    refVideos,
+    styleRefOmitReason:
+      !submitStyle && (preview.refs.length > 0 || preview.styleRefs.length > 0) ? omitCode : undefined,
+  }
 }
 
 export function buildTransitionVideoPreview(input: {
   source: ShotNodeType
   target: ShotNodeType
   generated: TransitionGenerated | undefined
-  model?: { label?: string; model?: string; features?: { lastFrame?: boolean } } | null
+  model?: {
+    label?: string
+    model?: string
+    providerKind?: string
+    features?: { lastFrame?: boolean; audioOut?: boolean }
+  } | null
+  nodes?: ShotNodeType[]
+  characters?: CharacterSheet[]
+  missingMedia?: Set<string>
 }): TransitionVideoPreview {
   const g = normalizeGenerated(input.generated)
   const supportsLastFrame = Boolean(input.model?.features?.lastFrame)
-  const req = transitionRequestSeconds(g.targetSeconds, input.model?.model, supportsLastFrame)
-  const effective = effectiveTransitionVideoPrompt(input.source, input.target, g)
+  const nativeMode = g.audioMode === 'native'
+  const req = transitionRequestSeconds(g.targetSeconds, input.model?.model, supportsLastFrame, {
+    nativeAudio: nativeMode,
+  })
+  const dialogue = parseDialogue(transitionDialogueText(input.source, input.target))
+  const performance = [...(input.source.data.performance ?? []), ...(input.target.data.performance ?? [])]
+  const audioCaps = audioRefCapabilitiesFor({
+    providerKind: input.model?.providerKind,
+    model: input.model?.model,
+    audioOut: input.model?.features?.audioOut,
+  })
+  const nativeRef = nativeMode
+    ? nativeAudioRef({
+        dialogue,
+        performance,
+        characters: input.characters ?? [],
+        caps: audioCaps,
+        seconds: req.seconds,
+      })
+    : null
+  const styleTokensForFp = transitionStyleRefTokens(
+    input.source,
+    input.target,
+    input.nodes ?? [],
+    input.characters ?? [],
+    input.missingMedia ?? new Set<string>(),
+    g,
+  )
+  const effectivePrompt = effectiveTransitionVideoPrompt(input.source, input.target, g, styleTokensForFp)
+  const promptFingerprint = transitionVideoPromptFingerprint(
+    input.source,
+    input.target,
+    g,
+    styleTokensForFp,
+  )
   const legacyKeyframe =
     g.bridging === 'keyframe' ? g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0] : undefined
   const bridging = legacyKeyframe ? 'keyframe' : 'morph'
   const attachments: TransitionVideoPreviewAttachment[] = []
-  const blocking: string[] = []
-  const warnings: string[] = []
+  const blocking: VideoRequestIssue[] = []
+  const warnings: VideoRequestIssue[] = []
 
   if (bridging === 'morph') {
     if (g.boundary?.out) {
@@ -323,10 +824,20 @@ export function buildTransitionVideoPreview(input: {
       })
     }
     if (!g.boundary?.out || !g.boundary?.in) {
-      blocking.push('缺少上一镜尾帧或下一镜首帧，请刷新边界或先给两镜出成片/静帧')
+      blocking.push(
+        transitionBlock(
+          'transition-boundary-missing',
+          '缺少上一镜尾帧或下一镜首帧，请刷新边界或先给两镜出成片/静帧',
+        ),
+      )
     }
     if (!supportsLastFrame) {
-      blocking.push('当前出片模型不支持尾帧，无法首尾直变（请选 Seedance 2.5 或 Kling v3）')
+      blocking.push(
+        transitionBlock(
+          'transition-no-last-frame',
+          '当前出片模型不支持尾帧，无法首尾直变（请选 Seedance 2.5 或 Kling v3）',
+        ),
+      )
     }
   } else if (legacyKeyframe) {
     attachments.push({
@@ -335,7 +846,121 @@ export function buildTransitionVideoPreview(input: {
       url: legacyKeyframe,
       purpose: '历史项目兼容',
     })
-    warnings.push('当前为旧版关键帧首帧模式，新转场建议删除关键帧并改用首尾直变')
+    warnings.push(
+      transitionWarn(
+        'transition-legacy-keyframe',
+        '当前为旧版关键帧首帧模式，新转场建议删除关键帧并改用首尾直变',
+      ),
+    )
+  }
+
+  const nodes = input.nodes ?? []
+  const characters = input.characters ?? []
+  const missingMedia = input.missingMedia ?? new Set<string>()
+  const hasIn = Boolean(g.boundary?.in)
+  const submitStyle = transitionRefSubmitAllowed(bridging, supportsLastFrame, hasIn)
+  const omitCode = styleRefOmitReason(bridging, supportsLastFrame, hasIn)
+  const merge = mergedTransitionShotReferences({
+    source: input.source,
+    target: input.target,
+    nodes,
+    characters,
+    missingMedia,
+    generated: g,
+  })
+  const supplemental = new Set(merge.supplementalTokens)
+  const usedSet = new Set(merge.used.map((r) => r.url))
+  const omittedFromLimit = merge.omitted.map((r) => ({
+    label: r.label,
+    reason:
+      r.source === 'expression'
+        ? `表情参考因参考图已达上限（${VIDEO_REFERENCE_IMAGE_LIMIT ?? '不限'}）省略`
+        : `超过参考图上限（${VIDEO_REFERENCE_IMAGE_LIMIT ?? '不限'}）`,
+  }))
+  const refs: VideoAttachment[] = merge.used.map((r, i) => ({
+    slot: 'image' as const,
+    index: i + 1,
+    url: r.url,
+    label: r.label,
+    purpose: purposeOfShotReference(r),
+    source: r.source,
+  }))
+  const primaryVideo = merge.videos[0]
+  const video: VideoAttachment | null = primaryVideo
+    ? {
+        slot: 'video',
+        index: 1,
+        url: primaryVideo.url,
+        label: primaryVideo.label,
+        purpose: '运动/机位',
+        source: 'asset',
+      }
+    : null
+
+  const styleRefs: TransitionStyleRefLine[] = []
+  const styleOmitted: TransitionStyleOmitted[] = []
+  const allLines = [...merge.used, ...merge.omitted]
+  for (const r of allLines) {
+    const kind: 'inherited' | 'added' = supplemental.has(r.token) ? 'added' : 'inherited'
+    const inUsed = usedSet.has(r.url)
+    let submitted = submitStyle && inUsed
+    let omittedReason: string | undefined
+    if (!submitStyle && r.url) {
+      omittedReason = omitCode
+    } else if (submitStyle && !inUsed) {
+      omittedReason = 'ref_limit'
+    }
+    styleRefs.push({
+      token: r.token,
+      label: r.label,
+      url: r.url,
+      kind,
+      submitted,
+      ...(omittedReason ? { omittedReason } : {}),
+    })
+    if (omittedReason) {
+      styleOmitted.push({
+        token: r.token,
+        label: r.label,
+        reason: OMIT_REASON_LABELS[omittedReason] ?? omittedReason,
+      })
+    }
+  }
+  for (const o of omittedFromLimit) {
+    styleOmitted.push({ token: '', label: o.label, reason: o.reason })
+  }
+  for (const o of merge.omittedVideos) {
+    styleOmitted.push({ token: 'video-extra', label: o.label, reason: o.reason })
+  }
+
+  for (const m of merge.missing) {
+    if (m.token === SHOT_PREV || m.token === SHOT_NEXT) {
+      blocking.push(transitionBlock('transition-adjacent-ref', `${m.label}：${m.reason}`))
+    } else if (String(m.token).startsWith('asset-') || String(m.reason).includes('视频')) {
+      blocking.push(transitionBlock('transition-ref-missing', `${m.label}：${m.reason}`))
+    }
+  }
+  for (const w of merge.warnings) {
+    warnings.push(transitionWarn('transition-merge-warn', w))
+  }
+
+  const continuityPreview = transitionContinuityBlock(input.source, input.target)
+  const submittedStyleCount = styleRefs.filter((r) => r.submitted).length
+  let promptBody = effectivePrompt.text
+  if (nativeMode && nativeRef?.ok && effectivePrompt.source === 'auto') {
+    const nativeSound = nativeAudioPrompt(nativeRef.character, dialogue, true)
+    if (nativeSound) promptBody = `${promptBody}\n\n${nativeSound}`
+  }
+  const prompt = finalizeTransitionPromptText(promptBody, effectivePrompt.source, attachments, refs, video)
+
+  if (nativeMode) {
+    if (!nativeRef?.ok) {
+      blocking.push(
+        transitionBlock('transition-native-audio', nativeRef?.reason ?? '原生音频未就绪'),
+      )
+    } else if (g.audioRef?.url && g.audioRef.url !== nativeRef.url) {
+      warnings.push(transitionWarn('transition-native-audio-stale', '台词或音色样本已变化，建议重生成或重新勾选原生声音'))
+    }
   }
 
   return {
@@ -346,15 +971,37 @@ export function buildTransitionVideoPreview(input: {
     supportsLastFrame,
     modelLabel: input.model?.label,
     attachments,
-    audio: {
-      mode: 'none',
-      label: '无参考音频',
-      detail: '转场出片与原生音色参考互斥；环境声请写在「声音描述」里',
-    },
+    refs,
+    video,
+    omitted: omittedFromLimit,
+    omittedVideos: merge.omittedVideos,
+    styleRefs,
+    styleOmitted,
+    submittedStyleCount,
+    audio:
+      nativeMode && nativeRef?.ok
+        ? {
+            mode: 'native' as const,
+            label: `${nativeRef.character} 音色`,
+            detail: '出片请求将附带 audio_url 与 generate_audio',
+            url: nativeRef.url,
+            character: nativeRef.character,
+          }
+        : {
+            mode: 'none' as const,
+            label: '无参考音频',
+            detail:
+              nativeMode && nativeRef && !nativeRef.ok
+                ? nativeRef.reason
+                : '勾选「使用 Seedance 原生声音」可送音色参考；环境声仍可写在「声音描述」',
+          },
     visualPrompt: g.prompt,
     soundPrompt: g.soundPrompt ?? '',
-    prompt: effective.text,
-    promptSource: effective.source,
+    continuityPreview,
+    prompt,
+    promptSource: effectivePrompt.source,
+    promptStale: effectivePrompt.stale,
+    promptFingerprint,
     blocking,
     warnings,
   }
@@ -379,11 +1026,14 @@ export function transitionRequestSeconds(
   targetSeconds: number,
   modelId: string | undefined,
   supportsLastFrame: boolean,
+  opts?: { nativeAudio?: boolean },
 ): { seconds: number; trimTo?: number } {
   const min = videoMinSeconds(modelId)
+  const nativeFloor = opts?.nativeAudio ? 5 : 0
+  const effectiveMin = Math.max(min, nativeFloor)
   const target = Math.max(0.8, Number(targetSeconds) || 1.2)
-  if (supportsLastFrame) return { seconds: Math.max(min, Math.round(target)) }
-  return { seconds: Math.max(min, Math.ceil(target + 0.6)), trimTo: target }
+  if (supportsLastFrame) return { seconds: Math.max(effectiveMin, Math.round(target)) }
+  return { seconds: Math.max(effectiveMin, Math.ceil(target + 0.6)), trimTo: target }
 }
 
 /** 关键帧提示词：面板留空时用上一镜/下一镜的提示词兜底；边界帧由文案描述，不拼进参考图 */

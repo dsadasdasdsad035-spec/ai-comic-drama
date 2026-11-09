@@ -9,10 +9,21 @@ type Props = {
   characters: CharacterSheet[]
   caps: AudioRefCapabilities | null
   modelKey?: string
+  /** 转场等场景：展示与分镜相同控件但不可启用 */
+  forcedOff?: boolean
+  forcedOffHint?: string
 }
 
 /** 画布视频的原生音频开关；首期只允许单说话人 + 有效角色音色样本。 */
-export default function NativeAudioPanel({ data, onPatch, characters, caps, modelKey }: Props) {
+export default function NativeAudioPanel({
+  data,
+  onPatch,
+  characters,
+  caps,
+  modelKey,
+  forcedOff,
+  forcedOffHint,
+}: Props) {
   const dialogue = parseDialogue(data.dialogue)
   const ref = nativeAudioRef({
     dialogue,
@@ -48,6 +59,21 @@ export default function NativeAudioPanel({ data, onPatch, characters, caps, mode
     } else {
       onPatch({ audioMode: 'off', audioMeta: undefined })
     }
+  }
+
+  if (forcedOff) {
+    return (
+      <div className="native-audio-panel dim" data-native-audio>
+        <div className="lip-head">
+          <span>原生音频</span>
+          <label className="perf-check">
+            <input type="checkbox" checked={false} disabled readOnly />
+            使用 Seedance 原生声音
+          </label>
+        </div>
+        {forcedOffHint ? <div className="lip-hint">{forcedOffHint}</div> : null}
+      </div>
+    )
   }
 
   return (

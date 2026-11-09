@@ -1,0 +1,58 @@
+[
+  {
+    "id": "card-flock-tumble",
+    "category": "transition",
+    "title": "卡片群翻 tumble",
+    "intent": "多元素聚散成下一画面主体，节奏偏快",
+    "tags": ["硬切感", "UI", "群像"]
+  },
+  {
+    "id": "cross-dissolve-soft",
+    "category": "transition",
+    "title": "柔叠",
+    "intent": "同场景时间流逝，光线与主体缓慢溶解",
+    "tags": ["叠化", "同场"]
+  },
+  {
+    "id": "wipe-light-band",
+    "category": "transition",
+    "title": "光带擦除",
+    "intent": "高亮条带横扫揭开幕后画面",
+    "tags": ["擦除", "产品"]
+  },
+  {
+    "id": "morph-weather",
+    "category": "transition",
+    "title": "天气形变",
+    "intent": "雨雾阳光大幅变化但空间连续",
+    "tags": ["生成", "环境"]
+  },
+  {
+    "id": "match-cut-action",
+    "category": "transition",
+    "title": "动作匹配切",
+    "intent": "动作中段顺势接到下一镜起始姿态",
+    "tags": ["动作", "生成"]
+  },
+  {
+    "id": "push-in-bridge",
+    "category": "camera",
+    "title": "推镜过桥",
+    "intent": "前推贯穿两镜轴线，景别递进",
+    "tags": ["推镜", "景别"]
+  },
+  {
+    "id": "orbit-handoff",
+    "category": "camera",
+    "title": "环绕交接",
+    "intent": "环绕主体半圈后落到下一镜起幅",
+    "tags": ["摇移", "生成"]
+  },
+  {
+    "id": "time-skip-fadeblack",
+    "category": "transition",
+    "title": "黑场跳时",
+    "intent": "章节或时间跳跃，黑场后进入新状态",
+    "tags": ["黑场", "节奏"]
+  }
+]

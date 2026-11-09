@@ -20,6 +20,8 @@ fs.writeFileSync(
     `export * from ${abs('src/editList.ts')}`,
     `export * from ${abs('src/shotSync.ts')}`,
     `export * from ${abs('src/transitionGen.ts')}`,
+    `export * from ${abs('src/transitionPresets.ts')}`,
+    `export * from ${abs('src/transitionSuggest.ts')}`,
   ].join('\n') + '\n',
 )
 const bundle = path.join(tmp, 'bundle.mjs')
@@ -256,6 +258,295 @@ const genSummary = lib.transitionSummary({
   generated: generated('/v.mp4'),
 })
 check('生成摘要 = 生成 1.2s', genSummary === '生成 1.2s', genSummary)
+
+// ---- 转场衔接正文（shot-transition-continuity）----
+const fullA = shot('cA', 'S01', 3, {
+  size: '全景',
+  move: '推镜',
+  prompt: '猫抬头',
+  visualBrief: {
+    version: 1,
+    usedVision: false,
+    subjects: [],
+    visible: [],
+    shotSize: '近景',
+    cameraHint: { height: 'low', angle: '仰拍' },
+  },
+})
+const fullB = shot('cB', 'S02', 3, { size: '特写', move: '横移', prompt: '猫跳下' })
+const autoFull = lib.autoTransitionVideoPrompt(fullA, fullB, { targetSeconds: 1.2, prompt: '', inheritRefs: true })
+check(
+  '齐全时出现衔接段',
+  autoFull.includes('衔接：') && autoFull.includes('推镜') && autoFull.includes('横移'),
+)
+check('视觉 brief 景别优先于 size', autoFull.includes('上一镜 近景'))
+check('机位提示进正文', autoFull.includes('低机位') && autoFull.includes('仰拍'))
+
+const noSizeA = shot('cA2', 'S01', 3, { prompt: 'a' })
+const noSizeB = shot('cB2', 'S02', 3, { prompt: 'b' })
+const autoNoSize = lib.autoTransitionVideoPrompt(noSizeA, noSizeB, { targetSeconds: 1.2, prompt: '', inheritRefs: true })
+check('缺景别不出景别句', !autoNoSize.includes('景别：'))
+check('缺运镜不出运镜句', !autoNoSize.includes('运镜：'))
+
+const sizeOnlyA = shot('cA3', 'S01', 3, { size: '中景', prompt: 'a' })
+const sizeOnlyB = shot('cB3', 'S02', 3, { size: '近景', prompt: 'b' })
+const autoSizeOnly = lib.autoTransitionVideoPrompt(sizeOnlyA, sizeOnlyB, {
+  targetSeconds: 1.2,
+  prompt: '',
+  inheritRefs: true,
+})
+check('仅景别无运镜', autoSizeOnly.includes('景别：') && !autoSizeOnly.includes('运镜：'))
+
+const override = lib.effectiveTransitionVideoPrompt(fullA, fullB, {
+  targetSeconds: 1.2,
+  prompt: '',
+  inheritRefs: true,
+  videoPromptOverride: '手写整段',
+})
+check('手改正文逐字、不含衔接段', override.text === '手写整段' && override.source === 'override')
+
+const genG = { targetSeconds: 1.2, prompt: '', inheritRefs: true }
+const fp1 = lib.transitionFingerprint(fullA.data, fullB.data, genG)
+const fullA2 = { ...fullA, data: { ...fullA.data, size: '远景', visualBrief: undefined } }
+const fp2 = lib.transitionFingerprint(fullA2.data, fullB.data, genG)
+check('改景别使指纹变化', fp1 !== fp2)
+const fpMove1 = lib.transitionFingerprint(fullA.data, fullB.data, genG)
+const fullB2 = { ...fullB, data: { ...fullB.data, move: '摇镜' } }
+const fpMove2 = lib.transitionFingerprint(fullA.data, fullB2.data, genG)
+check('改运镜使指纹变化', fpMove1 !== fpMove2)
+
+const previewG = {
+  targetSeconds: 1.2,
+  prompt: '',
+  inheritRefs: true,
+  bridging: 'morph',
+  boundary: { out: '/a.jpg', in: '/b.jpg' },
+}
+const prev = lib.buildTransitionVideoPreview({ source: fullA, target: fullB, generated: previewG })
+check('预览与自动正文一致含衔接', prev.prompt.includes('衔接：') && prev.promptSource === 'auto')
+const noBoundaryPrev = lib.buildTransitionVideoPreview({
+  source: fullA,
+  target: fullB,
+  generated: { targetSeconds: 1.2, prompt: '', inheritRefs: true, bridging: 'morph' },
+})
+check(
+  '缺边界 blocking 带 code',
+  noBoundaryPrev.blocking.some((b) => b.code === 'transition-boundary-missing' && b.message),
+)
+const panelModel = lib.transitionPreviewToPromptPanelModel(prev, '720p')
+check('panel 前缀含首尾帧', panelModel.refPrefix.length === 2 && panelModel.refPrefix[0]?.bold === '首帧')
+check('blocking 为 issue 结构', prev.warnings.every((w) => w.code && w.level))
+check('预览含衔接块字段', prev.continuityPreview.includes('衔接：'))
+check('首尾直变风格参考未提交', prev.submittedStyleCount === 0)
+
+const reqBundle = lib.buildTransitionVideoRequest({
+  source: fullA,
+  target: fullB,
+  generated: previewG,
+  model: { model: 'seedance-2.5', features: { lastFrame: true }, label: '2.5' },
+})
+check('请求正文与预览一致', reqBundle.prompt === prev.prompt)
+check('morph 下 refImages 为空', reqBundle.refImages.length === 0)
+
+const refShotA = shot('ra', 'S01', 3, { refExtras: ['/extra-a.jpg'] })
+const refShotB = shot('rb', 'S02', 3, { refExtras: ['/extra-b.jpg'] })
+const mergePrev = lib.buildTransitionVideoPreview({
+  source: refShotA,
+  target: refShotB,
+  generated: {
+    ...previewG,
+    refIds: ['extra:/extra-a.jpg', 'extra:/extra-b.jpg'],
+  },
+  nodes: [refShotA, refShotB],
+  characters: [],
+  missingMedia: new Set(),
+})
+check('双镜合并手工参考', mergePrev.refs.length === 2, String(mergePrev.refs.length))
+check(
+  '转场正文含参考图槽位描述',
+  mergePrev.prompt.includes('参考图：') &&
+    mergePrev.prompt.includes('[图1]=手工参考图') &&
+    mergePrev.prompt.includes('[首帧]='),
+)
+check('合并 refs 槽位同构', mergePrev.refs[0]?.slot === 'image' && mergePrev.refs[0]?.index === 1)
+
+const kfGen = {
+  targetSeconds: 1.2,
+  prompt: '',
+  bridging: 'keyframe',
+  keyframe: { image: '/k.jpg', candidates: ['/k.jpg'], activeIdx: 0 },
+  refIds: ['extra:/extra-a.jpg', 'extra:/extra-b.jpg'],
+}
+const kfReq = lib.buildTransitionVideoRequest({
+  source: refShotA,
+  target: refShotB,
+  generated: kfGen,
+  nodes: [refShotA, refShotB],
+  model: { model: 'doubao-seedance-1-0', features: { lastFrame: false } },
+})
+check('关键帧模式可提交参考图', kfReq.refImages.length === 2, String(kfReq.refImages.length))
+
+const noInherit = lib.buildTransitionVideoPreview({
+  source: refShotA,
+  target: refShotB,
+  generated: { ...previewG, inheritRefs: false, refIds: [] },
+  nodes: [refShotA, refShotB],
+})
+check('无 refIds 则不含风格参考', noInherit.refs.length === 0)
+
+const assetCanvas = {
+  id: 'asset-scene-canvas',
+  type: 'asset',
+  data: { title: '厨房', kind: 'scene', url: '/canvas/kitchen.jpg' },
+}
+const canvasSuppPrev = lib.buildTransitionVideoPreview({
+  source: refShotA,
+  target: refShotB,
+  generated: {
+    ...previewG,
+    inheritRefs: false,
+    refIds: ['asset-scene-canvas'],
+    bridging: 'keyframe',
+    keyframe: { image: '/k.jpg', candidates: ['/k.jpg'], activeIdx: 0 },
+  },
+  nodes: [refShotA, refShotB, assetCanvas],
+  characters: [],
+  missingMedia: new Set(),
+})
+check(
+  '画布 supplemental refIds 进入预览 refs',
+  canvasSuppPrev.refs.some((r) => r.url === '/canvas/kitchen.jpg'),
+  JSON.stringify(canvasSuppPrev.refs.map((r) => r.url)),
+)
+check(
+  'supplemental 标记为 added',
+  canvasSuppPrev.styleRefs.some(
+    (r) => r.token === 'asset-scene-canvas' && r.kind === 'added' && r.url === '/canvas/kitchen.jpg',
+  ),
+)
+
+const trEid = lib.transitionRefEdgeId('seq-n1-n2', 'asset-scene-canvas')
+const trParsed = lib.parseTransitionRefEdgeId(trEid)
+check(
+  '转场参考边 id 往返',
+  trParsed?.edgeId === 'seq-n1-n2' && trParsed?.refSourceId === 'asset-scene-canvas',
+)
+check('非法 ref-tr 解析为 null', lib.parseTransitionRefEdgeId('ref-tr|only') === null)
+
+const sigBase = {
+  no: 'S01',
+  seconds: 3,
+  size: '中景',
+  move: '固定',
+  dialogue: '',
+  prompt: '',
+  marks: [],
+  transitionOut: lib.normalizeTransitionOut(
+    { to: 'E01-S02', mode: 'generated', generated: { targetSeconds: 1.2, refIds: [] } },
+    'E01-S02',
+  ),
+}
+const bizSigEmpty = lib.bizSignature(sigBase)
+const bizSigWithRef = lib.bizSignature({
+  ...sigBase,
+  transitionOut: lib.normalizeTransitionOut(
+    {
+      to: 'E01-S02',
+      mode: 'generated',
+      generated: { targetSeconds: 1.2, refIds: ['asset-scene-canvas'] },
+    },
+    'E01-S02',
+  ),
+})
+check('generated.refIds 变化触发 bizSignature', bizSigEmpty !== bizSigWithRef)
+
+const fpPrompt1 = lib.transitionVideoPromptFingerprint(fullA, fullB, previewG, [])
+const fpPrompt2 = lib.transitionVideoPromptFingerprint(fullA, fullB, {
+  ...previewG,
+  boundary: { out: '/a.jpg', in: '/c.jpg' },
+}, [])
+check('改 boundary 使 prompt 指纹变化', fpPrompt1 !== fpPrompt2)
+const fpPrompt3 = lib.transitionVideoPromptFingerprint(fullA, fullB, {
+  ...previewG,
+  videoPromptOverride: { text: 'x', fingerprint: 'same', createdAt: 'now' },
+}, [])
+check('override 不改变 prompt 指纹', fpPrompt1 === fpPrompt3)
+const staleOverride = lib.effectiveTransitionVideoPrompt(
+  fullA,
+  fullB,
+  {
+    ...previewG,
+    videoPromptOverride: { text: '手改', fingerprint: 'old-fp', createdAt: 'now' },
+  },
+  [],
+)
+check('手改指纹不匹配标 stale', staleOverride.stale === true)
+
+const fpRef1 = lib.transitionFingerprint(fullA.data, fullB.data, { ...previewG, refIds: ['char-x'] })
+const fpRef2 = lib.transitionFingerprint(fullA.data, fullB.data, { ...previewG, refIds: ['char-y'] })
+check('refIds 进指纹', fpRef1 !== fpRef2)
+const fpEx1 = lib.transitionFingerprint(fullA.data, fullB.data, {
+  ...previewG,
+  excludeRefIds: ['char-a'],
+})
+const fpEx2 = lib.transitionFingerprint(fullA.data, fullB.data, {
+  ...previewG,
+  excludeRefIds: ['char-b'],
+})
+check('excludeRefIds 进指纹', fpEx1 !== fpEx2)
+
+// ---- 效果预设 ----
+check('预设不少于 12 项', lib.PRESET_COUNT >= 12)
+check('黑场预设映射 fadeblack', lib.xfadeName({ presetId: 'fadeblack', type: 'dissolve', seconds: 0.5 }) === 'fadeblack')
+check('无效预设回退叠化', lib.normalizeEffect({ presetId: 'no-such-preset', seconds: 0.5 }).presetId === 'dissolve')
+check('旧擦除兼容 wiperight', lib.xfadeName({ type: 'wipe', dir: 'right', seconds: 0.5 }) === 'wiperight')
+
+// ---- 智能建议 ----
+const sA = shot('sA', 'S01', 3, { size: '全景', sceneNo: 1, sceneSlug: '街口', move: '固定' })
+const sB = shot('sB', 'S02', 3, { size: '特写', sceneNo: 2, sceneSlug: '室内', move: '推镜', videoUrl: '/v.mp4' })
+const sug = lib.suggestTransition({ source: sA.data, target: sB.data })
+check('跨场建议有效', sug.mode === 'effect' || sug.mode === 'generated')
+const applied = lib.applyTransitionSuggestion(
+  { mode: 'generated', rationale: 't', generated: { prompt: '动作过桥', recipeIds: ['match-cut-action'] } },
+  lib.defaultTransition('E01-S02'),
+  { preserveVideoPromptOverride: true },
+)
+check('应用建议写入生成', applied.mode === 'generated' && applied.generated.prompt.includes('动作过桥'))
+const withOverride = {
+  ...lib.defaultTransition('E01-S02'),
+  generated: {
+    ...lib.normalizeGenerated({ targetSeconds: 1.2, prompt: '', inheritRefs: true }),
+    videoPromptOverride: '手改全文',
+  },
+}
+const appliedKeep = lib.applyTransitionSuggestion(
+  { mode: 'generated', rationale: 't', generated: { prompt: '新句' } },
+  withOverride,
+  { preserveVideoPromptOverride: true },
+)
+check(
+  '应用建议保留 override',
+  (typeof appliedKeep.generated.videoPromptOverride === 'string'
+    ? appliedKeep.generated.videoPromptOverride
+    : appliedKeep.generated.videoPromptOverride?.text) === '手改全文',
+)
+const fpEff1 = lib.transitionFingerprint(sA.data, sB.data, { targetSeconds: 1.2, prompt: '', inheritRefs: true }, {
+  presetId: 'fadeblack',
+  type: 'dissolve',
+  seconds: 0.5,
+})
+const fpEff2 = lib.transitionFingerprint(sA.data, sB.data, { targetSeconds: 1.2, prompt: '', inheritRefs: true }, {
+  presetId: 'radial',
+  type: 'dissolve',
+  seconds: 0.5,
+})
+check('效果预设进指纹', fpEff1 !== fpEff2)
+const autoAfter = lib.autoTransitionVideoPrompt(
+  sA,
+  sB,
+  lib.normalizeGenerated({ ...applied.generated, targetSeconds: 1.2, inheritRefs: true }),
+)
+check('应用后自动正文仍含衔接', autoAfter.includes('衔接：'))
 
 // ---- 边界帧：有视频抽首尾，无视频回退当前画面（需要 dev server）----
 const health = await fetch('http://127.0.0.1:5273/api/health').catch(() => null)

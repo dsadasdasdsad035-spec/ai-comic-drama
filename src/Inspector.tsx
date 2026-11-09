@@ -18,6 +18,8 @@ import type { MaterialCropPlan } from './imageMaterialCrop'
 import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialImageGate'
 import PerformanceEditor from './PerformanceEditor'
 import NativeAudioPanel from './NativeAudioPanel'
+import { VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
+import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
 import { videoRefLimitLabel } from './videoRefLimits'
@@ -382,11 +384,7 @@ const VIDEO_MODE_LABEL: Record<ShotVideoRequest['mode'], string> = {
   native: '原生音频',
 }
 
-/**
- * 出片前可见的最终提示词：上半部分是实际附加的参考（事实），
- * 下半部分是正文（可手改）。附件由画布连线和开关决定，改正文不会改附件。
- */
-function VideoPromptPanel({
+function ShotVideoPromptPanel({
   data,
   request,
   onPatch,
@@ -395,9 +393,6 @@ function VideoPromptPanel({
   request: ShotVideoRequest
   onPatch: (p: Partial<ShotData>) => void
 }) {
-  const [open, setOpen] = useState(true)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
   const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
   const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
   const sourceLabel =
@@ -407,161 +402,51 @@ function VideoPromptPanel({
         ? '画面提示词回退'
         : '默认运动描述'
 
-  const startEdit = () => {
-    setDraft(effective.text)
-    setEditing(true)
-  }
-  const save = () => {
-    const text = draft.trim()
-    if (!text) return
-    onPatch({
-      videoPromptOverride: {
-        text,
-        fingerprint: request.fingerprint,
-        createdAt: new Date().toISOString(),
-      },
-      handEdited: [...new Set([...(data.handEdited ?? []), 'video_prompt_override'])],
-    })
-    setEditing(false)
-  }
-  const restore = () => {
-    onPatch({
-      videoPromptOverride: undefined,
-      handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
-    })
-    setEditing(false)
-  }
-
   return (
-    <div className="vp-panel" data-video-prompt-panel>
-      <div className="vp-head">
-        <button className="vp-toggle" onClick={() => setOpen((v) => !v)}>
-          {open ? '▾' : '▸'} 本次出片提示词
-        </button>
-        <span
-          className={`vp-badge ${
-            effective.source === 'override' ? (effective.stale ? 'warn' : 'manual') : 'auto'
-          }`}
-        >
-          {effective.source === 'override' ? (effective.stale ? '旧快照' : '已手改') : '自动拼装'}
-        </span>
-      </div>
-
-      {open && (
+    <OutgoingVideoPromptPanel
+      summary={
         <>
-          <div className="vp-summary">
-            {VIDEO_MODE_LABEL[request.mode]} · {request.seconds}s
-            {request.resolution ? ` · ${request.resolution}` : ''} · 正文来自{sourceLabel}
-            <br />
-            参考图 {request.refs.length}
-            {videoRefLimitLabel() !== '不限' ? `/${videoRefLimitLabel()}` : ' 张'}
-            {request.omitted.length ? `（省略 ${request.omitted.length}）` : ''}
-            {` · 表情参考${data.useExpressionRef ? '开' : '关'}`}
-            {performanceVideoEntryCount(data.performance) > 0
-              ? ` · 表演 ${performanceVideoEntryCount(data.performance)} 人`
-              : ' · 无表演'}
-            {request.video ? ' · 参考视频 1' : ''}
-            {request.audio ? ' · 音色参考 1' : ''}
-          </div>
-
-          <ul className="vp-refs">
-            {request.refs.map((r) => (
-              <li key={`${r.slot}-${r.index}-${r.url}`}>
-                <b>图{r.index}</b> {r.label}
-                <span>{r.purpose}</span>
-              </li>
-            ))}
-            {request.video && (
-              <li>
-                <b>视频1</b> {request.video.label}
-                <span>{request.video.purpose}</span>
-              </li>
-            )}
-            {request.audio && (
-              <li>
-                <b>音频1</b> {request.audio.label}
-                <span>{request.audio.purpose}</span>
-              </li>
-            )}
-            {request.omitted.map((o, i) => (
-              <li className="omitted" key={`omitted-${i}-${o.label}`}>
-                <b>省略</b> {o.label}
-                <span>{o.reason}</span>
-              </li>
-            ))}
-            {request.omittedVideos.map((o, i) => (
-              <li className="omitted" key={`omitted-video-${i}-${o.label}`}>
-                <b>忽略</b> {o.label}
-                <span>{o.reason}</span>
-              </li>
-            ))}
-          </ul>
-
-          {request.blocking.map((b) => (
-            <div className="gen-error vp-issue" key={b.code}>
-              {b.message}
-            </div>
-          ))}
-          {request.warnings.map((w) => (
-            <div className="gen-warn vp-issue" key={w.code}>
-              {w.message}
-            </div>
-          ))}
-          {effective.stale && (
-            <div className="gen-warn vp-issue">
-              参考、台词或模式已变化，当前正文是保存时的旧快照。
-            </div>
-          )}
-
-          {editing ? (
-            <>
-              <textarea
-                className="vp-text vp-textarea"
-                rows={9}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-              />
-              <div className="vp-actions">
-                <button className="btn-mini" disabled={!draft.trim()} onClick={save}>
-                  保存手改
-                </button>
-                <button className="btn-mini" onClick={() => setEditing(false)}>
-                  取消
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <pre className="vp-text" data-video-prompt-text>
-                {effective.text}
-              </pre>
-              <div className="vp-actions">
-                <button className="btn-mini" onClick={startEdit}>
-                  编辑
-                </button>
-                {effective.source === 'override' && (
-                  <button className="btn-mini" onClick={restore}>
-                    {effective.stale ? '重新拼装' : '恢复自动拼装'}
-                  </button>
-                )}
-              </div>
-            </>
-          )}
-
-          {meta ? (
-            <details className="vp-meta">
-              <summary>
-                当前视频的提示词 · {new Date(meta.createdAt).toLocaleString()}
-                {meta.modelKey ? ` · ${meta.modelKey}` : ''}
-              </summary>
-              <pre>{meta.prompt}</pre>
-            </details>
-          ) : (
-            data.videoUrl && <div className="vp-meta-note">当前视频未记录提示词来源</div>
-          )}
+          {VIDEO_MODE_LABEL[request.mode]} · {request.seconds}s
+          {request.resolution ? ` · ${request.resolution}` : ''} · 正文来自{sourceLabel}
+          <br />
+          参考图 {request.refs.length}
+          {videoRefLimitLabel() !== '不限' ? `/${videoRefLimitLabel()}` : ' 张'}
+          {request.omitted.length ? `（省略 ${request.omitted.length}）` : ''}
+          {` · 表情参考${data.useExpressionRef ? '开' : '关'}`}
+          {performanceVideoEntryCount(data.performance) > 0
+            ? ` · 表演 ${performanceVideoEntryCount(data.performance)} 人`
+            : ' · 无表演'}
+          {request.video ? ' · 参考视频 1' : ''}
+          {request.audio ? ' · 音色参考 1' : ''}
         </>
-      )}
-    </div>
+      }
+      refs={request.refs}
+      video={request.video}
+      audio={request.audio}
+      omitted={request.omitted}
+      omittedVideos={request.omittedVideos}
+      blocking={request.blocking}
+      warnings={request.warnings}
+      effective={effective}
+      onSaveOverride={(text) =>
+        onPatch({
+          videoPromptOverride: {
+            text,
+            fingerprint: request.fingerprint,
+            createdAt: new Date().toISOString(),
+          },
+          handEdited: [...new Set([...(data.handEdited ?? []), 'video_prompt_override'])],
+        })
+      }
+      onClearOverride={() =>
+        onPatch({
+          videoPromptOverride: undefined,
+          handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+        })
+      }
+      videoMeta={meta}
+      hasVideoUrl={Boolean(data.videoUrl)}
+    />
   )
 }
 
@@ -1213,24 +1098,18 @@ function InspectorBody({
             </a>
           </div>
         )}
+        <VideoOutgoingModelRow
+          settings={settings}
+          pick={pick}
+          onPick={onPick}
+          vidRes={vidRes}
+          onVidResChange={setVidRes}
+        />
         <div className="gen-controls">
-          <select value={vidRes} onChange={(e) => setVidRes(e.target.value as '480p' | '720p')} title="分辨率">
-            <option value="480p">480p</option>
-            <option value="720p">720p</option>
-          </select>
           <span className="vid-len">
             {Math.min(12, Math.max(2, Math.round(d.seconds)))}s · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
           </span>
         </div>
-
-        <CapModelSelect
-          cap="video"
-          caps={['video', 'videoRef']}
-          label="出片模型"
-          settings={settings}
-          value={pick.video}
-          onChange={(key) => onPick('video', key)}
-        />
 
         <div className="field native-audio-field">
           <span>
@@ -1282,7 +1161,7 @@ function InspectorBody({
             </button>
           </div>
         )}
-        {videoRequest && <VideoPromptPanel data={d} request={videoRequest} onPatch={set} />}
+        {videoRequest && <ShotVideoPromptPanel data={d} request={videoRequest} onPatch={set} />}
       </div>
 
       <div className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual'}>
@@ -1402,7 +1281,7 @@ function InspectorBody({
               {d.vidState === 'error' && d.vidError && !videoRequest?.blocking.length ? (
                 <span className="si-foot-error">{d.vidError}</span>
               ) : videoReason ? (
-                '先处理上方出片提示词里的阻止项'
+                videoReason
               ) : (
                 `约 ¥${money(videoCost(price, Math.round(d.seconds), vidRes))} / 次`
               )}

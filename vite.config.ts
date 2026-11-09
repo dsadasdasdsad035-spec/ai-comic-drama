@@ -3756,6 +3756,34 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        if (url === '/api/transition/suggest') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const { suggestTransition, validateSuggestion } = await import('./src/transitionSuggest')
+            const source = body.source
+            const target = body.target
+            if (!source || !target) throw new Error('缺少 source / target 镜头数据')
+            const suggestion = validateSuggestion(
+              suggestTransition({
+                source,
+                target,
+                transitionOut: body.transitionOut ?? null,
+              }),
+            )
+            res.end(JSON.stringify({ ok: true, suggestion }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+          }
+          return
+        }
+
         // ---- 视觉理解：只接受声明 vision 能力的模型与参考板 dataURL ----
         if (url === '/api/vision') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -5800,11 +5828,6 @@ function seedreamProxy(): Plugin {
             const transitionMode = morphTransition
               ? Boolean(transition?.boundaryOut && transition?.boundaryIn)
               : Boolean(transition?.keyframe)
-            if (generateAudio && transitionMode) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: '原生音频与首尾帧/生成转场互斥，请改用参考图模式或关闭原生音频', kind: 'bad-request' }))
-              return
-            }
             const videoRefMode = !transitionMode && refVideos.length > 0
             const refMode = !transitionMode && refImages.length > 0
             // 全模态参考（图 / 视频）与首帧互斥
@@ -5887,6 +5910,18 @@ function seedreamProxy(): Plugin {
               '',
             )
 
+            if (generateAudio && transitionMode && provider?.kind === 'ark') {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: '方舟渠道暂不支持转场与 Seedance 原生声音同时使用',
+                  kind: 'bad-request',
+                }),
+              )
+              return
+            }
+
             if (provider?.kind === 'apimart') {
               const family = videoFamilyFor(model)
               if (generateAudio && family !== 'seedance-2.5') {
@@ -5920,7 +5955,7 @@ function seedreamProxy(): Plugin {
               const refUrls: string[] = []
               const refVideoUrls: string[] = []
               // 转场分流：关键帧模式用关键帧作首帧；首尾直变用上镜尾帧作首帧、下镜首帧作尾帧。
-              // Seedance 2.5 上游禁止尾帧与 reference_image 混用，所以转场不送参考图。
+              // Seedance 2.5 首尾直变：尾帧与 reference_image 互斥；非互斥时转场与分镜一样可送 reference_image / reference_video。
               const tKeyframe = transition?.keyframe || ''
               const tOut = transition?.boundaryOut || ''
               const tIn = transition?.boundaryIn || ''
@@ -5946,9 +5981,11 @@ function seedreamProxy(): Plugin {
                 )
                 return
               }
-              const refSources = transition ? [] : refImages
-              const effRefMode = transition ? false : refMode
-              const effVideoRefMode = transition ? false : videoRefMode
+              const morphRefMutex =
+                Boolean(transition) && morphTransition && useLastFrame && Boolean(tIn)
+              const refSources = transition ? (morphRefMutex ? [] : refImages) : refImages
+              const effRefMode = transition ? !morphRefMutex && refImages.length > 0 : refMode
+              const effVideoRefMode = transition ? !morphRefMutex && refVideos.length > 0 : videoRefMode
               const effReferenceMode = effRefMode || effVideoRefMode
               const withFrames = transition ? true : !effReferenceMode
               const uploadApimartRef = async (ref: string, tag: string) => {

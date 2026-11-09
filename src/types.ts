@@ -151,6 +151,8 @@ export type TransitionEffect = {
   /** 擦除/推移才有方向 */
   dir?: TransitionDirection
   seconds: number
+  /** 登记的效果预设 id；导出时用其 xfade 名 */
+  presetId?: string
 }
 
 export type TransitionBoundary = {
@@ -183,6 +185,8 @@ export type TransitionVideo = {
   state?: 'idle' | 'running' | 'error'
   error?: string
   at?: number
+  /** 最近一次成功出片的提示词来源 */
+  videoMeta?: VideoMeta
 }
 
 /** keyframe：过渡关键帧→下一镜首帧；morph：上一镜尾帧→下一镜首帧（天气变化等大跨度） */
@@ -194,7 +198,7 @@ export type TransitionGenerated = {
   /** 环境/天气/音效描述，拼进出片正文（无 reference audio 时的唯一声音控制） */
   soundPrompt?: string
   /** 手改后的完整出片正文；有值时优先于自动拼装 */
-  videoPromptOverride?: string
+  videoPromptOverride?: VideoPromptOverride
   /** 生成转场视频的锚点策略，默认 keyframe */
   bridging?: TransitionBridging
   /** 默认继承相邻两镜已连的角色/素材参考 */
@@ -206,6 +210,10 @@ export type TransitionGenerated = {
   boundary?: TransitionBoundary
   keyframe?: TransitionKeyframe
   video?: TransitionVideo
+  /** 转场成片音轨：off = 静音，native = Seedance 原生声音 + 音色参考 */
+  audioMode?: ShotAudioMode
+  audioRef?: AudioRef | null
+  audioMeta?: AudioMeta
 }
 
 /**

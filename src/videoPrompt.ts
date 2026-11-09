@@ -74,7 +74,7 @@ type ComposerRef = {
   purpose: string
 }
 
-function purposeOf(ref: ResolvedShotReference): string {
+export function purposeOfShotReference(ref: ResolvedShotReference): string {
   if (ref.source === 'expression') return '表情参考'
   if (ref.source === 'character') return '人物外观'
   if (ref.source === 'adjacent') return '相邻镜连贯'
@@ -85,7 +85,7 @@ function purposeOf(ref: ResolvedShotReference): string {
 }
 
 /** 仅解析画布连线（角色/素材/相邻/手工）；镜上静帧预览不参与视频参考。 */
-function collectComposerRefs(input: {
+export function collectShotComposerRefs(input: {
   data: ShotData
   nodeId: string
   nodes: ShotNodeType[]
@@ -124,7 +124,7 @@ function collectComposerRefs(input: {
 
   for (const ref of collected.refs) {
     if (ref.source === 'expression') continue
-    push({ url: ref.url, label: ref.label, kind: ref.source, purpose: purposeOf(ref) })
+    push({ url: ref.url, label: ref.label, kind: ref.source, purpose: purposeOfShotReference(ref) })
   }
   if (expression) {
     push({
@@ -137,7 +137,11 @@ function collectComposerRefs(input: {
   return { refs, missing: collected.missing, ...(expressionNote ? { expressionNote } : {}) }
 }
 
-function buildRefHint(refs: ComposerRef[], hasVideo: boolean): string {
+/** 与分镜出片一致：在正文末尾标注 [图N]=标签，供模型对齐 reference_image 槽位 */
+export function buildReferenceImagesPromptHint(
+  refs: { label: string }[],
+  hasVideo: boolean,
+): string {
   if (refs.length === 0) return ''
   const all = refs
     .map((r, i) => `${hasVideo ? `@图像${i + 1}` : `[图${i + 1}]`}=${r.label}`)
@@ -145,9 +149,17 @@ function buildRefHint(refs: ComposerRef[], hasVideo: boolean): string {
   return `\n\n参考图：${all}。主体外观、场景与道具必须与参考图一致。`
 }
 
-function buildVideoHint(video: ResolvedVideoReference | undefined): string {
+export function buildVideoReferencePromptHint(video: { label: string } | undefined): string {
   if (!video) return ''
   return `\n\n参考 @视频1（${video.label}）的运动、机位与节奏；画面风格、人物外观、场景与道具以参考图和文字为准。`
+}
+
+function buildRefHint(refs: ComposerRef[], hasVideo: boolean): string {
+  return buildReferenceImagesPromptHint(refs, hasVideo)
+}
+
+function buildVideoHint(video: ResolvedVideoReference | undefined): string {
+  return buildVideoReferencePromptHint(video)
 }
 
 function fingerprintOf(input: {
@@ -218,7 +230,7 @@ export function buildShotVideoRequest(input: {
       })
     : null
 
-  const { refs: candidates, missing, expressionNote } = collectComposerRefs({
+  const { refs: candidates, missing, expressionNote } = collectShotComposerRefs({
     data: d,
     nodeId: input.nodeId,
     nodes: input.nodes,
@@ -434,4 +446,19 @@ export function effectiveVideoPrompt(
     source: 'override',
     stale: Boolean(override.fingerprint && override.fingerprint !== request.fingerprint),
   }
+}
+
+/** 出片前参考省略说明，分镜与转场生成共用 */
+export function videoOmitToastMessages(request: {
+  omitted: { label: string }[]
+  omittedVideos: { label: string }[]
+}): string[] {
+  return [
+    request.omitted.length
+      ? `部分参考图未送出，已省略：${request.omitted.map((r) => r.label).join('、')}`
+      : '',
+    request.omittedVideos.length
+      ? `首期只使用第一条视频素材，已忽略：${request.omittedVideos.map((r) => r.label).join('、')}`
+      : '',
+  ].filter(Boolean)
 }

@@ -5,9 +5,11 @@ import type {
   TransitionEffectType,
   TransitionGenerated,
   TransitionOut,
+  VideoPromptOverride,
 } from './types'
 import { shortHash } from './scheduleGeometry'
 import { localPath } from './shotSync'
+import { getTransitionPreset, resolveTransitionPreset } from './transitionPresets'
 
 /** 首次标记为转场时的默认接缝 */
 export const DEFAULT_TRANSITION_SECONDS = 0.5
@@ -37,37 +39,80 @@ export function defaultTransition(to: string): TransitionOut {
 }
 
 export function normalizeEffect(input?: Partial<TransitionEffect> | null): TransitionEffect {
-  const type = EFFECT_TYPES.includes(input?.type as TransitionEffectType)
-    ? (input!.type as TransitionEffectType)
-    : 'dissolve'
-  const dir = DIRECTIONS.includes(input?.dir as TransitionDirection)
-    ? (input!.dir as TransitionDirection)
-    : 'left'
   const seconds = Number(input?.seconds)
+  const clamped = Number.isFinite(seconds)
+    ? Math.min(MAX_EFFECT_SECONDS, Math.max(0, seconds))
+    : DEFAULT_TRANSITION_SECONDS
+  const rawPreset = String(input?.presetId || '').trim()
+  const registered = getTransitionPreset(rawPreset)
+  if (rawPreset && !registered) {
+    return { type: 'dissolve', seconds: clamped, presetId: 'dissolve' }
+  }
+  const preset = registered ?? resolveTransitionPreset(input)
+  const type = registered
+    ? preset.legacyType
+    : EFFECT_TYPES.includes(input?.type as TransitionEffectType)
+      ? (input!.type as TransitionEffectType)
+      : preset.legacyType
+  const dir = preset.legacyDir
+    ? preset.legacyDir
+    : DIRECTIONS.includes(input?.dir as TransitionDirection)
+      ? (input!.dir as TransitionDirection)
+      : 'left'
   return {
     type,
-    ...(type === 'dissolve' ? {} : { dir }),
-    seconds: Number.isFinite(seconds) ? Math.min(MAX_EFFECT_SECONDS, Math.max(0, seconds)) : DEFAULT_TRANSITION_SECONDS,
+    ...(preset.legacyDir || (type !== 'dissolve' && !registered) ? { dir: preset.legacyDir ?? dir } : {}),
+    seconds: clamped,
+    presetId: preset.id,
   }
+}
+
+export function coerceTransitionVideoPromptOverride(input: unknown): VideoPromptOverride | undefined {
+  if (input == null) return undefined
+  if (typeof input === 'string') {
+    const text = input.trim()
+    if (!text) return undefined
+    return { text, fingerprint: '', createdAt: new Date(0).toISOString() }
+  }
+  if (typeof input === 'object' && input && 'text' in input) {
+    const raw = input as VideoPromptOverride
+    const text = String(raw.text || '').trim()
+    if (!text) return undefined
+    return {
+      text,
+      fingerprint: String(raw.fingerprint || ''),
+      createdAt: String(raw.createdAt || new Date().toISOString()),
+    }
+  }
+  return undefined
+}
+
+export function transitionOverrideText(override: VideoPromptOverride | undefined): string {
+  return override?.text?.trim() ?? ''
 }
 
 export function normalizeGenerated(input?: Partial<TransitionGenerated> | null): TransitionGenerated {
   const target = Number(input?.targetSeconds)
   const bridging = input?.bridging === 'keyframe' ? 'keyframe' : 'morph'
+  const videoPromptOverride = coerceTransitionVideoPromptOverride(input?.videoPromptOverride)
   return {
     targetSeconds: Number.isFinite(target)
       ? Math.min(MAX_GENERATED_TARGET, Math.max(MIN_GENERATED_TARGET, target))
       : DEFAULT_GENERATED_SECONDS,
     prompt: String(input?.prompt || ''),
     soundPrompt: String(input?.soundPrompt || ''),
-    ...(input?.videoPromptOverride?.trim() ? { videoPromptOverride: String(input.videoPromptOverride) } : {}),
+    ...(videoPromptOverride ? { videoPromptOverride } : {}),
     bridging,
-    inheritRefs: input?.inheritRefs !== false,
+    // 转场只认 generated.refIds 手动选择；忽略存档里的 inheritRefs
+    inheritRefs: false,
     refIds: Array.isArray(input?.refIds) ? input!.refIds!.filter(Boolean) : [],
     excludeRefIds: Array.isArray(input?.excludeRefIds) ? input!.excludeRefIds!.filter(Boolean) : [],
     ...(input?.boundary ? { boundary: input.boundary } : {}),
     ...(input?.keyframe ? { keyframe: input.keyframe } : {}),
     ...(input?.video ? { video: input.video } : {}),
+    ...(input?.audioMode === 'native' ? { audioMode: 'native' as const } : {}),
+    ...(input?.audioRef ? { audioRef: input.audioRef } : input?.audioRef === null ? { audioRef: null } : {}),
+    ...(input?.audioMeta ? { audioMeta: input.audioMeta } : {}),
   }
 }
 
@@ -98,10 +143,9 @@ export function generatedFade(prevDur: number, clipDur: number): number {
 }
 
 export function xfadeName(effect: TransitionEffect): string {
-  const dir = effect.dir || 'left'
-  if (effect.type === 'wipe') return `wipe${dir}`
-  if (effect.type === 'slide') return `slide${dir}`
-  return 'fade'
+  const normalized = normalizeEffect(effect)
+  const preset = getTransitionPreset(normalized.presetId) ?? resolveTransitionPreset(normalized)
+  return preset.xfade
 }
 
 const ARROW: Record<TransitionDirection, string> = {
@@ -112,6 +156,9 @@ const ARROW: Record<TransitionDirection, string> = {
 }
 
 export function effectLabel(effect: TransitionEffect): string {
+  const normalized = normalizeEffect(effect)
+  const preset = getTransitionPreset(normalized.presetId)
+  if (preset) return preset.label
   if (effect.type === 'wipe') return `擦除${ARROW[effect.dir || 'left']}`
   if (effect.type === 'slide') return `推移${ARROW[effect.dir || 'left']}`
   return '叠化'
@@ -128,22 +175,41 @@ export function transitionFingerprint(
   source: ShotData | undefined,
   target: ShotData | undefined,
   g: TransitionGenerated | undefined,
+  effect?: TransitionEffect,
+  styleRefTokens?: string[],
 ): string {
+  const outSize = String(source?.visualBrief?.shotSize || source?.size || '').trim()
+  const inSize = String(target?.visualBrief?.shotSize || target?.size || '').trim()
+  const outMove = String(source?.move || '').trim()
+  const inMove = String(target?.move || '').trim()
+  const eff = normalizeEffect(effect)
   return shortHash(
     JSON.stringify({
       out: localPath(source?.refImage) ?? '',
       outVideo: localPath(source?.videoUrl) ?? '',
       in: localPath(target?.refImage) ?? '',
       inVideo: localPath(target?.videoUrl) ?? '',
+      outSize,
+      inSize,
+      outMove,
+      inMove,
+      effectPreset: eff.presetId ?? '',
+      effectSeconds: eff.seconds,
       keyframe: localPath(g?.keyframe?.image) ?? '',
       boundaryOut: localPath(g?.boundary?.out) ?? '',
       boundaryIn: localPath(g?.boundary?.in) ?? '',
       prompt: g?.prompt ?? '',
       sound: g?.soundPrompt ?? '',
-      videoPromptOverride: g?.videoPromptOverride ?? '',
+      videoPromptOverride: transitionOverrideText(g?.videoPromptOverride),
       bridging: g?.bridging ?? 'morph',
       target: g?.targetSeconds ?? 0,
       model: g?.video?.modelKey ?? '',
+      inheritRefs: g?.inheritRefs === true,
+      excludeRefIds: [...(g?.excludeRefIds ?? [])].sort(),
+      refIds: [...(g?.refIds ?? [])].sort(),
+      styleRefTokens: styleRefTokens ?? [...(g?.refIds ?? [])].sort(),
+      audioMode: g?.audioMode ?? 'off',
+      audioRef: localPath(g?.audioRef?.url) ?? '',
     }),
   )
 }
