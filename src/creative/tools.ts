@@ -5,6 +5,7 @@ import { isRunnableModel, modelHasCap } from '../modelCaps'
 import { getContractSchema, validateContract } from '../skills/contracts'
 import type { Skill } from '../skills/types'
 import { boundJson } from '../agent/workbenchChat'
+import { getSkill } from '../skills/registry'
 import type { CreativeArtifact, CreativeSessionSummary, CreativeShot, CreativeSource } from './sessionStore'
 import {
   analyzeCreative,
@@ -534,7 +535,31 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
+  const readSkill = defineTool({
+    name: 'read_skill',
+    description: '读取指定技能的完整 SKILL.md（含 frontmatter）。',
+    schema: z.object({
+      id: z.string().min(1).describe('技能 id'),
+    }),
+    run: async ({ id }) => {
+      try {
+        const skill = await getSkill(String(id).trim())
+        return {
+          ok: true,
+          id: skill.id,
+          version: skill.manifest.version,
+          source: skill.source,
+          tools: skill.manifest.tools,
+          text: skill.text,
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+
   const byName = new Map<string, ToolDef>([
+    [readSkill.name, readSkill],
     [readSession.name, readSession],
     [readSource.name, readSource],
     [readShots.name, readShots],
@@ -567,6 +592,8 @@ export function bindCreativeTools(
       if (tool) out.set(name, tool)
     }
   }
+  const readSkillTool = set.byName.get('read_skill')
+  if (readSkillTool) out.set('read_skill', readSkillTool)
   return [...out.values()]
 }
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   callText,
   generateImage,
@@ -27,24 +27,12 @@ import {
 } from './materialImageGate'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
-import {
-  builtinFailure,
-  type BuiltinResult,
-  WORKBENCH_BUILTINS,
-  type WorkbenchChatAdapter,
-} from './agent/workbenchChat'
-import { AgentButton } from './agent/AgentButton'
+import { builtinFailure, type BuiltinResult } from './agent/workbenchChat'
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
-import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
-import { useWorkbenchChatOpen } from './agent/chatPanel'
-import { projectImageAttachmentSource } from './agent/projectAttachments'
-import { useMediaPicker } from './agent/useMediaPicker'
 import WorkbenchBar from './WorkbenchBar'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
-
-const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
 type Props = {
   projectName: string
@@ -95,7 +83,7 @@ export default function AssetBoard({
   const [loading, setLoading] = useState(false)
   const [stockOpen, setStockOpen] = useState(false)
   const [ready, setReady] = useState('')
-  const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
+  const [extracting, setExtracting] = useState<'' | 'episode' | 'project'>('')
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [cropPending, setCropPending] = useState<{
@@ -108,17 +96,12 @@ export default function AssetBoard({
   const designsRef = useRef(designs)
   const savedSigRef = useRef('')
   const epochRef = useRef(0)
-  const [chatRunning, setChatRunning] = useState(false)
   /** 空板起始提示：本次会话关掉就不再出现 */
   const [tipOpen, setTipOpen] = useState(true)
-  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('assets')
-  const chatVisible = chatOpen && Boolean(projectName)
-  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
-  const mediaPicker = useMediaPicker(projectName)
   const builtinStateRef = useRef({ extracting, settings, projectName, ready, project })
   builtinStateRef.current = { extracting, settings, projectName, ready, project }
   const runExtractRef = useRef<
-    (scope: 'episode' | 'script', signal?: AbortSignal) => Promise<BuiltinResult>
+    (scope: 'episode' | 'project', signal?: AbortSignal) => Promise<BuiltinResult>
   >(async (scope) =>
     builtinFailure(
       scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script',
@@ -129,95 +112,6 @@ export default function AssetBoard({
         saveMode: 'immediate',
       },
     ),
-  )
-
-  const chatAdapter = useMemo<WorkbenchChatAdapter>(
-    () => ({
-      surface: 'assets',
-      skillId: 'asset',
-      stage: 'asset',
-      artifact: 'designs',
-      writeTool: 'submit_designs',
-      writeContract: 'designs-v1',
-      threadKey: { project: projectName, surface: 'assets' },
-      scope: () => '本集',
-      inputs: () => {
-        const p = project
-        const { sceneText, shotText } = buildDesignContext({
-          scope: 'episode',
-          epNo,
-          source: p?.source,
-          episodes: p?.episodes,
-          shots: p?.shots,
-        })
-        return {
-          scopeLabel: `第 ${epNo} 集的剧本场次与分镜`,
-          sceneText,
-          shotBlock: shotText ? `\n\n【镜头摘要】\n${shotText}` : '',
-        }
-      },
-      ownDraft: () => designsRef.current,
-      projectSnapshot: () => getProject(projectName),
-      applyDraft: (payload) => {
-        const incoming = pickExtractedDesigns(payload)
-        if (incoming.length === 0) return { ok: false, summary: '', error: '没有可写入的场景或道具' }
-        const { next, added, updated } = mergeDesigns(designsRef.current, incoming)
-        designsRef.current = next
-        savedSigRef.current = JSON.stringify(next)
-        setDesigns(next)
-        // 沿用现有语义：素材提取结果立即落库，避免切项目时停在防抖窗口
-        patchProject(projectName, { designs: next }).catch(() => {})
-        return {
-          ok: true,
-          summary: `已写入并保存素材：新增 ${added.length} / 合并 ${updated.length}`,
-          counts: { total: next.length, added: added.length, updated: updated.length },
-        }
-      },
-      builtins: [
-        {
-          ...WORKBENCH_BUILTINS.extract_designs_episode,
-          disabled: () => {
-            const st = builtinStateRef.current
-            if (!st.projectName || st.ready !== st.projectName || !st.project) {
-              return { disabled: true, reason: '先选择项目' }
-            }
-            if (st.extracting) return { disabled: true, reason: '正在拆场景/道具' }
-            if (!hasTextModels(st.settings)) {
-              return { disabled: true, reason: '设置页还没有可用的文本模型' }
-            }
-            return { disabled: false }
-          },
-          run: (signal) => runExtractRef.current('episode', signal),
-        },
-        {
-          ...WORKBENCH_BUILTINS.extract_designs_script,
-          disabled: () => {
-            const st = builtinStateRef.current
-            if (!st.projectName || st.ready !== st.projectName || !st.project) {
-              return { disabled: true, reason: '先选择项目' }
-            }
-            if (st.extracting) return { disabled: true, reason: '正在拆场景/道具' }
-            if (!hasTextModels(st.settings)) {
-              return { disabled: true, reason: '设置页还没有可用的文本模型' }
-            }
-            return { disabled: false }
-          },
-          run: (signal) => runExtractRef.current('script', signal),
-        },
-      ],
-      attachments: projectImageAttachmentSource({
-        projectName,
-        prefix: 'chat-asset',
-        picker: {
-          open: async () => {
-            const item = await mediaPicker.open()
-            return item ? { url: item.url, title: item.title, name: item.name } : null
-          },
-        },
-        hint: '图片只用于本次对话，不写入场景/道具卡',
-      }),
-    }),
-    [projectName, epNo, project, mediaPicker],
   )
 
   useEffect(() => {
@@ -319,7 +213,7 @@ export default function AssetBoard({
   )
 
   const runExtract = useCallback(
-    async (scope: 'episode' | 'script', signal?: AbortSignal): Promise<BuiltinResult> => {
+    async (scope: 'episode' | 'project', signal?: AbortSignal): Promise<BuiltinResult> => {
       const label = scope === 'episode' ? '从本集拆' : '从全剧拆'
       const action = scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script'
       const fail = (message: string, cancelled = false) =>
@@ -343,7 +237,7 @@ export default function AssetBoard({
         return fail(
           scope === 'episode'
             ? `第 ${epNo} 集还没有可拆的场次/镜头`
-            : '当前项目没有剧本素材（source / 分集 / 镜头都为空）',
+            : '当前项目没有可用素材（source / 分集元数据 / 镜头都为空）',
         )
       }
       if (signal?.aborted) return fail('已取消', true)
@@ -351,7 +245,7 @@ export default function AssetBoard({
       const t0 = Date.now()
       try {
         const scopeLabel =
-          scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原著梗概、分集场次与分镜'
+          scope === 'episode' ? `第 ${epNo} 集分集梗概与分镜` : '全剧原著梗概、分集元数据与分镜'
         const shotBlock = shotText ? `\n\n【镜头摘要】\n${shotText}` : ''
         const skill = await buildBoardSkillPrompt('asset', { scopeLabel, sceneText, shotBlock })
         const r = await callText<{ scenes?: unknown[]; props?: unknown[] }>({
@@ -366,8 +260,8 @@ export default function AssetBoard({
         const incoming = pickExtractedDesigns(r.json)
         if (incoming.length === 0) {
           throw new Error(
-            scope === 'script'
-              ? '模型没找到场景或道具：全剧素材里没有可识别的地点与道具。先在「剧本」页补充分集场次的 beats，或改用「从本集拆」。'
+            scope === 'project'
+              ? '模型没找到场景或道具：全剧素材里没有可识别的地点与道具。补全分镜描述或原著梗概，或改用「从本集拆」。'
               : '模型没找到场景或道具：本集场次与分镜里没有可识别的地点与道具。先补分镜的画面描述，再拆一次。',
           )
         }
@@ -409,7 +303,7 @@ export default function AssetBoard({
   )
   runExtractRef.current = runExtract
 
-  const extract = async (scope: 'episode' | 'script') => {
+  const extract = async (scope: 'episode' | 'project') => {
     const r = await runExtract(scope)
     if (!r.ok) {
       if (!r.cancelled) toast(r.error || '拆场景/道具失败')
@@ -652,8 +546,7 @@ export default function AssetBoard({
   const canPush = Boolean(projectName && ready === projectName && withImage > 0)
 
   return (
-    <div className="board-with-chat">
-      <div className="board">
+    <div className="board">
       <WorkbenchBar
         scope={<span className="wb-bar-title">素材</span>}
         scopeDetail={
@@ -686,20 +579,13 @@ export default function AssetBoard({
         }
         actions={
           <>
-            <AgentButton
-              open={chatVisible}
-              onToggle={() => setChatOpen((v) => !v)}
-              disabled={!projectName}
-              running={chatRunning}
-              controlsId="workbench-chat-assets"
-            />
             <button
               className="btn-ghost"
               disabled={!projectName || ready !== projectName || !!extracting}
-              onClick={() => void extract('script')}
+              onClick={() => void extract('project')}
               title="用当前项目的原著、分集场次和全部分镜拆场景/道具"
             >
-              {extracting === 'script' ? '拆解中…' : '从全剧拆'}
+              {extracting === 'project' ? '拆解中…' : '从全剧拆'}
             </button>
             <button
               className="btn-ghost"
@@ -799,7 +685,6 @@ export default function AssetBoard({
           ))
         )}
       </div>
-      </div>
       {stockOpen && (
         <div className="mp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setStockOpen(false)}>
           <div className="mp-dialog stock-dialog" role="dialog" aria-modal="true" aria-label="在线素材库">
@@ -823,26 +708,6 @@ export default function AssetBoard({
           </div>
         </div>
       )}
-      <WorkbenchChatAside
-        surface="assets"
-        open={chatVisible}
-        onClose={() => setChatOpen(false)}
-      >
-        {projectName ? (
-          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
-            <LazySkillChat
-              adapter={chatAdapter}
-              settings={settings}
-              stagePick={stagePick}
-              onToast={toast}
-              onRunningChange={setChatRunning}
-              onClose={() => setChatOpen(false)}
-            />
-          </Suspense>
-        ) : (
-          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
-        )}
-      </WorkbenchChatAside>
       <CharacterImageCropModal
         open={Boolean(cropPending)}
         title={
@@ -860,7 +725,6 @@ export default function AssetBoard({
           setCropPending(null)
         }}
       />
-      {mediaPicker.node}
     </div>
   )
 }

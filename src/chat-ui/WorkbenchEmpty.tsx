@@ -12,21 +12,41 @@ export function WorkbenchEmpty({
   actions,
   onRunAction,
   running,
+  /** 镜头表等：不展示空态引导与内置动作区 */
+  compact,
 }: {
   profile: WorkbenchProfile
   loading?: boolean
   actions?: BuiltinAction[]
   onRunAction?: (action: BuiltinAction) => void
   running?: boolean
+  compact?: boolean
 }) {
+  if (compact) {
+    return loading ? (
+      <div data-chat-empty className="px-3 py-2 text-[11px] text-muted-foreground">
+        加载中…
+      </div>
+    ) : (
+      <div data-chat-empty className="min-h-0" aria-hidden />
+    )
+  }
+
+  const showTitle = loading || Boolean(profile.emptyTitle?.trim())
+  const showBody = loading || Boolean(profile.emptyBody?.trim())
+
   return (
     <div data-chat-empty className="px-3 py-4 text-[12px] leading-relaxed">
-      <div className="text-[13px] font-semibold text-foreground">
-        {loading ? '正在加载助手…' : profile.emptyTitle}
-      </div>
-      <p className="mt-1 text-muted-foreground">
-        {loading ? '技能加载完成后就可以开始。' : profile.emptyBody}
-      </p>
+      {showTitle ? (
+        <div className="text-[13px] font-semibold text-foreground">
+          {loading ? '正在加载助手…' : profile.emptyTitle}
+        </div>
+      ) : null}
+      {showBody ? (
+        <p className={showTitle ? 'mt-1 text-muted-foreground' : 'text-muted-foreground'}>
+          {loading ? '技能加载完成后就可以开始。' : profile.emptyBody}
+        </p>
+      ) : null}
       {!loading && actions && actions.length > 0 ? (
         <div data-chat-builtins className="mt-3">
           <p className="text-[11px] text-muted-foreground">从零生成 / 拆解：</p>
@@ -43,7 +63,7 @@ export function WorkbenchEmpty({
                   title={availability.reason || action.hint || builtinLabel(action)}
                 >
                   {builtinLabel(action)}
-                  {action.scope === 'script' ? ' · 全剧' : ''}
+                  {action.scope === 'project' ? ' · 全剧' : ''}
                 </button>
               )
             })}
@@ -53,11 +73,11 @@ export function WorkbenchEmpty({
           </p>
         </div>
       ) : null}
-      {!loading && (
+      {!loading && profile.suggestions.length > 0 ? (
         <p className="mt-2 text-[11px] text-muted-foreground">
           点下面的示例只填入输入框，不会直接发送。
         </p>
-      )}
+      ) : null}
     </div>
   )
 }

@@ -116,6 +116,33 @@ const dialogueDelivery = passthrough({
   emphasis: z.string().optional(),
 })
 
+const transitionTaxonomy = z.enum(['scene', 'character', 'space', 'vfx', 'camera', 'ai_video'])
+
+const joinItemV1 = passthrough({
+  after_no: z.union([z.string(), z.number()]),
+  to_no: z.union([z.string(), z.number()]),
+  relation: z.enum(['cut', 'transition']).optional(),
+  mode: z.enum(['effect', 'generated']).optional(),
+  taxonomy: transitionTaxonomy.optional(),
+  recipe_ids: z.array(z.string()).optional(),
+  effect: passthrough({
+    preset_id: z.string().optional(),
+    type: z.string().optional(),
+    seconds: z.number().optional(),
+  }).optional(),
+  generated: passthrough({
+    prompt: z.string().optional(),
+    sound_prompt: z.string().optional(),
+    target_seconds: z.number().optional(),
+    recipe_ids: z.array(z.string()).optional(),
+    taxonomy: transitionTaxonomy.optional(),
+  }).optional(),
+})
+
+const joinsV1 = passthrough({
+  joins: z.array(joinItemV1).min(1),
+})
+
 const shotsV1 = passthrough({
   shots: z
     .array(
@@ -220,12 +247,6 @@ const reverseV1 = passthrough({
   })
 })
 
-/** 发布助手：只要求一段给用户的回复；配置改动与提交意图走工具，不要求结构化产物。 */
-const publishPlanV1 = passthrough({
-  reply: z.string().min(1),
-  intent: z.enum(['answer', 'apply', 'stage']).optional(),
-  notes: z.array(z.string()).optional(),
-})
 const creativePlanV1 = passthrough({
   reply: z.string().min(1),
   directions: z
@@ -256,6 +277,7 @@ const REGISTRY: Record<string, SkillContract> = {
   'characters-v1': { id: 'characters-v1', label: '角色锚点', schema: charactersV1 },
   'designs-v1': { id: 'designs-v1', label: '场景/道具设定', schema: designsV1 },
   'shots-v1': { id: 'shots-v1', label: '镜头表', schema: shotsV1 },
+  'joins-v1': { id: 'joins-v1', label: '镜间接缝', schema: joinsV1 },
   'prompts-v1': { id: 'prompts-v1', label: '首帧/视频提示词', schema: promptsV1 },
   'reverse-v1': { id: 'reverse-v1', label: '视频反推提示词包', schema: reverseV1 },
   'creative-plan-v1': { id: 'creative-plan-v1', label: '创意方向与镜头草案', schema: creativePlanV1 },
@@ -265,7 +287,6 @@ const REGISTRY: Record<string, SkillContract> = {
     schema: scene3dCodeV1,
     lockedBlock: SCENE_CODE_ABI,
   },
-  'publish-plan-v1': { id: 'publish-plan-v1', label: '发布助手回复', schema: publishPlanV1 },
 }
 
 export function getContract(id: string): SkillContract | undefined {

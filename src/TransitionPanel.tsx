@@ -9,6 +9,7 @@ import {
   DEFAULT_GENERATED_SECONDS,
   DEFAULT_TRANSITION_SECONDS,
   MAX_EFFECT_SECONDS,
+  MAX_GENERATED_TARGET,
   MIN_EFFECT_SECONDS,
   clampEffectSeconds,
   effectLabel,
@@ -409,7 +410,7 @@ export default function TransitionPanel({
             <input
               type="number"
               min={0.8}
-              max={3}
+              max={MAX_GENERATED_TARGET}
               step={0.1}
               value={g.targetSeconds}
               onChange={(e) =>
@@ -454,7 +455,7 @@ export default function TransitionPanel({
               onChange={(e) => setGenerated({ soundPrompt: e.target.value })}
               rows={2}
             />
-            <em className="st-hint">写入提示词，非音色参考（转场与原生音频互斥）。</em>
+            <em className="st-hint">环境声与氛围；对白音色请用下方「原生音频」。</em>
           </label>
           {hasOverride ? (
             <div className="gen-note vp-field-note">
@@ -514,7 +515,7 @@ export default function TransitionPanel({
             <p className="vid-note">
               连线参考图走<b>多参考图模式</b>（reference_image）；连线了视频素材则同时送
               <b> reference_video</b>（首期只取第一条）。未连线参考图时仍可用首尾直变。时长取转场成片时长（约
-              0.8~3 秒），按 tokens 计费。
+              0.8~{MAX_GENERATED_TARGET} 秒），按 tokens 计费。
             </p>
             {omitBanner ? <p className="vid-refs">{omitBanner}</p> : null}
 

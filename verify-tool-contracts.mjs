@@ -68,6 +68,16 @@ const json = (id) => {
 }
 
 {
+  const joins = json('joins-v1')
+  const join = joins.properties.joins.items
+  check(
+    'joins-v1 必填 after_no / to_no',
+    ['after_no', 'to_no'].every((k) => join.required?.includes(k)),
+    JSON.stringify(join.required),
+  )
+}
+
+{
   const prompts = json('prompts-v1')
   const shot = prompts.properties.shots.items
   check(

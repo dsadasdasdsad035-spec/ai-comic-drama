@@ -44,22 +44,23 @@ const lib = await import(
   'data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64')
 )
 check(
-  '五个工作台的动作清单',
-  Object.keys(lib.WORKBENCH_BUILTIN_KEYS).sort().join(',') ===
-    'assets,characters,prompts,script,shots',
+  '四个工作台的动作清单',
+  Object.keys(lib.WORKBENCH_BUILTIN_KEYS).sort().join(',') === 'assets,characters,shots',
+)
+check(
+  '镜头表仅拆镜内置动作',
+  lib.WORKBENCH_BUILTIN_KEYS.shots?.join(',') === 'split_shots',
 )
 check(
   '角色、素材各有两个范围',
   lib.WORKBENCH_BUILTIN_KEYS.characters.length === 2 &&
     lib.WORKBENCH_BUILTIN_KEYS.assets.length === 2 &&
-    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.characters[1]].scope === 'script' &&
-    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.assets[1]].scope === 'script',
+    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.characters[1]].scope === 'project' &&
+    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.assets[1]].scope === 'project',
 )
 check(
-  '剧本/镜头动作范围',
-  lib.WORKBENCH_BUILTINS.generate_episodes.scope === 'script' &&
-    lib.WORKBENCH_BUILTINS.split_shots.scope === 'episode' &&
-    !('prompts' in lib.WORKBENCH_BUILTIN_KEYS),
+  '镜头动作范围',
+  lib.WORKBENCH_BUILTINS.split_shots.scope === 'episode' && !('prompts' in lib.WORKBENCH_BUILTIN_KEYS),
 )
 const fakeAction = {
   key: 'x',
@@ -301,29 +302,11 @@ try {
   await openView('镜头表', 'shots')
   check('无页内梗概条', (await page.locator('.wb-gen').count()) === 0)
   check('主区无拆镜按钮', (await page.getByRole('button', { name: '拆镜', exact: true }).count()) === 0)
-  check('镜头表无内置拆镜键', lib.WORKBENCH_BUILTIN_KEYS.shots.length === 0)
-  const shotChatEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
-  check('空态指向 Agent', /Agent|拆镜|镜头/.test(shotChatEmpty), shotChatEmpty.replace(/\n/g, ' ').slice(0, 120))
+  check('镜头表仅保留拆镜内置动作', lib.WORKBENCH_BUILTIN_KEYS.shots.join(',') === 'split_shots')
+  const shotChatEmpty = (await page.locator('[data-shots-chat] [data-chat-empty]').innerText()).trim()
+  check('镜头表聊天空态无引导文案', shotChatEmpty === '', shotChatEmpty.slice(0, 80))
   check('Agent 面板默认可见', await page.locator('[data-shots-chat]').isVisible())
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-shots.png') })
-
-  // 剧本
-  await openView('剧本', 'script')
-  active = 'script'
-  await runAction('script', '分集')
-  await waitReceipt('script')
-  check('剧本动作回执', (await cardTexts('script')).some((t) => t.includes('生成 2 集')))
-  check('剧本草稿替换为 2 集', (await page.locator('.sb-ep').count()) === 2)
-  check('剧本回执标明全剧', (await cardTexts('script')).some((t) => t.includes('全剧')))
-  await page.getByRole('button', { name: '保存', exact: true }).click()
-  await page.waitForTimeout(700)
-  const savedScript = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project
-  check(
-    '剧本动作结果可保存',
-    (savedScript.episodes || []).some((e) => e.title === '新一集'),
-    (savedScript.episodes || []).map((e) => e.title).join(','),
-  )
-  await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-script.png') })
 
   // 角色：全剧范围 + 本地草稿合并 + 自动落库
   await openView('角色', 'characters')

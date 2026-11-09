@@ -1,5 +1,11 @@
 import { parseDialogue } from './prompts'
-import { nativeAudioFingerprint, nativeAudioRef, nativeAudioStale, type AudioRefCapabilities } from './nativeAudio'
+import {
+  nativeAudioFingerprint,
+  nativeAudioGateSeconds,
+  nativeAudioRef,
+  nativeAudioStale,
+  type AudioRefCapabilities,
+} from './nativeAudio'
 import type { CharacterSheet } from './characters'
 import type { ShotData } from './types'
 
@@ -25,12 +31,13 @@ export default function NativeAudioPanel({
   forcedOffHint,
 }: Props) {
   const dialogue = parseDialogue(data.dialogue)
+  const requestSeconds = nativeAudioGateSeconds(Number(data.seconds) || 0, caps)
   const ref = nativeAudioRef({
     dialogue,
     performance: data.performance,
     characters,
     caps,
-    seconds: Number(data.seconds) || 0,
+    seconds: requestSeconds,
   })
   const mode = data.audioMode ?? 'off'
   const refChanged = Boolean(mode === 'native' && ref.ok && data.audioRef?.url !== ref.url)

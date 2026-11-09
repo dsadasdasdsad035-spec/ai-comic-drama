@@ -7,15 +7,15 @@ import type { WorkbenchSaveMode } from './workbenchChat'
 const LABELS: Record<string, string> = {
   read_source: '原著',
   read_episodes: '分集',
-  read_script: '剧本',
   read_characters: '角色表',
   read_episode: '本集',
   read_shots: '镜头表',
   read_designs: '场景/道具',
-  submit_script: '剧本草稿',
+  read_skill: '技能全文',
   submit_characters: '角色草稿',
   submit_designs: '素材草稿',
   submit_shots: '镜头草稿',
+  submit_joins: '接缝草稿',
   submit_prompts: '提示词草稿',
   builtin_action: '内置动作',
 }
@@ -109,7 +109,7 @@ function StageToolCard({
         ? `${builtinLabel}：已取消`
         : error
           ? `${builtinLabel}失败：${error}`
-          : `${builtinLabel}${scope === 'script' ? ' · 全剧' : ' · 当前集'}：${summary}`
+          : `${builtinLabel}${scope === 'project' ? ' · 全剧' : ' · 当前集'}：${summary}`
     const showSave = !cancelled && r.ok !== false && Boolean(builtinSaveMode)
     const countItems = Object.entries(counts)
       .filter(([, v]) => Number(v) > 0)

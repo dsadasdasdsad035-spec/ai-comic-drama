@@ -42,8 +42,7 @@ export function withRule(base: string, pack?: RulePack): string {
 }
 
 /** 默认规则包（来自技能库摘录），设置页首次展示/重置用 */
-export const DEFAULT_RULES: Record<'script' | 'character' | 'asset' | 'shot' | 'prompt', RulePack> = {
-  script: { enabled: true, text: SCRIPT_RULES },
+export const DEFAULT_RULES: Record<'character' | 'asset' | 'shot' | 'prompt', RulePack> = {
   character: { enabled: true, text: CHARACTER_RULES },
   asset: { enabled: true, text: ASSET_RULES },
   shot: { enabled: true, text: SHOT_LANGUAGE_RULES },

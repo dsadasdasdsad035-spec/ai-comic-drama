@@ -1,6 +1,11 @@
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
-import { audioRefCapabilitiesFor, nativeAudioPrompt, nativeAudioRef } from './nativeAudio'
+import {
+  audioRefCapabilitiesFor,
+  nativeAudioGateSeconds,
+  nativeAudioPrompt,
+  nativeAudioRef,
+} from './nativeAudio'
 import { parseDialogue } from './prompts'
 import {
   performanceFingerprintPayload,
@@ -226,7 +231,7 @@ export function buildShotVideoRequest(input: {
         performance: d.performance,
         characters: input.characters,
         caps: audioCaps,
-        seconds: Number(d.seconds) || 0,
+        seconds: nativeAudioGateSeconds(Number(d.seconds) || 0, audioCaps),
       })
     : null
 

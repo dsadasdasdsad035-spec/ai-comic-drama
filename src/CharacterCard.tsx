@@ -66,7 +66,7 @@ type Props = {
   onPersist: (next: CharacterSheet[]) => void
   onPublishSheet: () => void
   selectedShot: { id: string; no: string } | null
-  selectedBudget?: { used: number; max: number; expression: boolean; omitted: number } | null
+  selectedBudget?: { used: number; max: number | null; expression: boolean; omitted: number } | null
   missing: Set<string>
   onImageMissing: (ref: string) => void
 }

@@ -22,7 +22,8 @@ export const MIN_GENERATED_FADE = 0.1
 export const MAX_GENERATED_FADE = 0.25
 export const DEFAULT_GENERATED_SECONDS = 1.2
 export const MIN_GENERATED_TARGET = 0.8
-export const MAX_GENERATED_TARGET = 3
+/** 与分镜出片 /api/seedance 上限一致 */
+export const MAX_GENERATED_TARGET = 12
 
 export const DEFAULT_EFFECT: TransitionEffect = {
   type: 'dissolve',
@@ -113,6 +114,8 @@ export function normalizeGenerated(input?: Partial<TransitionGenerated> | null):
     ...(input?.audioMode === 'native' ? { audioMode: 'native' as const } : {}),
     ...(input?.audioRef ? { audioRef: input.audioRef } : input?.audioRef === null ? { audioRef: null } : {}),
     ...(input?.audioMeta ? { audioMeta: input.audioMeta } : {}),
+    ...(input?.taxonomy ? { taxonomy: input.taxonomy } : {}),
+    ...(input?.recipeIds?.length ? { recipeIds: input.recipeIds } : {}),
   }
 }
 

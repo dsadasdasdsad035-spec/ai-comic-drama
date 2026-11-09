@@ -8,7 +8,7 @@ import {
 import type { AppSettings } from '../api'
 import { stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
 import { modelHasCap } from '../modelCaps'
-import { buildSkillPrompt } from '../skills/render'
+import { buildWorkbenchAgentSystem } from './workbenchChat'
 import { imageAttachments, type ChatAttachment } from './chatAttachments'
 import { classifyChatImage, imageContextLines, MAX_CHAT_IMAGE_BYTES } from '../../server/chat-image-payload.mjs'
 import { loadSkills } from '../skills/registry'
@@ -37,12 +37,6 @@ import {
   type WorkbenchTaskView,
 } from './workbenchChat'
 import { WorkbenchChatContext } from './workbenchChatContext'
-import { requireProjectStyle } from '../productionContext'
-
-async function ensureProjectStyleIfNeeded(host: Skill, adapter: WorkbenchChatAdapter) {
-  if (!host.manifest.inputs.includes('style')) return
-  requireProjectStyle(await adapter.projectSnapshot())
-}
 
 type Props = {
   adapter: WorkbenchChatAdapter
@@ -66,16 +60,6 @@ function builtinId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `builtin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function textLength(value: unknown): number {
-  if (value == null) return 0
-  if (typeof value === 'string') return value.length
-  try {
-    return JSON.stringify(value).length
-  } catch {
-    return String(value).length
-  }
 }
 
 function textOfMessage(message: AgentMessage): string {
@@ -533,11 +517,7 @@ export default function SkillChat({
    * referenceDigest 始终存在（甚至为空串）：技能的 {{input:referenceDigest}}
    * 只有在键缺失时才被算作「缺输入」，空串是合法的「没有图」。
    */
-  const composeInputs = () => {
-    const base = adapter.inputs()
-    // 空串表示这轮没有视觉摘要。图片本身走用户消息，不写进技能模板。
-    return { ...base, referenceDigest: '' }
-  }
+  const bootstrapSystem = (host: Skill) => buildWorkbenchAgentSystem(host, adapter, readonly)
 
   /**
    * 本轮附件的文本标签。放进 userForModel 而不是技能模板输入，
@@ -560,18 +540,11 @@ export default function SkillChat({
   const contextStats = useMemo<WorkbenchContextStats | null>(() => {
     if (!loaded || !hostSkill) return null
     try {
-      const inputs = composeInputs()
-      const prompt = buildSkillPrompt(hostSkill, inputs, 'chat')
-      const entries = Object.entries(inputs).map(([key, value]) => ({
-        key,
-        label: profile.inputLabels[key] || key,
-        chars: textLength(value),
-        mode: prompt.references.some((r) => r.key === key) ? ('tool' as const) : ('inline' as const),
-      }))
+      const system = bootstrapSystem(hostSkill)
       return {
-        entries,
-        total: prompt.system.length + prompt.task.length,
-        referenceCount: prompt.references.length,
+        entries: [{ key: 'agent', label: 'Pi 引导', chars: system.length, mode: 'inline' as const }],
+        total: system.length,
+        referenceCount: 0,
       }
     } catch {
       return null
@@ -593,46 +566,27 @@ export default function SkillChat({
     setReadonly((prev) => prev.filter((s) => s.id !== id))
   }
 
-  const readonlySystemText = () =>
-    readonly
-      .map((s) => {
-        try {
-          return `【只读技能：${s.id}】\n${buildSkillPrompt(s, {}, 'chat').system}`
-        } catch {
-          return ''
-        }
-      })
-      .filter(Boolean)
-
-  const makeTaskView = (
-    host: Skill,
-    inputs: Record<string, unknown>,
-    prompt: ReturnType<typeof buildSkillPrompt>,
-    system: string,
-  ): WorkbenchTaskView => ({
+  const makeTaskView = (host: Skill, system: string): WorkbenchTaskView => ({
     system,
-    task: prompt.task,
-    inputs,
-    references: prompt.references,
-    missing: prompt.missing,
+    task: '',
+    inputs: {},
+    references: [],
+    missing: [],
     modelLabel,
     skillId: host.id,
     skillTitle: profile.title,
     skillSource: host.source,
     skillVersion: host.manifest.version,
     readonly: readonly.map((s) => ({ id: s.id, version: s.manifest.version })),
-    readTools: host.manifest.tools.filter((t) => t.startsWith('read_')),
+    readTools: [...new Set([...host.manifest.tools.filter((t) => t.startsWith('read_')), 'read_skill'])],
     saveMode: profile.saveMode,
   })
 
   const preview = async () => {
     if (!hostSkill) return
     try {
-      await ensureProjectStyleIfNeeded(hostSkill, adapter)
-      const inputs = composeInputs()
-      const prompt = buildSkillPrompt(hostSkill, inputs, 'chat')
-      const system = [prompt.system, ...readonlySystemText()].join('\n\n')
-      setTaskView(makeTaskView(hostSkill, inputs, prompt, system))
+      const system = bootstrapSystem(hostSkill)
+      setTaskView(makeTaskView(hostSkill, system))
     } catch (e) {
       onToast?.((e as Error).message || String(e))
     }
@@ -708,31 +662,15 @@ export default function SkillChat({
     const placeholders = decisions
       .filter((item) => !item.decision.sent)
       .map((item) => `图片「${item.decision.label}」未送入模型：${item.decision.reason}`)
-    let hostPrompt
-    try {
-      await ensureProjectStyleIfNeeded(host, adapter)
-      hostPrompt = buildSkillPrompt(host, composeInputs(), 'chat')
-      if (hostPrompt.missing.length) {
-        throw new Error(`技能输入缺失：${hostPrompt.missing.join('、')}`)
-      }
-    } catch (e) {
-      const message = (e as Error).message || String(e)
-      setActionError(message)
-      onToast?.(message)
-      return
-    }
-    const readonlySystem = readonlySystemText()
-    const system = [hostPrompt.system, ...readonlySystem].join('\n\n')
-    const taskCard = hostPrompt.task ? `【本轮技能任务】\n${hostPrompt.task}` : ''
+    const system = bootstrapSystem(host)
     const attachText = [attachmentBlock(), placeholders.length ? `${placeholders.join('\n')}\n\n` : ''].filter(Boolean).join('')
-    const head = [taskCard, attachText].filter(Boolean).join('\n')
-    const userForModel = head ? `${head}【用户要求】\n${text}` : text
+    const userForModel = attachText ? `${attachText}${text}` : text
     const tools = bindSkillTools(createStageToolSet(adapter), [
       { skill: host, mode: 'host' },
       ...readonly.map((s) => ({ skill: s, mode: 'readonly' as const })),
     ])
     const history = threadTranscript(messages)
-    setTaskView(makeTaskView(host, composeInputs(), hostPrompt, system))
+    setTaskView(makeTaskView(host, system))
 
     const gen = clearGenRef.current
     userStartedRef.current = true
@@ -925,7 +863,7 @@ export default function SkillChat({
   return (
     <div className="skill-chat chat-ui" data-skill-chat={adapter.surface}>
       <WorkbenchHeader
-        title={profile.title}
+        title={adapter.chatTitle?.() ?? profile.title}
         scope={scope}
         hostSkillId={hostSkill?.id || adapter.skillId}
         modelLabel={modelLabel}
@@ -1006,13 +944,20 @@ export default function SkillChat({
                     <WorkbenchEmpty
                       profile={profile}
                       loading={!loaded}
-                      actions={loaded && hostSkill ? adapter.builtins ?? [] : []}
+                      compact={adapter.surface === 'shots'}
+                      actions={
+                        adapter.surface === 'shots'
+                          ? []
+                          : loaded && hostSkill
+                            ? adapter.builtins ?? []
+                            : []
+                      }
                       onRunAction={(action) => void runBuiltinAction(action)}
                       running={busy}
                     />
                   }
                   emptyAlign="bottom"
-                  placeholder={profile.placeholder}
+                  placeholder={adapter.chatPlaceholder?.() || profile.placeholder || '输入消息…'}
                   inputLabel={`${adapter.surface} 技能聊天输入`}
                   suggestions={loaded && messages.length === 0 ? profile.suggestions : undefined}
                   disabled={!loaded || !hostSkill || busy}

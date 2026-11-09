@@ -50,7 +50,6 @@ const CONTRACT_IDS = [
   'prompts-v1',
   'reverse-v1',
   'creative-plan-v1',
-  'publish-plan-v1',
   'scene3d-code-v1',
 ]
 

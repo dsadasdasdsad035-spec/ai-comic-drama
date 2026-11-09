@@ -89,7 +89,7 @@ export type AgentBuiltinPart = {
   id: string
   actionKey: string
   label: string
-  scope?: 'episode' | 'script'
+  scope?: 'episode' | 'project'
   status: 'running' | 'done' | 'error' | 'cancelled'
   result?: BuiltinResult
   startedAt?: number

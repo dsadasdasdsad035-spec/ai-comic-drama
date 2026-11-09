@@ -1,10 +1,10 @@
 import type { ProjectData, Stage } from '../api'
-import type { SkillInputs, SkillReference, SkillSource } from '../skills/types'
+import type { Skill, SkillInputs, SkillReference, SkillSource } from '../skills/types'
 import type { ChatThreadKey } from './threads'
 
-export type WorkbenchSurface = 'script' | 'characters' | 'assets' | 'shots'
+export type WorkbenchSurface = 'characters' | 'assets' | 'shots'
 export type WorkbenchSaveMode = 'explicit' | 'auto' | 'immediate'
-export type WorkbenchBuiltinScope = 'episode' | 'script'
+export type WorkbenchBuiltinScope = 'episode' | 'project'
 
 /**
  * 工作台内置动作的结果：聊天回执与顶部按钮共用。
@@ -76,40 +76,52 @@ export function builtinFailure(
 
 /** 五个工作台内置动作的单一清单；board 只补充 disabled/run 与动态 label。 */
 export const WORKBENCH_BUILTINS = {
-  generate_episodes: {
-    key: 'generate_episodes',
-    label: '生成分集',
-    hint: '全剧；会替换当前分集草稿，保存前不动项目',
-    scope: 'script',
-  },
   extract_characters_episode: {
     key: 'extract_characters_episode',
     label: '从本集拆角色',
-    hint: '用当前集的剧本场次与分镜；约 1 秒后自动落库',
+    hint: '用当前集分集梗概与分镜；约 1 秒后自动落库',
     scope: 'episode',
   },
   extract_characters_script: {
     key: 'extract_characters_script',
     label: '从全剧拆角色',
-    hint: '从全剧原文梗概与分集场次拆；约 1 秒后自动落库',
-    scope: 'script',
+    hint: '从全剧原著梗概与分集元数据拆；约 1 秒后自动落库',
+    scope: 'project',
   },
   extract_designs_episode: {
     key: 'extract_designs_episode',
     label: '从本集拆',
-    hint: '用当前集的剧本场次与分镜；写入后立即保存',
+    hint: '用当前集分集梗概与分镜；写入后立即保存',
     scope: 'episode',
   },
   extract_designs_script: {
     key: 'extract_designs_script',
     label: '从全剧拆',
-    hint: '从全剧原著梗概、分集场次与分镜拆；写入后立即保存',
-    scope: 'script',
+    hint: '从全剧原著梗概、分集元数据与分镜拆；写入后立即保存',
+    scope: 'project',
   },
   split_shots: {
     key: 'split_shots',
     label: '拆镜',
     hint: '用当前集内容/梗概；只改当前集镜头草稿',
+    scope: 'episode',
+  },
+  plan_transition_joins: {
+    key: 'plan_transition_joins',
+    label: '规划本集镜间转场',
+    hint: '在拆镜之后批量写相邻镜接缝；只改 transition_out 草稿',
+    scope: 'episode',
+  },
+  plan_transition_director: {
+    key: 'plan_transition_director',
+    label: '镜间转场决策',
+    hint: 'transition-director：判硬切/效果/生成桥接，输出 YAML handoff',
+    scope: 'episode',
+  },
+  plan_cinematic_transition: {
+    key: 'plan_cinematic_transition',
+    label: '转场视频提示词',
+    hint: 'cinematic-transition：首尾帧与桥接 Seedance 提示词，写入接缝',
     scope: 'episode',
   },
   generate_prompts: {
@@ -124,10 +136,9 @@ export const WORKBENCH_BUILTIN_KEYS: Record<
   WorkbenchSurface,
   (keyof typeof WORKBENCH_BUILTINS)[]
 > = {
-  script: ['generate_episodes'],
   characters: ['extract_characters_episode', 'extract_characters_script'],
   assets: ['extract_designs_episode', 'extract_designs_script'],
-  shots: [],
+  shots: ['split_shots'],
 }
 
 /** 每个工作台的首屏文案与保存语义；不扩技能 frontmatter。 */
@@ -142,15 +153,6 @@ export type WorkbenchProfile = {
 }
 
 export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
-  script: {
-    title: '剧本助手',
-    emptyTitle: '改这一版剧本',
-    emptyBody: '按你的要求改分集、场次和钩子；也可点「生成分集」从零拆集（需项目里已有原著，或在对话里贴全文）。只改草稿，保存前不动项目。',
-    suggestions: ['把节奏改紧一点', '第 3 集结尾留一个反转', '只重写第 5–8 集'],
-    placeholder: '例如：把第 3 集节奏改快，结尾留一个反转钩子…',
-    saveMode: 'explicit',
-    inputLabels: { source: '原著', epCount: '集数', targetSeconds: '每集时长', style: '画风' },
-  },
   characters: {
     title: '角色助手',
     emptyTitle: '补齐这一集的角色',
@@ -158,7 +160,7 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
     suggestions: ['补全所有 lookEn', '合并同名角色', '只保留有台词的角色'],
     placeholder: '例如：补全所有角色的 lookEn，别改已经手写的外观…',
     saveMode: 'auto',
-    inputLabels: { scopeLabel: '范围', sceneText: '剧本场次', shotBlock: '分镜摘要' },
+    inputLabels: { scopeLabel: '范围', sceneText: '分集梗概', shotBlock: '分镜摘要' },
   },
   assets: {
     title: '素材助手',
@@ -167,17 +169,21 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
     suggestions: ['只拆出现两次以上的场景', '补道具的多角度描述', '场景图里不要出现人物'],
     placeholder: '例如：只拆出现两次以上的场景，道具补多角度…',
     saveMode: 'immediate',
-    inputLabels: { scopeLabel: '范围', sceneText: '剧本场次', shotBlock: '分镜摘要' },
+    inputLabels: { scopeLabel: '范围', sceneText: '分集梗概', shotBlock: '分镜摘要' },
   },
   shots: {
-    title: '分镜助手',
-    emptyTitle: '把这一集拆成可拍镜头',
-    emptyBody:
-      '在对话里说明如何拆镜或改某一镜；模型会读本集场次并一次写入分镜字段与首帧/视频提示词。左侧表格可手改，保存前不会落库。',
-    suggestions: ['拆成 12 个 3 秒镜头', '加两个反应镜', '只重写 S03 的首帧提示词'],
-    placeholder: '例如：拆成 12 个 3 秒镜头，每镜带好 Seedream/Seedance 提示词…',
+    title: '拆镜',
+    emptyTitle: '',
+    emptyBody: '',
+    suggestions: [],
+    placeholder: '',
     saveMode: 'explicit',
-    inputLabels: { style: '画风', aspect: '画幅', brief: '本集摘要', target: '目标时长' },
+    inputLabels: {
+      style: '画风',
+      aspect: '画幅',
+      brief: '本集摘要',
+      target: '目标时长',
+    },
   },
 }
 
@@ -196,12 +202,12 @@ export type WorkbenchTaskView = {
   readTools: string[]
   saveMode: WorkbenchSaveMode
 }
-export type WriteArtifact = 'script' | 'characters' | 'designs' | 'shots' | 'prompts'
+export type WriteArtifact = 'characters' | 'designs' | 'shots' | 'prompts'
 export type WriteTool =
-  | 'submit_script'
   | 'submit_characters'
   | 'submit_designs'
   | 'submit_shots'
+  | 'submit_joins'
   | 'submit_prompts'
 
 export type DraftApplyResult = {
@@ -275,6 +281,10 @@ export type WorkbenchChatAdapter = {
   onDraftChanged?: () => void
   /** 聊天里的显式内置动作；不提供时聊天与改动前一致。 */
   builtins?: BuiltinAction[]
+  /** 覆盖默认 profile 标题（如「S03 · 分镜」） */
+  chatTitle?: () => string
+  /** 覆盖输入框占位符 */
+  chatPlaceholder?: () => string
   /** 图片附件来源；不提供时不显示附件入口。 */
   attachments?: WorkbenchAttachmentSource
 }
@@ -288,6 +298,41 @@ export function boundJson(value: unknown, max = 8000): unknown {
   } catch {
     return String(value).slice(0, max)
   }
+}
+
+/** 工作台 Pi：不预灌技能正文与宿主 inputs，由 read_skill / read_* 自取。 */
+/** 创意等无 WorkbenchChatAdapter 的场景 */
+export function buildPiAgentSystem(host: Skill, extras: string[], readonlySkills: Skill[] = []): string {
+  const ro =
+    readonlySkills.length > 0
+      ? readonlySkills.map((s) => `${s.id} v${s.manifest.version}`).join('、')
+      : '（无）'
+  return [
+    '你是 Agent（Pi）。',
+    '执行前必须用 read_skill 读取宿主技能（及已挂只读技能）的完整 SKILL.md；不要用对话里未出现的预置摘要。',
+    '业务数据用技能声明的工具读取。',
+    '',
+    `宿主技能：${host.id} · v${host.manifest.version} · ${host.source}`,
+    `已挂只读技能：${ro}`,
+    ...extras.filter(Boolean),
+  ].join('\n')
+}
+
+export function buildWorkbenchAgentSystem(
+  host: Skill,
+  adapter: WorkbenchChatAdapter,
+  readonlySkills: Skill[],
+): string {
+  let scope = '当前项目'
+  try {
+    scope = adapter.scope?.() || scope
+  } catch {
+    /* 宿主 scope 异常时不阻断发送 */
+  }
+  return buildPiAgentSystem(host, [
+    `写回工具：${adapter.writeTool}；输出契约：${adapter.writeContract}`,
+    `编辑范围：${scope}`,
+  ], readonlySkills)
 }
 
 export function textOfSource(value: unknown): string {

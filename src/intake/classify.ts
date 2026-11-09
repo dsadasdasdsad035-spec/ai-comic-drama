@@ -6,7 +6,7 @@
  * 2) 「正文出现『镜头』就是分镜表」是错的——图片索引 README 的表格单元格里
  *    写着「走路镜头」，按关键词会误判成分镜表。必须锚定表头行首列。
  */
-export type BundleLabel = 'script' | 'shotlist' | 'prompts' | 'characters' | 'image'
+export type BundleLabel = 'shotlist' | 'prompts' | 'characters' | 'image'
 
 export type ClassifiedFile = {
   id: string
@@ -140,12 +140,6 @@ export function classifyFile(input: {
     if (via === 'none') via = 'content'
     reasons.push('含外观锚点小节')
   }
-  if (hasScriptBody(text)) {
-    labels.add('script')
-    if (via === 'none') via = 'content'
-    reasons.push('含集标题或故事梗概')
-  }
-
   const { scope, no } = episodeScopeOf(text)
   const fromName = fileNameEpisode(name)
   let episodeNo: number | undefined
@@ -191,7 +185,6 @@ export function classifyFile(input: {
 }
 
 export const LABEL_TEXT: Record<BundleLabel, string> = {
-  script: '剧本',
   shotlist: '分镜表',
   prompts: '提示词',
   characters: '角色档案',

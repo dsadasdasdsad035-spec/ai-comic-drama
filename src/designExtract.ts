@@ -125,7 +125,7 @@ export function buildDesignPrompt(d: DesignSheet, style?: string): string {
 
 /** 给拆解输入补场景摘要；场景和镜头都为空时返回空串，由调用方报错 */
 export function buildDesignContext(opts: {
-  scope: 'episode' | 'script'
+  scope: 'episode' | 'project'
   epNo: number
   source?: string
   episodes?: Parameters<typeof digestEpisodes>[0]

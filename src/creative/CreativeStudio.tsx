@@ -7,7 +7,7 @@ import {
 } from '@assistant-ui/react'
 import { generateImage, generateVoice, saveSettings, startVideo, waitVideo, type AppSettings, type Stage } from '../api'
 import { stageModelKey, type StagePick } from '../ModelSelect'
-import { buildSkillPrompt } from '../skills/render'
+import { buildPiAgentSystem } from '../agent/workbenchChat'
 import { loadSkills } from '../skills/registry'
 import type { Skill } from '../skills/types'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
@@ -208,6 +208,10 @@ export default function CreativeStudio({
   const [costPrompt, setCostPrompt] = useState<CostPrompt | null>(null)
   const [promoteArtifact, setPromoteArtifact] = useState<CreativeArtifact | null>(null)
   const [hostSkill, setHostSkill] = useState<Skill | null>(null)
+  const [hostSkillId, setHostSkillId] = useState(MODE_SKILL.plan)
+  const [skillCatalog, setSkillCatalog] = useState<Skill[]>([])
+  const [toolSkills, setToolSkills] = useState<Skill[]>([])
+  const [readonlySkills, setReadonlySkills] = useState<Skill[]>([])
   const [skillError, setSkillError] = useState('')
   const [creativeOverride, setCreativeOverride] = useState(() => normalizeCreativeSettings(settings?.creative))
   const creative = useMemo(() => normalizeCreativeSettings({ ...creativeOverride }), [creativeOverride])
@@ -256,17 +260,24 @@ export default function CreativeStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 加载宿主技能（随模式变化）
+  // 技能目录：宿主默认随模式；可手选。只读技能参考 SkillChat 过滤。
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
         const { skills, issues } = await loadSkills()
         if (!alive) return
-        const id = MODE_SKILL[mode]
-        const skill = skills.get(id)
+        const all = [...skills.values()]
+        const creative = all.filter((s) => s.manifest.stage === 'creative')
+        setSkillCatalog(creative.length ? creative : all.filter((s) => s.manifest.runtime === 'tools'))
+        setToolSkills(
+          all.filter(
+            (s) => s.manifest.runtime === 'tools' && s.manifest.tools.some((t) => t.startsWith('read_')),
+          ),
+        )
+        const skill = skills.get(hostSkillId)
         if (!skill) {
-          setSkillError(issues.find((x) => x.id === id)?.message || `技能「${id}」不可用`)
+          setSkillError(issues.find((x) => x.id === hostSkillId)?.message || `技能「${hostSkillId}」不可用`)
           setHostSkill(null)
           return
         }
@@ -280,6 +291,10 @@ export default function CreativeStudio({
     return () => {
       alive = false
     }
+  }, [hostSkillId])
+
+  useEffect(() => {
+    setHostSkillId(MODE_SKILL[mode])
   }, [mode])
 
   // 卸载时立刻落盘：切项目/切视图会让组件卸载，防抖计时器没机会跑
@@ -393,6 +408,23 @@ export default function CreativeStudio({
     }
   }
 
+  const loadReadonlySkill = (id: string) => {
+    if (!id || id === hostSkillId) return
+    if (readonlySkills.some((s) => s.id === id)) return
+    if (readonlySkills.length >= 1) {
+      onToast?.('最多挂 1 个只读技能，请先卸载')
+      return
+    }
+    void loadSkills().then(({ skills }) => {
+      const skill = skills.get(id)
+      if (!skill) {
+        onToast?.(`技能「${id}」不可用`)
+        return
+      }
+      setReadonlySkills((prev) => [...prev, skill])
+    })
+  }
+
   const changeMode = async (next: CreativeMode) => {
     setMode(next)
     const id = sessionRef.current?.id
@@ -458,20 +490,14 @@ export default function CreativeStudio({
     paidCallsRef.current = { count: 0, max: creative.limits?.maxPaidCallsPerTurn ?? 8 }
     frameCache.current = new Map()
 
-    let prompt
-    try {
-      prompt = buildSkillPrompt(hostSkill, {
-        mode: MODE_HINT[mode],
-        sourceLabel: session.sources[0]?.title || session.sources[0]?.url || '（尚未提供源视频）',
-        shotCount: String((session.sources[0] && (session.shots || {})[session.sources[0].id]?.length) || 0),
-        aspect: String(settings?.models?.length ? '9:16' : '9:16'),
-        topic: text,
-        constraints: '',
-      }, 'chat')
-    } catch (e) {
-      setActionError((e as Error).message || String(e))
-      return
-    }
+    const system = buildPiAgentSystem(
+      hostSkill,
+      [
+        `创意模式：${mode}（${MODE_HINT[mode]}）`,
+        `会话：${session.id}`,
+      ],
+      readonlySkills,
+    )
 
     const set = createCreativeToolSet({
       sessionId: session.id,
@@ -506,10 +532,11 @@ export default function CreativeStudio({
       onSourceChanged: () => void refreshSession(),
       onArtifactChanged: () => void refreshSession(),
     })
-    const tools = bindCreativeTools(set, [{ skill: hostSkill, mode: 'host' }])
-    const system = prompt.system
-    const taskCard = prompt.task ? `【本轮技能任务】\n${prompt.task}` : ''
-    const userForModel = taskCard ? `${taskCard}\n\n【用户要求】\n${text}` : text
+    const tools = bindCreativeTools(set, [
+      { skill: hostSkill, mode: 'host' },
+      ...readonlySkills.map((s) => ({ skill: s, mode: 'readonly' as const })),
+    ])
+    const userForModel = text
     const history = threadTranscript(messages)
 
     begin(text)
@@ -701,7 +728,13 @@ export default function CreativeStudio({
             stagePick={stagePick}
             onPickStage={onPickStage}
             modelKey={modelKey}
-            skillId={hostSkill?.id || MODE_SKILL[mode]}
+            hostSkillId={hostSkillId}
+            skillChoices={skillCatalog.map((s) => ({ id: s.id, label: s.manifest.name || s.id }))}
+            onHostSkillChange={setHostSkillId}
+            readonlySkills={readonlySkills}
+            availableReadonly={toolSkills.filter((s) => s.id !== hostSkillId)}
+            onLoadReadonly={loadReadonlySkill}
+            onRemoveReadonly={(id) => setReadonlySkills((prev) => prev.filter((s) => s.id !== id))}
             skillError={skillError}
             running={running}
             sources={session?.sources.length || 0}

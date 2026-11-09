@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react'
 import type { WorkbenchSaveMode, WorkbenchSurface } from './workbenchChat'
 
 export type WorkbenchChatContextValue = {
-  surface: WorkbenchSurface
+  surface: WorkbenchSurface | 'scene3d'
   saveMode: WorkbenchSaveMode
   onSave?: () => Promise<void> | void
   onRetry?: () => void

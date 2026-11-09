@@ -5,7 +5,6 @@ import {
   characterSys,
   normalizeRules,
   promptSys,
-  scriptSys,
   storyboardSys,
 } from './legacyPrompts'
 import { composeSkillBody } from './parse'
@@ -18,7 +17,6 @@ type LegacyEntry = {
 }
 
 const LEGACY: LegacyEntry[] = [
-  { key: 'script', skillId: 'script', sys: scriptSys },
   { key: 'character', skillId: 'character', sys: characterSys },
   { key: 'asset', skillId: 'asset', sys: assetSys },
   { key: 'shot', skillId: 'shotlist', sys: storyboardSys },

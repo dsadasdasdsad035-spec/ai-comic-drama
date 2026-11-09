@@ -13,7 +13,6 @@ import type { AppSettings, ProjectEpisode, ProjectShot } from '../api'
 import type { CharacterSheet } from '../characters'
 import { buildShotsFromImport } from '../agent/shotDraft'
 import { mergePromptDraft } from '../agent/promptDraft'
-import { mergeScriptDraft } from '../agent/drafts'
 import { mergeShotsDraft } from '../shotSync'
 import { describeDiff, diffShots, type IntakeDiff } from './diff'
 import { detectFormat, isTabular, type IntakeFormat } from './format'
@@ -84,7 +83,7 @@ export default function IntakeDialog({
 
   const format = useMemo(() => detectFormat(raw), [raw])
   const canUseModel = hasTextModels(settings)
-  const stage = target === 'script' ? 'script' : target === 'shots' ? 'shot' : 'prompt'
+  const stage = target === 'shots' ? 'shot' : 'prompt'
   const modelKey = stageModelKey(settings, stage, stagePick)
 
   /** 零模型路径：表格直接映射成导入行 */
@@ -189,24 +188,6 @@ export default function IntakeDialog({
         }
       }
       return null
-    }
-
-    // 剧本
-    if (target === 'script') {
-      if (!source) return null
-      const j = source as { logline?: unknown; episodes?: unknown }
-      const incoming = (Array.isArray(j.episodes) ? j.episodes : []) as ProjectEpisode[]
-      if (!incoming.length) return null
-      const merged = mergeScriptDraft(episodes, incoming, 'merge')
-      return {
-        episodes: merged.episodes,
-        summary: `新增 ${merged.added} 集 · 更新 ${merged.updated} 集 · 保留 ${merged.kept} 集`,
-        counts: { added: merged.added, updated: merged.updated, kept: merged.kept },
-        notices:
-          merged.updated > 0
-            ? ['导入按集整集替换：文件里出现的集会被改写，未出现的集保持原样']
-            : [],
-      }
     }
 
     // 提示词
@@ -362,9 +343,7 @@ export default function IntakeDialog({
               placeholder={
                 target === 'shots'
                   ? '粘贴表格（Markdown / CSV / 从 Excel 复制的制表符分隔），或粘贴镜头契约 JSON'
-                  : target === 'script'
-                    ? '粘贴剧本 JSON，或整篇剧本原文（再点「让模型整理」）'
-                    : '粘贴提示词 JSON，或按镜号列出的提示词原文（再点「让模型整理」）'
+                  : '粘贴提示词 JSON，或按镜号列出的提示词原文（再点「让模型整理」）'
               }
             />
           ) : (

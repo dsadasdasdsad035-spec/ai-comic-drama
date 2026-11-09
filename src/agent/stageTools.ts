@@ -6,6 +6,7 @@ import {
   validateContract,
 } from '../skills/contracts'
 import type { Skill } from '../skills/types'
+import { getSkill } from '../skills/registry'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
 import { defineTool, type ToolDef } from './tool'
 
@@ -40,16 +41,6 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   const snapshot = () => (snapshotPromise ??= adapter.projectSnapshot())
 
   const scriptData = async (): Promise<{ source: string; logline: string; episodes: unknown[]; style: string; aspect: string }> => {
-    if (adapter.artifact === 'script') {
-      const own = asRecord(adapter.ownDraft())
-      return {
-        source: String(own.source || ''),
-        logline: String(own.logline || ''),
-        episodes: Array.isArray(own.episodes) ? own.episodes : [],
-        style: String(own.style || ''),
-        aspect: String(own.aspect || ''),
-      }
-    }
     const p = await snapshot()
     return {
       source: String(p.source || ''),
@@ -112,23 +103,6 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readScript = defineTool({
-    name: 'read_script',
-    description: '读取项目剧本：原著、logline、分集场次。只读。',
-    schema: z.object({}),
-    run: async () => {
-      const d = await scriptData()
-      return {
-        ok: true,
-        source: d.source,
-        logline: d.logline,
-        episodes: boundJson(d.episodes),
-        style: d.style,
-        aspect: d.aspect,
-      }
-    },
-  })
-
   const readCharacters = defineTool({
     name: 'read_characters',
     description: '读取角色表与外观锚点。只读；可用 names 过滤。',
@@ -180,7 +154,29 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         list = list.filter((s) => set.has(String(s.id || '')))
       }
       if (limit) list = list.slice(0, limit)
-      return { ok: true, shots: boundJson(list), total: all.length }
+      const maxChars = shotIds?.length && shotIds.length <= 4 ? 200_000 : 8000
+      return { ok: true, shots: boundJson(list, maxChars), total: all.length }
+    },
+  })
+
+  const readTransitionRecipes = defineTool({
+    name: 'read_transition_recipes',
+    description: '读取转场食谱索引（video-shotcraft 风格卡片摘要）。可按 taxonomy 或关键词过滤。',
+    schema: z.object({
+      taxonomy: z
+        .enum(['scene', 'character', 'space', 'vfx', 'camera', 'ai_video'])
+        .optional()
+        .describe('六类接缝主分类'),
+      q: z.string().optional().describe('标题/intent/tags 关键词'),
+      limit: z.number().int().min(1).max(40).optional(),
+    }),
+    run: async ({ taxonomy, q, limit }) => {
+      const { listTransitionRecipes, searchTransitionRecipes } = await import('../transitionRecipes')
+      let list = listTransitionRecipes()
+      if (taxonomy) list = list.filter((r) => r.taxonomy === taxonomy)
+      if (q?.trim()) list = searchTransitionRecipes(q.trim())
+      if (limit) list = list.slice(0, limit)
+      return { ok: true, recipes: boundJson(list), total: list.length }
     },
   })
 
@@ -199,13 +195,41 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
+  const readSkill = defineTool({
+    name: 'read_skill',
+    description:
+      '读取指定技能的完整 SKILL.md（含 frontmatter）。选择/切换技能后应先读取宿主技能全文，再按需读取只读技能。',
+    schema: z.object({
+      id: z.string().min(1).describe('技能 id，例如 character、asset、shotlist、transition-director'),
+    }),
+    run: async ({ id }) => {
+      try {
+        const skill = await getSkill(String(id).trim())
+        return {
+          ok: true,
+          id: skill.id,
+          version: skill.manifest.version,
+          source: skill.source,
+          tools: skill.manifest.tools,
+          inputs: skill.manifest.inputs,
+          output: skill.manifest.output,
+          contracts: skill.manifest.contracts,
+          text: skill.text,
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+
   const readByName = new Map<string, ToolDef>([
+    [readSkill.name, readSkill],
     [readSource.name, readSource],
     [readEpisodes.name, readEpisodes],
-    [readScript.name, readScript],
     [readCharacters.name, readCharacters],
     [readDesigns.name, readDesigns],
     [readShots.name, readShots],
+    [readTransitionRecipes.name, readTransitionRecipes],
     [readEpisode.name, readEpisode],
   ])
 
@@ -258,5 +282,7 @@ export function bindSkillTools(
       if (tool) byName.set(name, tool)
     }
   }
+  const readSkillTool = set.byName.get('read_skill')
+  if (readSkillTool) byName.set('read_skill', readSkillTool)
   return [...byName.values()]
 }

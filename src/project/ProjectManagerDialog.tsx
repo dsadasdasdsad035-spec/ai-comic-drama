@@ -29,10 +29,6 @@ const COUNT_LABELS: { key: string; label: string }[] = [
   { key: 'scene_layouts', label: '场景布局' },
   { key: 'stock_imports', label: '在线素材' },
   { key: 'chat_threads', label: '聊天线程' },
-  { key: 'deliverables', label: '成片' },
-  { key: 'publish_jobs', label: '发布任务' },
-  { key: 'publish_intents', label: '提交意图' },
-  { key: 'publish_events', label: '发布事件' },
 ]
 
 function fmtBytes(n: number) {
@@ -147,7 +143,6 @@ export default function ProjectManagerDialog({ variant, onClose, onDeleted, curr
   const batch = targets.length > 1
   const expectedConfirm = batch ? String(targets.length) : targets[0] || ''
   const confirmOk = targets.length > 0 && !previewing && confirmText.trim() === expectedConfirm
-  const blocked = (previews ?? []).filter((p) => p.exists && p.activeJobs.length > 0)
   const totals = useMemo(() => {
     const counts: Record<string, number> = {}
     let mediaBytes = 0
@@ -300,19 +295,6 @@ export default function ProjectManagerDialog({ variant, onClose, onDeleted, curr
                   媒体 <b>{fmtBytes(totals.mediaBytes)}</b>
                 </span>
               </div>
-              {blocked.length > 0 && (
-                <p className="proj-error" data-delete-blocked>
-                  {blocked
-                    .map(
-                      (p) =>
-                        `${p.name} 还有 ${p.activeJobs.length} 个进行中的发布任务（${p.activeJobs
-                          .map((j) => `${j.platform}/${j.state}`)
-                          .join('、')}）`,
-                    )
-                    .join('；')}
-                  ，请先处理或取消。
-                </p>
-              )}
               <label className="proj-field">
                 <span>{batch ? '输入选中数量' : '输入项目名'}确认</span>
                 <input

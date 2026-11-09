@@ -10,7 +10,6 @@ export type StageRuntimeConfig = {
 
 /** 环节运行参数：一次性生成与聊天执行器共用，避免两套默认值。 */
 export const STAGE_RUNTIME: Record<Stage, StageRuntimeConfig> = {
-  script: { maxTokens: 8192, temperature: 0.4, output: 'script-v1' },
   character: { maxTokens: 6000, temperature: 0.3, output: 'characters-v1' },
   asset: { maxTokens: 6000, temperature: 0.3, output: 'designs-v1' },
   shot: { maxTokens: 8192, temperature: 0.3, output: 'shots-v1' },
@@ -20,8 +19,6 @@ export const STAGE_RUNTIME: Record<Stage, StageRuntimeConfig> = {
   videoVision: { maxTokens: 4096, temperature: 0.2, output: null },
   /** 创意会话：反推走 reverse-v1；策划模式由技能 frontmatter 覆盖输出 */
   creative: { maxTokens: 8192, temperature: 0.4, output: 'reverse-v1' },
-  /** 发布助手：只驱动发布台的读写工具，没有结构化产物契约 */
-  publish: { maxTokens: 8192, temperature: 0.3, output: null },
 }
 
 export function stageRuntime(stage: Stage): StageRuntimeConfig {

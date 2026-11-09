@@ -1,9 +1,9 @@
 ---
 name: character
-description: 从剧本场次与分镜中提取需要出镜的具名角色，产出可直接生图的外观锚点
+description: 从分集梗概与分镜中提取需要出镜的具名角色，产出可直接生图的外观锚点
 stage: character
 runtime: tools
-tools: [read_script, read_characters, submit_characters]
+tools: [read_source, read_episodes, read_characters, submit_characters]
 inputs: [scopeLabel, sceneText, shotBlock, referenceDigest]
 output: characters-v1
 contracts: [characters-v1]

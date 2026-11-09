@@ -171,7 +171,7 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
           >
             {eps.length === 0 ? (
               <div className="epbar-empty">
-                {projectName ? '这个项目还没有集。先去剧本页生成分集，或在镜头表里建镜头。' : '先在全局带选择项目。'}
+                {projectName ? '这个项目还没有集。在镜头表里建镜头，或在项目设置里维护分集。' : '先在全局带选择项目。'}
               </div>
             ) : (
               eps.map((e, i) => (

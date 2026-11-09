@@ -95,7 +95,7 @@ export function diffShots(
 
   if (opts.scenesFallback && opts.scenesFallback > 0) {
     notices.push(
-      `${opts.scenesFallback} 镜的场次号在当前集不存在，将归入第一场；检查表里的场次号是否与剧本页一致`,
+      `${opts.scenesFallback} 镜的场次号在当前集不存在，将归入第一场；检查表里的场次号是否与分集元数据一致`,
     )
   }
   if (involved > 0 && involved < visible.length) {

@@ -215,7 +215,7 @@ export function WorkbenchHeader({
                       title={availability.reason || action.hint}
                     >
                       {builtinLabel(action)}
-                      {action.scope === 'script' ? ' · 全剧' : ''}
+                      {action.scope === 'project' ? ' · 全剧' : ''}
                       {availability.disabled ? '（不可用）' : ''}
                     </option>
                   )

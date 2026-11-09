@@ -2,7 +2,6 @@ import type { Stage } from '../api'
 import { SkillParseError, type Skill, type SkillManifest, type SkillParseIssue, type SkillSource } from './types'
 
 const STAGES: Stage[] = [
-  'script',
   'character',
   'asset',
   'shot',
@@ -11,7 +10,6 @@ const STAGES: Stage[] = [
   'vision',
   'videoVision',
   'creative',
-  'publish',
 ]
 /**
  * 运行时取值。`json-tools` 是协议改名前的旧字面量，仍接受并归一化为 `tools`，

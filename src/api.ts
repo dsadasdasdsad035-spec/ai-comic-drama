@@ -332,8 +332,6 @@ export type ExportResult = {
   captions?: number
   /** 与烧录一致的 SRT sidecar */
   srtUrl?: string
-  /** 导出成功后服务端写入的成片记录；缺项目/集时不返回 */
-  deliverable?: { id: string; version: number }
   /** 服务端对 cue 夹紧/丢弃的说明 */
   captionWarnings?: string[]
   overflows: { shot: number; voice: number; shotLen: number }[]
@@ -351,7 +349,7 @@ export async function assembleAnimatic(
     joins?: ExportJoin[]
     staleTransitions?: number
     captionStyle?: ExportCaptionStyle
-    /** 成片归属；带上才会在服务端落成片记录 */
+    /** 成片归属；用于服务端合成任务标题 */
     project?: string
     episode?: number
     title?: string
@@ -402,9 +400,6 @@ export async function assembleAnimatic(
         subbed: s.subbed ?? 0,
         ...(typeof s.captions === 'number' ? { captions: s.captions } : {}),
         ...(s.srtUrl ? { srtUrl: String(s.srtUrl) } : {}),
-        ...(s.deliverable && s.deliverable.id
-          ? { deliverable: { id: String(s.deliverable.id), version: Number(s.deliverable.version) || 1 } }
-          : {}),
         ...(Array.isArray(s.captionWarnings) ? { captionWarnings: s.captionWarnings.map(String) } : {}),
         overflows: s.overflows ?? [],
         staleTransitions: opts.staleTransitions ?? 0,
@@ -1170,7 +1165,6 @@ export type RulePack = { enabled: boolean; text: string }
 export type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 /** 生成环节：环节默认值只引用模型表键 */
 export type Stage =
-  | 'script'
   | 'character'
   | 'asset'
   | 'shot'
@@ -1179,9 +1173,7 @@ export type Stage =
   | 'vision'
   | 'videoVision'
   | 'creative'
-  | 'publish'
 export const STAGES: Stage[] = [
-  'script',
   'character',
   'asset',
   'shot',
@@ -1190,7 +1182,6 @@ export const STAGES: Stage[] = [
   'vision',
   'videoVision',
   'creative',
-  'publish',
 ]
 export type ProviderKind =
   | 'ark'

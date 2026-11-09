@@ -17,12 +17,9 @@ function readWidth(surface: string): number {
 }
 
 const DATA_ATTRS: Record<string, Record<string, string>> = {
-  script: { 'data-script-chat': '' },
   characters: { 'data-characters-chat': '' },
   assets: { 'data-assets-chat': '' },
   shots: { 'data-shots-chat': '' },
-  // 发布台：断点由 publishChat.css 的 [data-publish-chat] 作用域覆盖为 1200px
-  publish: { 'data-publish-chat': '' },
 }
 
 /**
@@ -35,7 +32,7 @@ export function WorkbenchChatAside({
   onClose,
   children,
 }: {
-  /** 工作台 surface；发布台用 'publish'，断点由 publishChat.css 覆盖为 1200px */
+  /** 工作台 surface */
   surface: string
   open: boolean
   onClose: () => void

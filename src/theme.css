@@ -3108,6 +3108,281 @@ body.si-resizing {
   color: var(--warn);
 }
 
+/* 镜头表：本集 Agent 进度与选区 */
+.wb-pipeline {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--bg-1);
+}
+
+.wb-pipeline.dirty .wb-pipeline-step.on {
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.35);
+}
+
+.wb-pipeline-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wb-pipeline-step.on {
+  border-color: var(--accent);
+  background: var(--bg-1);
+}
+
+.wb-pipeline-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.wb-pipeline-sub {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.wb-agent-context {
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--bg-2);
+}
+
+.wb-agent-context-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: var(--fs-sm);
+}
+
+.wb-agent-context-head span {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-weight: normal;
+}
+
+.wb-agent-context-pre {
+  margin: 0;
+  padding: 8px;
+  max-height: 120px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--bg-1);
+  white-space: pre-wrap;
+}
+
+.wb-agent-context-dim {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.wb-agent-context-episode {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.wb-table tr.wb-shot-selected td {
+  background: rgba(56, 189, 248, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
+}
+
+.wb-seam-row.wb-seam-selected .wb-seam {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
+}
+
+.wb-seam-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.wb-seam-dot.status-cut {
+  background: var(--text-3);
+}
+
+.wb-seam-dot.status-needs_decision {
+  background: var(--warn);
+}
+
+.wb-seam-dot.status-needs_prompt {
+  background: #f97316;
+}
+
+.wb-seam-dot.status-ok {
+  background: var(--ok);
+}
+
+.wb-seam-dot.status-mismatch {
+  background: #f87171;
+}
+
+.wb-seam-status-tag {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 镜头表：相邻镜接缝行（硬切默认折叠） */
+.wb-seam-row td {
+  padding: 0;
+  background: var(--bg-2);
+  border-top: none;
+}
+
+.wb-seam-row.wb-seam-collapsed td {
+  background: transparent;
+}
+
+.wb-seam-row.wb-seam-warn .wb-seam-head {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.wb-seam {
+  margin: 2px 8px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+}
+
+.wb-seam-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wb-seam-label {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+
+.wb-seam-summary {
+  flex: 1;
+  font-size: var(--fs-sm);
+}
+
+.wb-seam-chevron {
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.wb-seam-body {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line-2);
+}
+
+.wb-seam-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.wb-seam-modes .btn-mini.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wb-seam-grid {
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  gap: 8px;
+}
+
+.wb-seam-stack label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.wb-seam-stack .label {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+
+.wb-seam-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.wb-seam-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wb-seam-inline input[type='number'] {
+  width: 72px;
+}
+
+.wb-handoff-brief {
+  padding: 8px 10px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.wb-handoff-brief label {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.wb-handoff-brief textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  padding: 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--text);
+  resize: vertical;
+  min-height: 72px;
+}
+
+@media (max-width: 960px) {
+  .wb-seam-grid {
+    grid-template-columns: 1fr;
+  }
+  .wb-seam-collapsed .wb-seam {
+    border-color: transparent;
+    margin-left: 4px;
+    margin-right: 4px;
+  }
+}
+
 .wb-table td.mono input {
   font-variant-numeric: tabular-nums;
   font-family: var(--font-mono);

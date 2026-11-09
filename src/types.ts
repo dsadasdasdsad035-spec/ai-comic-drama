@@ -214,6 +214,10 @@ export type TransitionGenerated = {
   audioMode?: ShotAudioMode
   audioRef?: AudioRef | null
   audioMeta?: AudioMeta
+  /** Agent / 镜头表接缝：主分类 */
+  taxonomy?: 'scene' | 'character' | 'space' | 'vfx' | 'camera' | 'ai_video'
+  /** video-shotcraft 等食谱卡片 id */
+  recipeIds?: string[]
 }
 
 /**

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { cn } from '@/chat-ui/lib/utils'
 import type { AppSettings, Stage } from '../api'
 import { StageModelSelect, type StagePick } from '../ModelSelect'
+import type { Skill } from '../skills/types'
 import type { CreativeMode } from './sessionStore'
 
 const MODES: Array<{ id: CreativeMode; label: string; hint: string }> = [
@@ -19,7 +20,13 @@ export function CreativeHeader({
   stagePick,
   onPickStage,
   modelKey,
-  skillId,
+  hostSkillId,
+  skillChoices,
+  onHostSkillChange,
+  readonlySkills,
+  availableReadonly,
+  onLoadReadonly,
+  onRemoveReadonly,
   skillError,
   running,
   sources,
@@ -35,14 +42,19 @@ export function CreativeHeader({
   stagePick?: StagePick
   onPickStage?: (stage: Stage, key: string) => void
   modelKey: string
-  skillId: string
+  hostSkillId: string
+  skillChoices: Array<{ id: string; label: string }>
+  onHostSkillChange: (id: string) => void
+  readonlySkills: Skill[]
+  availableReadonly: Skill[]
+  onLoadReadonly: (id: string) => void
+  onRemoveReadonly: (id: string) => void
   skillError: string
   running: boolean
   sources: number
   artifacts: number
   onOpenList: () => void
   onRefresh: () => void
-  /** 能力托盘；由宿主注入，避免头部依赖模型表 */
   capabilityTray?: ReactNode
 }) {
   return (
@@ -82,17 +94,64 @@ export function CreativeHeader({
             ) : (
               <span className={cn('creative-meta-item', !modelKey && 'text-destructive')}>未绑定文本模型</span>
             )}
-            <span aria-hidden="true" className="creative-meta-sep">·</span>
-            <span className="creative-meta-item" title="宿主技能随模式切换">
-              技能 {skillId}
+            <span aria-hidden="true" className="creative-meta-sep">
+              ·
             </span>
-            <span aria-hidden="true" className="creative-meta-sep">·</span>
+            <label className="creative-meta-item flex items-center gap-1">
+              <span className="sr-only">宿主技能</span>
+              <select
+                value={hostSkillId}
+                onChange={(e) => onHostSkillChange(e.target.value)}
+                title="宿主技能；正文用 read_skill 读取"
+                className="max-w-[140px] truncate rounded border border-border bg-transparent text-[11px]"
+              >
+                {skillChoices.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span aria-hidden="true" className="creative-meta-sep">
+              ·
+            </span>
+            <select
+              value=""
+              onChange={(e) => {
+                const id = e.target.value
+                if (id) onLoadReadonly(id)
+              }}
+              title="挂只读参考技能"
+              className="max-w-[120px] rounded border border-border bg-transparent text-[10px] text-muted-foreground"
+            >
+              <option value="">+ 只读技能</option>
+              {availableReadonly
+                .filter((s) => !readonlySkills.some((r) => r.id === s.id))
+                .map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.id}
+                  </option>
+                ))}
+            </select>
+            {readonlySkills.map((s) => (
+              <span key={s.id} className="skill-chip readonly text-[10px]">
+                参考：{s.id}
+                <button type="button" onClick={() => onRemoveReadonly(s.id)} aria-label={`卸载 ${s.id}`}>
+                  ×
+                </button>
+              </span>
+            ))}
+            <span aria-hidden="true" className="creative-meta-sep">
+              ·
+            </span>
             <span className="creative-meta-item">
               源 {sources} · 产物 {artifacts}
             </span>
             {skillError ? (
               <>
-                <span aria-hidden="true" className="creative-meta-sep">·</span>
+                <span aria-hidden="true" className="creative-meta-sep">
+                  ·
+                </span>
                 <span className="creative-meta-item text-destructive" title={skillError}>
                   {skillError}
                 </span>
@@ -118,7 +177,7 @@ export function CreativeHeader({
               aria-selected={mode === m.id}
               data-mode={m.id}
               title={m.hint}
-              className={cn('creative-mode', mode === m.id && 'on')}
+              className={cn(mode === m.id && 'on')}
               onClick={() => onModeChange(m.id)}
             >
               {m.label}

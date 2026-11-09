@@ -8,6 +8,7 @@
 2. 浏览 `references/shots/transitions/*.md` 与需要的 `camera/*.md`
 3. 为每张卡片提取：`id`（文件名）、`title`（首行标题）、`intent`（前 120 字摘要）、`tags`
 4. 合并进本目录 `transitionRecipes.json`，保持 `category` 为 `transition` 或 `camera`
-5. 跑 `node verify-transitions.mjs` 确认建议接口仍能解析 id
+5. 新字段：`taxonomy`（六类：`scene`/`character`/`space`/`vfx`/`camera`/`ai_video`）、`modeHint`（`effect`|`generated`|`either`）、`seedanceHints`（字符串数组，Agent 写 prompt 时参考）
+6. 跑 `node verify-joins.mjs` 与 `node verify-transitions.mjs` 确认契约与建议接口仍能解析 id
 
 本仓库默认只提交精简手写条目，避免 submodule 体积与许可证捆绑。

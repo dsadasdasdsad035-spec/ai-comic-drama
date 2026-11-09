@@ -3,6 +3,7 @@ import { ToolCard, type ToolCardStatus } from '@/chat-ui/tools/ToolCard'
 import { Badge } from '@/chat-ui/ui/badge'
 
 const LABELS: Record<string, { title: string; kind: 'read' | 'media' | 'write' | 'paid' }> = {
+  read_skill: { title: '技能全文', kind: 'read' },
   read_creative_session: { title: '会话概览', kind: 'read' },
   read_creative_source: { title: '源视频信息', kind: 'read' },
   read_video_shots: { title: '镜头切分', kind: 'read' },

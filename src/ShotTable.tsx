@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MOVES, SHOT_SIZES } from './types'
 import {
   getProject,
@@ -16,26 +16,18 @@ import type { CharacterSheet } from './characters'
 import { expandAnchors, hasUnresolvedAnchor, dialogueToText, parseDialogue, reconcileDialogueDelivery } from './prompts'
 import { auditKeyframePrompt } from './promptAudit'
 import IntakeDialog from './intake/IntakeDialog'
-import { clearHandEdited, mergeGenerated } from './shotSync'
+import { clearHandEdited, mergeShotsDraft } from './shotSync'
 import PerformanceEditor from './PerformanceEditor'
 import WorkbenchBar from './WorkbenchBar'
 import LipSyncPanel from './LipSyncPanel'
 import { performanceSummary } from './performance'
-import { buildShotsFromModel } from './agent/shotDraft'
-import { type WorkbenchChatAdapter } from './agent/workbenchChat'
-import { AgentButton } from './agent/AgentButton'
-import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
-import { useWorkbenchChatOpen } from './agent/chatPanel'
-import { projectImageAttachmentSource } from './agent/projectAttachments'
-import { useMediaPicker } from './agent/useMediaPicker'
+import ShotTableJoinRow from './ShotTableJoinRow'
 import { blankShot, findDuplicateNos, insertAfter, nextShotNo, removeRow } from './shotRows'
 import {
   resolveEpisodeTarget,
   resolveProjectStyle,
   setEpisodeTargetSeconds,
 } from './productionContext'
-
-const LazySkillChat = lazy(() => import('./agent/SkillChat'))
 
 type Props = {
   projectName: string
@@ -54,6 +46,8 @@ type Props = {
   onPickStage: (stage: Stage, key: string) => void
   /** 保存成功后通知 App 刷新集栏镜数 */
   onSaved?: () => void
+  /** 跳到画布并尽量打开两镜之间的转场面板 */
+  onGotoTransition?: (sourceShotId: string, targetShotId: string) => void
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -85,6 +79,7 @@ export default function ShotTable({
   stagePick,
   onPickStage,
   onSaved,
+  onGotoTransition,
 }: Props) {
   const [shots, setShots] = useState<ProjectShot[]>([])
   const [chars, setChars] = useState<CharacterSheet[]>([])
@@ -95,100 +90,25 @@ export default function ShotTable({
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
-  const [chatRunning, setChatRunning] = useState(false)
+  const [seamExpanded, setSeamExpanded] = useState<Set<string>>(() => new Set())
   const [perfEdit, setPerfEdit] = useState<string | null>(null)
   const [intakeOpen, setIntakeOpen] = useState(false)
   /** 待删除的镜头 id：显式删除意图，保存时随 deleteShotIds 提交 */
   const [pendingDelete, setPendingDelete] = useState<string[]>([])
   const [orphanOpen, setOrphanOpen] = useState(false)
-  const { open: chatOpen, setOpen: setChatOpen } = useWorkbenchChatOpen('shots')
-  const chatVisible = chatOpen && Boolean(projectName)
-  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
-  const mediaPicker = useMediaPicker(projectName)
-
   const liveRef = useRef({ shots, chars, style, aspect, episodes, epNo })
   liveRef.current = { shots, chars, style, aspect, episodes, epNo }
   const episodeTarget = useMemo(() => resolveEpisodeTarget(episodes, epNo), [episodes, epNo])
   const saveRef = useRef<() => Promise<void>>(async () => {})
 
-  const chatAdapter = useMemo<WorkbenchChatAdapter>(
-    () => ({
-      surface: 'shots',
-      skillId: 'shotlist',
-      stage: 'shot',
-      artifact: 'shots',
-      writeTool: 'submit_shots',
-      writeContract: 'shots-v1',
-      threadKey: { project: projectName, surface: 'shots', episode: epNo },
-      scope: () => '本集',
-      inputs: () => {
-        const l = liveRef.current
-        const ep = l.episodes.find((x: any) => Number(x?.no) === l.epNo)
-        return {
-          style: resolveProjectStyle({ style: l.style }) ?? '',
-          aspect: l.aspect,
-          brief: ep ? describeEpisode(ep) : '',
-          target: resolveEpisodeTarget(l.episodes, l.epNo),
-        }
-      },
-      ownDraft: () => liveRef.current.shots,
-      projectSnapshot: () => getProject(projectName),
-      applyDraft: (payload) => {
-        const data = (payload || {}) as { shots?: unknown[] }
-        const got = Array.isArray(data.shots) ? data.shots : []
-        const built = buildShotsFromModel(got, liveRef.current.episodes as ProjectEpisode[], epNo)
-        const current = liveRef.current.shots
-        const visibleNow = current.filter((s) => (Number(s.episode) || 1) === epNo)
-        const beforeIds = new Set(visibleNow.map((s) => s.id))
-        const merged = mergeGenerated(visibleNow, built.shots)
-        const anchors = liveRef.current.chars.map((c) => ({ name: c.name, lookEn: c.lookEn }))
-        let unresolved = 0
-        const missingPromptCols: string[] = []
-        const withAnchors = merged.map((s) => {
-          const rawKf = String(s.keyframe_prompt ?? '').trim()
-          const rawVp = String(s.video_prompt ?? '').trim()
-          if (!rawKf && !rawVp) return s
-          if (!rawKf || !rawVp) missingPromptCols.push(String(s.no || s.id))
-          const kf = rawKf ? expandAnchors(rawKf, anchors) : s.keyframe_prompt
-          if (kf && hasUnresolvedAnchor(kf)) unresolved++
-          return {
-            ...s,
-            ...(rawKf ? { keyframe_prompt: kf } : {}),
-            ...(rawVp ? { video_prompt: rawVp } : {}),
-          }
-        })
-        const added = withAnchors.filter((s) => !beforeIds.has(s.id)).length
-        const updated = withAnchors.length - added
-        const next = [...current.filter((s) => (Number(s.episode) || 1) !== epNo), ...withAnchors]
-        liveRef.current.shots = next
-        setShots(next)
-        setDirty(true)
-        const promptNote =
-          missingPromptCols.length > 0
-            ? ` · ${missingPromptCols.length} 镜缺首帧或视频提示词：${missingPromptCols.slice(0, 5).join('、')}${missingPromptCols.length > 5 ? '…' : ''}`
-            : ''
-        const anchorNote = unresolved > 0 ? ` · ${unresolved} 条未解析 {{角色名}}` : ''
-        return {
-          ok: true,
-          summary: `已写入镜头草稿：E${String(epNo).padStart(2, '0')} ${withAnchors.length} 镜（新增 ${added} / 更新 ${updated}）${promptNote}${anchorNote}，尚未保存`,
-          counts: { total: withAnchors.length, added, updated, sceneFallback: built.sceneFallback, unresolved },
-        }
-      },
-      saveDraft: () => saveRef.current(),
-      attachments: projectImageAttachmentSource({
-        projectName,
-        prefix: 'chat-shots',
-        picker: {
-          open: async () => {
-            const item = await mediaPicker.open()
-            return item ? { url: item.url, title: item.title, name: item.name } : null
-          },
-        },
-        hint: '图片只用于本次对话，不写入镜头表',
-      }),
-    }),
-    [projectName, epNo, mediaPicker],
-  )
+  const toggleSeam = useCallback((key: string) => {
+    setSeamExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
 
   const load = useCallback(
     async (name: string) => {
@@ -227,17 +147,6 @@ export default function ShotTable({
     if (projectName) load(projectName)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName])
-
-  useEffect(() => {
-    try {
-      if (sessionStorage.getItem('workbench-chat:shots:openOnce') === '1') {
-        sessionStorage.removeItem('workbench-chat:shots:openOnce')
-        setChatOpen(true)
-      }
-    } catch {
-      /* sessionStorage 不可用 */
-    }
-  }, [projectName, epNo, setChatOpen])
 
   /** 当前集的镜头。集号缺失的老数据按第 1 集处理 */
   const visible = useMemo(
@@ -313,6 +222,10 @@ export default function ShotTable({
       }),
     )
     setDirty(true)
+  }
+
+  const patchTransition = (sourceId: string, transitionOut: ProjectShot['transition_out']) => {
+    editMany(sourceId, { transition_out: transitionOut ?? null }, ['transition_out'])
   }
 
   const clearPerfHand = (s: ProjectShot) => {
@@ -443,14 +356,6 @@ export default function ShotTable({
         }
         actions={
           <>
-            <AgentButton
-              open={chatVisible}
-              onToggle={() => setChatOpen((v) => !v)}
-              disabled={!projectName}
-              running={chatRunning}
-              dirty={dirty}
-              controlsId="workbench-chat-shots"
-            />
             <button className="btn" onClick={() => load(projectName)} disabled={loading}>
               {loading ? '加载中…' : '重新加载'}
             </button>
@@ -481,7 +386,7 @@ export default function ShotTable({
         <div className="wb-empty">
           {loading
             ? '加载中…'
-            : `E${pad(epNo)} 还没有镜头。在右侧 Agent 描述如何拆镜（例如：拆成 12 个 3 秒镜头）。`}
+            : `E${pad(epNo)} 还没有镜头。可导入或手动新增。`}
         </div>
       ) : (
         <div className="wb-scroll">
@@ -513,7 +418,7 @@ export default function ShotTable({
                 const a = audits[i]
                 return (
                   <Fragment key={s.id}>
-                  <tr className={s.orphan ? 'orphan' : ''}>
+                  <tr className={s.orphan ? 'orphan' : ''} data-shot-row={s.id}>
                     <td className="mono">
                       <input value={s.no ?? ''} onChange={(e) => edit(s.id, 'no', e.target.value)} />
                     </td>
@@ -585,7 +490,7 @@ export default function ShotTable({
                         rows={2}
                         className={hand.has('keyframe_prompt') ? 'hand' : ''}
                         value={s.keyframe_prompt ?? ''}
-                        placeholder={s.desc ? s.desc.slice(0, 48) : '拆镜时由 Agent 写入'}
+                        placeholder={s.desc ? s.desc.slice(0, 48) : ''}
                         onChange={(e) => edit(s.id, 'keyframe_prompt', e.target.value)}
                       />
                     </td>
@@ -685,6 +590,16 @@ export default function ShotTable({
                       </td>
                     </tr>
                   )}
+                  {i < visible.length - 1 ? (
+                    <ShotTableJoinRow
+                      source={s}
+                      target={visible[i + 1]}
+                      expandedIds={seamExpanded}
+                      onToggle={toggleSeam}
+                      onPatch={patchTransition}
+                      onOpenCanvas={onGotoTransition}
+                    />
+                  ) : null}
                   </Fragment>
                 )
               })}
@@ -797,28 +712,6 @@ export default function ShotTable({
         />
       ) : null}
     </main>
-      <WorkbenchChatAside
-        surface="shots"
-        open={chatVisible}
-        onClose={() => setChatOpen(false)}
-      >
-        {projectName ? (
-          <Suspense fallback={<div className="sb-chat-placeholder">正在加载聊天…</div>}>
-            <LazySkillChat
-              adapter={chatAdapter}
-              settings={settings}
-              stagePick={stagePick}
-              onToast={toast}
-              onRunningChange={setChatRunning}
-              onClose={() => setChatOpen(false)}
-              dirty={dirty}
-            />
-          </Suspense>
-        ) : (
-          <div className="sb-chat-placeholder">先选择项目，再打开聊天。</div>
-        )}
-      </WorkbenchChatAside>
-      {mediaPicker.node}
     </div>
   )
 }

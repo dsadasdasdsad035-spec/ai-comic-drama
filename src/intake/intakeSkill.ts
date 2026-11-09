@@ -5,28 +5,25 @@
  * 超长文本按原文已有的集/场标记切块，没有标记就拒绝，绝不截断。
  */
 import type { ProjectEpisode } from '../api'
-import { DEFAULT_EPISODE_TARGET_SECONDS, resolveProjectStyle } from '../productionContext'
+import { resolveProjectStyle } from '../productionContext'
 import { callText } from '../api'
 import { buildBoardSkillPrompt } from '../skills/board'
 import { assertSkillOutput } from '../skills/board'
 import { normalizeShotsIntakeOutput } from './shotsIntakeNormalize'
 
-export type IntakeTarget = 'script' | 'shots' | 'prompts'
+export type IntakeTarget = 'shots' | 'prompts'
 
 const SKILL_OF: Record<IntakeTarget, string> = {
-  script: 'script-intake',
   shots: 'shotlist-intake',
   prompts: 'prompt-intake',
 }
 
 export const INTAKE_CONTRACT: Record<IntakeTarget, string> = {
-  script: 'script-v1',
   shots: 'shots-v1',
   prompts: 'prompts-v1',
 }
 
 export const INTAKE_LABEL: Record<IntakeTarget, string> = {
-  script: '剧本',
   shots: '镜头表',
   prompts: '提示词',
 }
@@ -39,12 +36,10 @@ export function splitByStructure(raw: string): string[] | null {
   const text = String(raw ?? '')
   if (text.length <= CHUNK_CHARS) return [text]
 
-  // 集级标记：第N集 / 第 N 集 / ## 第N集
   const epRe = /^(?:#{1,6}\s*)?第\s*[0-9一二三四五六七八九十百]+\s*集.*$/gm
   const epMarks = [...text.matchAll(epRe)].map((m) => m.index ?? 0)
   if (epMarks.length >= 2) return sliceAt(text, epMarks)
 
-  // 场级标记兜底：场景 N / 第N场
   const scRe = /^(?:#{1,6}\s*)?(?:场景\s*[0-9]+|第\s*[0-9]+\s*场).*$/gm
   const scMarks = [...text.matchAll(scRe)].map((m) => m.index ?? 0)
   if (scMarks.length >= 2) return sliceAt(text, scMarks)
@@ -60,7 +55,6 @@ function sliceAt(text: string, marks: number[]): string[] {
     const piece = text.slice(start, end).trim()
     if (piece) out.push(piece)
   }
-  // 首块前的引言不丢
   if (marks[0] > 0) {
     const head = text.slice(0, marks[0]).trim()
     if (head) out.unshift(head)
@@ -69,29 +63,12 @@ function sliceAt(text: string, marks: number[]): string[] {
 }
 
 export type IntakeResult = {
-  /** 契约 JSON（未经业务合并） */
   json: unknown
-  /** 用了几块（>1 表示切块合并过） */
   chunks: number
   modelLabel: string
 }
 
-/** 合并多块结果：按契约形状拼接，冲突时先出现的为准并记账 */
 function mergeChunks(target: IntakeTarget, parts: unknown[]): unknown {
-  if (target === 'script') {
-    const byNo = new Map<number, Record<string, unknown>>()
-    let logline = ''
-    for (const p of parts) {
-      const j = (p ?? {}) as { logline?: unknown; episodes?: unknown }
-      if (!logline && typeof j.logline === 'string') logline = j.logline
-      for (const ep of Array.isArray(j.episodes) ? j.episodes : []) {
-        const no = Number((ep as { no?: unknown })?.no)
-        if (!Number.isFinite(no)) continue
-        if (!byNo.has(no)) byNo.set(no, ep as Record<string, unknown>)
-      }
-    }
-    return { logline, episodes: [...byNo.values()].sort((a, b) => Number(a.no) - Number(b.no)) }
-  }
   if (target === 'shots') {
     const byNo = new Map<string, Record<string, unknown>>()
     for (const p of parts) {
@@ -114,10 +91,6 @@ function mergeChunks(target: IntakeTarget, parts: unknown[]): unknown {
   return { shots: [...byNo.values()] }
 }
 
-/**
- * 整理一次。失败时抛出可读错误（含超长但无法切块的明确提示）。
- * 调用方负责先确认用户点了按钮。
- */
 export async function runIntake(opts: {
   target: IntakeTarget
   raw: string
@@ -125,8 +98,6 @@ export async function runIntake(opts: {
   context?: {
     style?: string
     aspect?: string
-    epCount?: number
-    targetSeconds?: number
     epNo?: number
     episodes?: ProjectEpisode[]
   }
@@ -144,11 +115,7 @@ export async function runIntake(opts: {
   }
 
   const inputs: Record<string, unknown> = { raw: '' }
-  if (target === 'script') {
-    inputs.epCount = opts.context?.epCount ?? Math.max(1, countEpisodes(text))
-    inputs.targetSeconds = opts.context?.targetSeconds ?? DEFAULT_EPISODE_TARGET_SECONDS
-    inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
-  } else if (target === 'shots') {
+  if (target === 'shots') {
     inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
     inputs.aspect = opts.context?.aspect || '16:9'
   } else {
@@ -178,10 +145,4 @@ export async function runIntake(opts: {
   }
 
   return { json: mergeChunks(target, parts), chunks: chunks.length, modelLabel }
-}
-
-function countEpisodes(text: string): number {
-  const m = new Set<string>()
-  for (const hit of String(text).matchAll(/第\s*([0-9一二三四五六七八九十百]+)\s*集/g)) m.add(hit[1])
-  return Math.max(1, m.size)
 }

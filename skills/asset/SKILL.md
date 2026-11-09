@@ -1,9 +1,9 @@
 ---
 name: asset
-description: 从剧本场次与分镜中拆出可复用的场景和剧情关键道具，产出生图锚点
+description: 从分集梗概与分镜中拆出可复用的场景和剧情关键道具，产出生图锚点
 stage: asset
 runtime: tools
-tools: [read_script, read_shots, read_designs, submit_designs]
+tools: [read_source, read_episodes, read_shots, read_designs, submit_designs]
 inputs: [scopeLabel, sceneText, shotBlock]
 output: designs-v1
 contracts: [designs-v1]

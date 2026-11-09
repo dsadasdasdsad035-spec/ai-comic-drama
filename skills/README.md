@@ -73,10 +73,12 @@ version: 1
 
 | id | 工作台 | 输出契约 |
 |---|---|---|
-| `script` | 剧本 | `script-v1` |
 | `character` | 角色 | `characters-v1` |
 | `asset` | 素材 | `designs-v1` |
 | `shotlist` | 镜头表 | `shots-v1` |
+| `transition-planner` | 镜头表 · 镜间接缝（合并导演+提示词） | `joins-v1` |
+| `transition-director` | 镜间转场决策与 YAML handoff | `joins-v1` |
+| `cinematic-transition` | 转场首尾帧与桥接视频提示词 | `joins-v1` |
 | `prompt` | 提示词 | `prompts-v1` |
 | `scene3d` | 3D 场景聊天（含 DCC 预演技能包摘要；全文见 `scene3d/dcc-previs-pack.md`） | `scene3d-code-v1` |
 | `scene-code` | 一次性 3D 代码生成（非聊天） | `scene3d-code-v1` |

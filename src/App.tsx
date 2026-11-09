@@ -35,7 +35,6 @@ import Preview from './Preview'
 import ShotTable from './ShotTable'
 import Schedule3DBoard from './Schedule3DBoard'
 import EpPicker from './EpisodeBar'
-import ScriptBoard from './ScriptBoard'
 import ProjectSelect from './ProjectSelect'
 import ProjectMenu from './project/ProjectMenu'
 import TaskCenter from './TaskCenter'
@@ -50,7 +49,6 @@ import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
 import NodeContextMenu from './NodeContextMenu'
 import Settings from './Settings'
-import PublishBoard from './PublishBoard'
 import CreativeStudio from './creative/CreativeStudio'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
@@ -393,21 +391,13 @@ function Shell() {
     | 'assets'
     | 'table'
     | 'schedule3d'
-    | 'script'
-    | 'publish'
     | 'settings'
     | 'creative'
   >('board')
-  /** 从预览导出成功后带进发布台的成片 id；发布台消费后清空 */
-  const [publishTarget, setPublishTarget] = useState<string | null>(null)
-  /** 顶栏「发布」角标：运行中 + 失败 */
-  const [publishBadge, setPublishBadge] = useState({ count: 0, failed: 0 })
   const [projectName, setProjectName] = useState('')
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
   const [readyProject, setReadyProject] = useState('')
-  /** 剧本页是否有未保存分集：切项目/全剧拆角色前检查 */
-  const [scriptDirty, setScriptDirty] = useState(false)
   const [schedule3dEditorDirty, setSchedule3dEditorDirty] = useState(false)
   const projectEpochRef = useRef(0)
   /** 当前集：镜头表 / 3D / 画布等共用 */
@@ -491,7 +481,6 @@ function Shell() {
   const changeProject = useCallback(
     (next: string) => {
       if (next === projectName) return
-      if (scriptDirty && !window.confirm('剧本页有未保存的分集，切换项目会丢失。继续？')) return
       if (
         schedule3dEditorDirty &&
         !window.confirm('3D 调度页有未保存的代码修改，切换项目会丢失。继续？')
@@ -502,7 +491,7 @@ function Shell() {
       setReadyProject('')
       setProjectName(next)
     },
-    [projectName, scriptDirty, schedule3dEditorDirty],
+    [projectName, schedule3dEditorDirty],
   )
 
   /**
@@ -524,7 +513,6 @@ function Shell() {
       }
       const ps = await reloadProjects()
       if (gone.has(projectName)) {
-        setScriptDirty(false)
         setSchedule3dEditorDirty(false)
         setEpNo(1)
         setNodes([])
@@ -559,17 +547,9 @@ function Shell() {
     [reloadProjects],
   )
 
-  /** 离开剧本页也保护未保存分集；确认后才允许卸载剧本组件 */
   const changeView = useCallback(
     (next: typeof view) => {
       if (next === view) return
-      if (
-        view === 'script' &&
-        scriptDirty &&
-        !window.confirm('剧本页有未保存的分集，离开会丢失。继续？')
-      ) {
-        return
-      }
       if (
         view === 'schedule3d' &&
         schedule3dEditorDirty &&
@@ -577,41 +557,11 @@ function Shell() {
       ) {
         return
       }
-      setScriptDirty(false)
       setSchedule3dEditorDirty(false)
       setView(next)
     },
-    [view, scriptDirty, schedule3dEditorDirty],
+    [view, schedule3dEditorDirty],
   )
-
-  /** 顶栏发布角标：跟着项目/集轮询运行与失败任务数 */
-  useEffect(() => {
-    if (!projectName) {
-      setPublishBadge({ count: 0, failed: 0 })
-      return
-    }
-    let alive = true
-    const tick = async () => {
-      try {
-        const r = await fetch(
-          `/api/publish/jobs?project=${encodeURIComponent(projectName)}&episode=${epNo}`,
-        )
-        const j = await r.json().catch(() => ({}))
-        if (!alive || !j?.ok) return
-        const s = j.summary || {}
-        const failed = Number(s.failed || 0) + Number(s.unknown || 0)
-        setPublishBadge({ count: Number(s.running || 0) + failed, failed })
-      } catch {
-        /* 轮询失败静默 */
-      }
-    }
-    void tick()
-    const t = window.setInterval(tick, 15_000)
-    return () => {
-      alive = false
-      window.clearInterval(t)
-    }
-  }, [projectName, epNo])
 
   /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
   useEffect(() => {
@@ -1117,9 +1067,9 @@ function Shell() {
    * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。
    * 已写过外观锚点的同名角色不覆盖（保护手改），只做新增与补空。
    */
-  const [extracting, setExtracting] = useState<'' | 'episode' | 'script'>('')
+  const [extracting, setExtracting] = useState<'' | 'episode' | 'project'>('')
   const extractCharacters = useCallback(
-    async (scope: 'episode' | 'script', signal?: AbortSignal): Promise<BuiltinResult> => {
+    async (scope: 'episode' | 'project', signal?: AbortSignal): Promise<BuiltinResult> => {
       const label = scope === 'episode' ? '从本集拆角色' : '从全剧拆角色'
       const action = scope === 'episode' ? 'extract_characters_episode' : 'extract_characters_script'
       const fail = (message: string, cancelled = false) =>
@@ -1132,7 +1082,6 @@ function Shell() {
       if (extracting) return fail('正在拆角色，请稍候')
       if (!projectName) return fail('先绑定一个项目')
       if (readyProject !== projectName) return fail('项目还在加载，稍后再试')
-      if (scope === 'script' && scriptDirty) return fail('剧本页有未保存的分集，先保存再拆角色')
       if (signal?.aborted) return fail('已取消', true)
       setExtracting(scope)
       const t0 = Date.now()
@@ -1174,11 +1123,11 @@ function Shell() {
           throw new Error(
             scope === 'episode'
               ? `第 ${epNo} 集还没有镜头。先在「镜头表」拆镜，或把项目镜头推到画布。`
-              : '当前项目没有剧本素材（source 与分集场次都为空）。先去「剧本」页生成并保存分集，或切换到有剧本的项目。',
+              : '当前项目没有可用素材（原著梗概与分集元数据都为空）。请在项目设置写 source，或在镜头表建分镜。',
           )
         }
         const scopeLabel =
-          scope === 'episode' ? `第 ${epNo} 集的剧本场次与分镜` : '全剧的原文梗概与分集场次'
+          scope === 'episode' ? `第 ${epNo} 集分集梗概与分镜` : '全剧原著梗概与分集元数据'
         const shotBlock = shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : ''
         const skill = await buildBoardSkillPrompt('character', {
           scopeLabel,
@@ -1201,9 +1150,9 @@ function Shell() {
         const list = pickExtracted(r.json)
         if (list.length === 0) {
           throw new Error(
-            scope === 'script'
-              ? '模型没找到具名角色：全剧素材里没有可识别的角色。先在「剧本」页补充分集场次的 beats 与在场人物，或改用「从本集拆」。'
-              : '模型没找到具名角色：本集场次与分镜里没有可识别的角色名。先补分镜的 cast 或台词，再拆一次。',
+            scope === 'project'
+              ? '模型没找到具名角色：全剧素材里没有可识别的角色。补全分镜 cast/台词或原著梗概，或改用「从本集拆」。'
+              : '模型没找到具名角色：本集分镜里没有可识别的角色名。先补 cast 或台词，再拆一次。',
           )
         }
         if (signal?.aborted) return fail('已取消', true)
@@ -1240,7 +1189,7 @@ function Shell() {
         setExtracting('')
       }
     },
-    [extracting, projectName, readyProject, scriptDirty, epNo, stagePick],
+    [extracting, projectName, readyProject, epNo, stagePick],
   )
 
   // 角色改动回写（防抖 + 快照比对，避免首屏把整份角色重写一遍）
@@ -3224,13 +3173,6 @@ function Shell() {
               创意
             </button>
             <button
-              className={view === 'script' ? 'on' : ''}
-              aria-current={view === 'script' ? 'page' : undefined}
-              onClick={() => changeView('script')}
-            >
-              剧本
-            </button>
-            <button
               className={view === 'chars' ? 'on' : ''}
               aria-current={view === 'chars' ? 'page' : undefined}
               onClick={() => changeView('chars')}
@@ -3265,15 +3207,6 @@ function Shell() {
               onClick={() => changeView('board')}
             >
               画布
-            </button>
-            <button
-              className={view === 'publish' ? 'on' : ''}
-              aria-current={view === 'publish' ? 'page' : undefined}
-              onClick={() => changeView('publish')}
-              title="成片分发：抖音 / B站 / 头条"
-            >
-              发布
-              {publishBadge.count > 0 ? <span className="nav-badge">{publishBadge.count}</span> : null}
             </button>
             <button
               className={view === 'settings' ? 'on' : ''}
@@ -3325,32 +3258,20 @@ function Shell() {
             onPickStage={pickStageModel}
             onSaved={() => setEpVersion((v) => v + 1)}
             onPush={pushShotsToCanvas}
+            onGotoTransition={(sourceId, targetId) => {
+              changeView('board')
+              const edge = edges.find((e) => e.source === sourceId && e.target === targetId)
+              if (edge) {
+                openTransition(edge.id)
+              } else {
+                focusShotFromTransition(sourceId)
+                setToast('画布上尚无该连线；已选中源镜头，连接两镜后可编辑转场面板')
+                window.setTimeout(() => setToast(''), 3200)
+              }
+            }}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
-            }}
-          />
-        ) : view === 'script' ? (
-          <ScriptBoard
-            projectName={projectName}
-            epNo={epNo}
-            setEpNo={setEpNo}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            onDirtyChange={setScriptDirty}
-            onGotoShotTable={() => {
-              try {
-                sessionStorage.setItem('workbench-chat:shots:openOnce', '1')
-              } catch {
-                /* sessionStorage 不可用 */
-              }
-              changeView('table')
-            }}
-            onSaved={() => setEpVersion((v) => v + 1)}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 2800)
             }}
           />
         ) : view === 'schedule3d' ? (
@@ -3369,20 +3290,6 @@ function Shell() {
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2600)
-            }}
-          />
-        ) : view === 'publish' ? (
-          <PublishBoard
-            projectName={projectName}
-            epNo={epNo}
-            initialDeliverableId={publishTarget}
-            onConsumeInitial={() => setPublishTarget(null)}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            onToast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3200)
             }}
           />
         ) : view === 'settings' ? (
@@ -3445,7 +3352,6 @@ function Shell() {
             projectName={projectName}
             onPersist={saveCharactersNow}
             onPublishSheet={publishExpressionSheet}
-            onReplace={replaceCharacters}
             epNo={epNo}
             toast={(m) => {
               setToast(m)
@@ -3793,11 +3699,6 @@ function Shell() {
             epNo={epNo}
             onEpChange={setEpNo}
             projectName={projectName}
-            onPublish={(deliverableId) => {
-              setPublishTarget(deliverableId)
-              setPreview(false)
-              changeView('publish')
-            }}
           />
         )}
 

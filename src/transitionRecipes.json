@@ -4,55 +4,776 @@
     "category": "transition",
     "title": "卡片群翻 tumble",
     "intent": "多元素聚散成下一画面主体，节奏偏快",
-    "tags": ["硬切感", "UI", "群像"]
+    "tags": [
+      "硬切感",
+      "UI",
+      "群像"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "多元素聚散成下一画面主体，节奏偏快"
+    ]
   },
   {
     "id": "cross-dissolve-soft",
     "category": "transition",
     "title": "柔叠",
     "intent": "同场景时间流逝，光线与主体缓慢溶解",
-    "tags": ["叠化", "同场"]
+    "tags": [
+      "叠化",
+      "同场"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "同场景时间流逝，光线与主体缓慢溶解"
+    ]
   },
   {
     "id": "wipe-light-band",
     "category": "transition",
     "title": "光带擦除",
     "intent": "高亮条带横扫揭开幕后画面",
-    "tags": ["擦除", "产品"]
+    "tags": [
+      "擦除",
+      "产品"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "高亮条带横扫揭开幕后画面"
+    ]
   },
   {
     "id": "morph-weather",
     "category": "transition",
     "title": "天气形变",
     "intent": "雨雾阳光大幅变化但空间连续",
-    "tags": ["生成", "环境"]
+    "tags": [
+      "生成",
+      "环境"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "雨雾阳光大幅变化但空间连续"
+    ]
   },
   {
     "id": "match-cut-action",
     "category": "transition",
     "title": "动作匹配切",
     "intent": "动作中段顺势接到下一镜起始姿态",
-    "tags": ["动作", "生成"]
+    "tags": [
+      "动作",
+      "生成"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "动作中段顺势接到下一镜起始姿态"
+    ]
   },
   {
     "id": "push-in-bridge",
     "category": "camera",
     "title": "推镜过桥",
     "intent": "前推贯穿两镜轴线，景别递进",
-    "tags": ["推镜", "景别"]
+    "tags": [
+      "推镜",
+      "景别"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "前推贯穿两镜轴线，景别递进"
+    ]
   },
   {
     "id": "orbit-handoff",
     "category": "camera",
     "title": "环绕交接",
     "intent": "环绕主体半圈后落到下一镜起幅",
-    "tags": ["摇移", "生成"]
+    "tags": [
+      "摇移",
+      "生成"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "环绕主体半圈后落到下一镜起幅"
+    ]
   },
   {
     "id": "time-skip-fadeblack",
     "category": "transition",
     "title": "黑场跳时",
     "intent": "章节或时间跳跃，黑场后进入新状态",
-    "tags": ["黑场", "节奏"]
+    "tags": [
+      "黑场",
+      "节奏"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "章节或时间跳跃，黑场后进入新状态"
+    ]
+  },
+  {
+    "id": "doorway-reveal",
+    "category": "transition",
+    "title": "门洞显现",
+    "intent": "从门缝/门框内揭示下一空间",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "推镜穿门",
+      "内外光差渐变"
+    ]
+  },
+  {
+    "id": "stair-descend",
+    "category": "transition",
+    "title": "下楼接续",
+    "intent": "人物下楼动作连贯到下一层场景",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "垂直运动连续",
+      "景别递进"
+    ]
+  },
+  {
+    "id": "mirror-reflection",
+    "category": "space",
+    "title": "镜中世界",
+    "intent": "镜面反射翻转到另一场景",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "反射错位",
+      "现实幻想交界"
+    ]
+  },
+  {
+    "id": "smoke-wipe",
+    "category": "transition",
+    "title": "烟雾擦除",
+    "intent": "烟雾飘过揭示新画面",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "粒子遮挡",
+      "柔和边缘"
+    ]
+  },
+  {
+    "id": "lightning-flash",
+    "category": "transition",
+    "title": "闪电频闪",
+    "intent": "白闪切到雷暴/夜景",
+    "tags": [
+      "vfx",
+      "either"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "either",
+    "seedanceHints": [
+      "高频闪光",
+      "曝光骤变"
+    ]
+  },
+  {
+    "id": "rain-intensify",
+    "category": "transition",
+    "title": "雨势加强",
+    "intent": "雨线加密切换气氛",
+    "tags": [
+      "scene",
+      "effect"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "天气渐变",
+      "同场时间流逝"
+    ]
+  },
+  {
+    "id": "sunset-dissolve",
+    "category": "transition",
+    "title": "日落叠化",
+    "intent": "暖色天空溶解到夜景",
+    "tags": [
+      "scene",
+      "effect"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "色温渐变",
+      "长叠化"
+    ]
+  },
+  {
+    "id": "horizon-pan",
+    "category": "camera",
+    "title": "地平线横摇",
+    "intent": "横摇扫过地平线衔接远方新景",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "大横摇",
+      "远景建立"
+    ]
+  },
+  {
+    "id": "dolly-zoom-bridge",
+    "category": "camera",
+    "title": "推拉变焦桥",
+    "intent": "眩晕变焦连接两景情绪",
+    "tags": [
+      "camera",
+      "generated"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "希区柯克变焦",
+      "心理压迫"
+    ]
+  },
+  {
+    "id": "whip-pan-handoff",
+    "category": "camera",
+    "title": "甩镜交接",
+    "intent": "快速甩镜落到下一镜起幅",
+    "tags": [
+      "camera",
+      "generated"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "运动模糊",
+      "轴线连续"
+    ]
+  },
+  {
+    "id": "match-cut-face",
+    "category": "character",
+    "title": "面部匹配",
+    "intent": "表情/角度匹配切到另一角色",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "视线方向一致",
+      "构图重叠"
+    ]
+  },
+  {
+    "id": "match-cut-object",
+    "category": "character",
+    "title": "物体匹配",
+    "intent": "手中物体旋转接到下一镜姿态",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "形状匹配",
+      "动作中段"
+    ]
+  },
+  {
+    "id": "jump-action-land",
+    "category": "character",
+    "title": "跳跃落地",
+    "intent": "腾空动作落到下一镜着地",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "抛物线连续",
+      "重力一致"
+    ]
+  },
+  {
+    "id": "costume-morph",
+    "category": "character",
+    "title": "造型渐变",
+    "intent": "服装妆发在同一动作中变化",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "同一主体",
+      "外观渐变"
+    ]
+  },
+  {
+    "id": "portal-vortex",
+    "category": "vfx",
+    "title": "传送漩涡",
+    "intent": "能量漩涡吸入吐出到异地",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "粒子涡旋",
+      "色调夸张"
+    ]
+  },
+  {
+    "id": "glass-shatter",
+    "category": "vfx",
+    "title": "玻璃碎裂",
+    "intent": "碎裂纹理过渡画面",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "硬边碎片",
+      "高光闪烁"
+    ]
+  },
+  {
+    "id": "ink-splash",
+    "category": "vfx",
+    "title": "墨水泼溅",
+    "intent": "水墨泼散成下一画面",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "2D扩散",
+      "边缘柔和"
+    ]
+  },
+  {
+    "id": "glitch-jump",
+    "category": "vfx",
+    "title": "故障跳切",
+    "intent": "数字故障闪切赛博场景",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "RGB分离",
+      "扫描线"
+    ]
+  },
+  {
+    "id": "luma-fade",
+    "category": "transition",
+    "title": "亮度衰减",
+    "intent": "高光区域淡出",
+    "tags": [
+      "scene",
+      "effect"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "亮度蒙版",
+      "短叠化"
+    ]
+  },
+  {
+    "id": "iris-open",
+    "category": "transition",
+    "title": "光圈开",
+    "intent": "圆形遮罩打开揭示画面",
+    "tags": [
+      "camera",
+      "effect"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "圆形擦除",
+      "经典开场"
+    ]
+  },
+  {
+    "id": "split-screen-slide",
+    "category": "transition",
+    "title": "分屏滑入",
+    "intent": "分屏板块滑走露出全幅",
+    "tags": [
+      "camera",
+      "effect"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "几何运动",
+      "节奏切"
+    ]
+  },
+  {
+    "id": "page-curl",
+    "category": "transition",
+    "title": "卷页",
+    "intent": "纸页卷起显示下一页",
+    "tags": [
+      "scene",
+      "either"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "硬边翻页",
+      "立体感"
+    ]
+  },
+  {
+    "id": "train-window",
+    "category": "space",
+    "title": "车窗外景",
+    "intent": "窗外景色飞速变化到站新城市",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "框中框",
+      "运动连续"
+    ]
+  },
+  {
+    "id": "elevator-doors",
+    "category": "space",
+    "title": "电梯开门",
+    "intent": "电梯门开进入新楼层",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "纵向运动",
+      "室内光"
+    ]
+  },
+  {
+    "id": "tunnel-exit",
+    "category": "space",
+    "title": "隧道出口",
+    "intent": "隧道尽头急冲进开阔地",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "暗到亮曝光",
+      "速度感"
+    ]
+  },
+  {
+    "id": "underwater-rise",
+    "category": "space",
+    "title": "上浮破水",
+    "intent": "从水底上浮破水面换气",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "气泡轨迹",
+      "折射变化"
+    ]
+  },
+  {
+    "id": "dream-fog",
+    "category": "ai_video",
+    "title": "梦境雾气",
+    "intent": "浓雾散去露出超现实场景",
+    "tags": [
+      "ai_video",
+      "generated"
+    ],
+    "taxonomy": "ai_video",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "首尾态大跨度",
+      "真实材质"
+    ]
+  },
+  {
+    "id": "season-morph",
+    "category": "ai_video",
+    "title": "四季变形",
+    "intent": "同机位四季植被大变形",
+    "tags": [
+      "ai_video",
+      "generated"
+    ],
+    "taxonomy": "ai_video",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "大跨度环境",
+      "时间流逝"
+    ]
+  },
+  {
+    "id": "sky-timelapse",
+    "category": "ai_video",
+    "title": "天空延时",
+    "intent": "云层太阳位置快进到新时刻",
+    "tags": [
+      "ai_video",
+      "either"
+    ],
+    "taxonomy": "ai_video",
+    "modeHint": "either",
+    "seedanceHints": [
+      "同构图",
+      "光线跳变"
+    ]
+  },
+  {
+    "id": "clone-walk",
+    "category": "ai_video",
+    "title": "分身过桥",
+    "intent": "人物形体溶解成另一形态走过",
+    "tags": [
+      "ai_video",
+      "generated"
+    ],
+    "taxonomy": "ai_video",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "形体融合",
+      "运动连续"
+    ]
+  },
+  {
+    "id": "screen-within",
+    "category": "camera",
+    "title": "画中画收缩",
+    "intent": "屏中画面扩展成全屏",
+    "tags": [
+      "camera",
+      "generated"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "尺度变化",
+      "UI收回"
+    ]
+  },
+  {
+    "id": "shadow-pass",
+    "category": "camera",
+    "title": "阴影掠过",
+    "intent": "大块阴影扫过切场景",
+    "tags": [
+      "camera",
+      "generated"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "光影扫过",
+      "遮挡转场"
+    ]
+  },
+  {
+    "id": "focus-rack",
+    "category": "camera",
+    "title": "焦点转移",
+    "intent": "虚焦到实焦落到新主体",
+    "tags": [
+      "camera",
+      "generated"
+    ],
+    "taxonomy": "camera",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "景深变化",
+      "视线引导"
+    ]
+  },
+  {
+    "id": "match-color-flash",
+    "category": "scene",
+    "title": "色闪匹配",
+    "intent": "单色闪场接到同色新景",
+    "tags": [
+      "scene",
+      "effect"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "effect",
+    "seedanceHints": [
+      "颜色主导",
+      "快切节奏"
+    ]
+  },
+  {
+    "id": "audio-bridge-cut",
+    "category": "scene",
+    "title": "声桥硬切",
+    "intent": "声音先行画面后切",
+    "tags": [
+      "scene",
+      "either"
+    ],
+    "taxonomy": "scene",
+    "modeHint": "either",
+    "seedanceHints": [
+      "声音连续",
+      "画面跳切"
+    ]
+  },
+  {
+    "id": "match-cut-scale",
+    "category": "space",
+    "title": "比例匹配",
+    "intent": "巨物缩成掌中物",
+    "tags": [
+      "space",
+      "generated"
+    ],
+    "taxonomy": "space",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "尺度错视",
+      "形状呼应"
+    ]
+  },
+  {
+    "id": "chain-reaction",
+    "category": "character",
+    "title": "连锁动作",
+    "intent": "多米诺式连续动作传递",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "运动链",
+      "多主体"
+    ]
+  },
+  {
+    "id": "cloth-wipe",
+    "category": "character",
+    "title": "布料掠过",
+    "intent": "衣物甩过屏幕遮满再接",
+    "tags": [
+      "character",
+      "generated"
+    ],
+    "taxonomy": "character",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "柔软遮挡",
+      "快动模糊"
+    ]
+  },
+  {
+    "id": "dust-off-reveal",
+    "category": "vfx",
+    "title": "尘土揭开",
+    "intent": "拂尘或吹气揭开新画面",
+    "tags": [
+      "vfx",
+      "generated"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "微粒飘散",
+      "局部擦除"
+    ]
+  },
+  {
+    "id": "neon-flicker",
+    "category": "vfx",
+    "title": "霓虹闪烁",
+    "intent": "霓虹数次明灭后定帧新景",
+    "tags": [
+      "vfx",
+      "either"
+    ],
+    "taxonomy": "vfx",
+    "modeHint": "either",
+    "seedanceHints": [
+      "频闪曝光",
+      "城市夜景"
+    ]
+  },
+  {
+    "id": "freeze-melt",
+    "category": "ai_video",
+    "title": "冻结融化",
+    "intent": "画面冻结碎裂融成液体重聚",
+    "tags": [
+      "ai_video",
+      "generated"
+    ],
+    "taxonomy": "ai_video",
+    "modeHint": "generated",
+    "seedanceHints": [
+      "首尾帧直变",
+      "材质转换"
+    ]
   }
 ]

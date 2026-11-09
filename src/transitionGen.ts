@@ -1,6 +1,11 @@
 import { extractFrames, type ModelEntry } from './api'
 import { parseDialogue } from './prompts'
-import { audioRefCapabilitiesFor, nativeAudioPrompt, nativeAudioRef } from './nativeAudio'
+import {
+  audioRefCapabilitiesFor,
+  nativeAudioGateSeconds,
+  nativeAudioPrompt,
+  nativeAudioRef,
+} from './nativeAudio'
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import type { ShotData, TransitionBoundary, TransitionBridging, TransitionGenerated } from './types'
@@ -781,7 +786,7 @@ export function buildTransitionVideoPreview(input: {
         performance,
         characters: input.characters ?? [],
         caps: audioCaps,
-        seconds: req.seconds,
+        seconds: nativeAudioGateSeconds(req.seconds, audioCaps),
       })
     : null
   const styleTokensForFp = transitionStyleRefTokens(

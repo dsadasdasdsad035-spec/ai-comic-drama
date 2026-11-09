@@ -1,9 +1,7 @@
 /**
  * 项目生命周期：删除前预览、快照、级联清理。
  *
- * 为什么独立成模块而不是塞进 db.mjs：
- * - publish-jobs.mjs 已经依赖 db.mjs，删除要读活动任务状态；写进 db.mjs 会形成循环导入。
- * - 删除是跨 13 张表 + 文件系统的操作，和「项目读写」不是同一层职责。
+ * 删除是跨多张表 + 文件系统的操作，和「项目读写」不是同一层职责。
  *
  * 关键约束：
  * - 快照先落盘，写不进去就不删；快照只含数据库行，不含媒体文件。
@@ -13,8 +11,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { openDatabase, safeProjectName } from './db.mjs'
-import { listJobs } from './publish-jobs.mjs'
-
 /** 删除快照目录，位于项目根下，不随项目目录一起删 */
 export const DELETED_DIR = '.deleted'
 
@@ -61,16 +57,6 @@ function selectSql(item) {
 
 function deleteSql(item) {
   return `DELETE FROM ${item.table} WHERE ${whereFor(item)}`
-}
-
-function jobSummary(jobs) {
-  return jobs.map((j) => ({
-    id: j.id,
-    platform: j.platform,
-    state: j.state,
-    deliverableId: j.deliverableId,
-    createdAt: j.createdAt,
-  }))
 }
 
 /** 递归统计目录字节数；符号链接不计入、不跟随 */
@@ -146,14 +132,13 @@ export function previewProjectDelete(root, name) {
       const row = db.prepare(countSql(item)).get(...argsFor(item, project.id, n))
       counts[item.table] = Number(row?.n) || 0
     }
-    const activeJobs = jobSummary(listJobs(root, { project: n, active: true }))
     return {
       ok: true,
       name: n,
       exists: true,
       counts,
       mediaBytes: dirBytes(path.join(root, n)),
-      activeJobs,
+      activeJobs: [],
     }
   } finally {
     db.close()
@@ -199,7 +184,7 @@ export function previewProjectDeletes(root, names) {
         exists: true,
         counts,
         mediaBytes: dirBytes(path.join(root, n)),
-        activeJobs: jobSummary(listJobs(root, { project: n, active: true })),
+        activeJobs: [],
       }
     })
     return { ok: true, items }
@@ -210,7 +195,7 @@ export function previewProjectDeletes(root, names) {
 
 /**
  * 删除单个项目。返回带 code 的结果对象而不是抛错，方便批量逐项报告。
- * code: not_found | active_jobs | snapshot_failed | delete_failed
+ * code: not_found | snapshot_failed | delete_failed
  */
 export function deleteProject(root, name, opts = {}) {
   const n = safeProjectName(name)
@@ -220,17 +205,6 @@ export function deleteProject(root, name, opts = {}) {
     const project = db.prepare('SELECT * FROM projects WHERE name = ?').get(n)
     if (!project) {
       return { name: n, ok: false, code: 'not_found', message: `项目不存在：${n}` }
-    }
-
-    const active = listJobs(root, { project: n, active: true })
-    if (active.length) {
-      return {
-        name: n,
-        ok: false,
-        code: 'active_jobs',
-        message: '项目还有进行中的发布任务，先处理或取消后再删除',
-        jobs: jobSummary(active),
-      }
     }
 
     const tables = {}

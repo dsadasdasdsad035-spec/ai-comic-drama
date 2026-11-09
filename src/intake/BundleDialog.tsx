@@ -9,7 +9,6 @@ import type { AppSettings, ProjectEpisode, ProjectShot } from '../api'
 import type { CharacterSheet } from '../characters'
 import type { StagePick } from '../ModelSelect'
 import { buildShotsFromImport } from '../agent/shotDraft'
-import { mergeScriptDraft } from '../agent/drafts'
 import { mergeShotsDraft } from '../shotSync'
 import { rowsFromTable } from './rows'
 import { mergeImportedCharacters, parseCharacterDrafts } from './characters'
@@ -54,7 +53,7 @@ type Props = {
   }) => void
 }
 
-const ALL_LABELS: BundleLabel[] = ['script', 'shotlist', 'prompts', 'characters', 'image']
+const ALL_LABELS: BundleLabel[] = ['shotlist', 'prompts', 'characters', 'image']
 
 function mb(n: number) {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`
@@ -164,9 +163,6 @@ export default function BundleDialog({
   const plan = useMemo(() => {
     const active = files.filter((f) => !f.excluded)
     const images = active.filter((f) => (f.override ?? f.labels).includes('image'))
-    const scripts = active.filter(
-      (f) => (f.override ?? f.labels).includes('script') && f.episodeScope === 'single',
-    )
     const shotlists = active.filter((f) => (f.override ?? f.labels).includes('shotlist') && f.episodeScope === 'single')
     const prompts = active.filter((f) => (f.override ?? f.labels).includes('prompts'))
 
@@ -219,28 +215,7 @@ export default function BundleDialog({
       }
     }
 
-    // 剧本：按集合并（只改文件里出现的集）
-    let nextEpisodes = episodes
-    let epAdded = 0
-    let epUpdated = 0
-    for (const f of scripts) {
-      const preview = previewsRef.current[f.id] || ''
-      if (!/^#{1,6}\s*第\s*\d+\s*集/m.test(preview)) continue
-      const no = f.episodeNo || epNo
-      const titleMatch = preview.match(/^#{1,6}\s*第\s*\d+\s*集\s*《?([^》\n]*)》?/m)
-      const scenes = [...preview.matchAll(/^#{2,6}\s*(.+?)\s*$/gm)]
-        .map((m) => m[1].trim())
-        .filter((t) => !/^第\s*\d+\s*集/.test(t))
-      const ep = {
-        no,
-        title: (titleMatch?.[1] || '').trim() || `第 ${no} 集`,
-        scenes: scenes.map((t, i) => ({ no: i + 1, slug: t, beats: '' })),
-      }
-      const merged = mergeScriptDraft(nextEpisodes, [ep], 'merge')
-      nextEpisodes = merged.episodes
-      epAdded += merged.added
-      epUpdated += merged.updated
-    }
+    const nextEpisodes = episodes
 
     // 角色档案：解析名称与外观锚点，与已有角色合并（已有锚点不覆盖）
     let nextCharacters = characters
@@ -261,9 +236,7 @@ export default function BundleDialog({
       charNames.push(...drafts.map((d) => d.name))
     }
 
-    const skippedMulti = active.filter(
-      (f) => (f.override ?? f.labels).includes('script') && f.episodeScope === 'multi',
-    )
+    const skippedMulti = active.filter((f) => f.episodeScope === 'multi' && (f.override ?? f.labels).length === 0)
     const pending = active.filter((f) => (f.override ?? f.labels).length === 0)
     const pendingPrompts = prompts.length
     const pendingChars = active.filter((f) => (f.override ?? f.labels).includes('characters')).length
@@ -273,8 +246,6 @@ export default function BundleDialog({
       nextEpisodes,
       shotAdded,
       shotUpdated,
-      epAdded,
-      epUpdated,
       imageCount: images.length,
       nextCharacters,
       charAdded,
@@ -303,11 +274,6 @@ export default function BundleDialog({
         counts.shotsAdded = plan.shotAdded
         counts.shotsUpdated = plan.shotUpdated
       }
-      if (plan.epAdded || plan.epUpdated) {
-        parts.push(`剧本新增 ${plan.epAdded} 集 · 更新 ${plan.epUpdated} 集`)
-        counts.episodesAdded = plan.epAdded
-        counts.episodesUpdated = plan.epUpdated
-      }
       if (plan.charAdded || plan.charFilled) {
         parts.push(`角色新增 ${plan.charAdded} · 补全 ${plan.charFilled}`)
         counts.charactersAdded = plan.charAdded
@@ -320,7 +286,7 @@ export default function BundleDialog({
       if (!parts.length) throw new Error('没有可应用的内容：请检查分类或冲突选择')
       onApply({
         shots: plan.shotAdded || plan.shotUpdated ? plan.nextShots : undefined,
-        episodes: plan.epAdded || plan.epUpdated ? plan.nextEpisodes : undefined,
+        episodes: undefined,
         characters: plan.charAdded || plan.charFilled ? plan.nextCharacters : undefined,
         summary: parts.join(' · '),
         counts,
@@ -439,8 +405,8 @@ export default function BundleDialog({
 
               <div className="bundle-plan" data-bundle-plan>
                 <div className="bundle-plan-line">
-                  镜头：新增 {plan.shotAdded} · 更新 {plan.shotUpdated} · 剧本：新增 {plan.epAdded} 集 · 更新{' '}
-                  {plan.epUpdated} 集 · 角色：新增 {plan.charAdded} · 补全 {plan.charFilled}
+                  镜头：新增 {plan.shotAdded} · 更新 {plan.shotUpdated} · 角色：新增 {plan.charAdded} · 补全{' '}
+                  {plan.charFilled}
                 </div>
                 {plan.charNames.length ? (
                   <div className="st-hint">识别到角色：{plan.charNames.join('、')}（无英文锚点的需到角色页补齐）</div>
@@ -457,12 +423,12 @@ export default function BundleDialog({
                 ) : null}
                 {plan.skippedMulti.length ? (
                   <div className="st-hint">
-                    多集大纲不自动写入（结构不等价于单集剧本）：{plan.skippedMulti.join('、')}
+                    多集大纲需手动拆开后导入：{plan.skippedMulti.join('、')}
                   </div>
                 ) : null}
                 {plan.untouched.length ? (
                   <div className="st-hint">
-                    本轮只处理剧本/分镜/图片；提示词与角色档案需到对应工作台单独导入：
+                    本轮只处理分镜/图片；提示词与角色档案需到对应工作台单独导入：
                     {plan.untouched.join('、')}
                   </div>
                 ) : null}

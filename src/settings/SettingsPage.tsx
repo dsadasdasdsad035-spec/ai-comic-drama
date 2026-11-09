@@ -129,9 +129,8 @@ const KIND_META: { kind: ProviderKind; label: string }[] = [
 ]
 
 const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
-  { stage: 'script', label: '剧本（拆集）', hint: '原著 → 分集剧本' },
-  { stage: 'character', label: '角色（拆角色）', hint: '剧本/分镜 → 角色外观锚点' },
-  { stage: 'asset', label: '素材（拆场景/道具）', hint: '剧本/分镜 → 场景空镜与关键道具' },
+  { stage: 'character', label: '角色（拆角色）', hint: '分集梗概/分镜 → 角色外观锚点' },
+  { stage: 'asset', label: '素材（拆场景/道具）', hint: '分集梗概/分镜 → 场景空镜与关键道具' },
   { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 文本编排也用它' },
   {
     stage: 'prompt',
@@ -142,7 +141,6 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
   { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
   { stage: 'creative', label: '创意（对话助手）', hint: '创意工作室聊天主循环；空则沿用文本默认' },
-  { stage: 'publish', label: '发布（发布助手）', hint: '发布台聊天助手；空则沿用文本默认' },
 ]
 
 type AddPreset = Omit<Provider, 'apiKey' | 'keyAvailable'> & { custom?: boolean }
@@ -2093,7 +2091,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
         <br />
         原各项目目录下的 project.json 保留作为迁移前备份，之后不再回读。
         <br />
-        删除项目会先写数据库快照到项目根下的 <code>.deleted/</code>；成片导出、发布包、
+        删除项目会先写数据库快照到项目根下的 <code>.deleted/</code>；成片导出、
         生成图与配音在共享产物目录，不随项目删除。
       </p>
 
@@ -2102,7 +2100,7 @@ export default function SettingsPage({ toast, onSaved, onProjectsDeleted, curren
       </header>
       <p className="st-hint">
         新建项目在顶栏项目选择器旁；这里用于清理不再需要的项目。删除会级联清理镜头、角色、
-        素材、设定、聊天线程、成片与发布记录。
+        素材、设定、聊天线程等。
       </p>
       <ProjectManagerDialog
         variant="inline"
