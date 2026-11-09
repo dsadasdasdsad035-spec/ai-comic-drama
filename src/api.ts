@@ -214,14 +214,32 @@ export async function startVideo(
 }
 
 /** 轮询直到出片；onTick 每次回调可用于刷新计时 */
+function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortError()
+  return new Promise((resolve, reject) => {
+    const t = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      window.clearTimeout(t)
+      signal?.removeEventListener('abort', onAbort)
+      reject(abortError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 export async function waitVideo(
   id: string,
   onTick?: (elapsedSec: number) => void,
   timeoutMs = 12 * 60 * 1000,
+  signal?: AbortSignal,
 ): Promise<{ url: string }> {
   const t0 = Date.now()
   for (;;) {
-    await new Promise((r) => setTimeout(r, 3000))
+    if (signal?.aborted) throw abortError()
+    await sleepMs(3000, signal)
     let j: any
     try {
       const r = await fetch(`/api/seedance?id=${encodeURIComponent(id)}`)

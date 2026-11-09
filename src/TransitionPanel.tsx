@@ -56,6 +56,7 @@ type Props = {
   onClose: () => void
   onRefreshBoundary: (edgeId: string) => void
   onGenerateVideo: (edgeId: string) => void
+  onCancelVideo: (edgeId: string) => void
 }
 
 export default function TransitionPanel({
@@ -73,6 +74,7 @@ export default function TransitionPanel({
   onClose,
   onRefreshBoundary,
   onGenerateVideo,
+  onCancelVideo,
 }: Props) {
   const relation: Relation = edge.data?.relation ?? 'cut'
   const t = useMemo(
@@ -388,11 +390,21 @@ export default function TransitionPanel({
           <div className="tr-row">
             <button
               className="btn primary"
-              onClick={() => onGenerateVideo(edge.id)}
-              disabled={videoState === 'running' || preview.blocking.length > 0}
-              title="提交上方「最终发送正文」与参考首尾帧"
+              onClick={() =>
+                videoState === 'running' ? onCancelVideo(edge.id) : onGenerateVideo(edge.id)
+              }
+              disabled={videoState !== 'running' && preview.blocking.length > 0}
+              title={
+                videoState === 'running'
+                  ? '取消本次转场出片（本地停止等待，远端任务可能仍在跑）'
+                  : '提交上方「最终发送正文」与参考首尾帧'
+              }
             >
-              {videoState === 'running' ? '生成中…' : g.video?.url ? '重新生成视频' : '生成转场视频'}
+              {videoState === 'running'
+                ? '取消生成'
+                : g.video?.url
+                  ? '重新生成视频'
+                  : '生成转场视频'}
             </button>
           </div>
           {g.video?.error ? <div className="gen-error">{g.video.error}</div> : null}

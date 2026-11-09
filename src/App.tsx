@@ -191,6 +191,21 @@ function readSavedKey(key: string): Saved | null {
             data.genError = undefined
           }
         }
+        if (data.transitionOut?.generated?.video?.state === 'running') {
+          const generated = normalizeGenerated(data.transitionOut.generated)
+          data.transitionOut = {
+            ...data.transitionOut,
+            generated: {
+              ...generated,
+              video: {
+                ...(generated.video ?? {}),
+                state: 'idle',
+                error: undefined,
+                at: undefined,
+              },
+            },
+          }
+        }
         return { ...n, data }
       }),
       edges: p.edges ?? [],
@@ -1664,6 +1679,29 @@ function Shell() {
   const [selBusy, setSelBusy] = useState('')
   /** 运行中的出图请求：同一镜只允许一个在途请求 */
   const activeImgRef = useRef<Map<string, { token: number; controller: AbortController; taskId: string }>>(new Map())
+  type TransitionVideoRun = {
+    controller: AbortController
+    taskId: string
+    sourceId: string
+    to: string
+    edgeId: string
+  }
+  const activeTransitionVideoRef = useRef<Map<string, TransitionVideoRun>>(new Map())
+  const transitionVideoRunKey = (sourceId: string, to: string) => `${sourceId}\0${to}`
+  const registerTransitionVideoRun = (rec: TransitionVideoRun) => {
+    const m = activeTransitionVideoRef.current
+    m.set(rec.edgeId, rec)
+    m.set(transitionVideoRunKey(rec.sourceId, rec.to), rec)
+  }
+  const unregisterTransitionVideoRun = (rec: TransitionVideoRun) => {
+    const m = activeTransitionVideoRef.current
+    m.delete(rec.edgeId)
+    m.delete(transitionVideoRunKey(rec.sourceId, rec.to))
+  }
+  const lookupTransitionVideoRun = (edgeId: string, sourceId?: string, to?: string) => {
+    const m = activeTransitionVideoRef.current
+    return m.get(edgeId) ?? (sourceId && to ? m.get(transitionVideoRunKey(sourceId, to)) : undefined)
+  }
   const imgTokenRef = useRef(0)
   const batchAbortRef = useRef<AbortController | null>(null)
 
@@ -2465,6 +2503,39 @@ function Shell() {
     [transitionPair, writeTransition],
   )
 
+  const cancelTransitionVideo = useCallback(
+    (edgeId: string) => {
+      const pair = transitionPair(edgeId)
+      const rec = lookupTransitionVideoRun(edgeId, pair?.source.id, pair?.to)
+      const g = pair ? normalizeGenerated(pair.source.data.transitionOut?.generated) : null
+      if (!rec && (!pair || g?.video?.state !== 'running')) return
+
+      if (rec) {
+        unregisterTransitionVideoRun(rec)
+        rec.controller.abort()
+        cancelTask(rec.taskId)
+      }
+
+      const sourceId = rec?.sourceId ?? pair!.source.id
+      const to = rec?.to ?? pair!.to
+      writeTransition(sourceId, to, (cur) => ({
+        ...cur,
+        generated: {
+          ...normalizeGenerated(cur.generated),
+          video: {
+            ...(cur.generated?.video ?? {}),
+            state: 'idle',
+            error: undefined,
+            at: undefined,
+          },
+        },
+      }))
+      setToast(rec ? '已取消转场出片' : '已清除转场生成状态')
+      window.setTimeout(() => setToast(''), 2200)
+    },
+    [writeTransition, transitionPair],
+  )
+
   const generateTransitionVideo = useCallback(
     async (edgeId: string) => {
       const pair = transitionPair(edgeId)
@@ -2473,7 +2544,22 @@ function Shell() {
       const base = normalizeTransitionOut(source.data.transitionOut, to)
       const g = normalizeGenerated(base.generated)
       const legacyKeyframe = g.bridging === 'keyframe' ? g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0] : undefined
-      if (g.video?.state === 'running') return
+      if (lookupTransitionVideoRun(edgeId, source.id, to)) return
+      if (g.video?.state === 'running') {
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            video: {
+              ...(cur.generated?.video ?? {}),
+              state: 'idle',
+              error: undefined,
+              at: undefined,
+            },
+          },
+        }))
+      }
+      const controller = new AbortController()
       const videoKey = modelPick.video || appSettings?.defaults?.video || ''
       const entry = appSettings?.models.find((m) => m.key === videoKey)
       const supportsLast = modelSupportsLastFrame(entry)
@@ -2494,15 +2580,20 @@ function Shell() {
           },
         },
       }))
-      const tid = startTask('video', '转场视频', {
+      const tid = startTask('video', `转场 ${source.data.no}→${target.data.no}`, {
         cost: videoCost(price, req.seconds, vidRes),
+        retry: () => void generateTransitionVideo(edgeId),
+        cancel: () => cancelTransitionVideo(edgeId),
       })
+      const run: TransitionVideoRun = { controller, taskId: tid, sourceId: source.id, to, edgeId }
+      registerTransitionVideoRun(run)
       try {
         const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
         const bridging = legacyKeyframe ? 'keyframe' : 'morph'
         if (bridging === 'morph' && (!boundary.out || !boundary.in)) {
           throw new Error('需要两镜边界画面；请先有成片或静帧，或点「刷新边界帧」')
         }
+        if (controller.signal.aborted) return
         const res = await startVideo({
           transition: {
             boundaryOut: boundary.out,
@@ -2517,7 +2608,8 @@ function Shell() {
           cameraFixed: false,
           modelKey: videoKey,
         })
-        const done = await waitVideo(res.id)
+        const done = await waitVideo(res.id, undefined, 12 * 60 * 1000, controller.signal)
+        if (controller.signal.aborted) return
         writeTransition(source.id, to, (cur) => {
           const generated = {
             ...normalizeGenerated(cur.generated),
@@ -2547,6 +2639,7 @@ function Shell() {
           window.setTimeout(() => setToast(''), 4200)
         }
       } catch (e) {
+        if ((e as Error).name === 'AbortError' || controller.signal.aborted) return
         const message = (e as Error).message || '转场视频生成失败'
         writeTransition(source.id, to, (cur) => ({
           ...cur,
@@ -2560,9 +2653,11 @@ function Shell() {
           },
         }))
         endTask(tid, message)
+      } finally {
+        unregisterTransitionVideoRun(run)
       }
     },
-    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price],
+    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price, cancelTransitionVideo],
   )
 
   /** 批量只动效果转场；生成转场必须逐条手动，避免一次点掉多次视频生成 */
@@ -3430,6 +3525,7 @@ function Shell() {
               onClose={() => setSelEdgeId(null)}
               onRefreshBoundary={refreshTransitionBoundary}
               onGenerateVideo={generateTransitionVideo}
+              onCancelVideo={cancelTransitionVideo}
             />
           ) : (
             <Inspector
