@@ -155,11 +155,24 @@ export type TransitionEffect = {
   presetId?: string
 }
 
+/** 首尾帧手选来源；旧数据缺省按未知处理 */
+export type BoundarySource =
+  | 'source-frame'
+  | 'target-frame'
+  | 'source-tail'
+  | 'target-head'
+  | 'library'
+  | 'manual'
+
 export type TransitionBoundary = {
-  /** 上一镜尾帧 */
+  /** 首帧：用户为过渡起点手选的画面 */
   out?: string
-  /** 下一镜首帧 */
+  /** 尾帧：用户为过渡终点手选的画面 */
   in?: string
+  /** 首帧来源类别；用于标签，不参与出片指纹 */
+  outFrom?: BoundarySource
+  /** 尾帧来源类别；用于标签，不参与出片指纹 */
+  inFrom?: BoundarySource
   outAt?: number
   inAt?: number
 }

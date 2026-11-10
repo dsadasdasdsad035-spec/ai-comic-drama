@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import type { TransitionAttachmentRole } from './transitionGen'
+import type { BoundarySource } from './types'
 
 export type OutgoingRefPickItem = {
   token: string
@@ -8,10 +8,13 @@ export type OutgoingRefPickItem = {
   source: 'character' | 'asset'
 }
 
-export type OutgoingBoundaryRow = {
-  role: TransitionAttachmentRole
+/** 一个首尾帧槽位；只有已选值与来源，候选来源固定为两镜成片抽帧 */
+export type OutgoingBoundarySlot = {
+  side: 'out' | 'in'
   label: string
   purpose: string
+  value: string
+  from?: BoundarySource
 }
 
 type Tab = 'boundary' | 'character' | 'asset'
@@ -21,11 +24,11 @@ export type OutgoingReferencePickerModalProps = {
   onClose: () => void
   /** 弹窗标题，转场 / 分镜可各自传入 */
   title?: string
-  boundaryRows: OutgoingBoundaryRow[]
-  boundaryOut: string
-  boundaryIn: string
-  onBoundaryChange: (side: 'out' | 'in', url: string) => void
-  onRefreshBoundary?: () => void
+  /** morph 两个槽；空数组表示当前模式没有首尾帧槽位 */
+  boundarySlots: OutgoingBoundarySlot[]
+  onClearBoundary: (side: 'out' | 'in') => void
+  onExtractBoundary?: () => void
+  extractBusy?: boolean
   onFocusSourceShot?: () => void
   onFocusTargetShot?: () => void
   charItems: OutgoingRefPickItem[]
@@ -40,19 +43,29 @@ const TAB_LABEL: Record<Tab, string> = {
   asset: '素材',
 }
 
+const SOURCE_LABEL: Partial<Record<BoundarySource, string>> = {
+  'source-tail': '上镜尾帧',
+  'target-head': '下镜首帧',
+  'source-frame': '上镜画面',
+  'target-frame': '下镜画面',
+  library: '媒体库',
+  manual: '手填地址',
+}
+
+const sourceText = (from?: BoundarySource) => (from ? SOURCE_LABEL[from] ?? '已选画面' : '已选画面')
+
 /**
  * 出片参考统一选择：结构首尾帧 + 角色 + 素材。
- * 首期接转场；分镜视频 Tab 可复用同一壳子扩展字段。
+ * 首尾帧只来自两镜成片抽帧，不提供外部候选；抽取直接写入槽位。
  */
 export default function OutgoingReferencePickerModal({
   open,
   onClose,
   title = '选择出片参考',
-  boundaryRows,
-  boundaryOut,
-  boundaryIn,
-  onBoundaryChange,
-  onRefreshBoundary,
+  boundarySlots,
+  onClearBoundary,
+  onExtractBoundary,
+  extractBusy,
   onFocusSourceShot,
   onFocusTargetShot,
   charItems,
@@ -81,6 +94,11 @@ export default function OutgoingReferencePickerModal({
   const styleCount = [...selectedTokens].filter((t) =>
     [...charItems, ...assetItems].some((i) => i.token === t),
   ).length
+
+  const pickedCount = boundarySlots.filter((s) => Boolean(s.value)).length
+  const boundarySummary = boundarySlots.length
+    ? ` · 首尾帧 ${pickedCount}/${boundarySlots.length}${pickedCount === boundarySlots.length ? '' : '（未齐不能生成）'}`
+    : ''
 
   const renderPickGrid = (items: OutgoingRefPickItem[], empty: string) => {
     if (!items.length) return <p className="orp-note">{empty}</p>
@@ -128,7 +146,7 @@ export default function OutgoingReferencePickerModal({
             <b id="orp-title">{title}</b>
             <span>
               已选手动参考 {styleCount} 项
-              {boundaryOut && boundaryIn ? ' · 首尾帧已填' : boundaryOut || boundaryIn ? ' · 首尾帧未齐' : ''}
+              {boundarySummary}
             </span>
           </div>
           <button type="button" className="orp-close" aria-label="关闭" onClick={onClose}>
@@ -156,37 +174,49 @@ export default function OutgoingReferencePickerModal({
         <div className="orp-body" role="tabpanel">
           {tab === 'boundary' ? (
             <>
-              <p className="orp-note">首尾帧锁定过渡起点与终点；路径可为本地 /generated/… 或成片抽帧地址。</p>
-              {boundaryRows.map((row) => {
-                const side = row.role === 'first_frame' ? 'out' : 'in'
-                const value = side === 'out' ? boundaryOut : boundaryIn
-                const url =
-                  row.role === 'first_frame'
-                    ? boundaryOut
-                    : boundaryIn
-                return (
-                  <div key={row.role} className="orp-boundary-row">
+              <p className="orp-note">
+                首帧取<b>上一镜成片的最后一帧</b>，尾帧取<b>下一镜成片的第一帧</b>；点「抽取两镜成片帧」一次填好两侧，两帧都就绪才能生成。
+              </p>
+              {boundarySlots.map((slot) => (
+                <div key={slot.side} className="orp-slot" data-boundary-slot={slot.side}>
+                  <div className="orp-boundary-row">
                     <div className="orp-boundary-meta">
-                      <b>{row.label}</b>
-                      <span>{row.purpose}</span>
+                      <b>{slot.label}</b>
+                      <span>{slot.purpose}</span>
+                      <span className="orp-slot-state">
+                        {slot.value ? `已选 · ${sourceText(slot.from)}` : '未选择'}
+                      </span>
                     </div>
-                    {url ? <img src={url} alt="" /> : <div className="orp-boundary-ph">无图</div>}
-                    <input
-                      type="text"
-                      value={value}
-                      placeholder="本地路径或 URL"
-                      onChange={(e) => onBoundaryChange(side, e.target.value)}
-                    />
+                    {slot.value ? (
+                      <img src={slot.value} alt="" />
+                    ) : (
+                      <div className="orp-boundary-ph">未选择</div>
+                    )}
+                    <div className="orp-slot-btns">
+                      <button
+                        type="button"
+                        className="btn-mini ghost"
+                        onClick={() => onClearBoundary(slot.side)}
+                        disabled={!slot.value}
+                      >
+                        清除
+                      </button>
+                    </div>
                   </div>
-                )
-              })}
-              {!boundaryRows.length ? (
+                </div>
+              ))}
+              {!boundarySlots.length ? (
                 <p className="orp-note">当前模式无首尾帧槽位（例如旧版关键帧）。</p>
               ) : null}
               <div className="orp-actions">
-                {onRefreshBoundary ? (
-                  <button type="button" className="btn-mini" onClick={onRefreshBoundary}>
-                    从两镜成片刷新
+                {onExtractBoundary ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={onExtractBoundary}
+                    disabled={extractBusy}
+                  >
+                    {extractBusy ? '抽取中…' : '抽取两镜成片帧'}
                   </button>
                 ) : null}
                 {onFocusSourceShot ? (

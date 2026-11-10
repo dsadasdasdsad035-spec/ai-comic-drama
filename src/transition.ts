@@ -1,5 +1,7 @@
 import type {
+  BoundarySource,
   ShotData,
+  TransitionBoundary,
   TransitionDirection,
   TransitionEffect,
   TransitionEffectType,
@@ -92,6 +94,59 @@ export function transitionOverrideText(override: VideoPromptOverride | undefined
   return override?.text?.trim() ?? ''
 }
 
+const BOUNDARY_SOURCES: BoundarySource[] = [
+  'source-frame',
+  'target-frame',
+  'source-tail',
+  'target-head',
+  'library',
+  'manual',
+]
+
+/** 边界来源只在枚举内保留；旧数据无字段时留空，由展示层给中性文案 */
+function normalizeBoundary(input?: Partial<TransitionBoundary> | null): TransitionBoundary | undefined {
+  if (!input) return undefined
+  const out = String(input.out || '').trim()
+  const inn = String(input.in || '').trim()
+  const outFrom = BOUNDARY_SOURCES.includes(input.outFrom as BoundarySource)
+    ? (input.outFrom as BoundarySource)
+    : undefined
+  const inFrom = BOUNDARY_SOURCES.includes(input.inFrom as BoundarySource)
+    ? (input.inFrom as BoundarySource)
+    : undefined
+  const outAt = Number.isFinite(Number(input.outAt)) ? Number(input.outAt) : undefined
+  const inAt = Number.isFinite(Number(input.inAt)) ? Number(input.inAt) : undefined
+  if (!out && !inn && outAt === undefined && inAt === undefined) return undefined
+  return {
+    ...(out ? { out } : {}),
+    ...(inn ? { in: inn } : {}),
+    ...(outFrom ? { outFrom } : {}),
+    ...(inFrom ? { inFrom } : {}),
+    ...(outAt !== undefined ? { outAt } : {}),
+    ...(inAt !== undefined ? { inAt } : {}),
+  }
+}
+
+/** 首/尾帧来源标签；未知来源用中性文案，不推断成抽帧 */
+export function boundarySourceLabel(from?: BoundarySource): string {
+  switch (from) {
+    case 'source-frame':
+      return '上镜画面'
+    case 'target-frame':
+      return '下镜画面'
+    case 'source-tail':
+      return '上镜尾帧'
+    case 'target-head':
+      return '下镜首帧'
+    case 'library':
+      return '媒体库'
+    case 'manual':
+      return '手填地址'
+    default:
+      return '已选画面'
+  }
+}
+
 export function normalizeGenerated(input?: Partial<TransitionGenerated> | null): TransitionGenerated {
   const target = Number(input?.targetSeconds)
   const bridging = input?.bridging === 'keyframe' ? 'keyframe' : 'morph'
@@ -108,7 +163,7 @@ export function normalizeGenerated(input?: Partial<TransitionGenerated> | null):
     inheritRefs: false,
     refIds: Array.isArray(input?.refIds) ? input!.refIds!.filter(Boolean) : [],
     excludeRefIds: Array.isArray(input?.excludeRefIds) ? input!.excludeRefIds!.filter(Boolean) : [],
-    ...(input?.boundary ? { boundary: input.boundary } : {}),
+    ...(normalizeBoundary(input?.boundary) ? { boundary: normalizeBoundary(input?.boundary) } : {}),
     ...(input?.keyframe ? { keyframe: input.keyframe } : {}),
     ...(input?.video ? { video: input.video } : {}),
     ...(input?.audioMode === 'native' ? { audioMode: 'native' as const } : {}),

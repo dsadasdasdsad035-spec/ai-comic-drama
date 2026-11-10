@@ -5,6 +5,7 @@ import type { ShotEdgeType, ShotNodeType } from './data'
 import type { Pricing } from './pricing'
 import { money, videoCost } from './pricing'
 import type { Relation, ShotData, TransitionEffect, TransitionOut } from './types'
+import type { BoundarySource } from './types'
 import {
   DEFAULT_GENERATED_SECONDS,
   DEFAULT_TRANSITION_SECONDS,
@@ -23,7 +24,8 @@ import {
 import {
   autoTransitionVideoPrompt,
   buildTransitionVideoPreview,
-  modelSupportsLastFrame,
+  ensureTransitionBoundary,
+  INPUT_MODE_LABEL,
   OMIT_REASON_LABELS,
   transitionPreviewToPromptPanelModel,
   transitionRefCandidates,
@@ -32,7 +34,7 @@ import {
   transitionStyleRefTokens,
 } from './transitionGen'
 import { audioRefCapabilitiesFor } from './nativeAudio'
-import OutgoingReferencePickerModal from './OutgoingReferencePickerModal'
+import OutgoingReferencePickerModal, { type OutgoingBoundarySlot } from './OutgoingReferencePickerModal'
 import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
 import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategory } from './transitionPresets'
 import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
@@ -58,7 +60,6 @@ type Props = {
   onPatch: (id: string, p: Partial<ShotData>) => void
   onSetRelation: (edgeId: string, relation: Relation) => void
   onClose: () => void
-  onRefreshBoundary: (edgeId: string) => void
   onGenerateVideo: (edgeId: string) => void
   onCancelVideo: (edgeId: string) => void
   onFocusShot: (nodeId: string) => void
@@ -82,7 +83,6 @@ export default function TransitionPanel({
   onPatch,
   onSetRelation,
   onClose,
-  onRefreshBoundary,
   onGenerateVideo,
   onCancelVideo,
   onFocusShot,
@@ -125,10 +125,12 @@ export default function TransitionPanel({
   const modelForPreview = entry
     ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
     : null
-  const supportsLast = modelSupportsLastFrame(entry)
-  const req = transitionRequestSeconds(g.targetSeconds, entry?.model, supportsLast, {
-    nativeAudio: g.audioMode === 'native',
-  })
+  const req = transitionRequestSeconds(
+    g.targetSeconds,
+    entry?.model,
+    Boolean(g.boundary?.out && g.boundary?.in),
+    { nativeAudio: g.audioMode === 'native' },
+  )
   const estCost = videoCost(price, req.seconds, vidRes)
   const audioCaps = useMemo(
     () =>
@@ -209,14 +211,67 @@ export default function TransitionPanel({
     commit({ mode: 'generated', generated: { ...g, bridging: 'morph', ...patch } })
   }
 
-  const setBoundaryUrl = (side: 'out' | 'in', url: string) => {
+  const setBoundaryUrl = (side: 'out' | 'in', url: string, from?: BoundarySource) => {
+    const next = url.trim()
+    const cur = g.boundary ?? {}
     setGenerated({
       boundary: {
-        ...(g.boundary ?? {}),
-        [side]: url.trim() || undefined,
+        ...cur,
+        [side]: next || undefined,
+        ...(side === 'out'
+          ? { outFrom: next ? from ?? 'manual' : undefined }
+          : { inFrom: next ? from ?? 'manual' : undefined }),
       },
     })
   }
+
+  const [extractBusy, setExtractBusy] = useState(false)
+  const [extractError, setExtractError] = useState('')
+
+  /** 抽取即写入：首帧取上镜成片尾帧，尾帧取下镜成片首帧；失败侧保留原值 */
+  const extractBoundary = async () => {
+    setExtractBusy(true)
+    setExtractError('')
+    try {
+      const { boundary, warnings } = await ensureTransitionBoundary(source, target)
+      const cur = g.boundary ?? {}
+      const out = boundary.out ?? cur.out
+      const inn = boundary.in ?? cur.in
+      setGenerated({
+        boundary: {
+          ...(out ? { out, outFrom: boundary.out ? ('source-tail' as const) : cur.outFrom } : {}),
+          ...(inn ? { in: inn, inFrom: boundary.in ? ('target-head' as const) : cur.inFrom } : {}),
+        },
+      })
+      setExtractError(warnings.join('；'))
+    } catch (e) {
+      setExtractError((e as Error).message || '抽取失败')
+    } finally {
+      setExtractBusy(false)
+    }
+  }
+
+  const boundarySlots: OutgoingBoundarySlot[] = useMemo(() => {
+    if (preview.bridging !== 'morph') return []
+    return [
+      {
+        side: 'out' as const,
+        label: '首帧 · 过渡起点',
+        purpose: '上一镜成片的最后一帧',
+        value: g.boundary?.out ?? '',
+        from: g.boundary?.outFrom,
+      },
+      {
+        side: 'in' as const,
+        label: '尾帧 · 过渡终点',
+        purpose: '下一镜成片的第一帧',
+        value: g.boundary?.in ?? '',
+        from: g.boundary?.inFrom,
+      },
+    ]
+  }, [preview.bridging, g.boundary])
+
+  const clearBoundary = (side: 'out' | 'in') => setBoundaryUrl(side, '')
 
   const excludeRef = (token: string) => {
     setGenerated({
@@ -272,7 +327,6 @@ export default function TransitionPanel({
   const showGeneratedFoot = relation === 'transition' && t.mode === 'generated'
 
   const manualRefCount = dedicatedRefTokens.size
-  const boundaryReady = Boolean(g.boundary?.out && g.boundary?.in)
 
   return (
   <>
@@ -280,17 +334,10 @@ export default function TransitionPanel({
       open={refPickerOpen}
       onClose={() => setRefPickerOpen(false)}
       title={`转场参考 · ${source.data.no} → ${target.data.no}`}
-      boundaryRows={preview.attachments
-        .filter((a) => a.role === 'first_frame' || a.role === 'last_frame')
-        .map((a) => ({
-          role: a.role,
-          label: a.label,
-          purpose: a.purpose,
-        }))}
-      boundaryOut={g.boundary?.out ?? ''}
-      boundaryIn={g.boundary?.in ?? ''}
-      onBoundaryChange={setBoundaryUrl}
-      onRefreshBoundary={() => onRefreshBoundary(edge.id)}
+      boundarySlots={boundarySlots}
+      onClearBoundary={clearBoundary}
+      onExtractBoundary={() => void extractBoundary()}
+      extractBusy={extractBusy}
       onFocusSourceShot={() => onFocusShot(source.id)}
       onFocusTargetShot={() => onFocusShot(target.id)}
       charItems={charPickCandidates.map((c) => ({
@@ -559,20 +606,23 @@ export default function TransitionPanel({
                 >
                   <summary>转场与边界</summary>
                   <p className="tr-note">
-                    不自动继承镜头连线；画布拖线仍可写入本条转场（先点接缝边）。集中选择请用下方按钮。
+                    不自动继承镜头连线；画布拖线仍可写入本条转场（先点接缝边）。首尾帧只由两镜成片抽取，集中操作用下方按钮。
                   </p>
                   <div className="tr-row tr-ref-launch">
                     <button type="button" className="btn" onClick={() => setRefPickerOpen(true)}>
                       选择出片参考…
                     </button>
                     <span className="tr-ref-summary">
-                      {boundaryReady ? '首尾帧已设' : '首尾帧未齐'}
-                      {' · '}
-                      手动 {manualRefCount} 项
+                      首帧{g.boundary?.out ? '已选' : '未选'} · 尾帧{g.boundary?.in ? '已选' : '未选'}
+                      {' · 本次 '}
+                      {INPUT_MODE_LABEL[preview.inputMode]}
+                      {' · 手动 '}
+                      {manualRefCount} 项
                     </span>
                   </div>
+                  {extractError ? <div className="gen-note vp-field-note">{extractError}</div> : null}
                   {boundaryBlocking ? (
-                    <div className="gen-error">缺少上一镜尾帧或下一镜首帧，请在弹窗「首尾帧」中填写或刷新。</div>
+                    <div className="gen-error">首尾帧还没齐：打开「选择出片参考 → 首尾帧」点「抽取两镜成片帧」（上镜与下镜都要有成片）。</div>
                   ) : null}
                   <ul className="vp-refs tr-ref-actions">
                     {preview.styleRefs.map((r) => (

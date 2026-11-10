@@ -10249,6 +10249,27 @@ body,
   justify-content: flex-end;
 }
 
+/* 首尾帧槽位：空态也渲染；来源固定为两镜成片抽帧 */
+.orp-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  margin-bottom: 10px;
+}
+
+.orp-slot-state {
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+
+.orp-slot-btns {
+  display: flex;
+  gap: 6px;
+}
+
 .tr-continuity {
   margin-top: 8px;
 }

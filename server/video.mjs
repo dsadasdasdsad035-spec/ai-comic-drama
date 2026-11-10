@@ -139,9 +139,8 @@ export function buildVideoPayload({
     }
   } else if (first) {
     content.push({ type: 'image_url', image_url: { url: first }, role: 'first_frame' })
-  } else {
-    throw new VideoParamError('缺少首帧图片或参考图')
   }
+  // 三个都没有 = 纯文本生成；是否允许由调用方按模型能力位判定，这里只负责拼 payload
 
   return {
     model,

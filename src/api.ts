@@ -1215,6 +1215,8 @@ export type ModelFeatureSet = {
   videoRef?: boolean
   firstFrame?: boolean
   lastFrame?: boolean
+  /** 支持只给提示词生成（文生视频）；未声明时纯文本模式会被阻止 */
+  textToVideo?: boolean
   audioOut?: boolean
   tools?: boolean
 }

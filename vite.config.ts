@@ -291,6 +291,8 @@ type ModelFeatureSet = {
   videoRef?: boolean
   firstFrame?: boolean
   lastFrame?: boolean
+  /** 支持只给提示词生成（文生视频） */
+  textToVideo?: boolean
   audioOut?: boolean
   tools?: boolean
 }
@@ -576,7 +578,7 @@ const DEFAULT_MODELS: ModelEntry[] = [
     model: 'seedance-2.5',
     supportsVideoRef: true,
     source: 'preset',
-    features: { firstFrame: true, lastFrame: true, videoRef: true, audioOut: true },
+    features: { firstFrame: true, lastFrame: true, videoRef: true, audioOut: true, textToVideo: true },
   },
   {
     key: 'apimart-video-kling-v3',
@@ -598,7 +600,14 @@ const DEFAULT_MODELS: ModelEntry[] = [
     source: 'preset',
     features: { audioOut: true },
   },
-  { key: 'ark-video', label: 'Seedance 1.0 pro', cap: 'video', provider: 'ark', model: VIDEO_MODEL },
+  {
+    key: 'ark-video',
+    label: 'Seedance 1.0 pro',
+    cap: 'video',
+    provider: 'ark',
+    model: VIDEO_MODEL,
+    features: { firstFrame: true, textToVideo: true },
+  },
   { key: 'ark-video-ref', label: 'Seedance Lite I2V（多参考）', cap: 'videoRef', provider: 'ark', model: VIDEO_REF_MODEL },
   {
     key: 'ark-video-2-0',
@@ -607,6 +616,7 @@ const DEFAULT_MODELS: ModelEntry[] = [
     provider: 'ark',
     model: 'doubao-seedance-2-0-260128',
     supportsVideoRef: true,
+    features: { firstFrame: true, textToVideo: true },
   },
   {
     key: 'ark-video-2-5',
@@ -616,6 +626,7 @@ const DEFAULT_MODELS: ModelEntry[] = [
     model: 'doubao-seedance-2-5-260628',
     supportsVideoRef: true,
     videoRefTaskType: 'reference',
+    features: { firstFrame: true, textToVideo: true },
   },
   { key: 'eleven-tts', label: 'ElevenLabs 多语言 v2', cap: 'audio', provider: 'elevenlabs', model: 'eleven_multilingual_v2' },
   { key: 'volc-tts', label: '火山 Seed TTS 2.0', cap: 'audio', provider: 'volc-tts', model: 'doubao-seed-tts-2.0' },
@@ -646,7 +657,7 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
 }
 
 /** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
-const CURRENT_PRESETS_VERSION = 10
+const CURRENT_PRESETS_VERSION = 11
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
@@ -731,6 +742,15 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
         : m,
     )
   }
+  if (version < 11) {
+    // 已有设置库里的视频条目补上「是否能纯文本出片」；只补声明过的 key，不动其它条目。
+    const textKeys = new Set(
+      DEFAULT_MODELS.filter((m) => m.features?.textToVideo).map((m) => m.key),
+    )
+    models = models.map((m) =>
+      textKeys.has(m.key) ? { ...m, features: { ...m.features, textToVideo: true } } : m,
+    )
+  }
   return { ...cur, providers, models, defaults, stageModels, presetsVersion: CURRENT_PRESETS_VERSION }
 }
 
@@ -788,7 +808,7 @@ function normalizeModelCaps(raw: unknown): Cap[] | undefined {
 function normalizeFeatures(raw: any): ModelFeatureSet | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const out: ModelFeatureSet = {}
-  for (const key of ['vision', 'videoInput', 'videoRef', 'firstFrame', 'lastFrame', 'audioOut', 'tools'] as const) {
+  for (const key of ['vision', 'videoInput', 'videoRef', 'firstFrame', 'lastFrame', 'textToVideo', 'audioOut', 'tools'] as const) {
     if (typeof raw[key] === 'boolean') out[key] = raw[key]
   }
   if (raw.imageRef === 'none' || raw.imageRef === 'single' || raw.imageRef === 'multi') {
@@ -5200,7 +5220,8 @@ function seedreamProxy(): Plugin {
               refImages.unshift(image)
               image = ''
             }
-            // 转场：关键帧是必填；边界帧由服务端按模型能力决定用不用
+            // 转场输入按降级链判定：首尾帧 → 单首帧 → 参考图 → 参考视频 → 纯文本。
+            // 首尾帧是可选的，不再因为没有边界帧就拒绝。
             const rawTransition = body.transition && typeof body.transition === 'object' ? body.transition : null
             const transition = rawTransition
               ? {
@@ -5211,31 +5232,18 @@ function seedreamProxy(): Plugin {
                 }
               : null
             const morphTransition = transition?.bridging === 'morph'
-            const transitionMode = morphTransition
-              ? Boolean(transition?.boundaryOut && transition?.boundaryIn)
-              : Boolean(transition?.keyframe)
+            // 首尾帧齐全 = 真的会提交尾帧
+            const boundaryBoth = morphTransition && Boolean(transition?.boundaryOut && transition?.boundaryIn)
+            // 只提交首帧（有 out 无 in，或旧版关键帧）
+            const boundaryFirstOnly =
+              Boolean(transition) &&
+              !boundaryBoth &&
+              (morphTransition ? Boolean(transition?.boundaryOut) : Boolean(transition?.keyframe))
+            const transitionMode = boundaryBoth || boundaryFirstOnly
             const videoRefMode = !transitionMode && refVideos.length > 0
             const refMode = !transitionMode && refImages.length > 0
             // 全模态参考（图 / 视频）与首帧互斥
             const referenceMode = refMode || videoRefMode
-            if (rawTransition && !transitionMode) {
-              res.statusCode = 400
-              res.end(
-                JSON.stringify({
-                  ok: false,
-                  message: morphTransition
-                    ? '首尾直变需要上一镜尾帧与下一镜首帧，请确认两镜已有画面或成片'
-                    : '生成转场视频前必须有已确认的关键帧',
-                  kind: 'bad-request',
-                }),
-              )
-              return
-            }
-            if (!image && !referenceMode && !transitionMode) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: '缺少首帧图片或参考图，请先生成画面或连线参考' }))
-              return
-            }
 
             const seconds = Math.min(12, Math.max(2, Math.round(Number(body.seconds) || 5)))
             const ratio = ['16:9', '9:16', '4:3', '1:1', '3:4', '21:9'].includes(String(body.ratio))
@@ -5267,6 +5275,21 @@ function seedreamProxy(): Plugin {
               return
             }
             const model = pick.entry?.model || (referenceMode ? effVideoRefModel() : effVideoModel())
+            // 没有任何图片输入时只能走纯文本：仅对声明 textToVideo 的模型放行
+            const textMode = !image && !referenceMode && !transitionMode
+            const supportsText = Boolean(pick.entry?.features?.textToVideo)
+            if (textMode && !supportsText) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message:
+                    '没有可用输入：抽取首尾帧、连线参考图，或换一个支持文生视频的模型',
+                  kind: 'bad-request',
+                }),
+              )
+              return
+            }
             const provider = pick.provider
             const runKey = providerKey(provider)
             if (!runKey) {
@@ -5340,28 +5363,26 @@ function seedreamProxy(): Plugin {
               const skipped: string[] = []
               const refUrls: string[] = []
               const refVideoUrls: string[] = []
-              // 转场分流：关键帧模式用关键帧作首帧；首尾直变用上镜尾帧作首帧、下镜首帧作尾帧。
+              // 转场分流：首尾帧模式用边界帧；只首帧模式用首帧；纯文本模式两者都空。
               // Seedance 2.5 首尾直变：尾帧与 reference_image 互斥；非互斥时转场与分镜一样可送 reference_image / reference_video。
               const tKeyframe = transition?.keyframe || ''
               const tOut = transition?.boundaryOut || ''
               const tIn = transition?.boundaryIn || ''
               const useLastFrame =
-                Boolean(transition) &&
-                (family === 'kling-v3' || family === 'seedance-2.5') &&
-                Boolean(tIn)
+                Boolean(transition) && morphTransition && Boolean(tOut && tIn) && Boolean(tIn)
               const firstSource = transition
                 ? morphTransition
                   ? tOut
                   : tKeyframe
                 : image
               const lastSource = transition ? (useLastFrame ? tIn : '') : String(body.lastFrame || '')
-              if (morphTransition && (!firstSource || !useLastFrame)) {
+              // 首尾帧模式要求模型支持尾帧；单首帧与纯文本不需要
+              if (useLastFrame && family !== 'kling-v3' && family !== 'seedance-2.5') {
                 res.statusCode = 400
                 res.end(
                   JSON.stringify({
                     ok: false,
-                    message:
-                      '首尾直变须使用支持首尾帧的模型（如 Seedance 2.5 / Kling v3），且两镜边界帧齐全',
+                    message: '首尾直变须使用支持尾帧的模型（如 Seedance 2.5 / Kling v3）；也可只保留首帧或改用纯文本',
                     kind: 'unsupported',
                   }),
                 )
@@ -5452,7 +5473,17 @@ function seedreamProxy(): Plugin {
                 return
               }
 
-              const mode = generateAudio ? 'native' : transitionMode ? 'transition' : videoRefMode ? 'video' : refMode ? 'ref' : 'first'
+              const mode = generateAudio
+                ? 'native'
+                : transitionMode
+                  ? 'transition'
+                  : videoRefMode
+                    ? 'video'
+                    : refMode
+                      ? 'ref'
+                      : textMode
+                        ? 'text'
+                        : 'first'
               if (body.dryRun) {
                 res.end(
                   JSON.stringify({

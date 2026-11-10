@@ -124,8 +124,6 @@ import {
 } from './transition'
 import {
   buildTransitionVideoRequest,
-  ensureTransitionBoundary,
-  modelSupportsLastFrame,
   transitionRequestSeconds,
   transitionStyleRefTokens,
   transitionRefEdgeId,
@@ -2577,35 +2575,6 @@ function Shell() {
     [patch, ratio, vidRes, selectedVideoModel, sceneLayouts, projectAspect, missingMedia],
   )
 
-  const refreshTransitionBoundary = useCallback(
-    async (edgeId: string) => {
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, target, to } = pair
-      const base = normalizeTransitionOut(source.data.transitionOut, to)
-      const g = normalizeGenerated(base.generated)
-      try {
-        const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          mode: 'generated',
-          generated: { ...normalizeGenerated(cur.generated), boundary, bridging: 'morph' },
-        }))
-        if (warnings.length) {
-          setToast(warnings.join('；'))
-          window.setTimeout(() => setToast(''), 4200)
-        } else {
-          setToast('已刷新上下镜边界帧')
-          window.setTimeout(() => setToast(''), 2200)
-        }
-      } catch (e) {
-        setToast((e as Error).message || '边界帧刷新失败')
-        window.setTimeout(() => setToast(''), 3600)
-      }
-    },
-    [transitionPair, writeTransition],
-  )
-
   const cancelTransitionVideo = useCallback(
     (edgeId: string) => {
       const pair = transitionPair(edgeId)
@@ -2670,8 +2639,8 @@ function Shell() {
       const transitionModel = entry
         ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
         : null
-      const supportsLast = modelSupportsLastFrame(entry)
-      const req = transitionRequestSeconds(g.targetSeconds, entry?.model, supportsLast, {
+      const submitsLastFrame = Boolean(g.boundary?.out && g.boundary?.in)
+      const req = transitionRequestSeconds(g.targetSeconds, entry?.model, submitsLastFrame, {
         nativeAudio: g.audioMode === 'native',
       })
       const preBundle = buildTransitionVideoRequest({
@@ -2729,17 +2698,12 @@ function Shell() {
       const run: TransitionVideoRun = { controller, taskId: tid, sourceId: source.id, to, edgeId }
       registerTransitionVideoRun(run)
       try {
-        const { boundary, warnings } = await ensureTransitionBoundary(source, target, g.boundary)
         const bridging = legacyKeyframe ? 'keyframe' : 'morph'
-        if (bridging === 'morph' && (!boundary.out || !boundary.in)) {
-          throw new Error('需要两镜边界画面；请先有成片或静帧，或点「刷新边界帧」')
-        }
         if (controller.signal.aborted) return
-        const generatedWithBoundary = { ...g, boundary }
         const bundle = buildTransitionVideoRequest({
           source,
           target,
-          generated: generatedWithBoundary,
+          generated: g,
           model: transitionModel,
           nodes: nodesRef.current,
           characters,
@@ -2748,8 +2712,8 @@ function Shell() {
         const nativeOn = g.audioMode === 'native' && Boolean(g.audioRef?.url)
         const res = await startVideo({
           transition: {
-            boundaryOut: boundary.out,
-            boundaryIn: boundary.in,
+            boundaryOut: g.boundary?.out,
+            boundaryIn: g.boundary?.in,
             ...(legacyKeyframe ? { keyframe: legacyKeyframe } : {}),
             bridging,
           },
@@ -2768,7 +2732,6 @@ function Shell() {
         writeTransition(source.id, to, (cur) => {
           const generated = {
             ...normalizeGenerated(cur.generated),
-            boundary,
             video: {
               url: done.url,
               modelKey: videoKey,
@@ -2802,10 +2765,6 @@ function Shell() {
           }
         })
         endTask(tid)
-        if (warnings.length) {
-          setToast(warnings.join('；'))
-          window.setTimeout(() => setToast(''), 4200)
-        }
       } catch (e) {
         if ((e as Error).name === 'AbortError' || controller.signal.aborted) return
         const message = (e as Error).message || '转场视频生成失败'
@@ -3660,7 +3619,6 @@ function Shell() {
               onPatch={patch}
               onSetRelation={setEdgeRelation}
               onClose={() => setSelEdgeId(null)}
-              onRefreshBoundary={refreshTransitionBoundary}
               onGenerateVideo={generateTransitionVideo}
               onCancelVideo={cancelTransitionVideo}
               onFocusShot={focusShotFromTransition}

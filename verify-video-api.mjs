@@ -185,8 +185,13 @@ const pUnknown = buildVideoPayload({
   firstFrame: img,
 })
 check('未登记模型放行参数', pUnknown.duration === 20 && pUnknown.resolution === '8k', JSON.stringify(pUnknown))
-const eNoImg = await capture(async () => buildVideoPayload({ model: model10, prompt: 'x', seconds: 5 }))
-check('缺少图片时报错', eNoImg instanceof VideoParamError, eNoImg?.message)
+// 无图 = 纯文本生成：payload 只带 text content，是否允许由调用方按模型能力位判定
+const pText = buildVideoPayload({ model: model10, prompt: 'x', seconds: 5 })
+check(
+  '无图时按纯文本生成',
+  pText.content.length === 1 && pText.content[0].type === 'text',
+  JSON.stringify(pText.content),
+)
 
 // ---- 3. 提交 / 轮询 / 下载 ----
 postMode = 'success'

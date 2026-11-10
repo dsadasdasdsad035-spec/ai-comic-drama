@@ -196,11 +196,13 @@ check('非相邻不让总长变短', near(list5.total, 9), `got ${list5.total}`)
 
 // ---- 模型时长分流 ----
 const ark = lib.transitionRequestSeconds(1.2, 'doubao-seedance-1-0-pro-250528', false)
-check('方舟 1.0：请求 2s、裁到 1.2s', ark.seconds === 2 && ark.trimTo === 1.2)
+check('不提交尾帧：请求 2s、裁到 1.2s', ark.seconds === 2 && ark.trimTo === 1.2)
 const s25 = lib.transitionRequestSeconds(1.2, 'seedance-2.5', true)
-check('Seedance 2.5：请求 4s、不裁', s25.seconds === 4 && s25.trimTo === undefined)
+check('提交尾帧：请求 4s、不裁', s25.seconds === 4 && s25.trimTo === undefined)
 const kling = lib.transitionRequestSeconds(1.2, 'kling-v3', true)
-check('Kling v3：请求 3s、不裁', kling.seconds === 3 && kling.trimTo === undefined)
+check('提交尾帧：Kling 请求 3s、不裁', kling.seconds === 3 && kling.trimTo === undefined)
+const onlyFirst = lib.transitionRequestSeconds(1.2, 'seedance-2.5', false)
+check('Seedance 2.5 只首帧：请求加余量并裁', onlyFirst.seconds === 4 && onlyFirst.trimTo === 1.2)
 check('Seedance 1.5 下限 4s', lib.videoMinSeconds('doubao-seedance-1-5-pro') === 4)
 
 // ---- 关键帧参考上限 ----
@@ -328,11 +330,14 @@ const noBoundaryPrev = lib.buildTransitionVideoPreview({
   source: fullA,
   target: fullB,
   generated: { targetSeconds: 1.2, prompt: '', inheritRefs: true, bridging: 'morph' },
+  model: { model: 'seedance-2.5', features: { lastFrame: true, textToVideo: true } },
 })
 check(
-  '缺边界 blocking 带 code',
-  noBoundaryPrev.blocking.some((b) => b.code === 'transition-boundary-missing' && b.message),
+  '缺边界不再 blocking',
+  !noBoundaryPrev.blocking.some((b) => b.code === 'transition-boundary-missing'),
+  JSON.stringify(noBoundaryPrev.blocking.map((b) => b.code)),
 )
+check('缺边界时输入模式为纯文本', noBoundaryPrev.inputMode === 'text')
 const panelModel = lib.transitionPreviewToPromptPanelModel(prev, '720p')
 check('panel 前缀含首尾帧', panelModel.refPrefix.length === 2 && panelModel.refPrefix[0]?.bold === '首帧')
 check('blocking 为 issue 结构', prev.warnings.every((w) => w.code && w.level))
@@ -548,25 +553,203 @@ const autoAfter = lib.autoTransitionVideoPrompt(
 )
 check('应用后自动正文仍含衔接', autoAfter.includes('衔接：'))
 
-// ---- 边界帧：有视频抽首尾，无视频回退当前画面（需要 dev server）----
+// ---- 边界来源标签与候选（不依赖 dev server）----
+check('来源标签：上镜尾帧', lib.boundarySourceLabel('source-tail') === '上镜尾帧')
+check('来源标签：媒体库', lib.boundarySourceLabel('library') === '媒体库')
+check('来源标签：未知给中性文案', lib.boundarySourceLabel(undefined) === '已选画面')
+const legacyBoundary = lib.normalizeGenerated({
+  targetSeconds: 1.2,
+  prompt: '',
+  boundary: { out: IMG1, in: IMG2 },
+})
+check('旧边界无来源字段仍保留 URL', legacyBoundary.boundary?.out === IMG1 && !legacyBoundary.boundary?.outFrom)
+const sourcedBoundary = lib.normalizeGenerated({
+  targetSeconds: 1.2,
+  prompt: '',
+  boundary: { out: IMG1, in: IMG2, outFrom: 'library', inFrom: 'bogus' },
+})
+check(
+  '来源透传且非法值丢弃',
+  sourcedBoundary.boundary?.outFrom === 'library' && sourcedBoundary.boundary?.inFrom === undefined,
+)
+const boundarySource = shot('c1', 'C01', 3, { refImage: IMG1, videoUrl: '' })
+const boundaryTarget = shot('c2', 'C02', 3, { refImage: '/generated/target.jpg', videoUrl: '' })
+const noVideoBoundary = await lib.ensureTransitionBoundary(boundarySource, boundaryTarget)
+check(
+  '没有成片不回退静帧',
+  noVideoBoundary.boundary.out === undefined && noVideoBoundary.boundary.in === undefined,
+  JSON.stringify(noVideoBoundary.boundary),
+)
+check(
+  '没有成片给出可执行提示',
+  noVideoBoundary.warnings.some((w) => w.includes('还没有成片')),
+  noVideoBoundary.warnings.join('；'),
+)
+
+// ---- 输入模式降级链与来源标签 ----
+const textCapModel = {
+  model: 'seedance-2.5',
+  providerKind: 'apimart',
+  features: { lastFrame: true, textToVideo: true },
+}
+const noTextCapModel = { model: 'kling-v3', providerKind: 'apimart', features: { lastFrame: true } }
+const modeText = lib.buildTransitionVideoPreview({
+  source: sA,
+  target: sB,
+  generated: lib.normalizeGenerated({ targetSeconds: 1.2, prompt: '' }),
+  model: textCapModel,
+})
+check('纯文本模式：无输入但模型支持', modeText.inputMode === 'text' && modeText.blocking.length === 0)
+const modeNone = lib.buildTransitionVideoPreview({
+  source: sA,
+  target: sB,
+  generated: lib.normalizeGenerated({ targetSeconds: 1.2, prompt: '' }),
+  model: noTextCapModel,
+})
+check(
+  '不支持文生视频时 blocking',
+  modeNone.inputMode === 'none' &&
+    modeNone.blocking.some((b) => b.code === 'transition-no-input'),
+  JSON.stringify(modeNone.blocking.map((b) => b.code)),
+)
+const modeFirst = lib.buildTransitionVideoPreview({
+  source: sA,
+  target: sB,
+  generated: lib.normalizeGenerated({
+    targetSeconds: 1.2,
+    prompt: '',
+    boundary: { out: IMG1, outFrom: 'source-tail' },
+  }),
+  model: textCapModel,
+})
+check('只选首帧 → first-frame', modeFirst.inputMode === 'first-frame' && Boolean(modeFirst.trimTo))
+check(
+  '只选首帧不要求模型支持尾帧',
+  !modeFirst.blocking.some((b) => b.code === 'transition-no-last-frame'),
+)
+const modeBoundary = lib.buildTransitionVideoPreview({
+  source: sA,
+  target: sB,
+  generated: lib.normalizeGenerated({
+    targetSeconds: 1.2,
+    prompt: '',
+    boundary: { out: IMG1, in: IMG2 },
+  }),
+  model: textCapModel,
+})
+check(
+  '两帧齐全 → boundary 且不裁剪',
+  modeBoundary.inputMode === 'boundary' &&
+    modeBoundary.submitsLastFrame &&
+    modeBoundary.trimTo === undefined,
+)
+check(
+  '纯文本模式判定的五种输入',
+  lib.resolveTransitionInputMode({ boundary: { out: 'a', in: 'b' }, refCount: 0, hasVideoRef: false }) ===
+    'boundary' &&
+    lib.resolveTransitionInputMode({ boundary: { out: 'a' }, refCount: 0, hasVideoRef: false }) ===
+      'first-frame' &&
+    lib.resolveTransitionInputMode({ refCount: 2, hasVideoRef: false }) === 'reference' &&
+    lib.resolveTransitionInputMode({ refCount: 0, hasVideoRef: true }) === 'video-reference' &&
+    lib.resolveTransitionInputMode({ refCount: 0, hasVideoRef: false, features: { textToVideo: true } }) ===
+      'text',
+)
+const sourcedPreview = lib.buildTransitionVideoPreview({
+  source: sA,
+  target: sB,
+  generated: lib.normalizeGenerated({
+    targetSeconds: 1.2,
+    prompt: '',
+    boundary: { out: IMG1, in: IMG2, outFrom: 'library', inFrom: 'target-head' },
+  }),
+  model: { model: 'seedance-2.5', providerKind: 'apimart', features: { lastFrame: true } },
+})
+check(
+  '附件标签使用实际来源',
+  sourcedPreview.attachments.some((a) => a.label === '首帧 · 媒体库') &&
+    sourcedPreview.attachments.some((a) => a.label === '尾帧 · 下镜首帧'),
+  JSON.stringify(sourcedPreview.attachments.map((a) => a.label)),
+)
+const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8')
+const genBlock = appSource.slice(appSource.indexOf('const generateTransitionVideo'))
+check(
+  '生成路径不再调用自动抽帧',
+  !genBlock.slice(0, genBlock.indexOf('const cancelTransitionVideo') > 0 ? genBlock.indexOf('const cancelTransitionVideo') : 12000).includes('ensureTransitionBoundary'),
+)
+check(
+  '服务端不再因缺边界拒绝转场',
+  !fs
+    .readFileSync(path.join(root, 'vite.config.ts'), 'utf8')
+    .includes('首尾直变需要首帧与尾帧，请先在「选择出片参考 → 首尾帧」'),
+)
+const modalSource = fs.readFileSync(path.join(root, 'src/OutgoingReferencePickerModal.tsx'), 'utf8')
+check(
+  '弹窗槽位由 boundarySlots 驱动且空值也渲染',
+  modalSource.includes('boundarySlots.map(') && !modalSource.includes('boundaryRows'),
+)
+check(
+  '弹窗不再有候选网格/媒体库入口',
+  !modalSource.includes('orp-cand') &&
+    !modalSource.includes('MediaPicker') &&
+    modalSource.includes('onClearBoundary') &&
+    modalSource.includes('抽取两镜成片帧'),
+)
+const panelSource = fs.readFileSync(path.join(root, 'src/TransitionPanel.tsx'), 'utf8')
+check(
+  '面板 morph 时构造两个槽位',
+  panelSource.includes("preview.bridging !== 'morph'") &&
+    panelSource.includes("label: '首帧 · 过渡起点'") &&
+    panelSource.includes("label: '尾帧 · 过渡终点'"),
+)
+check(
+  '抽取即写入两侧来源',
+  panelSource.includes("'source-tail' as const") && panelSource.includes("'target-head' as const"),
+)
+
+// ---- 边界帧：有视频抽首尾；缺视频/抽帧失败不回退（需要 dev server）----
 const health = await fetch('http://127.0.0.1:5273/api/health').catch(() => null)
 if (health?.ok) {
   const origFetch = globalThis.fetch
   globalThis.fetch = (u, init) =>
     origFetch(typeof u === 'string' && u.startsWith('/') ? `http://127.0.0.1:5273${u}` : u, init)
   try {
-    const s = { id: 'v1', type: 'shot', data: { videoUrl: VID, refImage: IMG1 } }
-    const t = { id: 'v2', type: 'shot', data: { videoUrl: VID, refImage: IMG2 } }
-    const b = await lib.ensureTransitionBoundary(s, t)
-    check(
-      '有视频时抽到首尾两帧',
-      Boolean(b.boundary.out?.startsWith('/generated/') && b.boundary.in?.startsWith('/generated/')),
-      JSON.stringify(b.boundary),
-    )
+    // 用真实存在的成片夹具；没有就退化为「只断言不回退」
+    const videosDir = path.join(root, 'public', 'videos')
+    const realVideo = fs.existsSync(videosDir)
+      ? fs.readdirSync(videosDir).find((f) => /\.(mp4|webm)$/i.test(f))
+      : undefined
+    if (realVideo) {
+      const vidUrl = `/videos/${realVideo}`
+      const s = { id: 'v1', type: 'shot', data: { videoUrl: vidUrl, refImage: IMG1 } }
+      const t = { id: 'v2', type: 'shot', data: { videoUrl: vidUrl, refImage: IMG2 } }
+      const b = await lib.ensureTransitionBoundary(s, t)
+      check(
+        '有成片时抽到首尾两帧',
+        Boolean(b.boundary.out?.startsWith('/generated/') && b.boundary.in?.startsWith('/generated/')),
+        JSON.stringify(b.boundary),
+      )
+    } else {
+      console.log('⚠️ public/videos 无成片夹具，跳过真实抽帧')
+    }
     const s2 = { id: 'v3', type: 'shot', data: { refImage: IMG1 } }
     const t2 = { id: 'v4', type: 'shot', data: { refImage: IMG2 } }
     const b2 = await lib.ensureTransitionBoundary(s2, t2)
-    check('无视频时回退当前画面', b2.boundary.out === IMG1 && b2.boundary.in === IMG2)
+    check(
+      '无成片不回退静帧',
+      b2.boundary.out === undefined && b2.boundary.in === undefined,
+      JSON.stringify(b2.boundary),
+    )
+    // 成片 URL 指向不存在的文件：抽帧失败，也必须留空而不是拿 refImage 顶上
+    const sBad = { id: 'v5', type: 'shot', data: { videoUrl: VID, refImage: IMG1 } }
+    const tBad = { id: 'v6', type: 'shot', data: { videoUrl: VID, refImage: IMG2 } }
+    const bBad = await lib.ensureTransitionBoundary(sBad, tBad)
+    check(
+      '抽帧失败不回退静帧',
+      bBad.boundary.out === undefined &&
+        bBad.boundary.in === undefined &&
+        bBad.warnings.some((w) => w.includes('抽取失败')),
+      JSON.stringify(bBad.boundary),
+    )
   } finally {
     globalThis.fetch = origFetch
   }

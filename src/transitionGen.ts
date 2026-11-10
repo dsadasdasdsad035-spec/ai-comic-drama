@@ -13,7 +13,6 @@ import { assetMediaType } from './mediaPick'
 import {
   collectShotReferences,
   collectVideoReferences,
-  currentShotImage,
   SHOT_NEXT,
   SHOT_PREV,
   type MissingShotReference,
@@ -30,7 +29,7 @@ import {
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT } from './videoRefLimits'
 import { shortHash } from './scheduleGeometry'
 import { localPath } from './shotSync'
-import { coerceTransitionVideoPromptOverride, normalizeGenerated, transitionOverrideText } from './transition'
+import { coerceTransitionVideoPromptOverride, boundarySourceLabel, normalizeGenerated, transitionOverrideText } from './transition'
 
 /** 画布派生「转场参考」边 id：ref-tr|{转场边 id}|{素材/角色节点 id} */
 export const transitionRefEdgeId = (edgeId: string, refSourceId: string) =>
@@ -82,48 +81,34 @@ async function videoFrames(url: string): Promise<{ start?: string; end?: string 
 }
 
 /**
- * 边界帧：上一镜优先取视频尾帧，下一镜优先取视频首帧；
- * 没有视频就退回当前画面。缺图和抽帧失败都返回 warning，不抛。
+ * 边界帧只从成片抽取：上一镜成片尾帧、下一镜成片首帧。
+ * 没有成片或抽帧失败都留空并给 warning；不回退静帧。
  */
 export async function ensureTransitionBoundary(
   source: ShotNodeType,
   target: ShotNodeType,
-  existing?: TransitionBoundary,
 ): Promise<{ boundary: TransitionBoundary; warnings: string[] }> {
   const warnings: string[] = []
-  let out = existing?.out
-  let outAt = existing?.outAt
-  let inn = existing?.in
-  let inAt = existing?.inAt
+  let out: string | undefined
+  let inn: string | undefined
 
   if (source.data.videoUrl) {
     const f = await videoFrames(String(source.data.videoUrl))
-    if (f.end) {
-      out = f.end
-      outAt = undefined
-    } else {
-      warnings.push('上一镜尾帧抽取失败，暂用当前画面')
-      // 有成片时不沿用上次关键帧缓存的静帧，否则会一直显示 refImage
-      if (!outAt) out = undefined
-    }
+    if (f.end) out = f.end
+    else warnings.push('上镜成片尾帧抽取失败，请重新抽取或检查成片')
+  } else {
+    warnings.push('上镜还没有成片，无法抽取首帧')
   }
-  if (!out) out = currentShotImage(source.data)
 
   if (target.data.videoUrl) {
     const f = await videoFrames(String(target.data.videoUrl))
-    if (f.start) {
-      inn = f.start
-      inAt = undefined
-    } else {
-      warnings.push('下一镜首帧抽取失败，暂用当前画面')
-      if (!inAt) inn = undefined
-    }
+    if (f.start) inn = f.start
+    else warnings.push('下镜成片首帧抽取失败，请重新抽取或检查成片')
+  } else {
+    warnings.push('下镜还没有成片，无法抽取尾帧')
   }
-  if (!inn) inn = currentShotImage(target.data)
 
-  if (!out) warnings.push('上一镜没有可用画面')
-  if (!inn) warnings.push('下一镜没有可用画面')
-  return { boundary: { out, in: inn, outAt, inAt }, warnings }
+  return { boundary: { ...(out ? { out } : {}), ...(inn ? { in: inn } : {}) }, warnings }
 }
 
 const isRefSource = (s: string) => s === 'character' || s === 'asset' || s === 'extra'
@@ -231,13 +216,41 @@ function collectInherited(
   return out
 }
 
-/** 首尾直变 + 尾帧：reference_image 与尾帧互斥 */
-export function transitionRefSubmitAllowed(
-  bridging: TransitionBridging,
-  supportsLastFrame: boolean,
-  hasBoundaryIn: boolean,
-): boolean {
-  return !(bridging === 'morph' && supportsLastFrame && hasBoundaryIn)
+/** 本次提交的输入模式；按优先级命中即停 */
+export type TransitionInputMode =
+  | 'boundary'
+  | 'first-frame'
+  | 'reference'
+  | 'video-reference'
+  | 'text'
+  | 'none'
+
+/**
+ * 输入模式降级链：首尾帧 → 单首帧 → 参考图 → 参考视频 → 纯文本。
+ * 纯文本只在模型声明 textToVideo 时成立，否则视为 none。
+ */
+export function resolveTransitionInputMode(input: {
+  boundary?: TransitionBoundary
+  refCount: number
+  hasVideoRef: boolean
+  features?: { textToVideo?: boolean }
+}): TransitionInputMode {
+  const out = Boolean(input.boundary?.out)
+  const inn = Boolean(input.boundary?.in)
+  if (out && inn) return 'boundary'
+  if (out) return 'first-frame'
+  if (input.refCount > 0) return 'reference'
+  if (input.hasVideoRef) return 'video-reference'
+  if (input.features?.textToVideo) return 'text'
+  return 'none'
+}
+
+/** 该模式是否真的提交尾帧（决定裁剪与参考图互斥） */
+export const inputModeSubmitsLastFrame = (mode: TransitionInputMode): boolean => mode === 'boundary'
+
+/** 首尾直变 + 尾帧：reference_image 与尾帧互斥；按本次是否真的送尾帧判断 */
+export function transitionRefSubmitAllowed(submitsLastFrame: boolean): boolean {
+  return !submitsLastFrame
 }
 
 /** 转场若开启 inherit（已废弃，normalize 恒 false）：只继承素材/手工 URL，不用 cast 与表情 */
@@ -634,6 +647,16 @@ export type TransitionPromptPanelRefPrefix = {
 }
 
 /** 转场「本次出片提示词」面板摘要与 vp-refs 前缀（结构首尾帧） */
+/** 输入模式的中文标签，用于面板摘要 */
+export const INPUT_MODE_LABEL: Record<TransitionInputMode, string> = {
+  boundary: '首尾帧',
+  'first-frame': '仅首帧',
+  reference: '参考图',
+  'video-reference': '参考视频',
+  text: '纯文本',
+  none: '无输入',
+}
+
 export function transitionPreviewToPromptPanelModel(
   preview: TransitionVideoPreview,
   vidRes: string,
@@ -642,10 +665,10 @@ export function transitionPreviewToPromptPanelModel(
   textSourceLabel: string
   refPrefix: TransitionPromptPanelRefPrefix[]
 } {
-  const bridgingLabel = preview.bridging === 'morph' ? '首尾直变' : '关键帧首帧'
+  const modeLabel = INPUT_MODE_LABEL[preview.inputMode]
   const res = vidRes ? ` · ${vidRes}` : ''
   const trim = preview.trimTo ? ` · 裁到 ${preview.trimTo.toFixed(1)}s` : ''
-  const summaryLine = `${bridgingLabel} · ${preview.seconds}s（请求 ${preview.requestSeconds}s${trim}）${res} · 正文来自${
+  const summaryLine = `${modeLabel} · ${preview.seconds}s（请求 ${preview.requestSeconds}s${trim}）${res} · 正文来自${
     preview.promptSource === 'override' ? '手改正文' : '画面与过渡/声音描述'
   } · 表情参考无 · 无表演 · 无音色参考`
   const textSourceLabel = preview.promptSource === 'override' ? '手改正文' : '画面与过渡/声音描述'
@@ -675,6 +698,10 @@ export type TransitionStyleOmitted = {
 
 export type TransitionVideoPreview = {
   bridging: TransitionBridging
+  /** 本次提交的输入模式（首尾帧 → 单首帧 → 参考图 → 参考视频 → 纯文本） */
+  inputMode: TransitionInputMode
+  /** 本次是否真的提交尾帧；决定裁剪与参考图互斥 */
+  submitsLastFrame: boolean
   seconds: number
   requestSeconds: number
   trimTo?: number
@@ -714,12 +741,8 @@ export type TransitionVideoRequest = TransitionVideoPreview & {
   styleRefOmitReason: string | undefined
 }
 
-export function styleRefOmitReason(
-  bridging: TransitionBridging,
-  supportsLastFrame: boolean,
-  hasBoundaryIn: boolean,
-): string {
-  if (bridging === 'morph' && supportsLastFrame && hasBoundaryIn) return OMIT_REASON_MORPH_REF_MUTEX
+export function styleRefOmitReason(submitsLastFrame: boolean): string {
+  if (submitsLastFrame) return OMIT_REASON_MORPH_REF_MUTEX
   return OMIT_REASON_TRANSITION_NO_REFS
 }
 
@@ -731,17 +754,15 @@ export function buildTransitionVideoRequest(input: {
     label?: string
     model?: string
     providerKind?: string
-    features?: { lastFrame?: boolean; audioOut?: boolean }
+    features?: { lastFrame?: boolean; textToVideo?: boolean; audioOut?: boolean }
   } | null
   nodes?: ShotNodeType[]
   characters?: CharacterSheet[]
   missingMedia?: Set<string>
 }): TransitionVideoRequest {
   const preview = buildTransitionVideoPreview(input)
-  const g = normalizeGenerated(input.generated)
-  const hasIn = Boolean(g.boundary?.in)
-  const submitStyle = transitionRefSubmitAllowed(preview.bridging, preview.supportsLastFrame, hasIn)
-  const omitCode = styleRefOmitReason(preview.bridging, preview.supportsLastFrame, hasIn)
+  const submitStyle = transitionRefSubmitAllowed(preview.submitsLastFrame)
+  const omitCode = styleRefOmitReason(preview.submitsLastFrame)
   const refImages = submitStyle ? preview.refs.map((r) => r.url) : []
   const refVideos = submitStyle && preview.video ? [preview.video.url] : []
   return {
@@ -761,7 +782,7 @@ export function buildTransitionVideoPreview(input: {
     label?: string
     model?: string
     providerKind?: string
-    features?: { lastFrame?: boolean; audioOut?: boolean }
+    features?: { lastFrame?: boolean; textToVideo?: boolean; audioOut?: boolean }
   } | null
   nodes?: ShotNodeType[]
   characters?: CharacterSheet[]
@@ -770,9 +791,13 @@ export function buildTransitionVideoPreview(input: {
   const g = normalizeGenerated(input.generated)
   const supportsLastFrame = Boolean(input.model?.features?.lastFrame)
   const nativeMode = g.audioMode === 'native'
-  const req = transitionRequestSeconds(g.targetSeconds, input.model?.model, supportsLastFrame, {
-    nativeAudio: nativeMode,
-  })
+  const modelFeatures = input.model?.features
+  const req = transitionRequestSeconds(
+    g.targetSeconds,
+    input.model?.model,
+    Boolean(g.boundary?.out && g.boundary?.in),
+    { nativeAudio: nativeMode },
+  )
   const dialogue = parseDialogue(transitionDialogueText(input.source, input.target))
   const performance = [...(input.source.data.performance ?? []), ...(input.target.data.performance ?? [])]
   const audioCaps = audioRefCapabilitiesFor({
@@ -815,7 +840,7 @@ export function buildTransitionVideoPreview(input: {
     if (g.boundary?.out) {
       attachments.push({
         role: 'first_frame',
-        label: '首帧 · 上一镜尾帧',
+        label: `首帧 · ${boundarySourceLabel(g.boundary.outFrom)}`,
         url: g.boundary.out,
         purpose: '锁定过渡起点',
       })
@@ -823,24 +848,16 @@ export function buildTransitionVideoPreview(input: {
     if (g.boundary?.in) {
       attachments.push({
         role: 'last_frame',
-        label: '尾帧 · 下一镜首帧',
+        label: `尾帧 · ${boundarySourceLabel(g.boundary.inFrom)}`,
         url: g.boundary.in,
         purpose: '锁定过渡终点',
       })
     }
-    if (!g.boundary?.out || !g.boundary?.in) {
-      blocking.push(
-        transitionBlock(
-          'transition-boundary-missing',
-          '缺少上一镜尾帧或下一镜首帧，请刷新边界或先给两镜出成片/静帧',
-        ),
-      )
-    }
-    if (!supportsLastFrame) {
+    if (!supportsLastFrame && g.boundary?.out && g.boundary?.in) {
       blocking.push(
         transitionBlock(
           'transition-no-last-frame',
-          '当前出片模型不支持尾帧，无法首尾直变（请选 Seedance 2.5 或 Kling v3）',
+          '当前出片模型不支持尾帧，无法首尾直变（请选 Seedance 2.5 或 Kling v3，或只保留首帧）',
         ),
       )
     }
@@ -862,9 +879,6 @@ export function buildTransitionVideoPreview(input: {
   const nodes = input.nodes ?? []
   const characters = input.characters ?? []
   const missingMedia = input.missingMedia ?? new Set<string>()
-  const hasIn = Boolean(g.boundary?.in)
-  const submitStyle = transitionRefSubmitAllowed(bridging, supportsLastFrame, hasIn)
-  const omitCode = styleRefOmitReason(bridging, supportsLastFrame, hasIn)
   const merge = mergedTransitionShotReferences({
     source: input.source,
     target: input.target,
@@ -873,6 +887,23 @@ export function buildTransitionVideoPreview(input: {
     missingMedia,
     generated: g,
   })
+  const inputMode = resolveTransitionInputMode({
+    boundary: g.boundary,
+    refCount: merge.used.length,
+    hasVideoRef: Boolean(merge.videos[0]),
+    features: modelFeatures,
+  })
+  const submitsLastFrame = inputModeSubmitsLastFrame(inputMode)
+  const submitStyle = transitionRefSubmitAllowed(submitsLastFrame)
+  const omitCode = styleRefOmitReason(submitsLastFrame)
+  if (inputMode === 'none') {
+    blocking.push(
+      transitionBlock(
+        'transition-no-input',
+        '没有可用输入：抽取首尾帧、在画布连线参考图，或换一个支持文生视频的模型',
+      ),
+    )
+  }
   const supplemental = new Set(merge.supplementalTokens)
   const usedSet = new Set(merge.used.map((r) => r.url))
   const omittedFromLimit = merge.omitted.map((r) => ({
@@ -970,6 +1001,8 @@ export function buildTransitionVideoPreview(input: {
 
   return {
     bridging,
+    inputMode,
+    submitsLastFrame,
     seconds: g.targetSeconds,
     requestSeconds: req.seconds,
     ...(req.trimTo ? { trimTo: req.trimTo } : {}),
@@ -1026,18 +1059,18 @@ export function modelSupportsLastFrame(entry: ModelEntry | undefined): boolean {
   return Boolean(entry?.features?.lastFrame)
 }
 
-/** 生成转场的请求时长：首尾帧模型需要保住终点，只首帧模型多留一点余量再裁 */
+/** 生成转场的请求时长：本次真的提交尾帧才保住终点，否则多留余量再裁 */
 export function transitionRequestSeconds(
   targetSeconds: number,
   modelId: string | undefined,
-  supportsLastFrame: boolean,
+  submitsLastFrame: boolean,
   opts?: { nativeAudio?: boolean },
 ): { seconds: number; trimTo?: number } {
   const min = videoMinSeconds(modelId)
   const nativeFloor = opts?.nativeAudio ? 5 : 0
   const effectiveMin = Math.max(min, nativeFloor)
   const target = Math.max(0.8, Number(targetSeconds) || 1.2)
-  if (supportsLastFrame) return { seconds: Math.max(effectiveMin, Math.round(target)) }
+  if (submitsLastFrame) return { seconds: Math.max(effectiveMin, Math.round(target)) }
   return { seconds: Math.max(effectiveMin, Math.ceil(target + 0.6)), trimTo: target }
 }
 
