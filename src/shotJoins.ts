@@ -10,6 +10,7 @@ export type JoinGeneratedDraft = {
   sound_prompt?: string
   target_seconds?: number
   recipe_ids?: string[]
+  variant_id?: string
   taxonomy?: TransitionTaxonomy
 }
 
@@ -112,6 +113,7 @@ export function applyJoinsToShots(shots: ProjectShot[], joins: JoinDraft[]): Joi
       }
       const recipeIds = [...new Set([...(j.recipe_ids ?? []), ...(j.generated?.recipe_ids ?? [])])]
       if (recipeIds.length) g.recipeIds = recipeIds
+      if (j.generated?.variant_id) g.variantId = String(j.generated.variant_id)
       transitionOut = {
         ...base,
         to: toKey,

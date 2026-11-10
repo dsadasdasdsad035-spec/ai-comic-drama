@@ -231,6 +231,8 @@ export type TransitionGenerated = {
   taxonomy?: 'scene' | 'character' | 'space' | 'vfx' | 'camera' | 'ai_video'
   /** video-shotcraft 等食谱卡片 id */
   recipeIds?: string[]
+  /** 技法卡（kind: technique）命中时选定的变体 id；缺省则用卡级内容 */
+  variantId?: string
 }
 
 /**

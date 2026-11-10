@@ -31,8 +31,17 @@ version: 1
 ### 工具
 
 1. `read_shots` 读本集全部镜头（episode = 当前集号）。
-2. `read_transition_recipes` 按 taxonomy 或关键词取食谱卡片（intent 作参考，勿抄 Remotion）。
+2. `read_transition_recipes` 按 taxonomy 或关键词取食谱卡片。
 3. `submit_joins` 一次提交整集或一批接缝。
+
+### 读卡规则
+
+- 先看 `whenToUse` 判断这张卡适不适用于当前接缝；不适用就换卡，不要硬套。
+- `kind: technique` 的卡有多式 `variants`：按 `variants[].when` 择一式，再用该式的 `principle`，不要笼统引用整张卡。
+- `energy` 用来配 `modeHint` 倾向与 `duration_seconds`：`high`/`max` 偏 `generated` 且短促；`low` 可用 `effect` 或较长 `generated`。
+- `seedanceHints` 已是完整句子，写 `generated.prompt` 时可直接取用。
+- `pitfalls` 里的坑要在 prompt 或 rationale 里体现，避免复现。
+- **禁止**抄 Remotion 实现参数（帧数、bezier、像素、弹簧、CSS 值）。
 
 ### 输出字段（joins-v1）
 

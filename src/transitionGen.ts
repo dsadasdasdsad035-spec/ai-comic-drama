@@ -10,6 +10,7 @@ import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import type { ShotData, TransitionBoundary, TransitionBridging, TransitionGenerated } from './types'
 import { assetMediaType } from './mediaPick'
+import { getTransitionRecipe, type TransitionRecipe } from './transitionRecipes'
 import {
   collectShotReferences,
   collectVideoReferences,
@@ -512,7 +513,61 @@ export function autoTransitionVideoPrompt(
         '允许环境明显变化（天气、光线、降水、雾气等），但角色外观、服装与空间逻辑需连贯；运动连续自然，不出现字幕、文字与水印。'
       : '这是两个镜头之间的过渡片段：从上镜的落点自然过渡到下镜的起点，人物外观、服装、场景与光线保持一致，运动连续，不出现字幕、文字与水印。'
   const continuity = transitionContinuityBlock(source, target)
-  return `${base}${continuity}\n\n${tail}${transitionSoundBlock(g.soundPrompt, g.audioMode === 'native')}`
+  const recipe = transitionRecipePromptBlock(g.recipeIds, g.variantId, base)
+  return `${base}${recipe.text}${continuity}\n\n${tail}${transitionSoundBlock(g.soundPrompt, g.audioMode === 'native')}`
+}
+
+/**
+ * 食谱层：命中卡按 hints（逐条成句）优先、principle 兜底；技法卡优先用指定变体。
+ * 正文里已含某条原文时跳过该条，避免与 Agent 写的 prompt 重复。
+ */
+export function transitionRecipePromptBlock(
+  recipeIds: string[] | undefined,
+  variantId: string | undefined,
+  existingText = '',
+): { text: string; warnings: string[] } {
+  const ids = [...new Set((recipeIds ?? []).map(String).filter(Boolean))]
+  if (!ids.length) return { text: '', warnings: [] }
+  const warnings: string[] = []
+  const lines: string[] = []
+  const pitfalls: string[] = []
+  const seen = new Set<string>()
+  const alreadyIn = (s: string) => Boolean(s && existingText.includes(s))
+
+  for (const id of ids) {
+    const card: TransitionRecipe | undefined = getTransitionRecipe(id)
+    if (!card) continue
+    const variant = variantId ? (card.variants ?? []).find((v) => v.id === variantId) : undefined
+    if (card.kind === 'technique' && !variant) {
+      warnings.push(`技法卡「${card.title}」未指定变体，已用卡级描述`)
+    }
+    const hints = card.seedanceHints ?? []
+    const useVariant = Boolean(variant)
+    if (useVariant && variant) {
+      if (!alreadyIn(variant.principle) && !seen.has(variant.principle)) {
+        seen.add(variant.principle)
+        lines.push(variant.principle)
+      }
+    } else if (hints.length) {
+      for (const h of hints) {
+        if (!h || alreadyIn(h) || seen.has(h)) continue
+        seen.add(h)
+        lines.push(h)
+      }
+    } else if (card.principle && !alreadyIn(card.principle) && !seen.has(card.principle)) {
+      seen.add(card.principle)
+      lines.push(card.principle)
+    }
+    for (const p of [...(card.pitfalls ?? []), ...(variant?.principle ? [] : [])]) {
+      if (!p || pitfalls.includes(p)) continue
+      pitfalls.push(p)
+    }
+  }
+
+  const parts: string[] = []
+  if (lines.length) parts.push(`\n\n手法：\n${lines.join('\n')}`)
+  if (pitfalls.length) parts.push(`\n\n避免：\n${pitfalls.join('；')}。`)
+  return { text: parts.join(''), warnings }
 }
 
 /** @deprecated 用 autoTransitionVideoPrompt / effectiveTransitionVideoPrompt */
@@ -629,14 +684,13 @@ function finalizeTransitionPromptText(
   attachments: TransitionVideoPreviewAttachment[],
   refs: VideoAttachment[],
   video: VideoAttachment | null,
+  submitRefs: boolean,
 ): string {
   if (source === 'override') return base
-  return (
-    base +
-    buildTransitionStructurePromptHint(attachments) +
-    buildReferenceImagesPromptHint(refs, Boolean(video)) +
-    buildVideoReferencePromptHint(video ?? undefined)
-  )
+  // 互斥被省略时不能在正文里宣称有参考，否则正文与请求不一致
+  const refHint = submitRefs ? buildReferenceImagesPromptHint(refs, Boolean(video)) : ''
+  const videoHint = submitRefs ? buildVideoReferencePromptHint(video ?? undefined) : ''
+  return base + buildTransitionStructurePromptHint(attachments) + refHint + videoHint
 }
 
 export type TransitionPromptPanelRefPrefix = {
@@ -987,7 +1041,14 @@ export function buildTransitionVideoPreview(input: {
     const nativeSound = nativeAudioPrompt(nativeRef.character, dialogue, true)
     if (nativeSound) promptBody = `${promptBody}\n\n${nativeSound}`
   }
-  const prompt = finalizeTransitionPromptText(promptBody, effectivePrompt.source, attachments, refs, video)
+  const prompt = finalizeTransitionPromptText(
+    promptBody,
+    effectivePrompt.source,
+    attachments,
+    refs,
+    video,
+    submitStyle,
+  )
 
   if (nativeMode) {
     if (!nativeRef?.ok) {

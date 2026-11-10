@@ -161,7 +161,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 
   const readTransitionRecipes = defineTool({
     name: 'read_transition_recipes',
-    description: '读取转场食谱索引（video-shotcraft 风格卡片摘要）。可按 taxonomy 或关键词过滤。',
+    description:
+      '读取转场食谱索引。可按 taxonomy 或关键词过滤。卡片可能含 whenToUse（适用接缝）、energy（能量等级）、durationHint（秒）、principle（视觉机制）、variants（技法卡多式）、pitfalls（已知坑）、seedanceHints（可直接进提示词的完整句子）。',
     schema: z.object({
       taxonomy: z
         .enum(['scene', 'character', 'space', 'vfx', 'camera', 'ai_video'])

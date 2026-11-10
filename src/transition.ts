@@ -171,6 +171,7 @@ export function normalizeGenerated(input?: Partial<TransitionGenerated> | null):
     ...(input?.audioMeta ? { audioMeta: input.audioMeta } : {}),
     ...(input?.taxonomy ? { taxonomy: input.taxonomy } : {}),
     ...(input?.recipeIds?.length ? { recipeIds: input.recipeIds } : {}),
+    ...(input?.variantId ? { variantId: String(input.variantId) } : {}),
   }
 }
 

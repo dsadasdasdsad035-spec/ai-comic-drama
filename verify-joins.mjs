@@ -89,6 +89,61 @@ check(
 const ids = new Set(recipes.map((r) => r.id))
 check('match-cut-action 存在', ids.has('match-cut-action'))
 
+// ---- 食谱可迁移字段 ----
+const trans = recipes.filter((r) => r.category === 'transition')
+check('转场食谱 30 条', trans.length === 30, String(trans.length))
+check(
+  '转场食谱全部含 whenToUse',
+  trans.every((r) => String(r.whenToUse || '').trim()),
+  JSON.stringify(trans.filter((r) => !r.whenToUse).map((r) => r.id)),
+)
+const techniques = trans.filter((r) => r.kind === 'technique').map((r) => r.id)
+check(
+  '三张技法卡到位',
+  ['shot-transitions', 'transition-hidden-cut', 'transition-travel'].every((id) => techniques.includes(id)),
+  JSON.stringify(techniques),
+)
+check(
+  '技法卡都带 variants 且不设 energy',
+  trans
+    .filter((r) => r.kind === 'technique')
+    .every((r) => Array.isArray(r.variants) && r.variants.length > 0 && !r.energy),
+)
+check(
+  'variants 含 when 与 principle',
+  trans
+    .filter((r) => r.kind === 'technique')
+    .flatMap((r) => r.variants ?? [])
+    .every((v) => v.id && v.label && v.when && v.principle),
+)
+check(
+  '具体卡 seedanceHints 是完整句（≥12 字）',
+  trans
+    .filter((r) => r.kind !== 'technique')
+    .flatMap((r) => r.seedanceHints ?? [])
+    .every((h) => String(h).length >= 12),
+)
+const FORBIDDEN = /bezier|damping|stiffness|\d+px|ease-|@30fps/i
+const paramOffenders = []
+for (const r of trans) {
+  const texts = [
+    r.principle,
+    r.whenToUse,
+    ...(r.seedanceHints ?? []),
+    ...(r.pitfalls ?? []),
+    ...(r.variants ?? []).flatMap((v) => [v.when, v.principle]),
+  ].filter(Boolean)
+  if (texts.some((t) => FORBIDDEN.test(t))) paramOffenders.push(r.id)
+}
+check('迁移卡不含 Remotion 实现参数', paramOffenders.length === 0, JSON.stringify(paramOffenders))
+check(
+  '上游 14 张卡已导入',
+  ['bottom-push-stack-wipe', 'card-flip-reveal', 'circle-match-iris', 'gradient-transition',
+   'line-carry-transition', 'mosaic-reframe', 'page-turn-transitions', 'print-texture-transitions',
+   'shot-transitions', 'tear-streak-transitions', 'transition-hidden-cut', 'transition-travel',
+   'white-flash-logo-simplify-cut', 'wipe-transitions'].every((id) => ids.has(id)),
+)
+
 {
   const badId = joins.applyJoinsToShots([s1, s2], [
     { after_no: 'S99', to_no: 'S02', relation: 'transition', mode: 'generated' },

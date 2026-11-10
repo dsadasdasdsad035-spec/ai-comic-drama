@@ -135,6 +135,7 @@ const joinItemV1 = passthrough({
     sound_prompt: z.string().optional(),
     target_seconds: z.number().optional(),
     recipe_ids: z.array(z.string()).optional(),
+    variant_id: z.string().optional(),
     taxonomy: transitionTaxonomy.optional(),
   }).optional(),
 })

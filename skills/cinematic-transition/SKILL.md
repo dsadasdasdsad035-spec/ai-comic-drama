@@ -72,6 +72,24 @@ Concise negative prompt or avoid list (identity drift, anatomy, camera teleport,
 
 Adapt to first/last-frame conditioning, reference conditioning, short bridge duration, and compositing fallbacks per host Seedance 能力说明。
 
+当前转场可能只有首帧、只有参考图，甚至只有提示词（纯文本出片）；不要假定一定有尾帧。提示词 MUST NOT 引用「首帧」「尾帧」这类只在特定输入模式下存在的锚点。
+
+#### 7. 从食谱取素材（read_transition_recipes）
+
+读到的卡可能含以下字段，按用途取，不要整段照抄：
+
+| 字段 | 用途 |
+|---|---|
+| `whenToUse` | 判断这张卡适不适用当前接缝；不适用就换卡，别硬套 |
+| `variants` | 技法卡的多式选型；先按 `variants[].when` 择一式，再用该式的 `principle` |
+| `principle` | 视觉机制 → 改写成具体可见的画面描述 |
+| `seedanceHints` | 已是完整句子，可直接作为正文中的一句 |
+| `pitfalls` | 已知坑 → 转成负向约束，并入 `NEGATIVE_PROMPT` 或正文限制句 |
+| `energy` | 决定运动质感措辞：`high`/`max` 用加速、冲击、骤变；`low` 用缓释、渐变、克制 |
+| `durationHint` | 作为 `duration_seconds` 的参考起点，仍需按两镜实际时长调整 |
+
+**禁止**：不要把食谱里的帧数、缓动曲线（bezier 等）、像素坐标与尺寸、弹簧参数、CSS 属性值写进提示词——那些属于宿主渲染实现，对视频生成模型无意义。
+
 ### Required deliverables
 
 Return all sections below（对用户可摘要；完整字段写入 submit_joins）：
@@ -89,6 +107,7 @@ Return all sections below（对用户可摘要；完整字段写入 submit_joins
 - One dominant action and one dominant camera move.
 - Screen direction explicit; state what occupies the frame at the cut point.
 - Do not ask the model to create text, subtitles, UI, or logos unless required.
+- 每条过渡句必须是可见的画面运动（谁/什么在动、怎么动、画面怎么变），不是标签词组。
 
 ## 任务
 

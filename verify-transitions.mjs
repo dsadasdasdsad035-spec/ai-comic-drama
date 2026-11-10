@@ -21,6 +21,7 @@ fs.writeFileSync(
     `export * from ${abs('src/shotSync.ts')}`,
     `export * from ${abs('src/transitionGen.ts')}`,
     `export * from ${abs('src/transitionPresets.ts')}`,
+    `export * from ${abs('src/transitionRecipes.ts')}`,
     `export * from ${abs('src/transitionSuggest.ts')}`,
   ].join('\n') + '\n',
 )
@@ -368,10 +369,28 @@ const mergePrev = lib.buildTransitionVideoPreview({
 })
 check('双镜合并手工参考', mergePrev.refs.length === 2, String(mergePrev.refs.length))
 check(
-  '转场正文含参考图槽位描述',
-  mergePrev.prompt.includes('参考图：') &&
-    mergePrev.prompt.includes('[图1]=手工参考图') &&
-    mergePrev.prompt.includes('[首帧]='),
+  '首尾帧齐全时正文不宣称参考图（互斥省略）',
+  !mergePrev.prompt.includes('参考图：') && mergePrev.prompt.includes('[首帧]='),
+  mergePrev.prompt.slice(-160),
+)
+// 同一批参考在非互斥时（只有首帧）必须出现，且条数与 refImages 一致
+const mergeFirstOnly = lib.buildTransitionVideoRequest({
+  source: refShotA,
+  target: refShotB,
+  generated: {
+    ...previewG,
+    boundary: { out: '/a.jpg' },
+    refIds: ['extra:/extra-a.jpg', '/extra-a.jpg', 'extra:/extra-b.jpg'],
+  },
+  nodes: [refShotA, refShotB],
+  characters: [],
+  missingMedia: new Set(),
+})
+const hintCount = (mergeFirstOnly.prompt.match(/\[图\d+\]=/g) ?? []).length
+check(
+  '非互斥时参考注记与提交数一致',
+  mergeFirstOnly.prompt.includes('参考图：') && hintCount === mergeFirstOnly.refImages.length,
+  `hints=${hintCount} refs=${mergeFirstOnly.refImages.length}`,
 )
 check('合并 refs 槽位同构', mergePrev.refs[0]?.slot === 'image' && mergePrev.refs[0]?.index === 1)
 
@@ -499,6 +518,63 @@ const fpEx2 = lib.transitionFingerprint(fullA.data, fullB.data, {
   excludeRefIds: ['char-b'],
 })
 check('excludeRefIds 进指纹', fpEx1 !== fpEx2)
+
+// ---- 食谱检索覆盖新字段 ----
+const principleHit = lib.searchTransitionRecipes('魔术误导')
+check(
+  '检索命中 principle',
+  principleHit.some((r) => r.id === 'transition-hidden-cut'),
+  JSON.stringify(principleHit.map((r) => r.id).slice(0, 5)),
+)
+const whenHit = lib.searchTransitionRecipes('同心')
+check('检索命中 whenToUse/principle 关键词', whenHit.some((r) => r.id === 'circle-match-iris'))
+check(
+  '技法卡可选型',
+  lib.recipeVariants(lib.getTransitionRecipe('shot-transitions')).length === 3,
+)
+check(
+  '具体卡无变体',
+  lib.recipeVariants(lib.getTransitionRecipe('wipe-transitions')).length === 0,
+)
+
+// ---- 食谱层进入自动正文 ----
+const recipeShotA = shot('rs1', 'R01', 3, {})
+const recipeShotB = shot('rs2', 'R02', 3, {})
+const noRecipe = lib.autoTransitionVideoPrompt(recipeShotA, recipeShotB, {
+  targetSeconds: 1.2,
+  prompt: '雨势加大',
+})
+const withRecipe = lib.autoTransitionVideoPrompt(recipeShotA, recipeShotB, {
+  targetSeconds: 1.2,
+  prompt: '雨势加大',
+  recipeIds: ['circle-match-iris'],
+})
+check('无 recipeIds 时不加手法段', !noRecipe.includes('手法：'))
+check(
+  '命中卡写入 hints',
+  withRecipe.includes('手法：') && withRecipe.includes('一个圆形光圈从画面中某个圆形元素的圆心向外炸开'),
+)
+check('命中卡写入负向约束', withRecipe.includes('避免：') && withRecipe.includes('锚点必须是真圆'))
+check('未知 id 被忽略', lib.transitionRecipePromptBlock(['no-such-card'], undefined).text === '')
+
+const variantBlock = lib.transitionRecipePromptBlock(['shot-transitions'], 'portal-wipe')
+check(
+  '技法卡指定变体只用该式',
+  variantBlock.text.includes('页面内真实元素放大成全屏窗口') &&
+    !variantBlock.text.includes('机位一拍横甩') &&
+    !variantBlock.text.includes('跨骑一层短促白闪'),
+  variantBlock.text.slice(0, 80),
+)
+const noVariantBlock = lib.transitionRecipePromptBlock(['shot-transitions'], undefined)
+check('技法卡未指定变体给 warning', noVariantBlock.warnings.some((w) => w.includes('未指定变体')))
+
+const dedupBase = '一个圆形光圈从画面中某个圆形元素的圆心向外炸开'
+const dedupBlock = lib.transitionRecipePromptBlock(['circle-match-iris'], undefined, dedupBase)
+check(
+  '正文已含该 hint 时不重复',
+  (dedupBlock.text.match(/圆形元素的圆心向外炸开/g) ?? []).length === 0,
+  dedupBlock.text.slice(0, 60),
+)
 
 // ---- 效果预设 ----
 check('预设不少于 12 项', lib.PRESET_COUNT >= 12)
