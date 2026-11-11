@@ -40,6 +40,7 @@ import OutgoingReferencePickerModal, { type OutgoingBoundarySlot } from './Outgo
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
 import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
+import Fold from './Fold'
 import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategory } from './transitionPresets'
 import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
 
@@ -639,12 +640,14 @@ export default function TransitionPanel({
               videoMeta={videoMeta}
               hasVideoUrl={Boolean(g.video?.url)}
               advancedSlot={
-                <details
+                <Fold
                   className="tr-advanced"
+                  idPrefix="tr-advanced"
+                  title="转场与边界"
+                  meta={`首帧${g.boundary?.out ? '已选' : '未选'} · 尾帧${g.boundary?.in ? '已选' : '未选'}`}
                   open={advancedOpen}
-                  onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+                  onToggle={() => setAdvancedOpen((v) => !v)}
                 >
-                  <summary>转场与边界</summary>
                   <p className="tr-note">
                     不自动继承镜头连线；画布拖线仍可写入本条转场（先点接缝边）。首尾帧只由两镜成片抽取，集中操作用下方按钮。
                   </p>
@@ -709,7 +712,7 @@ export default function TransitionPanel({
                       ) : null}
                     </div>
                   ) : null}
-                </details>
+                </Fold>
               }
             />
 

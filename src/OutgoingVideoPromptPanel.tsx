@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import Fold from './Fold'
 import type { AppSettings, Stage } from './api'
 import {
   StageModelSelect,
@@ -143,63 +144,55 @@ export default function OutgoingVideoPromptPanel({
 
   return (
     <div className="vp-panel" data-video-prompt-panel data-open={open ? 'true' : 'false'}>
-      <button
-        type="button"
-        className="vp-disclosure-trigger"
-        aria-expanded={open}
-        aria-controls="vp-disclosure-body"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="vp-disclosure-chevron" aria-hidden="true" />
-        <span className="vp-disclosure-title">本次出片提示词</span>
-        <span className="vp-disclosure-meta">
-          {!open ? <span className="vp-disclosure-chars">{textChars} 字</span> : null}
-          {needsAttention ? <span className="vp-disclosure-attn" title="正文或附件需更新" /> : null}
-          <span
-            className={`vp-badge ${badgeClass}`}
-            title={
-              effective.source === 'override'
-                ? '手改全文优先于模板与语义层'
-                : effective.autoKind === 'template'
-                  ? '当前正文来自九段模板渲染'
-                  : '当前正文来自镜表语义层（较短）'
-            }
-          >
-            {badgeLabel}
-          </span>
-        </span>
-      </button>
-
-      {!open ? (
-        <div className="vp-disclosure-peek" id="vp-disclosure-peek">
-          <p className="vp-disclosure-peek-text" title={effective.text}>
-            {peekLine}
-          </p>
-          {needsAttention ? (
-            <p className="vp-disclosure-peek-warn">附件或模板已过期，展开后请更新</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div
-        id="vp-disclosure-body"
-        className="vp-disclosure-body"
-        hidden={!open}
-        aria-hidden={!open}
+      <Fold
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        title="本次出片提示词"
+        idPrefix="vp-disclosure"
+        className="vp-fold"
+        bodyClassName="vp-disclosure-body"
+        meta={
+          <>
+            {!open ? <span className="vp-disclosure-chars">{textChars} 字</span> : null}
+            {needsAttention ? (
+              <span className="vp-disclosure-attn" title="正文或附件需更新" />
+            ) : null}
+            <span
+              className={`vp-badge ${badgeClass}`}
+              title={
+                effective.source === 'override'
+                  ? '手改全文优先于模板与语义层'
+                  : effective.autoKind === 'template'
+                    ? '当前正文来自九段模板渲染'
+                    : '当前正文来自镜表语义层（较短）'
+              }
+            >
+              {badgeLabel}
+            </span>
+          </>
+        }
+        peek={
+          <>
+            <p className="vp-disclosure-peek-text" title={effective.text}>
+              {peekLine}
+            </p>
+            {needsAttention ? (
+              <p className="vp-disclosure-peek-warn">附件或模板已过期，展开后请更新</p>
+            ) : null}
+          </>
+        }
       >
           <div className="vp-summary">{summary}</div>
 
           {refCount > 0 ? (
-            <details
+            <Fold
               className="vp-refs-disclosure"
+              idPrefix="vp-refs"
+              title="附件与槽位"
+              meta={`${refCount} 项`}
               open={refsOpen}
-              onToggle={(e) => setRefsOpen(e.currentTarget.open)}
+              onToggle={() => setRefsOpen((v) => !v)}
             >
-              <summary className="vp-refs-summary">
-                <span className="vp-refs-summary-title">附件与槽位</span>
-                <span className="vp-refs-summary-count">{refCount} 项</span>
-                <span className="vp-refs-summary-chevron" aria-hidden="true" />
-              </summary>
               <ul className="vp-refs">
             {refPrefix.map((a) => (
               <li key={a.key}>
@@ -238,7 +231,7 @@ export default function OutgoingVideoPromptPanel({
               </li>
             ))}
               </ul>
-            </details>
+            </Fold>
           ) : null}
 
           {advancedSlot}
@@ -380,7 +373,7 @@ export default function OutgoingVideoPromptPanel({
           ) : hasVideoUrl ? (
             <div className="vp-meta-note">当前视频未记录提示词来源</div>
           ) : null}
-      </div>
+      </Fold>
     </div>
   )
 }

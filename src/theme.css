@@ -13837,3 +13837,128 @@ body,
   text-decoration: line-through;
 }
 
+/* ---------- 折叠原语：单行摘要条 + 就地展开 ---------- */
+.fold {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.fold-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.fold-head:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.fold-head:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.fold-chevron {
+  flex: none;
+  width: 12px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.18s ease;
+}
+
+.fold-chevron::before {
+  content: '▾';
+}
+
+.fold[data-open='false'] .fold-chevron {
+  transform: rotate(-90deg);
+}
+
+.fold-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fold-meta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 62%;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fold-peek {
+  padding: 0 9px 7px 29px;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  line-height: 1.45;
+}
+
+.fold-peek.danger {
+  color: var(--danger);
+}
+
+.fold-body {
+  padding: 2px 9px 9px;
+  animation: vp-disclosure-in 0.22s ease;
+}
+
+.fold-body[hidden] {
+  display: none;
+}
+
+/* 既有折叠区改用 Fold 承载后，保留各自原有的段落外观 */
+.si-section > .fold > .fold-head {
+  border-radius: 0;
+}
+
+.si-section > .fold > .fold-body {
+  padding: 0 8px 8px;
+}
+
+.vp-panel > .vp-fold > .fold-head {
+  border-radius: 0;
+}
+
+.vp-panel[data-open='true'] > .vp-fold > .fold-head {
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.vp-refs-disclosure > .fold-head {
+  padding: 6px 8px;
+  border-radius: 0;
+  font-size: var(--fs-2xs);
+}
+
+.vp-refs-disclosure > .fold-body {
+  padding: 0 8px 6px;
+}

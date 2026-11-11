@@ -20,6 +20,7 @@ import PerformanceEditor from './PerformanceEditor'
 import NativeAudioPanel from './NativeAudioPanel'
 import { VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
 import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
+import Fold from './Fold'
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
 import { audioRefCapabilitiesFor } from './nativeAudio'
@@ -517,27 +518,24 @@ function InspectorSection({
   className?: string
 }) {
   return (
-    <details
-      className={`si-section ${className ?? ''}`}
+    <div
+      className={`si-section ${className ?? ''}`.trim()}
       data-shot-tab={tab}
       data-section={id}
+      data-open={open ? 'true' : 'false'}
       hidden={hidden}
-      open={open}
     >
-      <summary
-        onClick={(e) => {
-          e.preventDefault()
-          onToggle()
-        }}
+      <Fold
+        open={open}
+        onToggle={onToggle}
+        title={title}
+        meta={summary}
+        idPrefix={`si-${id}`}
+        bodyClassName="si-section-body"
       >
-        <span className="si-section-title">{title}</span>
-        {summary ? <span className="si-section-summary">{summary}</span> : null}
-        <span className="si-section-chevron" aria-hidden="true">
-          ▾
-        </span>
-      </summary>
-      <div className="si-section-body">{children}</div>
-    </details>
+        {children}
+      </Fold>
+    </div>
   )
 }
 

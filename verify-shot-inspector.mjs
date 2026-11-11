@@ -215,14 +215,14 @@ check('视频 chip 切到视频页', (await activeTab()) === '视频', await act
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.waitForTimeout(200)
 const paramsSection = p.locator('[data-section="shotParams"]')
-check('镜头参数默认折叠', (await paramsSection.evaluate((el) => el.open)) === false)
-await paramsSection.locator('summary').focus()
+check('镜头参数默认折叠', (await paramsSection.evaluate((el) => el.dataset.open)) === 'false')
+await paramsSection.locator('.fold-head').focus()
 await p.keyboard.press('Enter')
 await p.waitForTimeout(200)
-check('键盘可展开折叠区', (await paramsSection.evaluate((el) => el.open)) === true)
+check('键盘可展开折叠区', (await paramsSection.evaluate((el) => el.dataset.open)) === 'true')
 await p.keyboard.press('Enter')
 await p.waitForTimeout(200)
-check('键盘可收起折叠区', (await paramsSection.evaluate((el) => el.open)) === false)
+check('键盘可收起折叠区', (await paramsSection.evaluate((el) => el.dataset.open)) === 'false')
 
 // 键盘 tab 导航
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
@@ -253,10 +253,10 @@ check('视频主操作在吸底栏', (await footer.innerText()).includes('视频
 await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(250)
 const perf = p.locator('[data-section="performance"]')
-check('表演默认折叠', (await perf.evaluate((el) => el.open)) === false)
-await perf.locator('summary').click()
+check('表演默认折叠', (await perf.evaluate((el) => el.dataset.open)) === 'false')
+await perf.locator('.fold-head').click()
 await p.waitForTimeout(250)
-check('表演可展开', (await perf.evaluate((el) => el.open)) === true)
+check('表演可展开', (await perf.evaluate((el) => el.dataset.open)) === 'true')
 
 // 草稿保留
 await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
@@ -320,7 +320,7 @@ await selectShot('S01')
 check('刷新后宽度保留', Math.abs((await width()) - afterWidth) < 3, JSON.stringify({ afterWidth, now: await width() }))
 await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
 await p.waitForTimeout(250)
-check('刷新后表演折叠状态保留', (await p.locator('[data-section="performance"]').evaluate((el) => el.open)) === true)
+check('刷新后表演折叠状态保留', (await p.locator('[data-section="performance"]').evaluate((el) => el.dataset.open)) === 'true')
 
 // 复位
 const handle2 = p.locator('.si-resize')
