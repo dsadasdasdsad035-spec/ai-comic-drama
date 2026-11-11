@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import type { CreativeSessionSummary } from './sessionStore'
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
@@ -12,12 +12,11 @@ function readAsDataUrl(file: File): Promise<string> {
   })
 }
 
-/** 输入区下方的媒体条：粘链接、上传视频、一键切分/抽帧 */
+/** 输入区下方的媒体条：上传视频、一键切分/抽帧 */
 export function CreativeComposerBar({
   session,
   busy,
   disabled,
-  onUrl,
   onUpload,
   onSplit,
   onFrames,
@@ -25,12 +24,10 @@ export function CreativeComposerBar({
   session: CreativeSessionSummary | null
   busy: string
   disabled: boolean
-  onUrl: (url: string) => void
   onUpload: (data: string, name: string) => void
   onSplit: () => void
   onFrames: () => void
 }) {
-  const [url, setUrl] = useState('')
   const fileRef = useRef<HTMLInputElement | null>(null)
   const source = session?.sources[0]
   const shots = source ? (session?.shots || {})[source.id] || [] : []
@@ -52,34 +49,6 @@ export function CreativeComposerBar({
   return (
     <div data-creative-composer-bar className="creative-composer-bar">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <input
-          data-creative-url
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="粘贴视频链接（抖音 / B 站 / TikTok / 直链）"
-          className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-[11px]"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && url.trim()) {
-              e.preventDefault()
-              onUrl(url.trim())
-              setUrl('')
-            }
-          }}
-          disabled={disabled}
-        />
-        <button
-          type="button"
-          data-creative-action="ingest-url"
-          className="shrink-0 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
-          onClick={() => {
-            if (!url.trim()) return
-            onUrl(url.trim())
-            setUrl('')
-          }}
-          disabled={disabled || !url.trim() || busy === 'ingest'}
-        >
-          {busy === 'ingest' ? '摄取中…' : '摄取'}
-        </button>
         <button
           type="button"
           data-creative-action="upload"
@@ -87,8 +56,11 @@ export function CreativeComposerBar({
           onClick={() => fileRef.current?.click()}
           disabled={disabled || busy === 'ingest'}
         >
-          上传视频
+          {busy === 'ingest' ? '上传中…' : '上传视频'}
         </button>
+        <span className="text-[10px] text-muted-foreground">
+          单文件 ≤200MB；平台链接请在 3D 调度工作台摄取
+        </span>
         <input
           ref={fileRef}
           type="file"

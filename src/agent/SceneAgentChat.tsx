@@ -276,6 +276,8 @@ type Props = {
   height: number
   aspect: string
   duration: number
+  /** 工作台注入的聊天草稿（不发送、不保存） */
+  composerSeed?: string
 }
 
 export default function SceneAgentChat({
@@ -301,6 +303,7 @@ export default function SceneAgentChat({
   height,
   aspect,
   duration,
+  composerSeed,
 }: Props) {
   const [messages, setMessages] = useState<AgentMessage[]>([])
   const [inspectorOpen, setInspectorOpen] = useState(false)
@@ -1105,6 +1108,7 @@ export default function SceneAgentChat({
                   ? '正在加载技能…'
                   : '修复技能后可发送'
             }
+            composerSeed={composerSeed}
             attachments={{
               items: manifestAttachments,
               // 3D 的上限由镜头上下文的素材预算决定（图片 16 / 视频 4），

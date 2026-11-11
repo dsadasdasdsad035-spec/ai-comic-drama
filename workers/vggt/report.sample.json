@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "sourceFingerprint": "sha256:mock0001",
+  "probe": { "duration": 6, "width": 1920, "height": 1080, "fps": 24 },
+  "confidence": "medium",
+  "scaleHint": {
+    "unit": "relative",
+    "sceneExtentM": null,
+    "note": "POC 仅提供相对位移；无绝对米制。"
+  },
+  "sampleCount": 12,
+  "keyframes": [
+    {
+      "t": 0,
+      "position": [0, 0, 0],
+      "rotationQuat": [1, 0, 0, 0],
+      "fovDeg": 54,
+      "confidence": 0.85
+    },
+    {
+      "t": 3,
+      "position": [0, 0.02, -0.12],
+      "rotationQuat": [0.998, 0.01, 0.05, 0],
+      "fovDeg": 52,
+      "confidence": 0.78
+    },
+    {
+      "t": 6,
+      "position": [0.04, 0.01, -0.18],
+      "rotationQuat": [0.996, 0.02, 0.08, 0.01],
+      "fovDeg": 50,
+      "confidence": 0.72
+    }
+  ],
+  "motionSummaryZh": "前段缓慢推近主体约 15%，中段略右移并微俯，末段基本静止。",
+  "mappingNote": "已按项目 16:9 解释；有效出片时长 6s，建议在 pose(t) 覆盖 0..6。",
+  "warnings": ["POC mock：非真实 VGGT 输出"]
+}

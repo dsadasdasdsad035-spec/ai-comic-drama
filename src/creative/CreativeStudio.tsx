@@ -619,8 +619,8 @@ export default function CreativeStudio({
     }
   }
 
-  /** 上传或粘链接：摄取源视频 */
-  const ingest = async (input: { url?: string; data?: string; name?: string }) => {
+  /** 本地上传：摄取源视频 */
+  const ingest = async (input: { data: string; name: string }) => {
     if (!session) return
     setBusyAction('ingest')
     setActionError('')
@@ -874,7 +874,7 @@ export default function CreativeStudio({
                       placeholder={
                         mode === 'plan'
                           ? '说说你想拍什么，例如：15 秒咖啡广告，前三秒要抓人…'
-                          : '粘一个抖音/B 站/TikTok 链接，或上传视频后说「反推提示词」…'
+                          : '先上传视频，再说「反推提示词」或「逐镜分析」…'
                       }
                       inputLabel="创意聊天输入"
                       suggestions={
@@ -895,7 +895,6 @@ export default function CreativeStudio({
                             session={session}
                             busy={busyAction}
                             disabled={running || !session}
-                            onUrl={(url) => void ingest({ url })}
                             onUpload={(data, name) => void ingest({ data, name })}
                             onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
                             onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}

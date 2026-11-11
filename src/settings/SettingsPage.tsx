@@ -1491,12 +1491,12 @@ export default function SettingsPage({
       <header className="st-sec-head">
         <h3>创意会话</h3>
         <span className="st-hint">
-          创意会话不绑定项目：下载与分析的源视频存本地 creatives/ 目录，只有「晋升项目」才写入项目数据。
-          下载服务默认关闭，只保留本地上传与直链。
+          创意会话不绑定项目：反推用的源视频仅支持本地上传，存在 creatives/ 目录；只有「晋升项目」才写入项目数据。
+          下方平台链接下载仅用于 3D 调度参考视频摄取（VGGT 面板）。
         </span>
       </header>
 
-      <h4 className="st-subhead">下载与摄取</h4>
+      <h4 className="st-subhead">平台链接下载（3D 参考摄取）</h4>
       <div className="st-grid">
         <label className="st-field">
           <span>yt-dlp 可执行文件</span>
@@ -1506,7 +1506,7 @@ export default function SettingsPage({
             placeholder="/opt/homebrew/bin/yt-dlp"
             onChange={(e) => setIngest({ ytdlp: { bin: e.target.value } })}
           />
-          <em>未安装可执行文件时该适配器显示为不可用，不影响上传与直链</em>
+          <em>未安装可执行文件时该适配器显示为不可用；创意室反推不依赖此配置</em>
         </label>
         <label className="st-field">
           <span>启用 yt-dlp</span>

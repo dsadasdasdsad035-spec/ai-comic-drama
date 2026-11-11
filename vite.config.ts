@@ -119,6 +119,15 @@ import {
   submitRenderJob,
 } from './server/blender.mjs'
 import {
+  cancelVggtJob,
+  cleanupVggtJobs,
+  getVggtJob,
+  isVggtAvailable,
+  submitVggtAnalyze,
+} from './server/vggt.mjs'
+// @ts-ignore 宿主导块 .mjs
+import { ingestShot3dReference } from './server/shot3d-ingest.mjs'
+import {
   ensureAgentJob,
   agentShell,
   agentReadFile,
@@ -2515,6 +2524,7 @@ function seedreamProxy(): Plugin {
       // dev server 重启后清掉上一次的残留作业目录；运行中的作业随进程退出终止。
       try {
         cleanupStaleJobs(root)
+        cleanupVggtJobs(root)
       } catch {
         /* 清理失败不阻塞启动 */
       }
@@ -2805,10 +2815,28 @@ function seedreamProxy(): Plugin {
                 res.end(JSON.stringify({ ok: false, message: `创意会话不存在：${sessionId || '(空)'}` }))
                 return
               }
+              const urlText = String(body.url || '').trim()
+              const dataText = String(body.data || '').trim()
+              if (urlText) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message:
+                      '创意室仅支持本地上传视频。抖音 / B 站等平台链接请在「3D 调度 → 参考片几何」中摄取。',
+                  }),
+                )
+                return
+              }
+              if (!dataText) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '请上传视频文件' }))
+                return
+              }
               const sessionDir = creativeSessionDir(root, sessionId)
               const sourceId = `src-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`
               const got = await ingestCreativeSource(
-                { url: body.url, data: body.data, name: body.name, adapter: body.adapter },
+                { data: body.data, name: body.name, adapter: body.adapter || 'upload' },
                 { sessionId, sourceId, sourcesDir: path.join(sessionDir, 'sources') },
                 creative,
               )
@@ -4434,6 +4462,79 @@ function seedreamProxy(): Plugin {
             }
             res.statusCode = 404
             res.end(JSON.stringify({ ok: false, message: '未知的 Blender 接口' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 3D 镜头参考视频摄取（抖音/B 站等，落项目 assets）----
+        if (url === '/api/shot-3d/ingest-reference' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const body = await readJson(req)
+            const settings = getAppSettings()
+            const creative = applyCreativeEnvDefaults(normalizeCreativeSettings(settings.creative), process.env).settings
+            const result = await ingestShot3dReference(root, body, creative)
+            res.end(JSON.stringify({ ok: true, ...result }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- VGGT 参考片几何分析（POC，不写调度真相）----
+        if (url.startsWith('/api/vggt/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rest = url.slice('/api/vggt/'.length)
+          try {
+            if (rest === 'status' && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, available: isVggtAvailable() }))
+              return
+            }
+            if (rest === 'analyze' && req.method === 'POST') {
+              const body = await readJson(req)
+              try {
+                const job = submitVggtAnalyze(root, body)
+                res.end(JSON.stringify({ ok: true, job }))
+              } catch (e: any) {
+                if (e?.code === 'VGGT_NO_WORKER') {
+                  res.statusCode = 503
+                  res.end(JSON.stringify({ ok: false, message: e.message }))
+                  return
+                }
+                throw e
+              }
+              return
+            }
+            const jobMatch = rest.match(/^jobs\/([^/]+)(?:\/cancel)?$/)
+            if (jobMatch) {
+              const jobId = decodeURIComponent(jobMatch[1])
+              if (rest.endsWith('/cancel')) {
+                if (req.method !== 'POST') {
+                  res.statusCode = 405
+                  res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+                  return
+                }
+                const job = cancelVggtJob(root, jobId)
+                res.end(JSON.stringify({ ok: true, job }))
+                return
+              }
+              if (req.method === 'GET') {
+                const job = getVggtJob(root, jobId)
+                if (!job) {
+                  res.statusCode = 404
+                  res.end(JSON.stringify({ ok: false, message: '作业不存在或已过期' }))
+                  return
+                }
+                res.end(JSON.stringify({ ok: true, job }))
+                return
+              }
+            }
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的 VGGT 接口' }))
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
@@ -6301,6 +6402,7 @@ export default defineConfig({
         '**/openspec/**',
         '**/verify-*.mjs',
         '**/.blender-jobs/**',
+        '**/.vggt-jobs/**',
         '**/.scene-drafts/**',
         '**/fixtures/**',
         '**/projects/**',

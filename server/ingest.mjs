@@ -498,6 +498,14 @@ export function pickAdapter(input, config = {}) {
   return BY_ID.get('direct')
 }
 
+/**
+ * 在指定目录执行摄取（创意会话 sources / 项目 assets 共用）。
+ * ctx: { sourceId, sourcesDir, sessionId? }
+ */
+export async function ingestSourceToDir(input, ctx, config = {}) {
+  return ingestSource(input, ctx, config)
+}
+
 /** 执行摄取；返回 { adapter, file, bytes, meta, warnings } */
 export async function ingestSource(input, ctx, config = {}) {
   const adapter = pickAdapter(input, config)

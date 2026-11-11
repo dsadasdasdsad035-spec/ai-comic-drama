@@ -336,30 +336,6 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     },
   })
 
-  const ingest = defineTool({
-    name: 'ingest_source',
-    description:
-      '摄取一个源视频：传 url 时由服务端按已启用的适配器选择下载方式。' +
-      '不要自己指定适配器；失败时按返回的「可用方式」提示用户。',
-    schema: z.object({
-      url: z.string().min(1).describe('公网视频链接或平台分享链接'),
-    }),
-    run: async ({ url }) => {
-      try {
-        const r = await ingestCreative({ sessionId: deps.sessionId, url })
-        deps.onSourceChanged?.()
-        return {
-          ok: true,
-          summary: `已摄取 ${r.source.platform || '视频'} · ${r.source.duration ?? '?'}s`,
-          source: r.source,
-          warnings: r.warnings,
-        }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message || String(e) }
-      }
-    },
-  })
-
   const probe = defineTool({
     name: 'probe_source',
     description: '重新读取源视频的技术信息（时长、分辨率、帧率、音轨）。不产生模型费用。',
@@ -565,7 +541,6 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
     [readSource.name, readSource],
     [readShots.name, readShots],
     [readFrameDetail.name, readFrameDetail],
-    [ingest.name, ingest],
     [probe.name, probe],
     [split.name, split],
     [frames.name, frames],

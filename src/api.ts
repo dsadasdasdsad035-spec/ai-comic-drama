@@ -1407,6 +1407,100 @@ export async function saveScheduleVideo(
 }
 
 /** 从调度视频抽关键帧，供出片时作结构性参考 */
+/** VGGT 参考片几何报告（只读 POC，version 1） */
+export type VggtConfidence = 'high' | 'medium' | 'low'
+export type VggtKeyframe = {
+  t: number
+  position: [number, number, number]
+  rotationQuat: [number, number, number, number]
+  fovDeg: number
+  confidence: number
+}
+export type VggtReportV1 = {
+  version: 1
+  sourceFingerprint: string
+  probe: { duration: number | null; width: number | null; height: number | null; fps: number | null }
+  confidence: VggtConfidence
+  scaleHint?: { unit?: string; sceneExtentM?: number | null; note?: string }
+  keyframes: VggtKeyframe[]
+  motionSummaryZh: string
+  mappingNote: string
+  warnings: string[]
+  sampleCount?: number
+}
+
+export type VggtJob = {
+  id: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  sourceKind?: 'reference' | 'schedule'
+  videoRef?: string
+  error?: string
+  report?: VggtReportV1
+}
+
+export type Shot3dIngestResult = {
+  videoUrl: string
+  bytes: number
+  adapter?: string
+  adapterLabel?: string
+  meta?: Record<string, string>
+  warnings?: string[]
+  probe?: {
+    duration: number | null
+    width: number | null
+    height: number | null
+    fps: number | null
+    hasAudio?: boolean
+  }
+}
+
+export async function ingestShot3dReference(input: {
+  projectName: string
+  shotId?: string
+  url?: string
+  data?: string
+  name?: string
+  adapter?: string
+}): Promise<Shot3dIngestResult> {
+  const r = await fetch('/api/shot-3d/ingest-reference', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const j = await r.json()
+  if (!j.ok) throw new Error(j.message || '参考视频摄取失败')
+  return j as Shot3dIngestResult
+}
+
+export async function vggtWorkerStatus(): Promise<{ ok: boolean; available: boolean }> {
+  const r = await fetch('/api/vggt/status')
+  return r.json()
+}
+
+export async function submitVggtAnalyze(input: {
+  videoRef: string
+  sourceKind?: 'reference' | 'schedule'
+  projectAspect?: string
+  effectiveSeconds?: number
+  maxFrames?: number
+}): Promise<VggtJob> {
+  const r = await fetch('/api/vggt/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const j = await r.json()
+  if (!j.ok) throw new Error(j.message || '几何分析提交失败')
+  return j.job as VggtJob
+}
+
+export async function getVggtJob(id: string): Promise<VggtJob | null> {
+  const r = await fetch(`/api/vggt/jobs/${encodeURIComponent(id)}`)
+  const j = await r.json()
+  if (!j.ok) return null
+  return j.job as VggtJob
+}
+
 export async function extractFrames(
   video: string,
   count = 3,

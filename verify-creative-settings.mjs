@@ -210,11 +210,20 @@ try {
   })
   check('留空保存保留原 Key', keepKey.settings?.creative?.ingest?.dtk?.hasApiKey === true)
 
-  // 6) 用 DTK 摄取：请求形状与鉴权头
+  // 6) 创意室不再用 URL 摄取
   const session = (await post('/api/creative/sessions', {})).session
-  // 桩服务返回的是 127.0.0.1，会被 SSRF 防护拦下——这正好验证「服务端不信任下载来源」
-  const ingest = await post('/api/creative/ingest', {
+  const creativeUrl = await post('/api/creative/ingest', {
     sessionId: session.id,
+    url: 'https://v.douyin.com/demo/',
+  })
+  check('创意 ingest 拒绝 URL', creativeUrl.ok === false && /本地上传|3D/.test(String(creativeUrl.message)), creativeUrl.message)
+
+  // 7) DTK 走 3D 参考摄取：请求形状与鉴权头（桩 CDN 为 127.0.0.1 → SSRF 拒绝）
+  const projName = `settings-dtk-${Date.now()}`
+  await api(`/api/project?create=1&name=${encodeURIComponent(projName)}`, { method: 'POST', body: '{}' })
+  dtkSeen.length = 0
+  const shot3dIngest = await post('/api/shot-3d/ingest-reference', {
+    projectName: projName,
     url: 'https://v.douyin.com/demo/',
     adapter: 'dtk',
   })
@@ -222,22 +231,22 @@ try {
   check('DTK 带 Authorization', dtkSeen[0]?.auth === 'Bearer dtk-secret', dtkSeen[0]?.auth)
   check('先调 parse 端点', String(dtkSeen[0]?.url || '').startsWith('/api/v1/parse'), dtkSeen[0]?.url)
   check('parse 请求体带 url', /"url"/.test(String(dtkSeen[0]?.body || '')), String(dtkSeen[0]?.body).slice(0, 80))
-  // 桩返回的 CDN 地址是 127.0.0.1，被 SSRF 防护拦下——验证「不信任解析结果里的地址」
   check(
     '内网下载地址被拒绝（SSRF 防护）',
-    ingest.ok === false && /内网|本机/.test(String(ingest.message)),
-    String(ingest.message).slice(0, 120),
+    shot3dIngest.ok === false && /内网|本机/.test(String(shot3dIngest.message)),
+    String(shot3dIngest.message).slice(0, 120),
   )
 
-  // 7) 已启用适配器失败时不静默回退
-  const fallback = await post('/api/creative/ingest', {
-    sessionId: session.id,
+  // 8) 已启用适配器失败时不静默回退（3D 摄取）
+  dtkSeen.length = 0
+  const fallback = await post('/api/shot-3d/ingest-reference', {
+    projectName: projName,
     url: 'https://v.douyin.com/demo/',
     adapter: 'dtk',
   })
   check('失败不回退到直链', fallback.ok === false && !/video\/mp4/.test(JSON.stringify(fallback)), String(fallback.message).slice(0, 80))
 
-  // 8) 凭据不出现在错误与线程里
+  // 9) 凭据不出现在创意线程里
   const thread = await api(`/api/creative/sessions/${session.id}/thread`)
   check('线程不含凭据', !JSON.stringify(thread).includes('dtk-secret'))
 

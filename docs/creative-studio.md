@@ -21,24 +21,9 @@
 
 ## 摄取
 
-支持三种输入，统一入口：
+创意反推**仅支持本地上传**（反推 / 复刻模式输入区「上传视频」或空态上传；单文件上限 200MB）。
 
-1. **本地上传**：界面按钮或直接拖入；单文件上限 200MB。
-2. **公网直链**：服务端流式下载；只允许 http(s)，拒绝 localhost 与私网地址。
-3. **平台链接**（抖音 / B 站 / TikTok）：需要先启用解析适配器。
-
-适配器默认只开前两种。可选适配器：
-
-- **yt-dlp**：设置页「创意 → 下载与摄取」填可执行文件路径并启用（`brew install yt-dlp`，路径通常是 `/opt/homebrew/bin/yt-dlp`）。未安装时该适配器显示不可用并给出原因；启用时若路径为空会被拦下，不允许保存出「开着但不可用」的状态。
-  - **抖音 / TikTok 需要 cookies**：把「读取浏览器 cookies」设为 Chrome（或 Safari/Edge/Firefox），并确保该浏览器里登录过平台。yt-dlp 只在本机读取 cookie 库，不上传不落盘。抖音的 web detail 接口目前对未带新鲜 cookies 的请求返回 403，带 cookies 也可能被风控拦截——这种情况下用「上传视频」更稳。
-  - **B 站**已验证可用（含封面探测）。
-- **DTK（Douyin_TikTok_Download_API）**：自建服务，抖音/TikTok 的实际可行路径。
-  - 部署：直接跑 `./scripts/dtk-up.sh`（拉源码、生成密钥、起容器、初始化管理员、铸造 API Key 全自动）。手工等价命令见 [`docs/deploy.md`](deploy.md)。**抖音必须加 `--profile browser`**，否则身份池为空，解析会返回 `IDENTITY_POOL_EXHAUSTED`。
-  - 首次启动后从 `docker logs dtk-api-1` 取 setup token，在 `/setup?token=...` 建管理员，再到控制台创建 API Key（需要 `douyin:read` 等 scope）。
-  - 本仓库只调两个稳定端点：`POST /api/v1/parse?wait=30` 与 `GET /api/v1/tasks/{id}`，从 `data.media.video.url` 取 CDN 直链，再由本机下载。**不走 `downloads` 端点**——那个只把文件存在 DTK 自己磁盘上，不从 API 回传。
-  - 实测：抖音链接下载 147MB / 36 分钟 / 1440×1080 / 有音轨，作者与标题均正确。
-
-已启用的适配器失败时**不会**静默回退到直链：避免你以为用的是 A，实际跑的是 B。
+平台链接（抖音 / B 站 / TikTok）与公网直链**不在创意室解析**；若需要，请在 **3D 调度 → 参考片几何** 摄取到项目 `assets/`，或下载后本地上传到创意会话。yt-dlp / DTK 等配置见设置 **「平台链接下载（3D 参考摄取）」**，详见根目录 `README.md` 的 VGGT 参考视频摄取说明。
 
 ## 反推链路
 
@@ -97,9 +82,7 @@
 | 现象 | 原因与处理 |
 | --- | --- |
 | 摄取报「不允许访问本机/内网地址」 | 直链或解析器返回了私网地址，被 SSRF 防护拦下；改用公网链接或本地上传 |
-| 平台链接提示「这个平台链接需要解析器」 | 没有可用解析器。装 yt-dlp 并填路径，或部署 DTK；也可直接上传视频 |
-| 平台链接提示「需要浏览器 cookies」 | 抖音/TikTok 反爬。设置页把「读取浏览器 cookies」设为 chrome，并确保浏览器登录过该平台 |
-| 抖音仍 403（已带 cookies） | yt-dlp 当前版本对抖音 web 接口的已知限制；改用 DTK（已验证可用）或「上传视频」 |
+| 粘贴了抖音/B 站链接想反推 | 创意室只接受本地上传；链接请到 3D 调度 VGGT 摄取或先下载再上传 |
 | DTK 返回 `IDENTITY_POOL_EXHAUSTED` | 没启动 browser 容器。用 `--profile browser` 重启，然后再调一次「铸造身份」 |
 | DTK 返回 `INVALID_PARAM: wait max 30` | `?wait=` 上限是 30 秒，别传更大值 |
 | 反推报「没有可用的视觉模型」 | 设置页「创意 → 能力绑定」或「默认路由」里绑定 vision 模型 |
@@ -114,6 +97,7 @@
 node verify-creative-reverse-contract.mjs   # reverse-v1 契约与技能解析
 node verify-creative-session.mjs            # 会话 CRUD、线程上限、目录清理、前端 store
 node verify-creative-ingest.mjs             # 摄取适配器、SSRF、probe、切分、抽帧
+node verify-shot-3d-reference-ingest.mjs # 3D 调度参考视频摄取（共用 creative.ingest 配置）
 node verify-creative-export.mjs             # 导出与晋升（含手改保护、失败回滚）
 node verify-creative-ui.mjs                 # 八视图、会话列表、模式、窄屏、项目切换
 node verify-creative-reverse.mjs            # 端到端反推（media + vision + 契约）

@@ -320,6 +320,15 @@ def dispose():
 
 选中素材通过稳定键取路径，例如 `character:<id>`、`design:<id>`、`image:<hash>`、`video:<hash>:frame:0`。视频只以关键帧进入代码运行时和聊天，不依赖视频逐帧 seek。
 
+### VGGT 参考片几何（实验）
+
+3D 工作台左侧「参考片几何建议」从参考片或**只读**调度片反推相对机位摘要，供复制到 Agent 聊天；**不构成调度真相**，不写入 `sceneCode` / `schedule_video` / 项目库。
+
+- **参考视频摄取**：在 VGGT 面板可粘贴**抖音 / B 站**等平台链接或上传 MP4，经 `POST /api/shot-3d/ingest-reference` 落成 `projects/<项目>/assets/` 下的站内地址（`/project-assets/...`）。解析器、yt-dlp 路径、DTK、cookies 等见 **设置 → 创意 → 平台链接下载（3D 参考摄取）**（`settings.creative.ingest`）；摄取**不会**自动写入 `sceneCode`，仅可把 URL 加入本镜 `Shot3DContext.videoUrls` 草稿，保存镜头后才落库。
+- **Worker**：`VGGT_WORKER_URL` 指向 Linux GPU 上的 `POST /v1/infer`（见 `workers/vggt/README.md`）；本地 POC 可 `node workers/vggt/mock-server.mjs`，并设 `VGGT_WORKER_URL=http://127.0.0.1:8765`。可选 `VGGT_WORKER_TOKEN`、`VGGT_JOB_TTL_DAYS`（默认 7）。
+- **作业目录**：`.vggt-jobs/`（gitignore）。
+- **验收**：`node verify-vggt-poc.mjs`；参考摄取 `node verify-shot-3d-reference-ingest.mjs`；总回归可 `node verify-all.mjs vggt`。
+
 ### Agent 聊天（LangGraph + assistant-ui）
 
 - `@langchain/langgraph` 的 `StateGraph` 管状态和工具循环；JSON action 由 `ZCodeChatModel` 实现（`{content, tool_calls}`），provider 原生工具调用由 `NativeToolChatModel` 实现。

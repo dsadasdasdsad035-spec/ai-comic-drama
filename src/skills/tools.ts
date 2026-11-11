@@ -31,7 +31,6 @@ export const KNOWN_TOOL_IDS = new Set([
   'read_creative_source',
   'read_video_shots',
   'read_frame_detail',
-  'ingest_source',
   'probe_source',
   'split_scenes',
   'extract_frames',

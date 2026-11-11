@@ -1,4 +1,4 @@
-import { useRef, type ReactNode, type ComponentType, type RefObject } from 'react'
+import { useEffect, useRef, type ReactNode, type ComponentType, type RefObject } from 'react'
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -127,6 +127,8 @@ export function ChatThreadBody({
   attachments,
   composerTop,
   onComposerDraftChange,
+  /** 外部注入聊天草稿（例如 VGGT 摘要） */
+  composerSeed,
   cancelLabel = '取消',
   emptyAlign = 'top',
 }: {
@@ -148,10 +150,18 @@ export function ChatThreadBody({
   composerTop?: ReactNode
   /** 实时同步输入框草稿（未发送文字） */
   onComposerDraftChange?: (text: string) => void
+  composerSeed?: string
   cancelLabel?: string
   emptyAlign?: 'top' | 'bottom'
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!composerSeed || !inputRef.current) return
+    inputRef.current.value = composerSeed
+    inputRef.current.dispatchEvent(new Event('input', { bubbles: true }))
+    onComposerDraftChange?.(composerSeed)
+    inputRef.current.focus()
+  }, [composerSeed, onComposerDraftChange])
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col">
       <ChatViewport>

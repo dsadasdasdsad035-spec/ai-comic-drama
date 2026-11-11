@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "sourceFingerprint": "sha256:evidence001",
+  "probe": { "duration": 6, "width": 1920, "height": 1080, "fps": 24 },
+  "confidence": "medium",
+  "scaleHint": {
+    "unit": "relative",
+    "sceneExtentM": null,
+    "note": "归档用 mock 样本"
+  },
+  "sampleCount": 12,
+  "keyframes": [
+    {
+      "t": 0,
+      "position": [0, 0, 0],
+      "rotationQuat": [1, 0, 0, 0],
+      "fovDeg": 54,
+      "confidence": 0.85
+    },
+    {
+      "t": 6,
+      "position": [0.04, 0.01, -0.18],
+      "rotationQuat": [0.996, 0.02, 0.08, 0.01],
+      "fovDeg": 50,
+      "confidence": 0.72
+    }
+  ],
+  "motionSummaryZh": "前段推近、末段略右移（evidence mock）。",
+  "mappingNote": "16:9 · 6s",
+  "warnings": ["evidence 归档样本"]
+}

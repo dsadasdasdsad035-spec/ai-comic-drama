@@ -1,5 +1,5 @@
 /**
- * 创意摄取验收：适配器可用性、上传、直链、SSRF 防护、probe、切分、抽帧。
+ * 创意摄取验收：适配器状态、本地上传、拒绝 URL、probe、切分、抽帧。
  * 用 ffmpeg 现场造一段样例视频，不依赖仓库里的媒体文件。
  * 跑法：node verify-creative-ingest.mjs
  */
@@ -151,20 +151,18 @@ try {
   const srcFileRes = await fetch(`${APP}${src1.file}`)
   check('源视频可站内访问', srcFileRes.ok)
 
-  // 3) 直链：先拒绝内网，再从本地服务取（本地服务也是内网，所以用白名单外的公网形状测拒绝）
-  const blocked = await post('/api/creative/ingest', {
+  // 3) 创意室不再接受 URL / 平台链接摄取
+  const urlBlocked = await post('/api/creative/ingest', {
     sessionId,
-    adapter: 'direct',
-    url: 'http://127.0.0.1:1/x.mp4',
+    url: 'https://v.douyin.com/xxxx/',
   })
-  check('直链拒绝环回地址', blocked.status === 400 && /内网|本机/.test(String(blocked.json?.message)), blocked.json?.message)
+  check('拒绝平台链接', urlBlocked.status === 400 && /本地上传|3D/.test(String(urlBlocked.json?.message)), urlBlocked.json?.message)
 
-  const blockedLocal = await post('/api/creative/ingest', {
+  const directBlocked = await post('/api/creative/ingest', {
     sessionId,
-    adapter: 'direct',
-    url: `http://localhost:${filePort}/sample.mp4`,
+    url: `http://127.0.0.1:${filePort}/sample.mp4`,
   })
-  check('直链拒绝 localhost', blockedLocal.status === 400, blockedLocal.json?.message)
+  check('拒绝公网直链', directBlocked.status === 400, directBlocked.json?.message)
 
   // 4) 损坏文件：摄取成功但 probe 报可读错误
   const brokenUp = await post('/api/creative/ingest', {
@@ -175,21 +173,7 @@ try {
   })
   check('损坏文件仍入库但带 probeError', brokenUp.json?.ok === true && Boolean(brokenUp.json?.probeError), brokenUp.json?.probeError)
 
-  // 5) 平台链接在适配器都未启用时退回直链（并因内网/不可达失败，不静默成功）
-  const platform = await post('/api/creative/ingest', {
-    sessionId,
-    url: 'https://v.douyin.com/xxxx/',
-  })
-  check('平台链接未配置解析器时给出可读失败', platform.json?.ok !== true, platform.json?.message)
-  // 不再退回直链：错误必须点名「需要解析器」并给出可照做的下一步
-  check(
-    '平台链接错误说明需要解析器',
-    /需要解析器/.test(String(platform.json?.message)) &&
-      /上传视频/.test(String(platform.json?.message)),
-    String(platform.json?.message).slice(0, 160),
-  )
-
-  // 6) probe / split / frames
+  // 5) probe / split / frames
   const probed = await post('/api/creative/analyze', { sourceId: src1.id, action: 'probe' })
   check('显式 probe 成功', probed.json?.ok === true && Math.abs(probed.json.probe.duration - 3.6) < 0.4)
 

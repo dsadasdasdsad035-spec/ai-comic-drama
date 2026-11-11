@@ -8,7 +8,6 @@ const LABELS: Record<string, { title: string; kind: 'read' | 'media' | 'write' |
   read_creative_source: { title: '源视频信息', kind: 'read' },
   read_video_shots: { title: '镜头切分', kind: 'read' },
   read_frame_detail: { title: '证据帧分析', kind: 'paid' },
-  ingest_source: { title: '摄取源视频', kind: 'media' },
   probe_source: { title: '探测媒体信息', kind: 'media' },
   split_scenes: { title: '切分镜头', kind: 'media' },
   extract_frames: { title: '抽取证据帧', kind: 'media' },

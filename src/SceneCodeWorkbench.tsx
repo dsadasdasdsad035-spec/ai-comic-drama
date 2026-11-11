@@ -11,6 +11,7 @@ import type { StagePick } from './ModelSelect'
 import { stageModelKey, StageModelSelect } from './ModelSelect'
 import { renderSize } from './scheduleGeometry'
 import Shot3DContextPicker from './Shot3DContextPicker'
+import VggtGeometryPanel from './VggtGeometryPanel'
 import {
   allCatalogItems,
   buildShot3DContextCatalog,
@@ -188,6 +189,7 @@ export default function SceneCodeWorkbench({
   const [past, setPast] = useState<Snapshot[]>([])
   const [future, setFuture] = useState<Snapshot[]>([])
   const [sideTab, setSideTab] = useState<'chat' | 'code'>('chat')
+  const [composerSeed, setComposerSeed] = useState<string | undefined>()
   const chatScrollRef = useRef(0)
   const [previewState, setPreviewState] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle')
   const [previewError, setPreviewError] = useState('')
@@ -1182,6 +1184,48 @@ export default function SceneCodeWorkbench({
     sceneLayouts,
   }
 
+  const vggtSources = useMemo(() => {
+    const out: { kind: 'reference' | 'schedule'; label: string; url: string }[] = []
+    for (const url of context?.videoUrls ?? []) {
+      const u = String(url || '').split('?')[0]
+      if (u.startsWith('/')) out.push({ kind: 'reference', label: '参考片', url: u })
+    }
+    const sched = String(renderedVideo || node.data.scheduleVideo || '').split('?')[0]
+    if (sched.startsWith('/')) {
+      out.push({ kind: 'schedule', label: '当前调度片（只读）', url: sched })
+    }
+    return out
+  }, [context?.videoUrls, renderedVideo, node.data.scheduleVideo])
+
+  const injectVggtToChat = useCallback((text: string) => {
+    setComposerSeed(undefined)
+    requestAnimationFrame(() => {
+      setComposerSeed(text)
+      setSideTab('chat')
+    })
+  }, [])
+
+  const addReferenceVideoUrl = useCallback(
+    (videoUrl: string) => {
+      if (!context) {
+        toast('上下文未就绪')
+        return false
+      }
+      const u = videoUrl.split('?')[0]
+      if (context.videoUrls.includes(u)) {
+        toast('该视频已在参考列表中')
+        return true
+      }
+      if (context.videoUrls.length >= SCENE_CODE_LIMITS.videos) {
+        toast(`视频参考上限为 ${SCENE_CODE_LIMITS.videos} 个`)
+        return false
+      }
+      setContextSafe({ ...context, videoUrls: [...context.videoUrls, u] })
+      return true
+    },
+    [context, setContextSafe, toast],
+  )
+
   return (
     <div className="cw-backdrop" role="dialog" aria-modal="true" aria-label="3D 代码工作台" ref={rootRef} tabIndex={-1}>
       <div className="cw-shell">
@@ -1275,6 +1319,16 @@ export default function SceneCodeWorkbench({
                 onChange={setContextSafe}
                 onInherit={inheritSelection}
                 onToast={toast}
+              />
+              <VggtGeometryPanel
+                projectName={projectName}
+                projectAspect={projectAspect}
+                effectiveSeconds={duration}
+                sources={vggtSources}
+                onCopyToChat={injectVggtToChat}
+                onAddReference={addReferenceVideoUrl}
+                onToast={toast}
+                geometryBusy={Boolean(renderBusy) || generating}
               />
             </aside>
           )}
@@ -1467,6 +1521,7 @@ export default function SceneCodeWorkbench({
                   height={height}
                   aspect={projectAspect}
                   duration={duration}
+                  composerSeed={composerSeed}
                 />
               </Suspense>
             </div>

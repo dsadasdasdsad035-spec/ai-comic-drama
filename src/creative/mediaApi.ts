@@ -86,9 +86,8 @@ export async function listCreativeAdapters(): Promise<AdaptersResponse> {
 
 export async function ingestCreative(input: {
   sessionId: string
-  url?: string
-  data?: string
-  name?: string
+  data: string
+  name: string
   adapter?: string
 }): Promise<IngestResponse> {
   const j = await postJson('/api/creative/ingest', input)

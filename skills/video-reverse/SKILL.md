@@ -3,7 +3,7 @@ name: video-reverse
 description: 把一条参考视频逐镜反推成可直接使用的首帧提示词与运动提示词
 stage: creative
 runtime: tools
-tools: [read_creative_session, read_creative_source, read_video_shots, read_frame_detail, ingest_source, probe_source, split_scenes, extract_frames, submit_reverse_pack, generate_image, generate_video, generate_voice]
+tools: [read_creative_session, read_creative_source, read_video_shots, read_frame_detail, probe_source, split_scenes, extract_frames, submit_reverse_pack, generate_image, generate_video, generate_voice]
 inputs: [mode, sourceLabel, shotCount, aspect]
 output: reverse-v1
 contracts: [reverse-v1]
@@ -14,7 +14,7 @@ version: 1
 
 【工作方式】
 - 先用 read_creative_source 确认源视频的技术信息。
-- 如果还没有镜头切分，用 split_scenes 切分；如果镜头还没有证据帧，用 extract_frames 抽帧。用户只给了链接时用 ingest_source 摄取。
+- 如果还没有镜头切分，用 split_scenes 切分；如果镜头还没有证据帧，用 extract_frames 抽帧。源视频须由用户在界面本地上传；若用户只贴了平台链接，提示其在界面点「上传视频」，或到 3D 调度工作台摄取后再晋升。
 - 再用 read_video_shots 拿到镜头段与证据帧，逐镜用 read_frame_detail 查看证据帧；一次只看一镜，不要凭想象描述没看到的画面。
 - 只描述证据帧里能观察到的事实。看不清就写「未识别」，不要编造品牌、文字、人脸细节。
 
