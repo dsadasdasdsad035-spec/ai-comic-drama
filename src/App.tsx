@@ -72,6 +72,7 @@ import {
   listMedia,
   mergeProjectShots,
   patchProject,
+  recoverVideo,
   startVideo,
   waitVideo,
   type AppSettings,
@@ -114,6 +115,7 @@ import {
   videoOmitToastMessages,
   type VideoModelInput,
 } from './videoPrompt'
+import { resolveVideoUpstreamRecover } from './videoRecover'
 import { type Ask } from './scheduleAI'
 import { resolveShotScene } from './shotScene'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
@@ -2515,7 +2517,13 @@ function Shell() {
         setToast(omittedNotes.join('；'))
         window.setTimeout(() => setToast(''), 4200)
       }
-      patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now(), videoUrl: undefined })
+      patch(id, {
+        vidState: 'running',
+        vidError: undefined,
+        vidAt: Date.now(),
+        videoUrl: undefined,
+        videoUpstreamRecover: undefined,
+      })
       const effective = effectiveVideoPrompt(request, node.data.videoPromptOverride)
       const imageUrls = request.refs.map((r) => r.url)
       const audioRef = request.audio
@@ -2564,6 +2572,7 @@ function Shell() {
           videoUrl: done.url,
           vidState: 'idle',
           vidAt: undefined,
+          videoUpstreamRecover: undefined,
           videoMeta: {
             url: done.url,
             prompt: effective.text,
@@ -2589,11 +2598,68 @@ function Shell() {
         })
         endTask(tid)
       } catch (e) {
-        patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
+        const recover = resolveVideoUpstreamRecover(e, modelKey, selectedVideoModel?.providerKind)
+        patch(id, {
+          vidState: 'error',
+          vidError: (e as Error).message,
+          vidAt: undefined,
+          ...(recover ? { videoUpstreamRecover: recover } : {}),
+        })
         endTask(tid, (e as Error).message)
       }
     },
     [patch, ratio, vidRes, selectedVideoModel, sceneLayouts, projectAspect, missingMedia],
+  )
+
+  /** 本地轮询超时但上游已完成时，凭 task_id 拉取成片 */
+  const recoverVideoOne = useCallback(
+    async (id: string) => {
+      const node = nodesRef.current.find((n) => n.id === id)
+      if (!node) return
+      const stored = node.data.videoUpstreamRecover
+      const modelKey = stored?.modelKey || selectedVideoModel?.key || ''
+      const recover = stored || resolveVideoUpstreamRecover(new Error(node.data.vidError || ''), modelKey, selectedVideoModel?.providerKind)
+      if (!recover) {
+        setToast('没有可恢复的上游 task_id')
+        window.setTimeout(() => setToast(''), 2800)
+        return
+      }
+      patch(id, { vidState: 'running', vidError: undefined, vidAt: Date.now() })
+      const tid = startTask('video', `${node.data.no} 拉取成片`, {
+        retry: () => void recoverVideoOne(id),
+      })
+      try {
+        const done = await recoverVideo({
+          upstreamTaskId: recover.upstreamTaskId,
+          modelKey,
+          providerKind: recover.providerKind,
+        })
+        const prevMeta = node.data.videoMeta
+        patch(id, {
+          videoUrl: done.url,
+          vidState: 'idle',
+          vidAt: undefined,
+          vidError: undefined,
+          videoUpstreamRecover: undefined,
+          videoMeta: prevMeta
+            ? { ...prevMeta, url: done.url, createdAt: new Date().toISOString() }
+            : {
+                url: done.url,
+                prompt: '',
+                fingerprint: '',
+                modelKey,
+                createdAt: new Date().toISOString(),
+              },
+        })
+        endTask(tid)
+        setToast('成片已拉回')
+        window.setTimeout(() => setToast(''), 2400)
+      } catch (e) {
+        patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
+        endTask(tid, (e as Error).message)
+      }
+    },
+    [patch, selectedVideoModel],
   )
 
   const renderVideoTemplate = useCallback(
@@ -2836,6 +2902,7 @@ function Shell() {
             ...(cur.generated?.video ?? {}),
             state: 'running',
             error: undefined,
+            upstreamRecover: undefined,
             at: Date.now(),
             modelKey: videoKey,
             seconds: req.seconds,
@@ -2891,6 +2958,7 @@ function Shell() {
               seconds: req.seconds,
               ...(req.trimTo ? { trimTo: req.trimTo } : {}),
               state: 'idle' as const,
+              upstreamRecover: undefined,
               videoMeta: {
                 url: done.url,
                 prompt: bundle.prompt,
@@ -2921,6 +2989,99 @@ function Shell() {
       } catch (e) {
         if ((e as Error).name === 'AbortError' || controller.signal.aborted) return
         const message = (e as Error).message || '转场视频生成失败'
+        const recover = resolveVideoUpstreamRecover(e, videoKey, videoProvider?.kind)
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            video: {
+              ...(cur.generated?.video ?? {}),
+              state: 'error',
+              error: message,
+              ...(recover ? { upstreamRecover: recover } : {}),
+            },
+          },
+        }))
+        endTask(tid, message)
+      } finally {
+        unregisterTransitionVideoRun(run)
+      }
+    },
+    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price, cancelTransitionVideo, characters, missingMedia],
+  )
+
+  const recoverTransitionVideo = useCallback(
+    async (edgeId: string) => {
+      const pair = transitionPair(edgeId)
+      if (!pair) return
+      const { source, target, to } = pair
+      const base = normalizeTransitionOut(source.data.transitionOut, to)
+      const g = normalizeGenerated(base.generated)
+      const videoKey = g.video?.modelKey || modelPick.video || appSettings?.defaults?.video || ''
+      const entry = appSettings?.models.find((m) => m.key === videoKey)
+      const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
+      const stored = g.video?.upstreamRecover
+      const recover =
+        stored ||
+        resolveVideoUpstreamRecover(new Error(g.video?.error || ''), videoKey, videoProvider?.kind)
+      if (!recover) {
+        setToast('没有可恢复的上游 task_id')
+        window.setTimeout(() => setToast(''), 2800)
+        return
+      }
+      writeTransition(source.id, to, (cur) => ({
+        ...cur,
+        generated: {
+          ...normalizeGenerated(cur.generated),
+          video: {
+            ...(cur.generated?.video ?? {}),
+            state: 'running',
+            error: undefined,
+            at: Date.now(),
+          },
+        },
+      }))
+      const tid = startTask('video', `转场 ${source.data.no}→${target.data.no} 拉取成片`, {
+        retry: () => void recoverTransitionVideo(edgeId),
+      })
+      try {
+        const done = await recoverVideo({
+          upstreamTaskId: recover.upstreamTaskId,
+          modelKey: videoKey,
+          providerKind: recover.providerKind,
+        })
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            video: {
+              ...(cur.generated?.video ?? {}),
+              url: done.url,
+              state: 'idle' as const,
+              error: undefined,
+              upstreamRecover: undefined,
+              at: undefined,
+              videoMeta: cur.generated?.video?.videoMeta
+                ? {
+                    ...cur.generated.video.videoMeta,
+                    url: done.url,
+                    createdAt: new Date().toISOString(),
+                  }
+                : {
+                    url: done.url,
+                    prompt: '',
+                    fingerprint: '',
+                    modelKey: videoKey,
+                    createdAt: new Date().toISOString(),
+                  },
+            },
+          },
+        }))
+        endTask(tid)
+        setToast('转场成片已拉回')
+        window.setTimeout(() => setToast(''), 2400)
+      } catch (e) {
+        const message = (e as Error).message
         writeTransition(source.id, to, (cur) => ({
           ...cur,
           generated: {
@@ -2933,11 +3094,9 @@ function Shell() {
           },
         }))
         endTask(tid, message)
-      } finally {
-        unregisterTransitionVideoRun(run)
       }
     },
-    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price, cancelTransitionVideo, characters, missingMedia],
+    [transitionPair, writeTransition, modelPick, appSettings],
   )
 
   /** 批量只动效果转场；生成转场必须逐条手动，避免一次点掉多次视频生成 */
@@ -3934,6 +4093,7 @@ function Shell() {
               onSetRelation={setEdgeRelation}
               onClose={() => setSelEdgeId(null)}
               onGenerateVideo={generateTransitionVideo}
+              onRecoverVideo={recoverTransitionVideo}
               onCancelVideo={cancelTransitionVideo}
               onFocusShot={focusShotFromTransition}
               onPick={pickModelKey}
@@ -3967,6 +4127,7 @@ function Shell() {
             vidRes={vidRes}
             setVidRes={setVidRes}
             onGenerateVideo={generateVideoOne}
+            onRecoverVideo={recoverVideoOne}
             projectAspect={projectAspect}
             price={price}
             projectName={projectName}

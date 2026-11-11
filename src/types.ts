@@ -1,3 +1,5 @@
+import type { VideoUpstreamRecover } from './videoRecover'
+
 export type Tool = 'none' | 'pen' | 'rect'
 export type Relation = 'cut' | 'transition' | 'flashback' | 'branch'
 
@@ -199,6 +201,7 @@ export type TransitionKeyframe = {
 export type TransitionVideo = {
   url?: string
   modelKey?: string
+  upstreamRecover?: VideoUpstreamRecover
   /** 实际请求的生成时长（秒） */
   seconds?: number
   /** 仅首帧模型：成片里裁到这个目标时长；首尾帧模型不裁 */
@@ -375,6 +378,8 @@ export type ShotData = {
   videoUrl?: string
   vidState?: 'idle' | 'running' | 'error'
   vidError?: string
+  /** 超时/失败时保留的上游 task_id，可点「重新拉取成片」 */
+  videoUpstreamRecover?: VideoUpstreamRecover
   /** 提交时间戳，用于计时 */
   vidAt?: number
   /** 台词配音 */

@@ -16,7 +16,8 @@ const CATALOG_TIMEOUT_MS = 30_000
 const SUBMIT_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 60_000
 const DOWNLOAD_TIMEOUT_MS = 120_000
-const TASK_TIMEOUT_MS = 5 * 60_000
+/** 与前端 waitVideo 12min 对齐，减少「云端已完成、本地先超时」 */
+const TASK_TIMEOUT_MS = 10 * 60_000
 const POLL_INTERVAL_MS = 2_500
 
 export const APIMART_DEFAULT_VOICE = 'alloy'
@@ -570,6 +571,24 @@ export async function submitVideo({ baseUrl, apiKey, payload, signal, timeoutMs 
 }
 
 // ---------------------------------------------------------------- 轮询 / 下载
+
+/** 查询一次任务状态（不轮询；用于超时后手动拉取成片） */
+export async function getTask({
+  baseUrl,
+  apiKey,
+  taskId,
+  signal,
+  timeoutMs = SUBMIT_TIMEOUT_MS,
+  fetchImpl = fetch,
+}) {
+  const j = await requestJson(`${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`, {
+    apiKey,
+    signal,
+    timeoutMs,
+    fetchImpl,
+  })
+  return j?.data && typeof j.data === 'object' ? j.data : j
+}
 
 export async function pollTask({
   baseUrl,

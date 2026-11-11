@@ -231,6 +231,27 @@ function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** 上游已完成时，凭 task_id 下载成片（不重新提交生成） */
+export async function recoverVideo(body: {
+  upstreamTaskId: string
+  modelKey?: string
+  providerKind?: 'apimart' | 'ark'
+}): Promise<{ url: string }> {
+  let res: Response
+  try {
+    res = await fetch('/api/seedance/recover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+  const j = await readJsonRes(res)
+  if (!j.ok) throw new Error(j.message || '拉取成片失败')
+  return { url: String(j.url || '') }
+}
+
 export async function waitVideo(
   id: string,
   onTick?: (elapsedSec: number) => void,
@@ -250,9 +271,25 @@ export async function waitVideo(
     }
     if (!j.ok) throw new Error(j.message || '查询失败')
     if (j.status === 'succeeded') return { url: j.url as string }
-    if (j.status === 'failed') throw new Error(j.message || '生成失败')
+    if (j.status === 'failed') {
+      const parts = [String(j.message || '生成失败').trim()]
+      const upstream = String(j.taskId || '').trim()
+      if (upstream) parts.push(`上游 task_id：${upstream}`)
+      const err = new Error(parts.filter(Boolean).join('\n'))
+      if (upstream) (err as Error & { upstreamTaskId?: string }).upstreamTaskId = upstream
+      throw err
+    }
     onTick?.(Math.round((Date.now() - t0) / 1000))
-    if (Date.now() - t0 > timeoutMs) throw new Error('等待超时，可稍后重试')
+    if (Date.now() - t0 > timeoutMs) {
+      const upstream = String(j.taskId || '').trim()
+      const err = new Error(
+        upstream
+          ? `等待超时，可点「重新拉取成片」\n上游 task_id：${upstream}`
+          : '等待超时，可稍后重试',
+      )
+      if (upstream) (err as Error & { upstreamTaskId?: string }).upstreamTaskId = upstream
+      throw err
+    }
   }
 }
 

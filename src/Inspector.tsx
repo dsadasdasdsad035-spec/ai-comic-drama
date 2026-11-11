@@ -20,6 +20,8 @@ import PerformanceEditor from './PerformanceEditor'
 import NativeAudioPanel from './NativeAudioPanel'
 import { VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
 import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
+import GenErrorNote from './GenErrorNote'
+import { parseUpstreamTaskIdFromError } from './videoRecover'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
 import { videoRefLimitLabel } from './videoRefLimits'
@@ -325,6 +327,7 @@ type Props = {
   vidRes: '480p' | '720p'
   setVidRes: (v: '480p' | '720p') => void
   onGenerateVideo: (id: string) => void
+  onRecoverVideo?: (id: string) => void
   projectAspect: string
   canvasProdMode: CanvasProdMode
   /** 设置页的渠道+模型表，用于生成时选模型 */
@@ -556,6 +559,7 @@ function InspectorBody({
   vidRes,
   setVidRes,
   onGenerateVideo,
+  onRecoverVideo,
   projectAspect,
   canvasProdMode,
   settings,
@@ -1318,7 +1322,7 @@ function InspectorBody({
             </button>
             <div className="si-foot-note">
               {d.genState === 'error' && d.genError ? (
-                <span className="si-foot-error">{d.genError}</span>
+                <GenErrorNote message={d.genError} summary="出图失败" />
               ) : imageReason ? (
                 imageReason
               ) : (
@@ -1337,9 +1341,22 @@ function InspectorBody({
             >
               {d.vidState === 'running' ? '出片中…' : d.videoUrl ? '重出视频' : '生成视频'}
             </button>
+            {d.vidState === 'error' &&
+            onRecoverVideo &&
+            (d.videoUpstreamRecover?.upstreamTaskId ||
+              parseUpstreamTaskIdFromError(d.vidError || '')) ? (
+              <button
+                type="button"
+                className="btn block"
+                onClick={() => onRecoverVideo(node.id)}
+                title="按报错里的上游 task_id 向云端查询并下载，不会重新提交生成"
+              >
+                重新拉取成片
+              </button>
+            ) : null}
             <div className="si-foot-note">
               {d.vidState === 'error' && d.vidError && !videoRequest?.blocking.length ? (
-                <span className="si-foot-error">{d.vidError}</span>
+                <GenErrorNote message={d.vidError} summary="出片失败" />
               ) : videoReason ? (
                 videoReason
               ) : (

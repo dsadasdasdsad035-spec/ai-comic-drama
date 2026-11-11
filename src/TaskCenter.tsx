@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import GenErrorNote from './GenErrorNote'
 import { KIND_LABEL, clearFinished, totalCost, useTasks } from './tasks'
 
 /** 顶栏任务台账：运行中 / 失败数 + 花费累计 + 可展开的队列 */
@@ -81,11 +82,11 @@ export default function TaskCenter() {
                     </button>
                   )}
                   {t.state === 'cancelled' && <span className="tc-meta">已取消</span>}
-                  {t.state === 'error' && t.error && (
-                    <span className="tc-err" title={t.error}>
-                      {t.error.slice(0, 18)}
-                    </span>
-                  )}
+                  {t.state === 'error' && t.error ? (
+                    <div className="tc-err-wrap">
+                      <GenErrorNote message={t.error} summary="查看错误" />
+                    </div>
+                  ) : null}
                 </div>
               )
             })}

@@ -37,6 +37,8 @@ import {
 } from './transitionGen'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import OutgoingReferencePickerModal, { type OutgoingBoundarySlot } from './OutgoingReferencePickerModal'
+import GenErrorNote from './GenErrorNote'
+import { parseUpstreamTaskIdFromError } from './videoRecover'
 import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
 import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategory } from './transitionPresets'
 import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
@@ -63,6 +65,7 @@ type Props = {
   onSetRelation: (edgeId: string, relation: Relation) => void
   onClose: () => void
   onGenerateVideo: (edgeId: string) => void
+  onRecoverVideo?: (edgeId: string) => void
   onCancelVideo: (edgeId: string) => void
   onFocusShot: (nodeId: string) => void
   onPick: (cap: Cap, key: string) => void
@@ -92,6 +95,7 @@ export default function TransitionPanel({
   onSetRelation,
   onClose,
   onGenerateVideo,
+  onRecoverVideo,
   onCancelVideo,
   onFocusShot,
   onPick,
@@ -709,7 +713,7 @@ export default function TransitionPanel({
               }
             />
 
-            {g.video?.error ? <div className="gen-error">{g.video.error}</div> : null}
+            {g.video?.error ? <GenErrorNote message={g.video.error} summary="转场出片失败" /> : null}
             {stale ? <div className="tr-warn">出片条件已变，建议重出视频。</div> : null}
           </div>
         </>
@@ -738,9 +742,22 @@ export default function TransitionPanel({
           >
             {videoState === 'running' ? '取消生成' : g.video?.url ? '重出视频' : '生成视频'}
           </button>
+          {videoState === 'error' &&
+          onRecoverVideo &&
+          (g.video?.upstreamRecover?.upstreamTaskId ||
+            parseUpstreamTaskIdFromError(g.video?.error || '')) ? (
+            <button
+              type="button"
+              className="btn block"
+              onClick={() => onRecoverVideo(edge.id)}
+              title="按报错里的上游 task_id 向云端查询并下载，不会重新提交生成"
+            >
+              重新拉取成片
+            </button>
+          ) : null}
           <div className="si-foot-note">
             {g.video?.error && !preview.blocking.length ? (
-              <span className="si-foot-error">{g.video.error}</span>
+              <GenErrorNote message={g.video.error} summary="转场出片失败" />
             ) : videoReason ? (
               videoReason
             ) : videoState === 'running' ? (

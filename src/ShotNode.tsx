@@ -5,6 +5,7 @@ import type Konva from 'konva'
 import { CanvasCtx } from './ctx'
 import { cardWidth, uid, type Mark } from './types'
 import type { ShotNodeType } from './data'
+import GenErrorNote from './GenErrorNote'
 import { useTheme } from './theme'
 
 type Draft =
@@ -436,7 +437,9 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
       </div>
 
       {data.vidState === 'error' && data.vidError && (
-        <div className="vid-error">{data.vidError}</div>
+        <div className="vid-error">
+          <GenErrorNote message={data.vidError} compact summary="出片失败，点开展开" />
+        </div>
       )}
 
       <Handle type="target" position={Position.Left} className="shot-handle" />

@@ -105,6 +105,15 @@ export declare function submitVideo(opts: {
   fetchImpl?: typeof fetch
 }): Promise<{ taskId: string }>
 
+export declare function getTask(opts: {
+  baseUrl: string
+  apiKey: string
+  taskId: string
+  signal?: AbortSignal
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}): Promise<any>
+
 export declare function pollTask(opts: {
   baseUrl: string
   apiKey: string

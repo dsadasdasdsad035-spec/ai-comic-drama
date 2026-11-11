@@ -52,6 +52,7 @@ import {
   VideoParamError,
   buildVideoPayload,
   downloadVideoArtifacts,
+  fetchVideoTask,
   pollVideoTask,
   submitVideoTask,
 } from './server/video.mjs'
@@ -70,6 +71,7 @@ import {
   apimartUsesResponsesForTools,
   buildApimartResponsesBody,
   parseApimartResponsesRaw,
+  getTask as getApimartTask,
   pollTask as pollApimartTask,
   submitImage as submitApimartImage,
   submitVideo as submitApimartVideo,
@@ -5179,6 +5181,134 @@ function seedreamProxy(): Plugin {
           return
         }
 
+        // ---- 凭上游 task_id 拉取已完成的成片（不重复提交）----
+        if (url === '/api/seedance/recover') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const upstreamTaskId = String(body.upstreamTaskId || '').trim()
+            const wantKey = String(body.modelKey || '').trim()
+            const kindHint = String(body.providerKind || '').trim()
+            if (!upstreamTaskId) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '缺少上游 task_id', kind: 'bad-request' }))
+              return
+            }
+            const pick = pickVideoModel(wantKey)
+            if (pick.error || !pick.entry) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: `模型不存在：${wantKey || '（未选择）'}`,
+                  kind: pick.error || 'model-key-not-found',
+                }),
+              )
+              return
+            }
+            const provider = pick.provider
+            const runKey = providerKey(provider)
+            if (!runKey) {
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: `渠道「${provider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                  kind: 'no-key',
+                }),
+              )
+              return
+            }
+            const useArk = kindHint === 'ark' || (!kindHint && provider?.kind === 'ark')
+            const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            const outDir = path.join(root, 'public', 'videos')
+            fs.mkdirSync(outDir, { recursive: true })
+
+            if (useArk) {
+              const task = await fetchVideoTask({ baseUrl: base, apiKey: runKey, taskId: upstreamTaskId })
+              const status = String(task.status || '').toLowerCase()
+              if (!['succeeded', 'failed', 'expired', 'cancelled', 'canceled'].includes(status)) {
+                res.statusCode = 409
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'still-running',
+                    message: `方舟任务仍在进行（${status || 'unknown'}），稍后再试`,
+                    status,
+                  }),
+                )
+                return
+              }
+              if (status !== 'succeeded') {
+                const err = task.error || {}
+                res.statusCode = 422
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message: String(err.message || '上游任务未成功，无法拉取'),
+                    status,
+                  }),
+                )
+                return
+              }
+              const videoUrl = String(task.content?.video_url || '').trim()
+              if (!videoUrl) {
+                res.statusCode = 422
+                res.end(JSON.stringify({ ok: false, message: '上游任务成功但未返回视频地址' }))
+                return
+              }
+              const art = await downloadVideoArtifacts({ videoUrl, videoDir: outDir })
+              res.end(JSON.stringify({ ok: true, url: art.url, upstreamTaskId }))
+              return
+            }
+
+            if (provider?.kind !== 'apimart' && kindHint !== 'apimart') {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '仅支持方舟或 APIMart 渠道拉取成片', kind: 'unsupported' }))
+              return
+            }
+            const data = await getApimartTask({ baseUrl: base, apiKey: runKey, taskId: upstreamTaskId })
+            const status = String(data?.status || '')
+            if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+              res.statusCode = 409
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: 'still-running',
+                  message: `APIMart 任务仍在进行（${status || 'unknown'}），稍后再试`,
+                  status,
+                }),
+              )
+              return
+            }
+            if (status !== 'completed') {
+              const message = String(data?.error?.message || data?.error || `任务 ${status}`)
+              res.statusCode = 422
+              res.end(JSON.stringify({ ok: false, message, status }))
+              return
+            }
+            const remoteUrl = videoUrlFromTask(data)
+            if (!remoteUrl) {
+              res.statusCode = 422
+              res.end(JSON.stringify({ ok: false, message: '上游任务已完成但未返回视频地址' }))
+              return
+            }
+            const dl = await downloadApimartResult({ url: remoteUrl })
+            const name = `shot-vid-recover-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+            fs.writeFileSync(path.join(outDir, name), dl.bytes)
+            res.end(JSON.stringify({ ok: true, url: `/videos/${name}`, upstreamTaskId }))
+          } catch (e) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+          }
+          return
+        }
+
         // ---- 图生视频：提交方舟任务 + 服务端轮询 + 下载产物 ----
         if (url === '/api/seedance') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -5527,12 +5657,18 @@ function seedreamProxy(): Plugin {
                     taskId,
                   })
                 } catch (e) {
+                  const err = e as ApimartError & { taskId?: string }
+                  let message = String(err?.message || e)
+                  const upstreamId = String(taskId || err?.taskId || '').trim()
+                  if (upstreamId && !message.includes(upstreamId)) {
+                    message = `${message}\nAPIMart task_id：${upstreamId}`
+                  }
                   videoJobs.set(id, {
                     status: 'failed',
-                    message: (e as Error).message,
+                    message,
                     startedAt,
                     elapsed: Date.now() - startedAt,
-                    ...(taskId ? { taskId } : {}),
+                    ...(upstreamId ? { taskId: upstreamId } : {}),
                   })
                 }
               })()

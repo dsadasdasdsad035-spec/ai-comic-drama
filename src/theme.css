@@ -1142,6 +1142,54 @@ body.si-resizing {
   color: var(--danger);
 }
 
+.si-foot-note .gen-error-note {
+  text-align: left;
+}
+
+.gen-error-note {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: var(--r-sm);
+  background: rgba(127, 29, 29, 0.12);
+  color: var(--danger);
+  font-size: var(--fs-2xs);
+}
+
+.gen-error-note > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.gen-error-note > summary::-webkit-details-marker {
+  display: none;
+}
+
+.gen-error-note-text {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px;
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gen-error-note-copy {
+  margin-top: 6px;
+}
+
+.gen-error-note--compact .gen-error-note-text {
+  max-height: 100px;
+}
+
 .si-section {
   margin-bottom: 10px;
   overflow: hidden;
@@ -2221,15 +2269,10 @@ body.si-resizing {
 
 .vid-error {
   margin-top: 5px;
-  padding: 4px 6px;
-  border-radius: var(--r-sm);
-  background: rgba(127, 29, 29, 0.22);
-  border: 1px solid rgba(248, 113, 113, 0.32);
-  color: var(--danger);
-  font-size: var(--fs-2xs);
-  line-height: 1.5;
-  max-height: 46px;
-  overflow: hidden;
+}
+
+.vid-error .gen-error-note {
+  margin-top: 0;
 }
 
 .gen-overlay.vid {
@@ -4590,11 +4633,22 @@ body.si-resizing {
 
 .tc-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   padding: 5px 10px;
   font-size: var(--fs-sm);
   border-left: 2px solid transparent;
+}
+
+.tc-err-wrap {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.tc-err-wrap .gen-error-note {
+  margin-top: 0;
 }
 
 .tc-row.running {
@@ -4715,11 +4769,22 @@ body.si-resizing {
 
 .tc-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   padding: 5px 10px;
   font-size: var(--fs-sm);
   border-left: 2px solid transparent;
+}
+
+.tc-err-wrap {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.tc-err-wrap .gen-error-note {
+  margin-top: 0;
 }
 
 .tc-row.running {
