@@ -80,6 +80,14 @@ export type VideoPromptOverride = {
   createdAt: string
 }
 
+/** Seedance 九段模板 LLM 渲染结果元数据 */
+export type VideoPromptRenderMeta = {
+  fingerprint: string
+  templateVersion: string
+  renderedAt: string
+  modelKey?: string
+}
+
 /** 一条视频实际使用的提示词来源；url 用于对齐当前挂载的视频 */
 export type VideoMeta = {
   url: string
@@ -212,6 +220,10 @@ export type TransitionGenerated = {
   soundPrompt?: string
   /** 手改后的完整出片正文；有值时优先于自动拼装 */
   videoPromptOverride?: VideoPromptOverride
+  /** 九段模板渲染的完整出片正文 */
+  renderedPrompt?: string
+  /** 模板渲染元数据（指纹对齐转场拼装指纹） */
+  renderMeta?: VideoPromptRenderMeta
   /** 生成转场视频的锚点策略，默认 keyframe */
   bridging?: TransitionBridging
   /** 默认继承相邻两镜已连的角色/素材参考 */
@@ -277,6 +289,10 @@ export type ShotData = {
   videoPrompt?: string
   /** 手改的出片提示词快照；有值时整段逐字发送，不再自动拼装 */
   videoPromptOverride?: VideoPromptOverride
+  /** 九段模板渲染的完整出片正文（优先于语义层 video_prompt） */
+  videoPromptRendered?: string
+  /** 模板渲染元数据（指纹对齐 buildShotVideoRequest.fingerprint） */
+  videoPromptRenderMeta?: VideoPromptRenderMeta
   /** 最近一次成功出片的提示词来源 */
   videoMeta?: VideoMeta
   /** 手动附加参考图（场景图/道具图），生成画面时与角色图一起传给 Seedream */

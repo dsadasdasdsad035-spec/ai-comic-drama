@@ -11,6 +11,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'submit_shots',
   'submit_joins',
   'submit_prompts',
+  'submit_prompt_renders',
+  'read_prompt_render_bundle',
   'read_transition_recipes',
   'get_shot_context',
   'set_scene_code',

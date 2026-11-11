@@ -172,6 +172,10 @@ export function normalizeGenerated(input?: Partial<TransitionGenerated> | null):
     ...(input?.taxonomy ? { taxonomy: input.taxonomy } : {}),
     ...(input?.recipeIds?.length ? { recipeIds: input.recipeIds } : {}),
     ...(input?.variantId ? { variantId: String(input.variantId) } : {}),
+    ...(String(input?.renderedPrompt ?? '').trim()
+      ? { renderedPrompt: String(input?.renderedPrompt).trim() }
+      : {}),
+    ...(input?.renderMeta ? { renderMeta: input.renderMeta } : {}),
   }
 }
 

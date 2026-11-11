@@ -84,6 +84,7 @@ const STAGE_TOOLS = new Set([
   'submit_designs',
   'submit_shots',
   'submit_prompts',
+  'submit_prompt_renders',
   'submit_joins',
 ])
 

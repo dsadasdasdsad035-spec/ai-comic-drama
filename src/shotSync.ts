@@ -148,6 +148,8 @@ export function bizSignature(d: ShotData): string {
     voice_meta: d.voiceMeta ?? null,
     keyframe_prompt: d.prompt,
     video_prompt: d.videoPrompt ?? '',
+    video_prompt_rendered: d.videoPromptRendered ?? '',
+    video_prompt_render_meta: d.videoPromptRenderMeta,
     video_prompt_override: d.videoPromptOverride,
     video_meta: d.videoMeta,
     keyframe: localPath(d.refImage),
@@ -197,6 +199,8 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     video_prompt: d.videoPrompt,
     // null 是明确清除：mergeShots 只跳过 undefined，恢复自动拼装必须写 null
     video_prompt_override: d.videoPromptOverride ?? null,
+    video_prompt_rendered: d.videoPromptRendered ?? null,
+    video_prompt_render_meta: d.videoPromptRenderMeta ?? null,
     video_meta: d.videoMeta,
     keyframe: localPath(d.refImage),
     clip: localPath(d.videoUrl),
@@ -247,6 +251,10 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     videoPrompt: s.video_prompt ?? fallback.videoPrompt,
     videoPromptOverride:
       s.video_prompt_override === undefined ? fallback.videoPromptOverride : s.video_prompt_override ?? undefined,
+    videoPromptRendered:
+      s.video_prompt_rendered === undefined ? fallback.videoPromptRendered : s.video_prompt_rendered ?? undefined,
+    videoPromptRenderMeta:
+      s.video_prompt_render_meta === undefined ? fallback.videoPromptRenderMeta : s.video_prompt_render_meta ?? undefined,
     videoMeta: s.video_meta ?? fallback.videoMeta,
     refImage: s.keyframe ?? fallback.refImage,
     videoUrl: s.clip ?? fallback.videoUrl,

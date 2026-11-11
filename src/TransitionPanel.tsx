@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { type AppSettings, type Cap, type ModelEntry } from './api'
+import { type AppSettings, type Cap, type ModelEntry, type Stage } from './api'
+import type { StagePick } from './ModelSelect'
 import type { CharacterSheet } from './characters'
 import type { ShotEdgeType, ShotNodeType } from './data'
 import type { Pricing } from './pricing'
@@ -24,6 +25,7 @@ import {
 import {
   autoTransitionVideoPrompt,
   buildTransitionVideoPreview,
+  effectiveTransitionVideoPrompt,
   ensureTransitionBoundary,
   INPUT_MODE_LABEL,
   OMIT_REASON_LABELS,
@@ -65,6 +67,12 @@ type Props = {
   onFocusShot: (nodeId: string) => void
   onPick: (cap: Cap, key: string) => void
   onVidResChange: (v: '480p' | '720p') => void
+  projectStyle: string
+  onRenderTransitionTemplate?: (edgeId: string) => Promise<void>
+  templateRenderBusy?: boolean
+  onOpenPromptRefine?: (edgeId: string) => void
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
 }
 
 export default function TransitionPanel({
@@ -88,6 +96,12 @@ export default function TransitionPanel({
   onFocusShot,
   onPick,
   onVidResChange,
+  projectStyle: _projectStyle,
+  onRenderTransitionTemplate,
+  templateRenderBusy,
+  onOpenPromptRefine,
+  stagePick,
+  onPickStage,
 }: Props) {
   const relation: Relation = edge.data?.relation ?? 'cut'
   const t = useMemo(
@@ -312,13 +326,20 @@ export default function TransitionPanel({
   const hasOverride = preview.promptSource === 'override'
   const boundaryBlocking = preview.blocking.some((m) => m.code === 'transition-boundary-missing')
   const panelModel = useMemo(() => transitionPreviewToPromptPanelModel(preview, vidRes), [preview, vidRes])
+  const transitionEffective = useMemo(
+    () => effectiveTransitionVideoPrompt(source, target, g, styleTokens),
+    [source, target, g, styleTokens],
+  )
   const effectivePrompt = useMemo(
     () => ({
       text: preview.prompt,
       source: preview.promptSource,
       stale: preview.promptStale,
+      autoKind: transitionEffective.autoKind,
+      renderStale: transitionEffective.renderStale,
+      templateStale: transitionEffective.templateStale,
     }),
-    [preview.prompt, preview.promptSource, preview.promptStale],
+    [preview.prompt, preview.promptSource, preview.promptStale, transitionEffective],
   )
   const videoMeta =
     g.video?.videoMeta && g.video.videoMeta.url === g.video.url ? g.video.videoMeta : null
@@ -596,6 +617,21 @@ export default function TransitionPanel({
                   },
                 })
               }
+              onTemplateRender={
+                onRenderTransitionTemplate
+                  ? () => onRenderTransitionTemplate(edge.id)
+                  : undefined
+              }
+              onClearTemplateRender={() =>
+                setGenerated({ renderedPrompt: undefined, renderMeta: undefined })
+              }
+              onPromptRefine={
+                onOpenPromptRefine ? () => onOpenPromptRefine(edge.id) : undefined
+              }
+              templateRendering={templateRenderBusy}
+              settings={settings}
+              stagePick={stagePick}
+              onPickPromptModel={onPickStage}
               videoMeta={videoMeta}
               hasVideoUrl={Boolean(g.video?.url)}
               advancedSlot={

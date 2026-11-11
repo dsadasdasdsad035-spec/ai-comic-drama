@@ -278,18 +278,22 @@ const fullA = shot('cA', 'S01', 3, {
 })
 const fullB = shot('cB', 'S02', 3, { size: '特写', move: '横移', prompt: '猫跳下' })
 const autoFull = lib.autoTransitionVideoPrompt(fullA, fullB, { targetSeconds: 1.2, prompt: '', inheritRefs: true })
+check('无语义 prompt 时走默认桥接句', autoFull.includes('过渡瞬间'))
+const continuityFull = lib.transitionContinuityBlock(fullA, fullB)
 check(
-  '齐全时出现衔接段',
-  autoFull.includes('衔接：') && autoFull.includes('推镜') && autoFull.includes('横移'),
+  '衔接块独立函数仍可用（不注入自动正文）',
+  continuityFull.includes('衔接：') && continuityFull.includes('推镜') && continuityFull.includes('横移'),
 )
-check('视觉 brief 景别优先于 size', autoFull.includes('上一镜 近景'))
-check('机位提示进正文', autoFull.includes('低机位') && autoFull.includes('仰拍'))
+check('视觉 brief 景别优先于 size', continuityFull.includes('上一镜 近景'))
+check('机位提示在衔接块', continuityFull.includes('低机位') && continuityFull.includes('仰拍'))
+check('自动正文不含运行时衔接段', !autoFull.includes('衔接：'))
 
 const noSizeA = shot('cA2', 'S01', 3, { prompt: 'a' })
 const noSizeB = shot('cB2', 'S02', 3, { prompt: 'b' })
 const autoNoSize = lib.autoTransitionVideoPrompt(noSizeA, noSizeB, { targetSeconds: 1.2, prompt: '', inheritRefs: true })
-check('缺景别不出景别句', !autoNoSize.includes('景别：'))
-check('缺运镜不出运镜句', !autoNoSize.includes('运镜：'))
+const contNoSize = lib.transitionContinuityBlock(noSizeA, noSizeB)
+check('缺景别时衔接块不出景别句', !contNoSize.includes('景别：'))
+check('自动正文为默认句', autoNoSize.includes('过渡瞬间'))
 
 const sizeOnlyA = shot('cA3', 'S01', 3, { size: '中景', prompt: 'a' })
 const sizeOnlyB = shot('cB3', 'S02', 3, { size: '近景', prompt: 'b' })
@@ -298,7 +302,7 @@ const autoSizeOnly = lib.autoTransitionVideoPrompt(sizeOnlyA, sizeOnlyB, {
   prompt: '',
   inheritRefs: true,
 })
-check('仅景别无运镜', autoSizeOnly.includes('景别：') && !autoSizeOnly.includes('运镜：'))
+check('自动正文无景别段', !autoSizeOnly.includes('景别：'))
 
 const override = lib.effectiveTransitionVideoPrompt(fullA, fullB, {
   targetSeconds: 1.2,
@@ -326,7 +330,10 @@ const previewG = {
   boundary: { out: '/a.jpg', in: '/b.jpg' },
 }
 const prev = lib.buildTransitionVideoPreview({ source: fullA, target: fullB, generated: previewG })
-check('预览与自动正文一致含衔接', prev.prompt.includes('衔接：') && prev.promptSource === 'auto')
+check(
+  '预览正文为语义层、衔接仅在 continuityPreview',
+  !prev.prompt.includes('衔接：') && prev.continuityPreview.includes('衔接：') && prev.promptSource === 'auto',
+)
 const noBoundaryPrev = lib.buildTransitionVideoPreview({
   source: fullA,
   target: fullB,
@@ -386,11 +393,10 @@ const mergeFirstOnly = lib.buildTransitionVideoRequest({
   characters: [],
   missingMedia: new Set(),
 })
-const hintCount = (mergeFirstOnly.prompt.match(/\[图\d+\]=/g) ?? []).length
 check(
-  '非互斥时参考注记与提交数一致',
-  mergeFirstOnly.prompt.includes('参考图：') && hintCount === mergeFirstOnly.refImages.length,
-  `hints=${hintCount} refs=${mergeFirstOnly.refImages.length}`,
+  '非互斥时仍提交参考图但正文不写参考注记',
+  mergeFirstOnly.refImages.length > 0 && !mergeFirstOnly.prompt.includes('参考图：') && !/\[图\d+\]=/.test(mergeFirstOnly.prompt),
+  `refs=${mergeFirstOnly.refImages.length} tail=${mergeFirstOnly.prompt.slice(-80)}`,
 )
 check('合并 refs 槽位同构', mergePrev.refs[0]?.slot === 'image' && mergePrev.refs[0]?.index === 1)
 
@@ -537,7 +543,7 @@ check(
   lib.recipeVariants(lib.getTransitionRecipe('wipe-transitions')).length === 0,
 )
 
-// ---- 食谱层进入自动正文 ----
+// ---- 食谱层（仅 helper；不再注入自动正文）----
 const recipeShotA = shot('rs1', 'R01', 3, {})
 const recipeShotB = shot('rs2', 'R02', 3, {})
 const noRecipe = lib.autoTransitionVideoPrompt(recipeShotA, recipeShotB, {
@@ -549,12 +555,11 @@ const withRecipe = lib.autoTransitionVideoPrompt(recipeShotA, recipeShotB, {
   prompt: '雨势加大',
   recipeIds: ['circle-match-iris'],
 })
-check('无 recipeIds 时不加手法段', !noRecipe.includes('手法：'))
+check('自动正文仅为语义 prompt', noRecipe === '雨势加大' && withRecipe === '雨势加大')
 check(
-  '命中卡写入 hints',
-  withRecipe.includes('手法：') && withRecipe.includes('一个圆形光圈从画面中某个圆形元素的圆心向外炸开'),
+  '食谱 helper 仍可生成手法段',
+  lib.transitionRecipePromptBlock(['circle-match-iris'], undefined, '').text.includes('手法：'),
 )
-check('命中卡写入负向约束', withRecipe.includes('避免：') && withRecipe.includes('锚点必须是真圆'))
 check('未知 id 被忽略', lib.transitionRecipePromptBlock(['no-such-card'], undefined).text === '')
 
 const variantBlock = lib.transitionRecipePromptBlock(['shot-transitions'], 'portal-wipe')
@@ -627,7 +632,7 @@ const autoAfter = lib.autoTransitionVideoPrompt(
   sB,
   lib.normalizeGenerated({ ...applied.generated, targetSeconds: 1.2, inheritRefs: true }),
 )
-check('应用后自动正文仍含衔接', autoAfter.includes('衔接：'))
+check('应用建议后自动正文仍为语义 prompt', autoAfter === '动作过桥' && !autoAfter.includes('衔接：'))
 
 // ---- 边界来源标签与候选（不依赖 dev server）----
 check('来源标签：上镜尾帧', lib.boundarySourceLabel('source-tail') === '上镜尾帧')

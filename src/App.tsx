@@ -98,6 +98,17 @@ import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, SHOT_NEXT, SHOT_PREV } from './shotReferences'
 import { resolveShotSchedule } from './scheduleStatus'
 import {
+  buildShotPromptRenderBundle,
+  buildTransitionPromptRenderBundle,
+  renderSeedancePrompt,
+  refreshPromptRenderTemplateVersion,
+} from './promptRender'
+import PromptRefineModal from './PromptRefineModal'
+import {
+  createShotPromptRefineAdapter,
+  createTransitionPromptRefineAdapter,
+} from './agent/promptRefineAdapter'
+import {
   buildShotVideoRequest,
   effectiveVideoPrompt,
   videoOmitToastMessages,
@@ -123,6 +134,7 @@ import {
   transitionSummary,
 } from './transition'
 import {
+  buildTransitionVideoPreview,
   buildTransitionVideoRequest,
   transitionRequestSeconds,
   transitionStyleRefTokens,
@@ -434,6 +446,10 @@ function Shell() {
   const [sceneLayouts, setSceneLayouts] = useState<SceneLayout[]>([])
   /** 项目画幅：3D 预演与出片共用 */
   const [projectAspect, setProjectAspect] = useState('16:9')
+  const [projectStyle, setProjectStyle] = useState('')
+  const [templateRenderBusy, setTemplateRenderBusy] = useState(false)
+  const [refineShotNodeId, setRefineShotNodeId] = useState<string | null>(null)
+  const [refineTransitionEdgeId, setRefineTransitionEdgeId] = useState<string | null>(null)
   const assetsSnapRef = useRef('')
   /** 服务端报告的缺失媒体引用（角色三视图 / 设定图） */
   const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
@@ -633,6 +649,7 @@ function Shell() {
         setAssets(projectAssets)
         setSceneLayouts((p.sceneLayouts ?? []) as SceneLayout[])
         setProjectAspect(p.aspect || '16:9')
+        setProjectStyle(String(p.style || ''))
         setEpNo(Math.min(Math.max(1, wantedEp), maxEp))
         syncedRef.current = new Map()
         for (const n of shotNodes) {
@@ -654,6 +671,7 @@ function Shell() {
         setAssets([])
         setSceneLayouts([])
         setProjectAspect('16:9')
+        setProjectStyle('')
         setMissingMedia(new Set())
         setToast(`加载项目失败：${(e as Error).message}`)
         window.setTimeout(() => setToast(''), 3200)
@@ -1034,7 +1052,10 @@ function Shell() {
   }, [modelPick.video, appSettings])
   const reloadSettings = useCallback(() => {
     getSettings()
-      .then(({ settings }) => setAppSettings(settings as AppSettings))
+      .then(async ({ settings }) => {
+        setAppSettings(settings as AppSettings)
+        await refreshPromptRenderTemplateVersion().catch(() => {})
+      })
       .catch(() => setAppSettings(null))
   }, [])
   useEffect(() => {
@@ -2575,6 +2596,76 @@ function Shell() {
     [patch, ratio, vidRes, selectedVideoModel, sceneLayouts, projectAspect, missingMedia],
   )
 
+  const renderVideoTemplate = useCallback(
+    async (id: string) => {
+      const node = nodesRef.current.find((n) => n.id === id)
+      if (!node) return
+      setTemplateRenderBusy(true)
+      try {
+        const schedule = resolveShotSchedule({
+          data: node.data,
+          shotId: node.id,
+          sceneLayouts,
+          projectAspect,
+        })
+        const request = buildShotVideoRequest({
+          data: node.data,
+          nodeId: node.id,
+          nodes: nodesRef.current,
+          characters: charactersRef.current,
+          missingMedia,
+          schedule,
+          model: selectedVideoModel,
+          resolution: vidRes,
+        })
+        const bundle = buildShotPromptRenderBundle({
+          data: node.data,
+          nodeId: node.id,
+          nodes: nodesRef.current,
+          characters: charactersRef.current,
+          missingMedia,
+          schedule,
+          model: selectedVideoModel,
+          resolution: vidRes,
+          style: projectStyle,
+          aspect: projectAspect,
+          request,
+        })
+        const modelKey = stageModelKey(appSettings, 'prompt', stagePick)
+        const rendered = await renderSeedancePrompt(bundle, modelKey)
+        patch(id, {
+          videoPromptRendered: rendered.rendered_prompt,
+          videoPromptRenderMeta: {
+            fingerprint: request.fingerprint,
+            templateVersion: rendered.templateVersion,
+            renderedAt: new Date().toISOString(),
+            modelKey: rendered.modelKey,
+          },
+          videoPromptOverride: undefined,
+          handEdited: (node.data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+        })
+        setToast('模板出片提示词已更新')
+        window.setTimeout(() => setToast(''), 2800)
+      } catch (e) {
+        setToast(`模板渲染失败：${(e as Error).message}`)
+        window.setTimeout(() => setToast(''), 4200)
+      } finally {
+        setTemplateRenderBusy(false)
+      }
+    },
+    [
+      sceneLayouts,
+      projectAspect,
+      projectStyle,
+      missingMedia,
+      selectedVideoModel,
+      vidRes,
+      stagePick,
+      appSettings,
+      patch,
+    ],
+  )
+
   const cancelTransitionVideo = useCallback(
     (edgeId: string) => {
       const pair = transitionPair(edgeId)
@@ -2606,6 +2697,68 @@ function Shell() {
       window.setTimeout(() => setToast(''), 2200)
     },
     [writeTransition, transitionPair],
+  )
+
+  const renderTransitionTemplate = useCallback(
+    async (edgeId: string) => {
+      const pair = transitionPair(edgeId)
+      if (!pair) return
+      const { source, target, to } = pair
+      const base = normalizeTransitionOut(source.data.transitionOut, to)
+      const g = normalizeGenerated(base.generated)
+      const videoKey = modelPick.video || appSettings?.defaults?.video || ''
+      const entry = appSettings?.models.find((m) => m.key === videoKey)
+      const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
+      const transitionModel = entry
+        ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
+        : null
+      setTemplateRenderBusy(true)
+      try {
+        const preview = buildTransitionVideoPreview({
+          source,
+          target,
+          generated: g,
+          model: transitionModel,
+          nodes: nodesRef.current,
+          characters: charactersRef.current,
+          missingMedia,
+        })
+        const bundle = buildTransitionPromptRenderBundle({
+          source,
+          target,
+          generated: g,
+          inputMode: preview.inputMode,
+          style: projectStyle,
+          aspect: projectAspect,
+          seconds: preview.seconds,
+          requestFingerprint: preview.promptFingerprint,
+        })
+        const rendered = await renderSeedancePrompt(bundle, stageModelKey(appSettings, 'prompt', stagePick))
+        writeTransition(source.id, to, (cur) => ({
+          ...cur,
+          mode: 'generated',
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            renderedPrompt: rendered.rendered_prompt,
+            renderMeta: {
+              fingerprint: preview.promptFingerprint,
+              templateVersion: rendered.templateVersion,
+              renderedAt: new Date().toISOString(),
+              modelKey: rendered.modelKey,
+            },
+            videoPromptOverride: undefined,
+          },
+        }))
+        setToast('转场模板出片提示词已更新')
+        window.setTimeout(() => setToast(''), 2800)
+      } catch (e) {
+        setToast(`转场模板渲染失败：${(e as Error).message}`)
+        window.setTimeout(() => setToast(''), 4200)
+      } finally {
+        setTemplateRenderBusy(false)
+      }
+    },
+    [transitionPair, writeTransition, stagePick, appSettings, projectStyle, projectAspect, missingMedia],
   )
 
   const generateTransitionVideo = useCallback(
@@ -3097,6 +3250,167 @@ function Shell() {
   const selEdge = selEdgeId ? edges.find((e) => e.id === selEdgeId) ?? null : null
   const selEdgeSource = selEdge ? nodes.find((n) => n.id === selEdge.source) ?? null : null
   const selEdgeTarget = selEdge ? nodes.find((n) => n.id === selEdge.target) ?? null : null
+
+  const shotRefineAdapter = useMemo(() => {
+    if (!refineShotNodeId || !projectName) return null
+    const node = nodes.find((n) => n.id === refineShotNodeId)
+    if (!node) return null
+    const schedule = resolveShotSchedule({
+      data: node.data,
+      shotId: node.id,
+      sceneLayouts,
+      projectAspect,
+    })
+    const request = buildShotVideoRequest({
+      data: node.data,
+      nodeId: node.id,
+      nodes,
+      characters,
+      missingMedia,
+      schedule,
+      model: selectedVideoModel,
+      resolution: vidRes,
+    })
+  return createShotPromptRefineAdapter({
+      projectName,
+      episode: node.data.episode ?? epNo,
+      shotNo: node.data.no,
+      shotNodeId: node.id,
+      style: projectStyle,
+      aspect: projectAspect,
+      bundle: () =>
+        buildShotPromptRenderBundle({
+          data: node.data,
+          nodeId: node.id,
+          nodes,
+          characters,
+          missingMedia,
+          schedule,
+          model: selectedVideoModel,
+          resolution: vidRes,
+          style: projectStyle,
+          aspect: projectAspect,
+          request,
+        }),
+      getSnapshot: () => ({
+        name: projectName,
+        title: projectName,
+        style: projectStyle,
+        aspect: projectAspect,
+        shots: nodes
+          .filter((n) => (n as { type?: string }).type !== 'asset')
+          .map((n) => nodeToShot(n.data, n.id)),
+        characters,
+      }),
+      setSnapshot: () => {},
+      onShotPatched: (nodeId, p) => {
+        patch(nodeId, {
+          videoPromptRendered: p.videoPromptRendered,
+          videoPromptRenderMeta: p.videoPromptRenderMeta,
+          videoPromptOverride: undefined,
+          handEdited: (node.data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+        })
+      },
+    })
+  }, [
+    refineShotNodeId,
+    projectName,
+    projectStyle,
+    projectAspect,
+    nodes,
+    characters,
+    missingMedia,
+    sceneLayouts,
+    selectedVideoModel,
+    vidRes,
+    epNo,
+    patch,
+  ])
+
+  const transitionRefineAdapter = useMemo(() => {
+    if (!refineTransitionEdgeId || !projectName) return null
+    const edge = edges.find((e) => e.id === refineTransitionEdgeId)
+    if (!edge) return null
+    const source = nodes.find((n) => n.id === edge.source)
+    const target = nodes.find((n) => n.id === edge.target)
+    if (!source || !target) return null
+    const to = target.data.shotId || target.id
+    const base = normalizeTransitionOut(source.data.transitionOut, to)
+    const g = normalizeGenerated(base.generated)
+    const videoKey = modelPick.video || appSettings?.defaults?.video || ''
+    const entry = appSettings?.models.find((m) => m.key === videoKey)
+    const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
+    const transitionModel = entry
+      ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
+      : null
+    const preview = buildTransitionVideoPreview({
+      source,
+      target,
+      generated: g,
+      model: transitionModel,
+      nodes,
+      characters,
+      missingMedia,
+    })
+    return createTransitionPromptRefineAdapter({
+      projectName,
+      episode: source.data.episode ?? epNo,
+      sourceId: source.id,
+      sourceNo: source.data.no,
+      targetNo: target.data.no,
+      to,
+      style: projectStyle,
+      aspect: projectAspect,
+      fingerprint: preview.promptFingerprint,
+      bundle: () =>
+        buildTransitionPromptRenderBundle({
+          source,
+          target,
+          generated: g,
+          inputMode: preview.inputMode,
+          style: projectStyle,
+          aspect: projectAspect,
+          seconds: preview.seconds,
+          requestFingerprint: preview.promptFingerprint,
+        }),
+      getSnapshot: () => ({
+        name: projectName,
+        title: projectName,
+        style: projectStyle,
+        aspect: projectAspect,
+        shots: nodes
+          .filter((n) => (n as { type?: string }).type !== 'asset')
+          .map((n) => nodeToShot(n.data, n.id)),
+        characters,
+      }),
+      onTransitionPatched: (sourceId, targetKey, p) => {
+        writeTransition(sourceId, targetKey, (cur) => ({
+          ...cur,
+          generated: {
+            ...normalizeGenerated(cur.generated),
+            renderedPrompt: p.renderedPrompt,
+            renderMeta: p.renderMeta,
+            videoPromptOverride: undefined,
+          },
+        }))
+      },
+    })
+  }, [
+    refineTransitionEdgeId,
+    projectName,
+    edges,
+    nodes,
+    characters,
+    missingMedia,
+    modelPick.video,
+    appSettings,
+    projectStyle,
+    projectAspect,
+    epNo,
+    writeTransition,
+  ])
+
+  const promptRefineAdapter = shotRefineAdapter ?? transitionRefineAdapter
 
   return (
     <CanvasCtx.Provider value={api}>
@@ -3624,6 +3938,15 @@ function Shell() {
               onFocusShot={focusShotFromTransition}
               onPick={pickModelKey}
               onVidResChange={setVidRes}
+              projectStyle={projectStyle}
+              onRenderTransitionTemplate={renderTransitionTemplate}
+              templateRenderBusy={templateRenderBusy}
+              onOpenPromptRefine={(edgeId) => {
+                setRefineShotNodeId(null)
+                setRefineTransitionEdgeId(edgeId)
+              }}
+              stagePick={stagePick}
+              onPickStage={pickStageModel}
             />
           ) : (
             <Inspector
@@ -3649,6 +3972,15 @@ function Shell() {
             projectName={projectName}
             characters={characters}
             videoRequest={selectedVideoRequest}
+            projectStyle={projectStyle}
+            onRenderVideoTemplate={renderVideoTemplate}
+            templateRenderBusy={templateRenderBusy}
+            onOpenPromptRefine={(shotId) => {
+              setRefineTransitionEdgeId(null)
+              setRefineShotNodeId(shotId)
+            }}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
@@ -3671,6 +4003,24 @@ function Shell() {
             projectName={projectName}
           />
         )}
+
+        {promptRefineAdapter ? (
+          <PromptRefineModal
+            open={Boolean(refineShotNodeId || refineTransitionEdgeId)}
+            onClose={() => {
+              setRefineShotNodeId(null)
+              setRefineTransitionEdgeId(null)
+            }}
+            adapter={promptRefineAdapter}
+            settings={appSettings}
+            stagePick={stagePick}
+            onPickStage={pickStageModel}
+            onToast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3200)
+            }}
+          />
+        ) : null}
 
         {toast && <div className="toast">{toast}</div>}
       </div>

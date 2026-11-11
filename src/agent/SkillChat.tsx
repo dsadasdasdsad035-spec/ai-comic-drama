@@ -5,8 +5,8 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
-import type { AppSettings } from '../api'
-import { stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
+import type { AppSettings, Stage } from '../api'
+import { StageModelSelect, stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
 import { modelHasCap } from '../modelCaps'
 import { buildWorkbenchAgentSystem } from './workbenchChat'
 import { imageAttachments, type ChatAttachment } from './chatAttachments'
@@ -42,6 +42,8 @@ type Props = {
   adapter: WorkbenchChatAdapter
   settings: AppSettings | null
   stagePick?: StagePick
+  /** 传入后在头部显示环节模型下拉（与模板渲染共用 prompt 环节手选） */
+  onPickStage?: (stage: Stage, key: string) => void
   onToast?: (message: string) => void
   onRunningChange?: (running: boolean) => void
   onClose?: () => void
@@ -263,6 +265,7 @@ export default function SkillChat({
   adapter,
   settings,
   stagePick,
+  onPickStage,
   onToast,
   onRunningChange,
   onClose,
@@ -891,6 +894,20 @@ export default function SkillChat({
         onClear={() => void clearConversation()}
         canClear={messages.length > 0 && !clearing}
         clearing={clearing}
+        modelSelect={
+          onPickStage ? (
+            <StageModelSelect
+              stage={adapter.stage}
+              label="模型"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+              className="wb-field wb-context-model"
+              disabled={busy}
+            />
+          ) : undefined
+        }
       />
 
       {loadError ? (

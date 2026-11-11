@@ -2,7 +2,7 @@ import type { ProjectData, Stage } from '../api'
 import type { Skill, SkillInputs, SkillReference, SkillSource } from '../skills/types'
 import type { ChatThreadKey } from './threads'
 
-export type WorkbenchSurface = 'characters' | 'assets' | 'shots'
+export type WorkbenchSurface = 'characters' | 'assets' | 'shots' | 'prompt-refine'
 export type WorkbenchSaveMode = 'explicit' | 'auto' | 'immediate'
 export type WorkbenchBuiltinScope = 'episode' | 'project'
 
@@ -139,6 +139,7 @@ export const WORKBENCH_BUILTIN_KEYS: Record<
   characters: ['extract_characters_episode', 'extract_characters_script'],
   assets: ['extract_designs_episode', 'extract_designs_script'],
   shots: ['split_shots'],
+  'prompt-refine': [],
 }
 
 /** 每个工作台的首屏文案与保存语义；不扩技能 frontmatter。 */
@@ -185,6 +186,21 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
       target: '目标时长',
     },
   },
+  'prompt-refine': {
+    title: '出片改稿',
+    emptyTitle: '与模型改九段正文',
+    emptyBody:
+      '说明要如何改运镜、表演、资产映射或连续性；改完后会写回「模板渲染」层。可点「查看将发送」核对设置页技能模板与 bundle。',
+    suggestions: ['把第 2 段 @图像 映射写清楚', '加强结束帧与下一镜衔接', '缩短时间轴到 5 秒内'],
+    placeholder: '例如：运镜再慢一点，补充 @图像1 的外观约束，不要改指纹无关的镜号…',
+    saveMode: 'immediate',
+    inputLabels: {
+      style: '画风',
+      aspect: '画幅',
+      episode: '集号',
+      bundle: '渲染 bundle',
+    },
+  },
 }
 
 export type WorkbenchTaskView = {
@@ -209,6 +225,7 @@ export type WriteTool =
   | 'submit_shots'
   | 'submit_joins'
   | 'submit_prompts'
+  | 'submit_prompt_renders'
 
 export type DraftApplyResult = {
   ok: boolean
@@ -287,6 +304,14 @@ export type WorkbenchChatAdapter = {
   chatPlaceholder?: () => string
   /** 图片附件来源；不提供时不显示附件入口。 */
   attachments?: WorkbenchAttachmentSource
+  /** 出片改稿：当前 PromptRenderBundle */
+  promptRenderBundle?: () => import('../promptRender').PromptRenderBundle | null
+  /** 写回时仅允许该镜或该接缝 */
+  promptRenderGate?:
+    | { kind: 'shot'; shotNo: string }
+    | { kind: 'join'; afterNo: string; toNo: string }
+  /** 检查器展示：设置页生效的 role/task */
+  promptRenderSkillPreview?: () => Promise<{ role: string; task: string; source: import('../skills/types').SkillSource }>
 }
 
 /** 读工具结果上限：超出的返回摘要，避免把整份产物塞进下一轮上下文。 */

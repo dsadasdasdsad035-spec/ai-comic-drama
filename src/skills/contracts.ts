@@ -248,6 +248,36 @@ const reverseV1 = passthrough({
   })
 })
 
+const promptRenderMetaV1 = passthrough({
+  fingerprint: z.string().min(1),
+  templateVersion: z.string().min(1),
+  renderedAt: z.string().optional(),
+  modelKey: z.string().optional(),
+})
+
+const promptRendersV1 = passthrough({
+  shots: z
+    .array(
+      passthrough({
+        no: z.string().optional(),
+        id: z.string().optional(),
+        video_prompt_rendered: z.string().min(1),
+        video_prompt_render_meta: promptRenderMetaV1,
+      }),
+    )
+    .optional(),
+  joins: z
+    .array(
+      passthrough({
+        after_no: z.string().min(1),
+        to_no: z.string().min(1),
+        rendered_prompt: z.string().min(1),
+        render_meta: promptRenderMetaV1,
+      }),
+    )
+    .optional(),
+})
+
 const creativePlanV1 = passthrough({
   reply: z.string().min(1),
   directions: z
@@ -280,6 +310,7 @@ const REGISTRY: Record<string, SkillContract> = {
   'shots-v1': { id: 'shots-v1', label: '镜头表', schema: shotsV1 },
   'joins-v1': { id: 'joins-v1', label: '镜间接缝', schema: joinsV1 },
   'prompts-v1': { id: 'prompts-v1', label: '首帧/视频提示词', schema: promptsV1 },
+  'prompt-renders-v1': { id: 'prompt-renders-v1', label: '九段出片渲染', schema: promptRendersV1 },
   'reverse-v1': { id: 'reverse-v1', label: '视频反推提示词包', schema: reverseV1 },
   'creative-plan-v1': { id: 'creative-plan-v1', label: '创意方向与镜头草案', schema: creativePlanV1 },
   'scene3d-code-v1': {

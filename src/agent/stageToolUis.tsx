@@ -17,6 +17,7 @@ const LABELS: Record<string, string> = {
   submit_shots: '镜头草稿',
   submit_joins: '接缝草稿',
   submit_prompts: '提示词草稿',
+  submit_prompt_renders: '模板出片提示词',
   builtin_action: '内置动作',
 }
 

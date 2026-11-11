@@ -8,6 +8,7 @@ import {
 import type { Skill } from '../skills/types'
 import { getSkill } from '../skills/registry'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
+import type { PromptRenderBundle } from '../promptRender'
 import { defineTool, type ToolDef } from './tool'
 
 export type LoadedSkill = { skill: Skill; mode: 'host' | 'readonly' }
@@ -248,6 +249,29 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         contractId === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
       const checked = validateContract(contractId, normalized)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
+      const body = checked.value as Record<string, unknown>
+      const gate = adapter.promptRenderGate
+      if (gate && adapter.writeContract === 'prompt-renders-v1') {
+        if (gate.kind === 'shot') {
+          const shots = Array.isArray(body.shots) ? body.shots : []
+          if (shots.length !== 1) {
+            return { ok: false, error: `本改稿会话仅允许写回镜号 ${gate.shotNo}，收到 ${shots.length} 条` }
+          }
+          const no = String((shots[0] as Record<string, unknown>).no || '')
+          if (no && no !== gate.shotNo) {
+            return { ok: false, error: `镜号须为 ${gate.shotNo}，收到 ${no}` }
+          }
+        } else {
+          const joins = Array.isArray(body.joins) ? body.joins : []
+          if (joins.length !== 1) {
+            return { ok: false, error: '本改稿会话仅允许写回一条接缝' }
+          }
+          const j = joins[0] as Record<string, unknown>
+          if (String(j.after_no) !== gate.afterNo || String(j.to_no) !== gate.toNo) {
+            return { ok: false, error: `接缝须为 ${gate.afterNo}→${gate.toNo}` }
+          }
+        }
+      }
       const applied = adapter.applyDraft(checked.value)
       adapter.onDraftChanged?.()
       if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
@@ -264,6 +288,22 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 
   const byName = new Map(readByName)
   byName.set(submit.name, submit)
+
+  if (adapter.promptRenderBundle) {
+    const readBundle = defineTool({
+      name: 'read_prompt_render_bundle',
+      description: '读取当前镜头或转场接缝的 PromptRenderBundle（只读）。',
+      schema: z.object({}),
+      run: async () => {
+        const bundle = adapter.promptRenderBundle?.() ?? null
+        if (!bundle) return { ok: false, error: 'bundle 不可用' }
+        return { ok: true, bundle: boundJson(bundle) as PromptRenderBundle }
+      },
+    })
+    readByName.set(readBundle.name, readBundle)
+    byName.set(readBundle.name, readBundle)
+  }
+
   return { read: readByName, submit, byName }
 }
 

@@ -8,6 +8,8 @@ import shotlistIntakeSkillText from '../../skills/shotlist-intake/SKILL.md?raw'
 import transitionPlannerSkillText from '../../skills/transition-planner/SKILL.md?raw'
 import transitionDirectorSkillText from '../../skills/transition-director/SKILL.md?raw'
 import cinematicTransitionSkillText from '../../skills/cinematic-transition/SKILL.md?raw'
+import seedancePromptRenderSkillText from '../../skills/seedance-prompt-render/SKILL.md?raw'
+import seedancePromptRefineSkillText from '../../skills/seedance-prompt-refine/SKILL.md?raw'
 import { listSkillTexts } from './api'
 import { buildSkillPrompt } from './render'
 import type { Skill, SkillInputs, SkillPrompt, SkillRenderMode, SkillTextRecord } from './types'
@@ -24,6 +26,8 @@ const BUILTIN_TEXTS: Record<string, string> = {
   'transition-planner': transitionPlannerSkillText,
   'transition-director': transitionDirectorSkillText,
   'cinematic-transition': cinematicTransitionSkillText,
+  'seedance-prompt-render': seedancePromptRenderSkillText,
+  'seedance-prompt-refine': seedancePromptRefineSkillText,
 }
 
 let cache: SkillLoadResult | null = null

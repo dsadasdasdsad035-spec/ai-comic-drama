@@ -3,14 +3,10 @@ import type { ShotNodeType } from './data'
 import {
   audioRefCapabilitiesFor,
   nativeAudioGateSeconds,
-  nativeAudioPrompt,
   nativeAudioRef,
 } from './nativeAudio'
 import { parseDialogue } from './prompts'
-import {
-  performanceFingerprintPayload,
-  performanceVideoPromptBlock,
-} from './performance'
+import { performanceFingerprintPayload } from './performance'
 import { motionNoteOf, shortHash } from './scheduleGeometry'
 import type { ShotScheduleState } from './scheduleStatus'
 import {
@@ -21,6 +17,12 @@ import {
   type ResolvedShotReference,
   type ResolvedVideoReference,
 } from './shotReferences'
+import {
+  isFreshVideoPromptRender,
+  getPromptRenderTemplateVersion,
+  templateVersionStale,
+  videoPromptRenderStale,
+} from './promptRender'
 import type { ShotData, VideoPromptOverride } from './types'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
 
@@ -56,7 +58,7 @@ export type ShotVideoRequest = {
   omitted: { label: string; reason: string }[]
   /** 首期只使用第一条视频素材，其余在这里说明 */
   omittedVideos: { label: string; reason: string }[]
-  textSource: 'video_prompt' | 'prompt_fallback' | 'fallback'
+  textSource: 'video_prompt' | 'prompt_fallback' | 'fallback' | 'template_render'
   seconds: number
   resolution: string
   warnings: VideoRequestIssue[]
@@ -157,14 +159,6 @@ export function buildReferenceImagesPromptHint(
 export function buildVideoReferencePromptHint(video: { label: string } | undefined): string {
   if (!video) return ''
   return `\n\n参考 @视频1（${video.label}）的运动、机位与节奏；画面风格、人物外观、场景与道具以参考图和文字为准。`
-}
-
-function buildRefHint(refs: ComposerRef[], hasVideo: boolean): string {
-  return buildReferenceImagesPromptHint(refs, hasVideo)
-}
-
-function buildVideoHint(video: ResolvedVideoReference | undefined): string {
-  return buildVideoReferencePromptHint(video)
 }
 
 function fingerprintOf(input: {
@@ -276,18 +270,8 @@ export function buildShotVideoRequest(input: {
     motionNoteOf(input.schedule.scene, input.schedule.blocking, input.schedule.duration, d.move) ||
     d.motionNote ||
     ''
-  const nativeSound =
-    nativeMode && nativeRef?.ok ? nativeAudioPrompt(nativeRef.character, dialogue, true) : ''
-  const performanceBlock = performanceVideoPromptBlock(d.performance, dialogue, d.dialogueDelivery)
-  const refHint = buildRefHint(limited, Boolean(primaryVideo))
-  const videoHint = buildVideoHint(primaryVideo)
-  const prompt =
-    (motion || fallback) +
-    (liveMotionNote ? `\n【运镜与走位】${liveMotionNote}` : '') +
-    performanceBlock +
-    (nativeSound ? `\n\n${nativeSound}` : '') +
-    refHint +
-    videoHint
+  /** 无模板渲染时仅用表内语义层正文，不再运行时拼接后缀 */
+  const semantic = motion || fallback
 
   const mode: VideoRequestMode = nativeMode
     ? 'native'
@@ -327,6 +311,29 @@ export function buildShotVideoRequest(input: {
           character: nativeRef.character,
         }
       : null
+
+  const fingerprint = fingerprintOf({
+    data: d,
+    candidates,
+    refs: limited,
+    mode,
+    motion: motion || fallback,
+    textSource,
+    motionNote: liveMotionNote,
+    seconds,
+    dialogue,
+    audio,
+    videos,
+  })
+
+  const rendered = d.videoPromptRendered?.trim()
+  const freshRender =
+    rendered &&
+    isFreshVideoPromptRender(d.videoPromptRenderMeta, fingerprint, getPromptRenderTemplateVersion())
+  const prompt = freshRender ? rendered : semantic
+  const resolvedTextSource: ShotVideoRequest['textSource'] = freshRender
+    ? 'template_render'
+    : textSource
 
   const warnings: VideoRequestIssue[] = []
   const orphanAssets = (d.refIds ?? []).filter(
@@ -402,20 +409,6 @@ export function buildShotVideoRequest(input: {
     })
   }
 
-  const fingerprint = fingerprintOf({
-    data: d,
-    candidates,
-    refs: limited,
-    mode,
-    motion: motion || fallback,
-    textSource,
-    motionNote: liveMotionNote,
-    seconds,
-    dialogue,
-    audio,
-    videos,
-  })
-
   return {
     prompt,
     mode,
@@ -425,7 +418,7 @@ export function buildShotVideoRequest(input: {
     audio,
     omitted,
     omittedVideos,
-    textSource,
+    textSource: resolvedTextSource,
     seconds,
     resolution,
     warnings,
@@ -437,19 +430,34 @@ export function buildShotVideoRequest(input: {
 export type EffectiveVideoPrompt = {
   text: string
   source: 'auto' | 'override'
+  autoKind?: 'template' | 'semantic'
   stale: boolean
+  renderStale?: boolean
+  templateStale?: boolean
 }
 
 /** 手改快照优先；过期只提示，不阻止出片。 */
 export function effectiveVideoPrompt(
-  request: Pick<ShotVideoRequest, 'prompt' | 'fingerprint'>,
+  request: Pick<ShotVideoRequest, 'prompt' | 'fingerprint' | 'textSource'>,
   override?: VideoPromptOverride | null,
+  render?: { text?: string; meta?: import('./types').VideoPromptRenderMeta },
 ): EffectiveVideoPrompt {
-  if (!override?.text) return { text: request.prompt, source: 'auto', stale: false }
+  if (override?.text) {
+    return {
+      text: override.text,
+      source: 'override',
+      stale: Boolean(override.fingerprint && override.fingerprint !== request.fingerprint),
+    }
+  }
+  const renderStale = videoPromptRenderStale(render?.text, render?.meta, request.fingerprint, getPromptRenderTemplateVersion())
+  const templateStale = templateVersionStale(render?.meta, getPromptRenderTemplateVersion())
   return {
-    text: override.text,
-    source: 'override',
-    stale: Boolean(override.fingerprint && override.fingerprint !== request.fingerprint),
+    text: request.prompt,
+    source: 'auto',
+    autoKind: request.textSource === 'template_render' ? 'template' : 'semantic',
+    stale: false,
+    renderStale,
+    templateStale,
   }
 }
 

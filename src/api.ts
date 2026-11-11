@@ -21,6 +21,7 @@ import type {
   VisualBriefMeta,
   VideoMeta,
   VideoPromptOverride,
+  VideoPromptRenderMeta,
   VoiceMeta,
 } from './types'
 export type GenResult = {
@@ -600,6 +601,8 @@ export type ProjectShot = {
   video_prompt?: string
   /** 手改的出片提示词快照；null = 明确恢复自动拼装 */
   video_prompt_override?: VideoPromptOverride | null
+  video_prompt_rendered?: string | null
+  video_prompt_render_meta?: VideoPromptRenderMeta | null
   /** 最近一次成功出片的提示词来源 */
   video_meta?: VideoMeta
   /** 该镜在画面内的角色名（拆镜产出，比从台词/描述猜准） */

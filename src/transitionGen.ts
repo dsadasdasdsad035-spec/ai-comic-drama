@@ -28,6 +28,12 @@ import {
   purposeOfShotReference,
 } from './videoPrompt'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT } from './videoRefLimits'
+import {
+  isFreshVideoPromptRender,
+  getPromptRenderTemplateVersion,
+  templateVersionStale,
+  videoPromptRenderStale,
+} from './promptRender'
 import { shortHash } from './scheduleGeometry'
 import { localPath } from './shotSync'
 import { coerceTransitionVideoPromptOverride, boundarySourceLabel, normalizeGenerated, transitionOverrideText } from './transition'
@@ -500,21 +506,35 @@ export function transitionDialogueText(source: ShotNodeType, target: ShotNodeTyp
     .join('\n')
 }
 
-export function autoTransitionVideoPrompt(
+/** 无模板渲染时仅用语义层桥接正文（Agent/面板 prompt），不再运行时拼食谱/衔接/尾句 */
+export function semanticTransitionVideoPrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
   const g = normalizeGenerated(generated)
-  const base = g.prompt.trim() || defaultTransitionPrompt(source, target)
-  const tail =
-    g.bridging === 'morph'
-      ? '这是两个镜头之间的过渡片段：画面从上一镜结束瞬间变形到下一镜开始瞬间。' +
-        '允许环境明显变化（天气、光线、降水、雾气等），但角色外观、服装与空间逻辑需连贯；运动连续自然，不出现字幕、文字与水印。'
-      : '这是两个镜头之间的过渡片段：从上镜的落点自然过渡到下镜的起点，人物外观、服装、场景与光线保持一致，运动连续，不出现字幕、文字与水印。'
-  const continuity = transitionContinuityBlock(source, target)
-  const recipe = transitionRecipePromptBlock(g.recipeIds, g.variantId, base)
-  return `${base}${recipe.text}${continuity}\n\n${tail}${transitionSoundBlock(g.soundPrompt, g.audioMode === 'native')}`
+  return g.prompt.trim() || defaultTransitionPrompt(source, target)
+}
+
+/** @deprecated 用 semanticTransitionVideoPrompt */
+export const mechanicalTransitionVideoPrompt = semanticTransitionVideoPrompt
+export const autoTransitionVideoPrompt = semanticTransitionVideoPrompt
+
+export function resolveTransitionAutoPrompt(
+  source: ShotNodeType,
+  target: ShotNodeType,
+  generated: TransitionGenerated | undefined,
+  transitionFingerprint: string,
+): { text: string; kind: 'template' | 'semantic' } {
+  const g = normalizeGenerated(generated)
+  const rendered = g.renderedPrompt?.trim()
+  if (
+    rendered &&
+    isFreshVideoPromptRender(g.renderMeta, transitionFingerprint, getPromptRenderTemplateVersion())
+  ) {
+    return { text: rendered, kind: 'template' }
+  }
+  return { text: semanticTransitionVideoPrompt(source, target, g), kind: 'semantic' }
 }
 
 /**
@@ -570,13 +590,13 @@ export function transitionRecipePromptBlock(
   return { text: parts.join(''), warnings }
 }
 
-/** @deprecated 用 autoTransitionVideoPrompt / effectiveTransitionVideoPrompt */
+/** @deprecated 用 mechanicalTransitionVideoPrompt / effectiveTransitionVideoPrompt */
 export function transitionVideoPrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
-  return autoTransitionVideoPrompt(source, target, generated)
+  return mechanicalTransitionVideoPrompt(source, target, generated)
 }
 
 export function transitionVideoPromptFingerprint(
@@ -610,7 +630,10 @@ export function transitionVideoPromptFingerprint(
 export type EffectiveTransitionVideoPrompt = {
   text: string
   source: 'auto' | 'override'
+  autoKind?: 'template' | 'semantic'
   stale: boolean
+  renderStale?: boolean
+  templateStale?: boolean
 }
 
 export function effectiveTransitionVideoPrompt(
@@ -620,14 +643,32 @@ export function effectiveTransitionVideoPrompt(
   styleRefTokens: string[] = [],
 ): EffectiveTransitionVideoPrompt {
   const g = normalizeGenerated(generated)
-  const auto = autoTransitionVideoPrompt(source, target, g)
   const fp = transitionVideoPromptFingerprint(source, target, g, styleRefTokens)
+  const resolved = resolveTransitionAutoPrompt(source, target, g, fp)
   const override = coerceTransitionVideoPromptOverride(g.videoPromptOverride)
-  if (!override?.text) return { text: auto, source: 'auto', stale: false }
+  const renderStale = videoPromptRenderStale(
+    g.renderedPrompt,
+    g.renderMeta,
+    fp,
+    getPromptRenderTemplateVersion(),
+  )
+  const templateStale = templateVersionStale(g.renderMeta, getPromptRenderTemplateVersion())
+  if (!override?.text) {
+    return {
+      text: resolved.text,
+      source: 'auto',
+      autoKind: resolved.kind,
+      stale: false,
+      renderStale,
+      templateStale,
+    }
+  }
   return {
     text: override.text,
     source: 'override',
     stale: Boolean(override.fingerprint && override.fingerprint !== fp),
+    renderStale,
+    templateStale,
   }
 }
 
@@ -687,10 +728,11 @@ function finalizeTransitionPromptText(
   submitRefs: boolean,
 ): string {
   if (source === 'override') return base
-  // 互斥被省略时不能在正文里宣称有参考，否则正文与请求不一致
-  const refHint = submitRefs ? buildReferenceImagesPromptHint(refs, Boolean(video)) : ''
-  const videoHint = submitRefs ? buildVideoReferencePromptHint(video ?? undefined) : ''
-  return base + buildTransitionStructurePromptHint(attachments) + refHint + videoHint
+  // 仅保留结构锚点（首尾帧槽位）；参考图/视频映射交给模板渲染或语义正文，不再运行时拼接
+  void submitRefs
+  void refs
+  void video
+  return base + buildTransitionStructurePromptHint(attachments)
 }
 
 export type TransitionPromptPanelRefPrefix = {
@@ -1036,11 +1078,7 @@ export function buildTransitionVideoPreview(input: {
 
   const continuityPreview = transitionContinuityBlock(input.source, input.target)
   const submittedStyleCount = styleRefs.filter((r) => r.submitted).length
-  let promptBody = effectivePrompt.text
-  if (nativeMode && nativeRef?.ok && effectivePrompt.source === 'auto') {
-    const nativeSound = nativeAudioPrompt(nativeRef.character, dialogue, true)
-    if (nativeSound) promptBody = `${promptBody}\n\n${nativeSound}`
-  }
+  const promptBody = effectivePrompt.text
   const prompt = finalizeTransitionPromptText(
     promptBody,
     effectivePrompt.source,

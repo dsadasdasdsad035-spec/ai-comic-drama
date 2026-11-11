@@ -2,12 +2,12 @@ import type { ShotData } from './types'
 import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from './types'
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
-import type { AppSettings, Cap } from './api'
+import type { AppSettings, Cap, Stage } from './api'
 import { listVideoFiles, type VideoFile } from './api'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import type { CharacterSheet } from './characters'
-import { CapModelSelect } from './ModelSelect'
+import { CapModelSelect, type StagePick } from './ModelSelect'
 import MediaPicker from './MediaPicker'
 import { fetchStockMeta } from './stock/api'
 import type { StockImportMeta } from './stock/types'
@@ -340,6 +340,12 @@ type Props = {
   characters: CharacterSheet[]
   /** 选中镜头的出片请求预览；与生成请求共用同一个拼装器 */
   videoRequest: ShotVideoRequest | null
+  projectStyle: string
+  onRenderVideoTemplate?: (shotNodeId: string) => Promise<void>
+  templateRenderBusy?: boolean
+  onOpenPromptRefine?: (shotNodeId: string) => void
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
 }
 
 export default function Inspector(props: Props) {
@@ -388,19 +394,38 @@ function ShotVideoPromptPanel({
   data,
   request,
   onPatch,
+  onRenderVideoTemplate,
+  templateRenderBusy,
+  onOpenPromptRefine,
+  shotNodeId,
+  settings,
+  stagePick,
+  onPickStage,
 }: {
   data: ShotData
   request: ShotVideoRequest
   onPatch: (p: Partial<ShotData>) => void
+  onRenderVideoTemplate?: (shotNodeId: string) => Promise<void>
+  templateRenderBusy?: boolean
+  onOpenPromptRefine?: (shotNodeId: string) => void
+  shotNodeId: string
+  settings: AppSettings | null
+  stagePick: StagePick
+  onPickStage: (stage: Stage, key: string) => void
 }) {
-  const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
+  const effective = effectiveVideoPrompt(request, data.videoPromptOverride, {
+    text: data.videoPromptRendered,
+    meta: data.videoPromptRenderMeta,
+  })
   const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
   const sourceLabel =
-    request.textSource === 'video_prompt'
-      ? '运动提示词'
-      : request.textSource === 'prompt_fallback'
-        ? '画面提示词回退'
-        : '默认运动描述'
+    request.textSource === 'template_render'
+      ? '九段模板渲染'
+      : request.textSource === 'video_prompt'
+        ? '运动提示词'
+        : request.textSource === 'prompt_fallback'
+          ? '画面提示词回退'
+          : '默认运动描述'
 
   return (
     <OutgoingVideoPromptPanel
@@ -444,6 +469,20 @@ function ShotVideoPromptPanel({
           handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
         })
       }
+      onTemplateRender={
+        onRenderVideoTemplate ? () => onRenderVideoTemplate(shotNodeId) : undefined
+      }
+      onClearTemplateRender={() =>
+        onPatch({
+          videoPromptRendered: undefined,
+          videoPromptRenderMeta: undefined,
+        })
+      }
+      onPromptRefine={onOpenPromptRefine ? () => onOpenPromptRefine(shotNodeId) : undefined}
+      templateRendering={templateRenderBusy}
+      settings={settings}
+      stagePick={stagePick}
+      onPickPromptModel={onPickStage}
       videoMeta={meta}
       hasVideoUrl={Boolean(data.videoUrl)}
     />
@@ -526,6 +565,11 @@ function InspectorBody({
   projectName,
   characters,
   videoRequest,
+  onRenderVideoTemplate,
+  templateRenderBusy,
+  onOpenPromptRefine,
+  stagePick,
+  onPickStage,
 }: BodyProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [pickVideo, setPickVideo] = useState('')
@@ -542,7 +586,10 @@ function InspectorBody({
   const d = node.data
   const set = (p: Partial<ShotData>) => patch(node.id, p)
   const activeVideoPrompt = videoRequest
-    ? effectiveVideoPrompt(videoRequest, d.videoPromptOverride)
+    ? effectiveVideoPrompt(videoRequest, d.videoPromptOverride, {
+        text: d.videoPromptRendered,
+        meta: d.videoPromptRenderMeta,
+      })
     : null
   const setDialogue = (text: string) => {
     const oldLines = parseDialogue(d.dialogue)
@@ -1161,7 +1208,20 @@ function InspectorBody({
             </button>
           </div>
         )}
-        {videoRequest && <ShotVideoPromptPanel data={d} request={videoRequest} onPatch={set} />}
+        {videoRequest && (
+          <ShotVideoPromptPanel
+            data={d}
+            request={videoRequest}
+            onPatch={set}
+            shotNodeId={node.id}
+            onRenderVideoTemplate={onRenderVideoTemplate}
+            templateRenderBusy={templateRenderBusy}
+            onOpenPromptRefine={onOpenPromptRefine}
+            settings={settings}
+            stagePick={stagePick}
+            onPickStage={onPickStage}
+          />
+        )}
       </div>
 
       <div className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual'}>

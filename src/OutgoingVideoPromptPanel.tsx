@@ -1,4 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import type { AppSettings, Stage } from './api'
+import {
+  StageModelSelect,
+  stageDefaultLabel,
+  stageModelKey,
+  type StagePick,
+} from './ModelSelect'
 import type { VideoMeta } from './types'
 import {
   type EffectiveVideoPrompt,
@@ -25,9 +32,19 @@ export type OutgoingVideoPromptPanelProps = {
   warnings: VideoRequestIssue[]
   effective: EffectiveVideoPrompt
   staleMessage?: string
+  renderStaleMessage?: string
+  templateStaleMessage?: string
   onSaveOverride: (text: string) => void
   onClearOverride: () => void
   onRebuildOverride?: () => void
+  onTemplateRender?: () => void | Promise<void>
+  onClearTemplateRender?: () => void
+  onPromptRefine?: () => void
+  templateRendering?: boolean
+  /** 模板渲染 / 改稿用的文本模型（prompt 环节） */
+  settings?: AppSettings | null
+  stagePick?: StagePick
+  onPickPromptModel?: (stage: Stage, key: string) => void
   videoMeta: VideoMeta | null
   hasVideoUrl: boolean
   advancedSlot?: ReactNode
@@ -48,9 +65,18 @@ export default function OutgoingVideoPromptPanel({
   warnings,
   effective,
   staleMessage = '参考、台词或模式已变化，当前正文是保存时的旧快照。',
+  renderStaleMessage = '模板渲染与当前输入不一致，请点「模板渲染」更新。',
+  templateStaleMessage = '内置模板已升级，建议重新模板渲染。',
   onSaveOverride,
   onClearOverride,
   onRebuildOverride,
+  onTemplateRender,
+  onClearTemplateRender,
+  onPromptRefine,
+  templateRendering = false,
+  settings = null,
+  stagePick,
+  onPickPromptModel,
   videoMeta,
   hasVideoUrl,
   advancedSlot,
@@ -74,26 +100,107 @@ export default function OutgoingVideoPromptPanel({
     setEditing(false)
   }
 
-  return (
-    <div className="vp-panel" data-video-prompt-panel>
-      <div className="vp-head">
-        <button type="button" className="vp-toggle" onClick={() => setOpen((v) => !v)}>
-          {open ? '▾' : '▸'} 本次出片提示词
-        </button>
-        <span
-          className={`vp-badge ${
-            effective.source === 'override' ? (effective.stale ? 'warn' : 'manual') : 'auto'
-          }`}
-        >
-          {effective.source === 'override' ? (effective.stale ? '旧快照' : '已手改') : '自动拼装'}
-        </span>
-      </div>
+  const showCompose = Boolean(onPickPromptModel || onTemplateRender || onPromptRefine)
+  const promptModelReady = Boolean(stageModelKey(settings, 'prompt', stagePick))
+  const promptModelLabel = stageDefaultLabel(settings, 'prompt', stagePick)
 
-      {open ? (
-        <>
+  const badgeClass =
+    effective.source === 'override'
+      ? effective.stale
+        ? 'warn'
+        : 'manual'
+      : effective.autoKind === 'template'
+        ? 'template'
+        : 'semantic'
+
+  const badgeLabel =
+    effective.source === 'override'
+      ? effective.stale
+        ? '旧快照'
+        : '已手改'
+      : effective.autoKind === 'template'
+        ? '模板渲染'
+        : '语义层'
+
+  const needsAttention =
+    Boolean(effective.stale || effective.renderStale || effective.templateStale) || blocking.length > 0
+
+  const textChars = effective.text.length
+  const peekLine = useMemo(() => {
+    const line = effective.text.split(/\n/).map((s) => s.trim()).find(Boolean) || '（暂无正文）'
+    return line.length > 72 ? `${line.slice(0, 72)}…` : line
+  }, [effective.text])
+
+  const refCount =
+    refPrefix.length +
+    refs.length +
+    (video ? 1 : 0) +
+    (audio ? 1 : 0) +
+    omitted.length +
+    omittedVideos.length
+
+  const [refsOpen, setRefsOpen] = useState(() => refCount <= 4)
+
+  return (
+    <div className="vp-panel" data-video-prompt-panel data-open={open ? 'true' : 'false'}>
+      <button
+        type="button"
+        className="vp-disclosure-trigger"
+        aria-expanded={open}
+        aria-controls="vp-disclosure-body"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="vp-disclosure-chevron" aria-hidden="true" />
+        <span className="vp-disclosure-title">本次出片提示词</span>
+        <span className="vp-disclosure-meta">
+          {!open ? <span className="vp-disclosure-chars">{textChars} 字</span> : null}
+          {needsAttention ? <span className="vp-disclosure-attn" title="正文或附件需更新" /> : null}
+          <span
+            className={`vp-badge ${badgeClass}`}
+            title={
+              effective.source === 'override'
+                ? '手改全文优先于模板与语义层'
+                : effective.autoKind === 'template'
+                  ? '当前正文来自九段模板渲染'
+                  : '当前正文来自镜表语义层（较短）'
+            }
+          >
+            {badgeLabel}
+          </span>
+        </span>
+      </button>
+
+      {!open ? (
+        <div className="vp-disclosure-peek" id="vp-disclosure-peek">
+          <p className="vp-disclosure-peek-text" title={effective.text}>
+            {peekLine}
+          </p>
+          {needsAttention ? (
+            <p className="vp-disclosure-peek-warn">附件或模板已过期，展开后请更新</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div
+        id="vp-disclosure-body"
+        className="vp-disclosure-body"
+        hidden={!open}
+        aria-hidden={!open}
+      >
           <div className="vp-summary">{summary}</div>
 
-          <ul className="vp-refs">
+          {refCount > 0 ? (
+            <details
+              className="vp-refs-disclosure"
+              open={refsOpen}
+              onToggle={(e) => setRefsOpen(e.currentTarget.open)}
+            >
+              <summary className="vp-refs-summary">
+                <span className="vp-refs-summary-title">附件与槽位</span>
+                <span className="vp-refs-summary-count">{refCount} 项</span>
+                <span className="vp-refs-summary-chevron" aria-hidden="true" />
+              </summary>
+              <ul className="vp-refs">
             {refPrefix.map((a) => (
               <li key={a.key}>
                 <b>{a.bold}</b> {a.label}
@@ -130,7 +237,9 @@ export default function OutgoingVideoPromptPanel({
                 <span>{o.reason}</span>
               </li>
             ))}
-          </ul>
+              </ul>
+            </details>
+          ) : null}
 
           {advancedSlot}
 
@@ -145,6 +254,8 @@ export default function OutgoingVideoPromptPanel({
             </div>
           ))}
           {effective.stale ? <div className="gen-warn vp-issue">{staleMessage}</div> : null}
+          {effective.renderStale ? <div className="gen-warn vp-issue">{renderStaleMessage}</div> : null}
+          {effective.templateStale ? <div className="gen-warn vp-issue">{templateStaleMessage}</div> : null}
 
           {editing ? (
             <>
@@ -168,22 +279,92 @@ export default function OutgoingVideoPromptPanel({
               <pre className="vp-text" data-video-prompt-text>
                 {effective.text}
               </pre>
-              <div className="vp-actions">
-                <button type="button" className="btn-mini" onClick={startEdit}>
-                  编辑
-                </button>
-                {effective.source === 'override' ? (
-                  <>
-                    <button type="button" className="btn-mini" onClick={restore}>
-                      {effective.stale ? '重新拼装' : '恢复自动拼装'}
-                    </button>
-                    {onRebuildOverride ? (
-                      <button type="button" className="btn-mini" onClick={onRebuildOverride}>
-                        用当前字段重填
+
+              {showCompose ? (
+                <section className="vp-compose" aria-label="AI 扩写出片提示词">
+                  <div className="vp-compose-head">
+                    <span className="vp-compose-title">AI 扩写</span>
+                    <span className="vp-compose-hint">用文本模型生成九段正文，不调用出片 API</span>
+                  </div>
+                  {onPickPromptModel ? (
+                    <div className="vp-compose-model">
+                      <StageModelSelect
+                        stage="prompt"
+                        label="文本模型"
+                        settings={settings}
+                        pick={stagePick}
+                        onChange={onPickPromptModel}
+                        compact
+                        className="wb-field vp-stage-model"
+                        disabled={templateRendering}
+                      />
+                      <p
+                        className={`vp-compose-model-hint ${promptModelReady ? '' : 'is-error'}`}
+                        title={promptModelLabel}
+                      >
+                        {promptModelReady
+                          ? `将使用：${promptModelLabel}`
+                          : '未配置文本模型，请到设置页绑定「提示词」环节'}
+                      </p>
+                    </div>
+                  ) : null}
+                  <div className="vp-compose-actions">
+                    {onTemplateRender ? (
+                      <button
+                        type="button"
+                        className="btn-mini vp-btn-primary"
+                        disabled={templateRendering || !promptModelReady}
+                        title={
+                          promptModelReady ? '按设置页技能模板一次性渲染' : '请先配置文本模型'
+                        }
+                        onClick={() => void onTemplateRender()}
+                      >
+                        {templateRendering ? '渲染中…' : '一键模板渲染'}
                       </button>
                     ) : null}
-                  </>
-                ) : null}
+                    {onPromptRefine ? (
+                      <button
+                        type="button"
+                        className="btn-mini vp-btn-accent"
+                        disabled={!promptModelReady}
+                        title={promptModelReady ? '打开聊天多轮改稿' : '请先配置文本模型'}
+                        onClick={onPromptRefine}
+                      >
+                        与模型改稿…
+                      </button>
+                    ) : null}
+                    {onClearTemplateRender ? (
+                      <button
+                        type="button"
+                        className="btn-mini vp-btn-ghost"
+                        onClick={onClearTemplateRender}
+                      >
+                        清除模板层
+                      </button>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
+
+              <div className="vp-actions vp-actions--manual">
+                <span className="vp-actions-label">正文</span>
+                <div className="vp-actions-row">
+                  <button type="button" className="btn-mini" onClick={startEdit}>
+                    手改编辑
+                  </button>
+                  {effective.source === 'override' ? (
+                    <>
+                      <button type="button" className="btn-mini" onClick={restore}>
+                        {effective.stale ? '重新拼装' : '恢复自动'}
+                      </button>
+                      {onRebuildOverride ? (
+                        <button type="button" className="btn-mini" onClick={onRebuildOverride}>
+                          用字段重填
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
               </div>
             </>
           )}
@@ -199,8 +380,7 @@ export default function OutgoingVideoPromptPanel({
           ) : hasVideoUrl ? (
             <div className="vp-meta-note">当前视频未记录提示词来源</div>
           ) : null}
-        </>
-      ) : null}
+      </div>
     </div>
   )
 }
