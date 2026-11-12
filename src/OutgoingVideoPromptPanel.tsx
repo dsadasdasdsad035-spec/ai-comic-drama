@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Fold from './Fold'
 import type { AppSettings, Stage } from './api'
 import {
@@ -140,7 +140,65 @@ export default function OutgoingVideoPromptPanel({
     omitted.length +
     omittedVideos.length
 
-  const [refsOpen, setRefsOpen] = useState(() => refCount <= 4)
+  // 附件与槽位默认收起：展开时正文优先，避免一屏被参考清单占满
+  const [refsOpen, setRefsOpen] = useState(false)
+  // 提示合并成一行入口，逐条内容按需展开
+  const [warnsOpen, setWarnsOpen] = useState(false)
+
+  // AI 扩写改成锚定浮层：不占正文高度，Esc / 外部点击关闭，关闭后焦点回到入口
+  const composeRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [composePos, setComposePos] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  )
+
+  const openCompose = () => {
+    const r = composeRef.current?.getBoundingClientRect()
+    if (!r) return
+    const width = Math.min(300, Math.max(232, window.innerWidth - 24))
+    const left = Math.min(Math.max(8, r.left + r.width - width), window.innerWidth - width - 8)
+    const top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 320))
+    setComposePos({ top, left, width })
+    setComposeOpen(true)
+  }
+
+  const closeCompose = () => {
+    setComposeOpen(false)
+    composeRef.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!composeOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setComposeOpen(false)
+      composeRef.current?.focus()
+    }
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (popRef.current?.contains(t) || composeRef.current?.contains(t)) return
+      setComposeOpen(false)
+      composeRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKey, true)
+    document.addEventListener('mousedown', onDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKey, true)
+      document.removeEventListener('mousedown', onDown, true)
+    }
+  }, [composeOpen])
+
+  const warnItems = useMemo(
+    () => [
+      ...warnings.map((w) => ({ code: w.code, message: w.message })),
+      ...(effective.stale ? [{ code: 'stale', message: staleMessage }] : []),
+      ...(effective.renderStale ? [{ code: 'render-stale', message: renderStaleMessage }] : []),
+      ...(effective.templateStale ? [{ code: 'template-stale', message: templateStaleMessage }] : []),
+    ],
+    [warnings, effective.stale, effective.renderStale, effective.templateStale, staleMessage, renderStaleMessage, templateStaleMessage],
+  )
 
   return (
     <div className="vp-panel" data-video-prompt-panel data-open={open ? 'true' : 'false'}>
@@ -236,19 +294,22 @@ export default function OutgoingVideoPromptPanel({
 
           {advancedSlot}
 
-          {blocking.map((b) => (
-            <div className="gen-error vp-issue" key={b.code}>
-              {b.message}
-            </div>
-          ))}
-          {warnings.map((w) => (
-            <div className="gen-warn vp-issue" key={w.code}>
-              {w.message}
-            </div>
-          ))}
-          {effective.stale ? <div className="gen-warn vp-issue">{staleMessage}</div> : null}
-          {effective.renderStale ? <div className="gen-warn vp-issue">{renderStaleMessage}</div> : null}
-          {effective.templateStale ? <div className="gen-warn vp-issue">{templateStaleMessage}</div> : null}
+          {warnItems.length ? (
+            <Fold
+              className="vp-warns"
+              idPrefix="vp-warns"
+              title={`${warnItems.length} 条提示`}
+              meta="展开逐条查看"
+              open={warnsOpen}
+              onToggle={() => setWarnsOpen((v) => !v)}
+            >
+              {warnItems.map((w) => (
+                <div className="gen-warn vp-issue" key={w.code}>
+                  {w.message}
+                </div>
+              ))}
+            </Fold>
+          ) : null}
 
           {editing ? (
             <>
@@ -274,69 +335,96 @@ export default function OutgoingVideoPromptPanel({
               </pre>
 
               {showCompose ? (
-                <section className="vp-compose" aria-label="AI 扩写出片提示词">
-                  <div className="vp-compose-head">
-                    <span className="vp-compose-title">AI 扩写</span>
+                <>
+                  <div className="vp-compose-entry">
+                    <button
+                      type="button"
+                      ref={composeRef}
+                      className="btn-mini vp-compose-trigger"
+                      aria-haspopup="dialog"
+                      aria-expanded={composeOpen}
+                      aria-controls="vp-compose-pop"
+                      onClick={() => (composeOpen ? closeCompose() : openCompose())}
+                    >
+                      AI 扩写
+                    </button>
                     <span className="vp-compose-hint">用文本模型生成九段正文，不调用出片 API</span>
                   </div>
-                  {onPickPromptModel ? (
-                    <div className="vp-compose-model">
-                      <StageModelSelect
-                        stage="prompt"
-                        label="文本模型"
-                        settings={settings}
-                        pick={stagePick}
-                        onChange={onPickPromptModel}
-                        compact
-                        className="wb-field vp-stage-model"
-                        disabled={templateRendering}
-                      />
-                      <p
-                        className={`vp-compose-model-hint ${promptModelReady ? '' : 'is-error'}`}
-                        title={promptModelLabel}
-                      >
-                        {promptModelReady
-                          ? `将使用：${promptModelLabel}`
-                          : '未配置文本模型，请到设置页绑定「提示词」环节'}
-                      </p>
+                  {composeOpen ? (
+                    <div
+                      id="vp-compose-pop"
+                      ref={popRef}
+                      className="vp-compose-pop"
+                      role="dialog"
+                      aria-label="AI 扩写出片提示词"
+                      style={composePos ?? undefined}
+                    >
+                      <div className="vp-compose-head">
+                        <span className="vp-compose-title">AI 扩写</span>
+                        <span className="vp-compose-hint">
+                          用文本模型生成九段正文，不调用出片 API
+                        </span>
+                      </div>
+                      {onPickPromptModel ? (
+                        <div className="vp-compose-model">
+                          <StageModelSelect
+                            stage="prompt"
+                            label="文本模型"
+                            settings={settings}
+                            pick={stagePick}
+                            onChange={onPickPromptModel}
+                            compact
+                            className="wb-field vp-stage-model"
+                            disabled={templateRendering}
+                          />
+                          <p
+                            className={`vp-compose-model-hint ${promptModelReady ? '' : 'is-error'}`}
+                            title={promptModelLabel}
+                          >
+                            {promptModelReady
+                              ? `将使用：${promptModelLabel}`
+                              : '未配置文本模型，请到设置页绑定「提示词」环节'}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="vp-compose-actions">
+                        {onTemplateRender ? (
+                          <button
+                            type="button"
+                            className="btn-mini vp-btn-primary"
+                            disabled={templateRendering || !promptModelReady}
+                            title={
+                              promptModelReady ? '按设置页技能模板一次性渲染' : '请先配置文本模型'
+                            }
+                            onClick={() => void onTemplateRender()}
+                          >
+                            {templateRendering ? '渲染中…' : '一键模板渲染'}
+                          </button>
+                        ) : null}
+                        {onPromptRefine ? (
+                          <button
+                            type="button"
+                            className="btn-mini vp-btn-accent"
+                            disabled={!promptModelReady}
+                            title={promptModelReady ? '打开聊天多轮改稿' : '请先配置文本模型'}
+                            onClick={onPromptRefine}
+                          >
+                            与模型改稿…
+                          </button>
+                        ) : null}
+                        {onClearTemplateRender ? (
+                          <button
+                            type="button"
+                            className="btn-mini vp-btn-ghost"
+                            onClick={onClearTemplateRender}
+                          >
+                            清除模板层
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
-                  <div className="vp-compose-actions">
-                    {onTemplateRender ? (
-                      <button
-                        type="button"
-                        className="btn-mini vp-btn-primary"
-                        disabled={templateRendering || !promptModelReady}
-                        title={
-                          promptModelReady ? '按设置页技能模板一次性渲染' : '请先配置文本模型'
-                        }
-                        onClick={() => void onTemplateRender()}
-                      >
-                        {templateRendering ? '渲染中…' : '一键模板渲染'}
-                      </button>
-                    ) : null}
-                    {onPromptRefine ? (
-                      <button
-                        type="button"
-                        className="btn-mini vp-btn-accent"
-                        disabled={!promptModelReady}
-                        title={promptModelReady ? '打开聊天多轮改稿' : '请先配置文本模型'}
-                        onClick={onPromptRefine}
-                      >
-                        与模型改稿…
-                      </button>
-                    ) : null}
-                    {onClearTemplateRender ? (
-                      <button
-                        type="button"
-                        className="btn-mini vp-btn-ghost"
-                        onClick={onClearTemplateRender}
-                      >
-                        清除模板层
-                      </button>
-                    ) : null}
-                  </div>
-                </section>
+                </>
               ) : null}
 
               <div className="vp-actions vp-actions--manual">
@@ -374,6 +462,16 @@ export default function OutgoingVideoPromptPanel({
             <div className="vp-meta-note">当前视频未记录提示词来源</div>
           ) : null}
       </Fold>
+      {/* 阻断项常驻：折叠提示词也不隐藏，避免底栏按钮变灰却看不到原因 */}
+      {blocking.length ? (
+        <div className="vp-blocking" role="alert" data-vp-blocking>
+          {blocking.map((b) => (
+            <div className="gen-error vp-issue" key={b.code}>
+              {b.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -74,6 +74,39 @@ check('折叠态露出 peek', closed.includes('fold-peek') && closed.includes('�
 check('展开态不渲染 peek', !opened.includes('fold-peek'))
 check('data-open 同步输出', closed.includes('data-open="false"') && opened.includes('data-open="true"'))
 
+// ---------------------------------------------------------------- 折叠结构一致性
+// 分镜视频 Tab 与转场生成区的「出片设置」共用同一原语，摘要行子节点顺序必须一致
+const headOrder = (html) => {
+  const head = html.match(/<button[^>]*class="fold-head"[\s\S]*?<\/button>/)?.[0] ?? ''
+  return [...head.matchAll(/class="(fold-[a-z]+)"/g)]
+    .map((m) => m[1])
+    .filter((c) => c !== 'fold-head')
+}
+const noMeta = probe.render(true, false)
+const orderWithMeta = headOrder(opened)
+check(
+  '摘要行子节点顺序为 chevron → title → meta',
+  JSON.stringify(orderWithMeta) === JSON.stringify(['fold-chevron', 'fold-title', 'fold-meta']),
+  JSON.stringify(orderWithMeta),
+)
+const orderNoMeta = headOrder(noMeta)
+check(
+  '无 meta 时顺序为 chevron → title',
+  JSON.stringify(orderNoMeta) === JSON.stringify(['fold-chevron', 'fold-title']),
+  JSON.stringify(orderNoMeta),
+)
+const inspFoldSrc = fs.readFileSync(path.join(root, 'src/Inspector.tsx'), 'utf8')
+const transFoldSrc = fs.readFileSync(path.join(root, 'src/TransitionPanel.tsx'), 'utf8')
+check(
+  '两条路径的出片设置折叠参数一致',
+  inspFoldSrc.includes('title="出片设置"') &&
+    transFoldSrc.includes('title="出片设置"') &&
+    inspFoldSrc.includes('sectionId="videoSettings"') &&
+    transFoldSrc.includes('sectionId="videoSettings"') &&
+    inspFoldSrc.includes('idPrefix="vid-settings"') &&
+    transFoldSrc.includes('idPrefix="tr-settings"'),
+)
+
 // ---------------------------------------------------------------- 样式（真实样式表）
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1200, height: 900 } })
@@ -138,6 +171,24 @@ check('meta 不溢出容器', style.open.headWrap <= 1, String(style.open.headWr
 check('chevron 使用 ▾', style.open.chevron.includes('▾'), style.open.chevron)
 
 await b.close()
+
+// ---------------------------------------------------------------- DOM / 类名契约
+// 既有验收脚本 verify-video-prompt-preview / verify-transitions-ui 已陈旧
+// （仍按旧默认模式与已移除流程断言），改由源码契约检查覆盖本次"类名不回归"的要求。
+const panelSrc = fs.readFileSync(path.join(root, 'src/OutgoingVideoPromptPanel.tsx'), 'utf8')
+const transSrc = fs.readFileSync(path.join(root, 'src/TransitionPanel.tsx'), 'utf8')
+const inspSrc = fs.readFileSync(path.join(root, 'src/Inspector.tsx'), 'utf8')
+
+check('保留 vp-panel 容器与 data-open', panelSrc.includes('className="vp-panel"') && panelSrc.includes('data-open={open'))
+check('保留 vp-summary 摘要行', panelSrc.includes('className="vp-summary"'))
+check('保留 vp-refs 槽位列表', panelSrc.includes('className="vp-refs"'))
+check('保留 vp-issue 阻断/提示', panelSrc.includes('vp-issue'))
+check('保留 vp-text 正文', panelSrc.includes('vp-text'))
+check('转场保留 tr-advanced 外观挂点', transSrc.includes('"tr-advanced"'))
+check('四个折叠点统一走 Fold', [panelSrc, transSrc, inspSrc].every((s) => s.includes("from './Fold'")))
+check('旧的折叠外观类已移除', !panelSrc.includes('vp-disclosure-trigger') && !panelSrc.includes('vp-refs-summary-chevron') && !inspSrc.includes('si-section-chevron'))
+check('分镜分区不再用原生 details', !/details[\s\S]{0,80}si-section/.test(inspSrc) && inspSrc.includes('className={`si-section'))
+
 fs.rmSync(outDir, { recursive: true, force: true })
 console.log(bad === 0 ? '\n全部通过' : `\n${bad} 项未通过`)
 process.exit(bad === 0 ? 0 : 1)

@@ -16,6 +16,8 @@ export type FoldProps = {
   bodyClassName?: string
   /** 显式指定 body id 前缀，便于测试与 aria 关联 */
   idPrefix?: string
+  /** 输出 data-section，便于验收脚本按分区定位 */
+  sectionId?: string
 }
 
 /**
@@ -35,6 +37,7 @@ export default function Fold({
   className = '',
   bodyClassName = '',
   idPrefix,
+  sectionId,
 }: FoldProps) {
   const auto = useId()
   const base = idPrefix ?? `fold-${auto.replace(/[^a-zA-Z0-9_-]/g, '')}`
@@ -42,7 +45,11 @@ export default function Fold({
   const bodyId = `${base}-body`
 
   return (
-    <div className={`fold ${className}`.trim()} data-open={open ? 'true' : 'false'}>
+    <div
+      className={`fold ${className}`.trim()}
+      data-open={open ? 'true' : 'false'}
+      data-section={sectionId}
+    >
       <button
         type="button"
         id={headId}

@@ -999,20 +999,34 @@ function InspectorBody({
           )}
         </InspectorSection>
 
-        <label className="field" data-shot-tab="video" hidden={effectiveTab !== 'video'}>
-          <span>
-            运动提示词
-            <i className="hint-inline" title="出片时发给 Seedance 的提示词，只写动作与运镜；留空则回退用画面提示词">
-              Seedance
-            </i>
-          </span>
-          <textarea
-            rows={3}
-            value={d.videoPrompt ?? ''}
-            placeholder="只写动作与运镜：镜头缓慢前推 20 厘米，雨丝斜切画面，24fps 冷青色调"
-            onChange={(e) => set({ videoPrompt: e.target.value })}
-          />
-        </label>
+        <Fold
+          className="si-fold-field"
+          idPrefix="si-motion-prompt"
+          sectionId="motionPrompt"
+          title="运动提示词"
+          meta={
+            (d.videoPrompt ?? '').trim()
+              ? `${(d.videoPrompt ?? '').trim().length} 字`
+              : '未填 · 回退画面提示词'
+          }
+          open={!prefs.collapsed.motionPrompt}
+          onToggle={() => toggleSection('motionPrompt')}
+        >
+          <label className="field" data-shot-tab="video" hidden={effectiveTab !== 'video'}>
+            <span>
+              运动提示词
+              <i className="hint-inline" title="出片时发给 Seedance 的提示词，只写动作与运镜；留空则回退用画面提示词">
+                Seedance
+              </i>
+            </span>
+            <textarea
+              rows={3}
+              value={d.videoPrompt ?? ''}
+              placeholder="只写动作与运镜：镜头缓慢前推 20 厘米，雨丝斜切画面，24fps 冷青色调"
+              onChange={(e) => set({ videoPrompt: e.target.value })}
+            />
+          </label>
+        </Fold>
         {activeVideoPrompt?.source === 'override' && (
           <div
             className="gen-note vp-field-note"
@@ -1133,12 +1147,6 @@ function InspectorBody({
       </div>
 
       <div className="gen-box vid-box" data-shot-tab="video" hidden={effectiveTab !== 'video'}>
-        <div className="gen-head">
-          <span>出片设置</span>
-          <span className="gen-cost">
-            Seedance · 约 ¥{money(videoCost(price, Math.round(d.seconds), vidRes))} / 次
-          </span>
-        </div>
         {d.videoUrl && (
           <div className="si-video-preview">
             <video src={d.videoUrl} muted loop autoPlay playsInline controls preload="metadata" />
@@ -1147,13 +1155,22 @@ function InspectorBody({
             </a>
           </div>
         )}
-        <VideoOutgoingModelRow
-          settings={settings}
-          pick={pick}
-          onPick={onPick}
-          vidRes={vidRes}
-          onVidResChange={setVidRes}
-        />
+        <Fold
+          className="vid-settings"
+          idPrefix="vid-settings"
+          sectionId="videoSettings"
+          title="出片设置"
+          meta={`${selectedVideoModel?.label ?? '未选模型'} · ${vidRes} · ${Math.min(12, Math.max(2, Math.round(d.seconds)))}s · ¥${money(videoCost(price, Math.round(d.seconds), vidRes))}`}
+          open={!prefs.collapsed.videoSettings}
+          onToggle={() => toggleSection('videoSettings')}
+        >
+          <VideoOutgoingModelRow
+            settings={settings}
+            pick={pick}
+            onPick={onPick}
+            vidRes={vidRes}
+            onVidResChange={setVidRes}
+          />
         <div className="gen-controls">
           <span className="vid-len">
             {Math.min(12, Math.max(2, Math.round(d.seconds)))}s · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
@@ -1210,6 +1227,7 @@ function InspectorBody({
             </button>
           </div>
         )}
+        </Fold>
         {videoRequest && (
           <ShotVideoPromptPanel
             data={d}

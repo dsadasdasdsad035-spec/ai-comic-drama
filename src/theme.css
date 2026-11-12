@@ -2662,13 +2662,32 @@ body.si-resizing {
 }
 
 /* AI 扩写：与「手改正文」分区，适配窄侧栏 */
-.vp-compose {
-  margin-top: 10px;
+/* AI 扩写：单行入口 + 锚定浮层，避免正文区被常驻表单吃掉高度 */
+.vp-compose-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.vp-compose-entry .vp-compose-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vp-compose-pop {
+  position: fixed;
+  z-index: 1400;
   padding: 10px 10px 8px;
   border: 1px solid var(--accent-line);
   border-radius: var(--r-md);
-  background: linear-gradient(165deg, var(--accent-dim) 0%, transparent 55%);
+  background: var(--panel);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
   box-sizing: border-box;
+  animation: vp-disclosure-in 0.16s ease;
 }
 
 .vp-compose-head {
@@ -13933,6 +13952,14 @@ body,
 
 .fold-body[hidden] {
   display: none;
+}
+
+.tr-preset-all {
+  margin-top: 4px;
+}
+
+.tr-grid-common {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 /* 既有折叠区改用 Fold 承载后，保留各自原有的段落外观 */

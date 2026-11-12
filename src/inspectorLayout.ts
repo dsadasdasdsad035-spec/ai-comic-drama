@@ -8,7 +8,14 @@ export type ShotInspectorTab = 'visual' | 'video' | 'more'
 /** @deprecated 偏好里可能仍存 audio，加载时映射到 more */
 export type LegacyShotInspectorTab = ShotInspectorTab | 'audio'
 export type InspectorTabPreference = 'auto' | LegacyShotInspectorTab
-export type CollapsibleSection = 'shotParams' | 'performance' | 'schedule' | 'refs' | 'advanced'
+export type CollapsibleSection =
+  | 'shotParams'
+  | 'performance'
+  | 'schedule'
+  | 'refs'
+  | 'advanced'
+  | 'videoSettings'
+  | 'motionPrompt'
 
 export type InspectorPrefs = {
   width: number
@@ -29,7 +36,15 @@ export const MIN_INSPECTOR_WIDTH = 320
 export const MAX_INSPECTOR_WIDTH = 520
 
 const TABS: InspectorTabPreference[] = ['auto', 'visual', 'video', 'more']
-const SECTIONS: CollapsibleSection[] = ['shotParams', 'performance', 'schedule', 'refs', 'advanced']
+const SECTIONS: CollapsibleSection[] = [
+  'shotParams',
+  'performance',
+  'schedule',
+  'refs',
+  'advanced',
+  'videoSettings',
+  'motionPrompt',
+]
 
 export function defaultInspectorPrefs(): InspectorPrefs {
   return {
@@ -41,6 +56,9 @@ export function defaultInspectorPrefs(): InspectorPrefs {
       schedule: true,
       refs: false,
       advanced: true,
+      // 出片设置只留一行摘要；运动提示词与正文重复，默认收起
+      videoSettings: true,
+      motionPrompt: true,
     },
   }
 }

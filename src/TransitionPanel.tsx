@@ -45,6 +45,12 @@ import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategor
 import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
 
 const PRESET_ORDER: TransitionPresetCategory[] = ['classic', 'rhythm', 'geometry', 'motion']
+/** 常用段固定 4 项：覆盖叠化、黑场淡出、白场淡入、推移 */
+const COMMON_PRESET_IDS = ['dissolve', 'fadeblack', 'fadewhite', 'slide-right']
+const COMMON_PRESETS = COMMON_PRESET_IDS.map((id) =>
+  TRANSITION_PRESETS.find((p) => p.id === id),
+).filter((p): p is NonNullable<typeof p> => Boolean(p))
+const COMMON_PRESET_SET = new Set(COMMON_PRESET_IDS)
 
 const shotKey = (n: ShotNodeType) => String(n.data.shotId || n.id)
 const durOf = (n: ShotNodeType) => Math.max(0.4, Number(n.data.seconds) || 3)
@@ -125,6 +131,18 @@ export default function TransitionPanel({
   const join = relation === 'transition' ? resolveJoin(t, aDur, bDur, fingerprint) : { mode: 'cut' as const }
   const stale = Boolean(g.video?.url && t.meta?.fingerprint && t.meta.fingerprint !== fingerprint)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // 出片设置只留一行摘要，与分镜视频 Tab 保持同一套折叠语言
+  const [vidSettingsOpen, setVidSettingsOpen] = useState(false)
+  // 全部预设默认收起，常用段固定 4 项
+  const [allPresetsOpen, setAllPresetsOpen] = useState(false)
+  const summaryModel = useMemo(() => {
+    const family = (settings?.models ?? []).filter(
+      (m) => m.cap === 'video' || m.cap === 'videoRef',
+    )
+    return (
+      family.find((m) => m.key === (pick.video || settings?.defaults?.video)) || family[0]
+    )
+  }, [settings, pick.video])
   const [continuityOpen, setContinuityOpen] = useState(false)
   const [refPickerOpen, setRefPickerOpen] = useState(false)
   const presetGroups = useMemo(() => {
@@ -432,15 +450,16 @@ export default function TransitionPanel({
       {relation === 'transition' && t.mode === 'effect' ? (
         <div className="field">
           <span>效果预设</span>
-          {presetGroups.map((group) => (
-            <div key={group.cat} className="tr-preset-group">
-              <span className="tr-preset-cat">{group.label}</span>
-              <div className="tr-grid">
-                {group.items.map((p) => (
+          <div className="tr-preset-group tr-preset-common">
+            <span className="tr-preset-cat">常用</span>
+            <div className="tr-grid tr-grid-common">
+              {COMMON_PRESETS.map((p) => {
+                const on = (effect.presetId ?? 'dissolve') === p.id
+                return (
                   <button
                     key={p.id}
                     type="button"
-                    className={`btn-mini ${(effect.presetId ?? 'dissolve') === p.id ? 'on' : ''}`}
+                    className={`btn-mini ${on ? 'on' : ''}`}
                     title={p.xfade}
                     onClick={() =>
                       setEffect({
@@ -452,10 +471,48 @@ export default function TransitionPanel({
                   >
                     {p.label}
                   </button>
-                ))}
-              </div>
+                )
+              })}
             </div>
-          ))}
+          </div>
+          <Fold
+            className="tr-preset-all"
+            idPrefix="tr-presets"
+            sectionId="effectPresets"
+            title="全部预设"
+            meta={`${TRANSITION_PRESETS.length - COMMON_PRESETS.length} 种`}
+            open={allPresetsOpen}
+            onToggle={() => setAllPresetsOpen((v) => !v)}
+          >
+            {presetGroups.map((group) => {
+              const items = group.items.filter((p) => !COMMON_PRESET_SET.has(p.id))
+              if (!items.length) return null
+              return (
+                <div key={group.cat} className="tr-preset-group">
+                  <span className="tr-preset-cat">{group.label}</span>
+                  <div className="tr-grid">
+                    {items.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={`btn-mini ${(effect.presetId ?? 'dissolve') === p.id ? 'on' : ''}`}
+                        title={p.xfade}
+                        onClick={() =>
+                          setEffect({
+                            presetId: p.id,
+                            type: p.legacyType,
+                            ...(p.legacyDir ? { dir: p.legacyDir } : {}),
+                          })
+                        }
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </Fold>
           <label className="tr-inline">
             <span>重叠</span>
             <input
@@ -537,12 +594,6 @@ export default function TransitionPanel({
           ) : null}
 
           <div className="gen-box vid-box tr-vid-box">
-            <div className="gen-head">
-              <span>出片设置</span>
-              <span className="gen-cost">
-                Seedance · 约 ¥{money(estCost)} / 次
-              </span>
-            </div>
             {g.video?.url ? (
               <div className="si-video-preview">
                 <video src={g.video.url} muted loop autoPlay playsInline controls preload="metadata" />
@@ -555,7 +606,15 @@ export default function TransitionPanel({
                 </a>
               </div>
             ) : null}
-
+            <Fold
+              className="vid-settings"
+              idPrefix="tr-settings"
+              sectionId="videoSettings"
+              title="出片设置"
+              meta={`${summaryModel?.label ?? '未选模型'} · ${vidRes} · ${Math.min(12, Math.max(2, Math.round(preview.seconds)))}s · ¥${money(estCost)}`}
+              open={vidSettingsOpen}
+              onToggle={() => setVidSettingsOpen((v) => !v)}
+            >
             <VideoOutgoingModelRow
               settings={settings}
               pick={pick}
@@ -591,6 +650,7 @@ export default function TransitionPanel({
               0.8~{MAX_GENERATED_TARGET} 秒），按 tokens 计费。
             </p>
             {omitBanner ? <p className="vid-refs">{omitBanner}</p> : null}
+            </Fold>
 
             <OutgoingVideoPromptPanel
               summary={panelModel.summaryLine}
