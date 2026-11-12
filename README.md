@@ -78,6 +78,8 @@ brew install --cask blender    # 或自行安装到 /Applications
 
 内置 **运镜白膜库**（`public/presets/camera-moves-whitebox-132/`，132 段 MP4，署名 hong hou zi）可在素材页「镜头语言」、选择器运镜库/镜头语法中预览；确认选用会复制进 `projects/<项目>/assets/`。镜头 Inspector 可绑定运镜参照、发布参照素材卡；**作为运镜 `reference_video` 默认关闭**，需勾选「作为运镜 reference_video」或自行连线素材卡。
 
+镜头语言列表只渲染缩略封面（`thumbs/<key>.jpg`，16:9 静帧），hover 或键盘聚焦某条时才加载该条 MP4，同一时刻最多一个视频元素。封面由 `node scripts/gen-lexicon-posters.mjs` 生成并回写 manifest 的 `poster` 字段；**替换或重新渲染 MP4 后需要重跑该脚本**（加 `--force` 全部重抽），`node verify-camera-lexicon.mjs` 会校验每条封面的存在与 16:9 比例。
+
 ## 角色参考图
 
 角色卡的三视图页有「参考图」区，用来放你手上已有的角色设定图、定妆照或别人做好的角色图。

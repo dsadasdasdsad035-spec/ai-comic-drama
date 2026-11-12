@@ -26,6 +26,9 @@ const GRAMMAR_LABELS: Record<string, string> = {
   E: '节奏情绪',
 }
 
+/** hover / 键盘聚焦后停留多久才真正加载视频：避免扫过列表就连续起播 */
+const PLAY_DELAY_MS = 150
+
 function LexiconTile({
   entry,
   selected,
@@ -42,6 +45,10 @@ function LexiconTile({
   onStop: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const playTimer = useRef<number | null>(null)
+  /** 封面请求失败后本条回退成视频元数据预览，不拖累其他格子 */
+  const [posterBroken, setPosterBroken] = useState(false)
+
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
@@ -49,6 +56,30 @@ function LexiconTile({
     else el.pause()
   }, [playing])
 
+  useEffect(
+    () => () => {
+      if (playTimer.current !== null) window.clearTimeout(playTimer.current)
+    },
+    [],
+  )
+
+  const startDelayed = () => {
+    if (playTimer.current !== null) window.clearTimeout(playTimer.current)
+    playTimer.current = window.setTimeout(() => {
+      playTimer.current = null
+      onPlay()
+    }, PLAY_DELAY_MS)
+  }
+
+  const stopNow = () => {
+    if (playTimer.current !== null) {
+      window.clearTimeout(playTimer.current)
+      playTimer.current = null
+    }
+    onStop()
+  }
+
+  const hasPoster = Boolean(entry.poster) && !posterBroken
   const badge =
     entry.lexiconCategory === 'shot-grammar' && entry.grammarGroup
       ? `语法 ${entry.grammarGroup}`
@@ -59,15 +90,40 @@ function LexiconTile({
       type="button"
       className={`lex-tile ${selected ? 'on' : ''}`}
       data-lexicon-key={entry.key}
+      data-lexicon-playing={playing ? '1' : undefined}
       aria-pressed={selected}
       onClick={onSelect}
-      onMouseEnter={onPlay}
-      onMouseLeave={onStop}
-      onFocus={onPlay}
-      onBlur={onStop}
+      onMouseEnter={startDelayed}
+      onMouseLeave={stopNow}
+      onFocus={startDelayed}
+      onBlur={stopNow}
     >
       <div className="lex-thumb" aria-hidden="true">
-        <video ref={videoRef} src={entry.url} muted loop playsInline preload="metadata" />
+        {hasPoster && (
+          <img
+            className="lex-thumb-poster"
+            src={entry.poster}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={() => setPosterBroken(true)}
+          />
+        )}
+        {playing && (
+          <video
+            ref={videoRef}
+            className="lex-thumb-video"
+            src={entry.url}
+            muted
+            loop
+            playsInline
+            autoPlay
+            preload="auto"
+          />
+        )}
+        {!hasPoster && !playing && (
+          <video className="lex-thumb-video" src={entry.url} muted loop playsInline preload="metadata" />
+        )}
         <span className="lex-thumb-badge">{badge}</span>
         <span className="lex-thumb-play">{playing ? '❚❚' : '▶'}</span>
       </div>
@@ -94,10 +150,20 @@ export default function CameraLexiconBrowser({
   const [section, setSection] = useState(0)
   const [grammarGroup, setGrammarGroup] = useState('')
   const [q, setQ] = useState('')
+  /** 防抖后的关键词：连续键入只在停顿后重建一次结果 */
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [busy, setBusy] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [playingKey, setPlayingKey] = useState<string | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  /** 详情区视频按需加载：换条目就回到封面，避免打开面板就拉整段 MP4 */
+  const [dockPlaying, setDockPlaying] = useState(false)
   const effectiveCategory = scopeLock ?? (viewScope === 'all' ? undefined : viewScope)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 200)
+    return () => window.clearTimeout(t)
+  }, [q])
 
   const entries = useMemo(
     () =>
@@ -105,10 +171,15 @@ export default function CameraLexiconBrowser({
         ...(effectiveCategory ? { category: effectiveCategory } : {}),
         ...(section > 0 ? { section } : {}),
         ...(grammarGroup ? { grammarGroup } : {}),
-        ...(q.trim() ? { q: q.trim() } : {}),
+        ...(debouncedQ ? { q: debouncedQ } : {}),
       }),
-    [effectiveCategory, section, grammarGroup, q],
+    [effectiveCategory, section, grammarGroup, debouncedQ],
   )
+
+  // 筛选条件变化后回到顶部：结果从整库缩到几条时不会停在原滚动位置的空白处
+  useEffect(() => {
+    gridRef.current?.scrollTo({ top: 0 })
+  }, [effectiveCategory, section, grammarGroup, debouncedQ])
 
   const sections = useMemo(() => {
     const m = new Map<number, string>()
@@ -145,6 +216,11 @@ export default function CameraLexiconBrowser({
     if (effectiveCategory !== 'shot-grammar') setGrammarGroup('')
   }, [effectiveCategory])
 
+  // 选中条目变化时收起详情区视频，回到封面
+  useEffect(() => {
+    setDockPlaying(false)
+  }, [selected?.key])
+
   const importEntry = async (entry: CameraLexiconEntry, mode: 'asset' | 'shot') => {
     if (!projectName) {
       toast('请先选择项目')
@@ -171,6 +247,7 @@ export default function CameraLexiconBrowser({
     setSection(0)
     setGrammarGroup('')
     setQ('')
+    setDebouncedQ('')
     if (!scopeLock) setViewScope('all')
   }
 
@@ -288,7 +365,7 @@ export default function CameraLexiconBrowser({
           <div className="lex-grid-head">
             <span>
               共 <b>{entries.length}</b> 条
-              {q.trim() ? '（已搜索）' : ''}
+              {debouncedQ ? '（已搜索）' : ''}
             </span>
           </div>
           {entries.length === 0 ? (
@@ -299,7 +376,7 @@ export default function CameraLexiconBrowser({
               </button>
             </div>
           ) : (
-            <div className="lex-grid" role="list">
+            <div className="lex-grid" role="list" ref={gridRef} data-lexicon-grid>
               {entries.map((e) => (
                 <LexiconTile
                   key={e.key}
@@ -319,13 +396,31 @@ export default function CameraLexiconBrowser({
           {selected ? (
             <>
               <div className="lex-dock-video">
-                <video
-                  key={selected.url}
-                  src={selected.url}
-                  controls
-                  playsInline
-                  preload="auto"
-                />
+                {dockPlaying ? (
+                  <video
+                    key={selected.url}
+                    src={selected.url}
+                    poster={selected.poster}
+                    controls
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="lex-dock-cover"
+                    onClick={() => setDockPlaying(true)}
+                    aria-label={`播放 ${selected.cn} 预览`}
+                  >
+                    {selected.poster ? (
+                      <img src={selected.poster} alt="" decoding="async" />
+                    ) : (
+                      <span className="lex-dock-cover-blank" />
+                    )}
+                    <span className="lex-dock-cover-play">▶ 播放预览</span>
+                  </button>
+                )}
               </div>
               <div className="lex-dock-body">
                 <h3>{selected.cn}</h3>

@@ -8,7 +8,7 @@
     1080
   ],
   "fps": 24,
-  "duration": 4.0,
+  "duration": 4,
   "count": 132,
   "basePath": "/presets/camera-moves-whitebox-132",
   "entries": [
@@ -22,14 +22,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 740373,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "推",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/01_dolly_in.jpg"
     },
     {
       "key": "02_dolly_out",
@@ -41,14 +42,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 735003,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "拉",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/02_dolly_out.jpg"
     },
     {
       "key": "03_pan",
@@ -60,14 +62,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 716315,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "摇",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/03_pan.jpg"
     },
     {
       "key": "04_tilt",
@@ -79,12 +82,13 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 530376,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/04_tilt.jpg"
     },
     {
       "key": "05_truck",
@@ -96,14 +100,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1079328,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "移",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/05_truck.jpg"
     },
     {
       "key": "06_crane_up",
@@ -115,14 +120,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 988912,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "升降",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/06_crane_up.jpg"
     },
     {
       "key": "07_orbit",
@@ -134,12 +140,13 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1908239,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/07_orbit.jpg"
     },
     {
       "key": "08_follow",
@@ -151,14 +158,15 @@
       "sectionTitle": "基础运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1021878,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "跟",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/08_follow.jpg"
     },
     {
       "key": "09_vertigo_pull",
@@ -170,12 +178,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 633290,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/09_vertigo_pull.jpg"
     },
     {
       "key": "10_vertigo_push",
@@ -187,12 +196,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 624626,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/10_vertigo_push.jpg"
     },
     {
       "key": "11_zoom_in",
@@ -204,12 +214,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 690098,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/11_zoom_in.jpg"
     },
     {
       "key": "12_zoom_out",
@@ -221,12 +232,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 669611,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/12_zoom_out.jpg"
     },
     {
       "key": "13_crash_zoom",
@@ -238,12 +250,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 733016,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/13_crash_zoom.jpg"
     },
     {
       "key": "14_whip_pan",
@@ -255,12 +268,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 669484,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/14_whip_pan.jpg"
     },
     {
       "key": "15_dutch_angle",
@@ -272,12 +286,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 738956,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/15_dutch_angle.jpg"
     },
     {
       "key": "16_barrel_roll",
@@ -289,12 +304,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1718916,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/16_barrel_roll.jpg"
     },
     {
       "key": "17_spiral_up",
@@ -306,12 +322,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1394057,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/17_spiral_up.jpg"
     },
     {
       "key": "18_high_descend",
@@ -323,12 +340,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 880924,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/18_high_descend.jpg"
     },
     {
       "key": "19_low_push",
@@ -340,12 +358,13 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 565481,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/19_low_push.jpg"
     },
     {
       "key": "20_handheld",
@@ -357,14 +376,15 @@
       "sectionTitle": "经典影视运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 675577,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToMove": "手持",
-      "primaryForMove": true
+      "primaryForMove": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/20_handheld.jpg"
     },
     {
       "key": "21_jib_advance_rise",
@@ -376,12 +396,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 951084,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/21_jib_advance_rise.jpg"
     },
     {
       "key": "22_crane_down",
@@ -393,12 +414,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 897519,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/22_crane_down.jpg"
     },
     {
       "key": "23_boom_over",
@@ -410,12 +432,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 982717,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/23_boom_over.jpg"
     },
     {
       "key": "24_arc_inward",
@@ -427,12 +450,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1323513,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/24_arc_inward.jpg"
     },
     {
       "key": "25_arc_outward",
@@ -444,12 +468,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1223416,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/25_arc_outward.jpg"
     },
     {
       "key": "26_bullet_time",
@@ -461,12 +486,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1587292,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/26_bullet_time.jpg"
     },
     {
       "key": "27_fpv_dive",
@@ -478,12 +504,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1453554,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/27_fpv_dive.jpg"
     },
     {
       "key": "28_fpv_reveal",
@@ -495,12 +522,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1150263,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/28_fpv_reveal.jpg"
     },
     {
       "key": "29_dolly_in_tilt",
@@ -512,12 +540,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 706441,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/29_dolly_in_tilt.jpg"
     },
     {
       "key": "30_dolly_in_dutch",
@@ -529,12 +558,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 833168,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/30_dolly_in_dutch.jpg"
     },
     {
       "key": "31_push_pull",
@@ -546,12 +576,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 824380,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/31_push_pull.jpg"
     },
     {
       "key": "32_impact_shake",
@@ -563,12 +594,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 662999,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/32_impact_shake.jpg"
     },
     {
       "key": "33_handheld_lateral",
@@ -580,12 +612,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 832748,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/33_handheld_lateral.jpg"
     },
     {
       "key": "34_rack_focus",
@@ -597,12 +630,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 693962,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/34_rack_focus.jpg"
     },
     {
       "key": "35_zoom_snap_out",
@@ -614,12 +648,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 714580,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/35_zoom_snap_out.jpg"
     },
     {
       "key": "36_vertigo_roll",
@@ -631,12 +666,13 @@
       "sectionTitle": "进阶运镜",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 841457,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/36_vertigo_roll.jpg"
     },
     {
       "key": "37_walk_follow",
@@ -648,12 +684,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1168924,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/37_walk_follow.jpg"
     },
     {
       "key": "38_walk_lead",
@@ -665,12 +702,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 903682,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/38_walk_lead.jpg"
     },
     {
       "key": "39_walk_side",
@@ -682,12 +720,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1105382,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/39_walk_side.jpg"
     },
     {
       "key": "40_walk_orbit",
@@ -699,12 +738,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1560862,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/40_walk_orbit.jpg"
     },
     {
       "key": "41_walk_rise",
@@ -716,12 +756,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1388483,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/41_walk_rise.jpg"
     },
     {
       "key": "42_walk_past",
@@ -733,12 +774,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 760081,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/42_walk_past.jpg"
     },
     {
       "key": "43_walk_reveal",
@@ -750,12 +792,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1093067,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/43_walk_reveal.jpg"
     },
     {
       "key": "44_run_chase",
@@ -767,12 +810,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1281061,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/44_run_chase.jpg"
     },
     {
       "key": "45_run_fpv",
@@ -784,12 +828,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1380802,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/45_run_fpv.jpg"
     },
     {
       "key": "46_run_side",
@@ -801,12 +846,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1198193,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/46_run_side.jpg"
     },
     {
       "key": "47_walk_approach",
@@ -818,12 +864,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 582855,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/47_walk_approach.jpg"
     },
     {
       "key": "48_diag_follow",
@@ -835,12 +882,13 @@
       "sectionTitle": "带主体位移",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1400779,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/48_diag_follow.jpg"
     },
     {
       "key": "49_kubrick_push",
@@ -852,12 +900,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 635963,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/49_kubrick_push.jpg"
     },
     {
       "key": "50_spielberg_push",
@@ -869,12 +918,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 618709,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/50_spielberg_push.jpg"
     },
     {
       "key": "51_pull_out_reveal",
@@ -886,12 +936,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 759791,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/51_pull_out_reveal.jpg"
     },
     {
       "key": "52_slow_creep",
@@ -903,12 +954,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 610680,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/52_slow_creep.jpg"
     },
     {
       "key": "53_snap_push_hold",
@@ -920,12 +972,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 520910,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/53_snap_push_hold.jpg"
     },
     {
       "key": "54_gods_eye",
@@ -937,12 +990,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 793956,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/54_gods_eye.jpg"
     },
     {
       "key": "55_worms_eye",
@@ -954,12 +1008,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 538416,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/55_worms_eye.jpg"
     },
     {
       "key": "56_high_angle",
@@ -971,12 +1026,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 688373,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/56_high_angle.jpg"
     },
     {
       "key": "57_low_angle_hero",
@@ -988,12 +1044,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 468484,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/57_low_angle_hero.jpg"
     },
     {
       "key": "58_overhead_rotate",
@@ -1005,12 +1062,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 869998,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/58_overhead_rotate.jpg"
     },
     {
       "key": "59_fisheye",
@@ -1022,12 +1080,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 549483,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/59_fisheye.jpg"
     },
     {
       "key": "60_telephoto",
@@ -1039,12 +1098,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 562880,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/60_telephoto.jpg"
     },
     {
       "key": "61_deep_focus",
@@ -1056,12 +1116,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 601766,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/61_deep_focus.jpg"
     },
     {
       "key": "62_wide_low",
@@ -1073,12 +1134,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 643537,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/62_wide_low.jpg"
     },
     {
       "key": "63_macro_close",
@@ -1090,14 +1152,15 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 566590,
       "ok": true,
       "lexiconCategory": "camera-move",
       "mapsToSize": "大特写",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/63_macro_close.jpg"
     },
     {
       "key": "64_push_through",
@@ -1109,12 +1172,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1213193,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/64_push_through.jpg"
     },
     {
       "key": "65_twist_around",
@@ -1126,12 +1190,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 977881,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/65_twist_around.jpg"
     },
     {
       "key": "66_corridor_advance",
@@ -1143,12 +1208,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 806684,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/66_corridor_advance.jpg"
     },
     {
       "key": "67_rise_reveal",
@@ -1160,12 +1226,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 907187,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/67_rise_reveal.jpg"
     },
     {
       "key": "68_reverse_angle",
@@ -1177,12 +1244,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1256714,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/68_reverse_angle.jpg"
     },
     {
       "key": "69_trunk_shot",
@@ -1194,12 +1262,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 537861,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/69_trunk_shot.jpg"
     },
     {
       "key": "70_jump_cut",
@@ -1211,12 +1280,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 657791,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/70_jump_cut.jpg"
     },
     {
       "key": "71_face_close_low",
@@ -1228,12 +1298,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 580509,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/71_face_close_low.jpg"
     },
     {
       "key": "72_pull_back_up",
@@ -1245,12 +1316,13 @@
       "sectionTitle": "经典电影镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 906449,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/72_pull_back_up.jpg"
     },
     {
       "key": "73_hitchcock_zoom",
@@ -1262,12 +1334,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 637149,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/73_hitchcock_zoom.jpg"
     },
     {
       "key": "74_piro_rotate",
@@ -1279,12 +1352,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 2176446,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/74_piro_rotate.jpg"
     },
     {
       "key": "75_time_slice",
@@ -1296,12 +1370,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 756756,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/75_time_slice.jpg"
     },
     {
       "key": "76_proscenium",
@@ -1313,12 +1388,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 587901,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/76_proscenium.jpg"
     },
     {
       "key": "77_flat_symmetric",
@@ -1330,12 +1406,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 515332,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/77_flat_symmetric.jpg"
     },
     {
       "key": "78_vertigo_spin",
@@ -1347,12 +1424,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1173049,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/78_vertigo_spin.jpg"
     },
     {
       "key": "79_dolly_spin",
@@ -1364,12 +1442,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1056573,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/79_dolly_spin.jpg"
     },
     {
       "key": "80_peek_over",
@@ -1381,12 +1460,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 542199,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/80_peek_over.jpg"
     },
     {
       "key": "81_through_pillars",
@@ -1398,12 +1478,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 747736,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/81_through_pillars.jpg"
     },
     {
       "key": "82_reveal_tilt_up",
@@ -1415,12 +1496,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 558190,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/82_reveal_tilt_up.jpg"
     },
     {
       "key": "83_pull_focus_deep",
@@ -1432,12 +1514,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 617305,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/83_pull_focus_deep.jpg"
     },
     {
       "key": "84_scale_reveal",
@@ -1449,12 +1532,13 @@
       "sectionTitle": "经典电影镜头·续",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 894797,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/84_scale_reveal.jpg"
     },
     {
       "key": "85_fast_truck",
@@ -1466,12 +1550,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1734286,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/85_fast_truck.jpg"
     },
     {
       "key": "86_whip_snap",
@@ -1483,12 +1568,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 634032,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/86_whip_snap.jpg"
     },
     {
       "key": "87_snap_zoom_in",
@@ -1500,12 +1586,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 743505,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/87_snap_zoom_in.jpg"
     },
     {
       "key": "88_snap_zoom_out",
@@ -1517,12 +1604,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 704505,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/88_snap_zoom_out.jpg"
     },
     {
       "key": "89_fast_pass",
@@ -1534,12 +1622,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1067232,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/89_fast_pass.jpg"
     },
     {
       "key": "90_crash_zoom_fast",
@@ -1551,12 +1640,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 425921,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/90_crash_zoom_fast.jpg"
     },
     {
       "key": "91_whip_double",
@@ -1568,12 +1658,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 936975,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/91_whip_double.jpg"
     },
     {
       "key": "92_rapid_dolly",
@@ -1585,12 +1676,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 883084,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/92_rapid_dolly.jpg"
     },
     {
       "key": "93_dive_bomb",
@@ -1602,12 +1694,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1450957,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/93_dive_bomb.jpg"
     },
     {
       "key": "94_rocket_rise",
@@ -1619,12 +1712,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1235626,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/94_rocket_rise.jpg"
     },
     {
       "key": "95_side_wipe",
@@ -1636,12 +1730,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1395548,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/95_side_wipe.jpg"
     },
     {
       "key": "96_hyperspeed",
@@ -1653,12 +1748,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 957010,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/96_hyperspeed.jpg"
     },
     {
       "key": "97_slingshot",
@@ -1670,12 +1766,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 919846,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/97_slingshot.jpg"
     },
     {
       "key": "98_barrel_burst",
@@ -1687,12 +1784,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1583051,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/98_barrel_burst.jpg"
     },
     {
       "key": "99_zip_lateral",
@@ -1704,12 +1802,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1378899,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/99_zip_lateral.jpg"
     },
     {
       "key": "100_strobe_run",
@@ -1721,12 +1820,13 @@
       "sectionTitle": "快速镜头",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1788035,
       "ok": true,
-      "lexiconCategory": "camera-move"
+      "lexiconCategory": "camera-move",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/100_strobe_run.jpg"
     },
     {
       "key": "101_establishing_pull",
@@ -1738,15 +1838,16 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 961540,
       "ok": true,
       "grammarGroup": "A",
       "lexiconCategory": "shot-grammar",
       "mapsToSize": "远景",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/101_establishing_pull.jpg"
     },
     {
       "key": "102_master_wide",
@@ -1758,15 +1859,16 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 775505,
       "ok": true,
       "grammarGroup": "A",
       "lexiconCategory": "shot-grammar",
       "mapsToSize": "全景",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/102_master_wide.jpg"
     },
     {
       "key": "103_medium_push",
@@ -1778,15 +1880,16 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 596439,
       "ok": true,
       "grammarGroup": "A",
       "lexiconCategory": "shot-grammar",
       "mapsToSize": "中景",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/103_medium_push.jpg"
     },
     {
       "key": "104_close_up_push",
@@ -1798,15 +1901,16 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 685788,
       "ok": true,
       "grammarGroup": "A",
       "lexiconCategory": "shot-grammar",
       "mapsToSize": "特写",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/104_close_up_push.jpg"
     },
     {
       "key": "105_insert_detail",
@@ -1818,15 +1922,16 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 685858,
       "ok": true,
       "grammarGroup": "A",
       "lexiconCategory": "shot-grammar",
       "mapsToSize": "大特写",
-      "primaryForSize": true
+      "primaryForSize": true,
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/105_insert_detail.jpg"
     },
     {
       "key": "106_reaction_drift",
@@ -1838,13 +1943,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 657317,
       "ok": true,
       "grammarGroup": "A",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/106_reaction_drift.jpg"
     },
     {
       "key": "107_eyeline_look",
@@ -1856,13 +1962,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 593640,
       "ok": true,
       "grammarGroup": "A",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/107_eyeline_look.jpg"
     },
     {
       "key": "108_reverse_pair",
@@ -1874,13 +1981,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1076919,
       "ok": true,
       "grammarGroup": "A",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/108_reverse_pair.jpg"
     },
     {
       "key": "109_ots_clean",
@@ -1892,13 +2000,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 570367,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/109_ots_clean.jpg"
     },
     {
       "key": "110_ots_reverse",
@@ -1910,13 +2019,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 600399,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/110_ots_reverse.jpg"
     },
     {
       "key": "111_dirty_two",
@@ -1928,13 +2038,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 863008,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/111_dirty_two.jpg"
     },
     {
       "key": "112_conversation_arc",
@@ -1946,13 +2057,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1001099,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/112_conversation_arc.jpg"
     },
     {
       "key": "113_reaction_pan",
@@ -1964,13 +2076,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 691083,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/113_reaction_pan.jpg"
     },
     {
       "key": "114_group_scan",
@@ -1982,13 +2095,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 845576,
       "ok": true,
       "grammarGroup": "B",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/114_group_scan.jpg"
     },
     {
       "key": "115_match_cut_push",
@@ -2000,13 +2114,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 711813,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/115_match_cut_push.jpg"
     },
     {
       "key": "116_invisible_cut",
@@ -2018,13 +2133,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 369563,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/116_invisible_cut.jpg"
     },
     {
       "key": "117_swish_clean",
@@ -2036,13 +2152,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 667235,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/117_swish_clean.jpg"
     },
     {
       "key": "118_wipe_reveal",
@@ -2054,13 +2171,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1930271,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/118_wipe_reveal.jpg"
     },
     {
       "key": "119_whip_out",
@@ -2072,13 +2190,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 1025612,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/119_whip_out.jpg"
     },
     {
       "key": "120_hold_dissolve",
@@ -2090,13 +2209,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 596346,
       "ok": true,
       "grammarGroup": "C",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/120_hold_dissolve.jpg"
     },
     {
       "key": "121_pov_walk",
@@ -2108,13 +2228,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 681399,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/121_pov_walk.jpg"
     },
     {
       "key": "122_pov_look",
@@ -2126,13 +2247,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 767618,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/122_pov_look.jpg"
     },
     {
       "key": "123_blind_reveal",
@@ -2144,13 +2266,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 739059,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/123_blind_reveal.jpg"
     },
     {
       "key": "124_door_crack",
@@ -2162,13 +2285,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 529290,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/124_door_crack.jpg"
     },
     {
       "key": "125_negative_space",
@@ -2180,13 +2304,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 736642,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/125_negative_space.jpg"
     },
     {
       "key": "126_diagonal_frame",
@@ -2198,13 +2323,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 680437,
       "ok": true,
       "grammarGroup": "D",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/126_diagonal_frame.jpg"
     },
     {
       "key": "127_breathing_push",
@@ -2216,13 +2342,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 667639,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/127_breathing_push.jpg"
     },
     {
       "key": "128_tremor_hold",
@@ -2234,13 +2361,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 602375,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/128_tremor_hold.jpg"
     },
     {
       "key": "129_heartbeat_zoom",
@@ -2252,13 +2380,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 756078,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/129_heartbeat_zoom.jpg"
     },
     {
       "key": "130_slow_ramp",
@@ -2270,13 +2399,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 666066,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/130_slow_ramp.jpg"
     },
     {
       "key": "131_speed_ramp",
@@ -2288,13 +2418,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 710654,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/131_speed_ramp.jpg"
     },
     {
       "key": "132_freeze_push",
@@ -2306,13 +2437,14 @@
       "sectionTitle": "实用镜头语法",
       "width": 1920,
       "height": 1080,
-      "fps": 24.0,
+      "fps": 24,
       "frames": 96,
-      "duration": 4.0,
+      "duration": 4,
       "bytes": 602387,
       "ok": true,
       "grammarGroup": "E",
-      "lexiconCategory": "shot-grammar"
+      "lexiconCategory": "shot-grammar",
+      "poster": "/presets/camera-moves-whitebox-132/thumbs/132_freeze_push.jpg"
     }
   ]
 }

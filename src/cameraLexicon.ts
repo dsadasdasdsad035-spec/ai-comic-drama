@@ -8,6 +8,8 @@ export type CameraLexiconEntry = {
   en: string
   filename: string
   url: string
+  /** 16:9 静帧封面；缺省时列表回退为视频元数据预览 */
+  poster?: string
   section: number
   sectionTitle: string
   lexiconCategory: LexiconCategory

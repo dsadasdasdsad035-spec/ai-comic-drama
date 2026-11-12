@@ -2616,6 +2616,17 @@ body.si-resizing {
   object-fit: cover;
 }
 
+/* 缩略封面：与视频同层同位，切换时不改变尺寸 */
+.lex-thumb-poster,
+.lex-thumb-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #0a0c10;
+}
+
 .lex-thumb-badge {
   position: absolute;
   top: 6px;
@@ -2691,6 +2702,49 @@ body.si-resizing {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+
+/* 详情区先给封面 + 播放按钮：打开面板时不请求 MP4 */
+.lex-dock-cover {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: #000;
+  cursor: pointer;
+  display: block;
+}
+
+.lex-dock-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.lex-dock-cover-blank {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #0a0c10;
+}
+
+.lex-dock-cover-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.lex-dock-cover:hover .lex-dock-cover-play {
+  background: color-mix(in srgb, var(--accent) 70%, #000);
 }
 
 .lex-dock-body {
