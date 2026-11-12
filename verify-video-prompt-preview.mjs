@@ -295,24 +295,6 @@ const sync = await p.evaluate(async () => {
 check('重新生成保留手改正文、其他字段可更新', sync.merged.video_prompt === '新' && sync.merged.video_prompt_override?.text === '手改', JSON.stringify(sync.merged))
 check('清除后写 null 不复活', sync.wrote === null && sync.read === undefined && sync.cleared.video_prompt_override === null, JSON.stringify(sync))
 
-const sched = await p.evaluate(async () => {
-  const m = await import('/src/scheduleStatus.ts')
-  const base = { no: 'S01', seconds: 5, size: '中景', move: '推', dialogue: '', prompt: '', marks: [] }
-  const input = (data) => ({ data, shotId: 'n1', sceneLayouts: [], projectAspect: '16:9' })
-  return {
-    none: m.resolveShotSchedule(input(base)),
-    review: m.resolveShotSchedule(
-      input({ ...base, scheduleVideo: '/videos/x.mp4', scheduleMeta: { version: 1, mode: 'review', fingerprint: 'x' } }),
-    ),
-    stale: m.resolveShotSchedule(
-      input({ ...base, scheduleVideo: '/videos/x.mp4', scheduleMeta: { version: 1, mode: 'clean', fingerprint: 'x' } }),
-    ),
-  }
-})
-check('调度未渲染状态', sched.none.ready === false && sched.none.status === '未渲染', JSON.stringify(sched.none))
-check('审阅视频仅看空间', sched.review.ready === false && sched.review.status === '仅审阅' && sched.review.reason.includes('审阅'), JSON.stringify(sched.review))
-check('过期调度标为已过期', sched.stale.ready === false && sched.stale.status === '已过期' && sched.stale.reason.includes('重新渲染'), JSON.stringify(sched.stale))
-
 const dry = await fetch(`${BASE}/api/seedance`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },

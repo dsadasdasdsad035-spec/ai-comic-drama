@@ -1,4 +1,11 @@
 import type { ShotData } from './types'
+import {
+  CAMERA_LEXICON_ATTRIBUTION,
+  getCameraLexiconEntry,
+  listCameraLexicon,
+  resolveShotLexiconRef,
+} from './cameraLexicon'
+import { importCameraLexiconPreset } from './api'
 import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from './types'
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
@@ -350,6 +357,93 @@ type Props = {
   onOpenPromptRefine?: (shotNodeId: string) => void
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
+  onAddAssetCard?: (input: { title: string; kind: string; url: string }) => void
+}
+
+function ShotLexiconRefBlock({
+  data,
+  projectName,
+  onPatch,
+  onAddAssetCard,
+}: {
+  data: ShotData
+  projectName: string
+  onPatch: (p: Partial<ShotData>) => void
+  onAddAssetCard?: (input: { title: string; kind: string; url: string }) => void
+}) {
+  const ref = useMemo(() => resolveShotLexiconRef(data), [data])
+  const previewUrl = data.lexiconRefUrl || ref?.url || ''
+  const [busy, setBusy] = useState(false)
+  const options = useMemo(() => listCameraLexicon({ limit: 132 }), [])
+
+  const bindKey = async (key: string) => {
+    if (!key) {
+      onPatch({ lexiconRefKey: undefined, lexiconRefUrl: undefined })
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await importCameraLexiconPreset(projectName, key)
+      onPatch({ lexiconRefKey: key, lexiconRefUrl: r.url })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const publish = async () => {
+    const key = data.lexiconRefKey || ref?.key
+    if (!key || !onAddAssetCard) return
+    setBusy(true)
+    try {
+      const r = await importCameraLexiconPreset(projectName, key)
+      onPatch({ lexiconRefUrl: r.url })
+      onAddAssetCard({ title: r.title, kind: 'video', url: r.url })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="field si-lexicon" data-shot-lexicon>
+      <span>
+        运镜参照
+        <i className="hint-inline" title={`内置白膜库 · ${CAMERA_LEXICON_ATTRIBUTION}`}>
+          镜头语言库
+        </i>
+      </span>
+      <select
+        value={data.lexiconRefKey || ref?.key || ''}
+        disabled={busy}
+        onChange={(e) => void bindKey(e.target.value)}
+      >
+        <option value="">默认（随景别/运镜）</option>
+        {options.map((e) => (
+          <option key={e.key} value={e.key}>
+            {e.cn} · {e.en}
+          </option>
+        ))}
+      </select>
+      {previewUrl ? (
+        <video className="si-lexicon-vid" src={previewUrl} muted loop playsInline controls preload="metadata" />
+      ) : null}
+      <label className="chk">
+        <input
+          type="checkbox"
+          checked={Boolean(data.motionLexiconAsRef)}
+          onChange={(e) => onPatch({ motionLexiconAsRef: e.target.checked })}
+        />
+        作为运镜 reference_video（不占画布连线）
+      </label>
+      {onAddAssetCard && (
+        <button type="button" className="btn-ghost" disabled={busy || !(data.lexiconRefKey || ref?.key)} onClick={() => void publish()}>
+          发布参照到画布
+        </button>
+      )}
+      {data.lexiconRefKey && (
+        <span className="muted">{getCameraLexiconEntry(data.lexiconRefKey)?.en ?? data.lexiconRefKey}</span>
+      )}
+    </div>
+  )
 }
 
 export default function Inspector(props: Props) {
@@ -572,6 +666,7 @@ function InspectorBody({
   onOpenPromptRefine,
   stagePick,
   onPickStage,
+  onAddAssetCard,
 }: BodyProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [pickVideo, setPickVideo] = useState('')
@@ -627,9 +722,7 @@ function InspectorBody({
     audioOut: selectedVideoModel?.features?.audioOut,
   })
   const sceneNo = Math.max(1, Math.round(Number(d.sceneNo) || 1))
-  const sceneLabel = d.sceneCode
-    ? `代码场景${d.sceneSlug ? ` · ${d.sceneSlug}` : ''}`
-    : d.sceneSlug || `场 ${sceneNo}`
+  const sceneLabel = d.sceneSlug || `场 ${sceneNo}`
 
   const [prefs, setPrefs] = useState<InspectorPrefs>(() => loadInspectorPrefs())
   const panelRef = useRef<HTMLElement>(null)
@@ -893,6 +986,12 @@ function InspectorBody({
               {MOVES.map((s) => <option key={s}>{s}</option>)}
             </select>
           </label>
+          <ShotLexiconRefBlock
+            data={d}
+            projectName={projectName}
+            onPatch={set}
+            onAddAssetCard={onAddAssetCard}
+          />
         </InspectorSection>
 
         <div className="field si-frame" data-shot-tab="visual" hidden={effectiveTab !== 'visual'}>

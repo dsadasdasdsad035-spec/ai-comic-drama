@@ -1,13 +1,23 @@
 import type { MediaBundle, ProjectAssetItem } from './api'
 import type { AssetKind } from './data'
 
-export type PickSource = 'asset' | 'project-image' | 'generated-image' | 'video' | 'stock' | 'manual'
+export type PickSource =
+  | 'asset'
+  | 'project-image'
+  | 'generated-image'
+  | 'video'
+  | 'stock'
+  | 'manual'
+  | 'lexicon'
 
 export type MediaType = 'image' | 'video' | 'audio'
 
 export type PickItem = {
   /** 去重键，通常就是 url */
   key: string
+  /** 内置运镜 catalog key；确认选用时导入项目 */
+  lexiconKey?: string
+  lexiconCategory?: 'camera-move' | 'shot-grammar'
   source: PickSource
   kind: AssetKind
   mediaType: MediaType
@@ -26,6 +36,7 @@ export const SOURCE_LABEL: Record<PickSource, string> = {
   'generated-image': '生成图片',
   video: '视频',
   stock: '在线素材',
+  lexicon: '运镜库',
   manual: '当前来源',
 }
 
@@ -239,10 +250,35 @@ export function pickTitle(item: PickItem, currentTitle: string): string {
 }
 
 /** 给 UI 分组用：视频和音频各自单独归类 */
-export function pickerTabOf(item: PickItem): 'project' | 'generated' | 'video' | 'audio' | 'manual' {
+export function pickerTabOf(
+  item: PickItem,
+): 'project' | 'generated' | 'video' | 'audio' | 'lexicon-move' | 'lexicon-grammar' | 'manual' {
+  if (item.source === 'lexicon') {
+    return item.lexiconCategory === 'shot-grammar' ? 'lexicon-grammar' : 'lexicon-move'
+  }
   if (item.mediaType === 'audio') return 'audio'
   if (item.mediaType === 'video') return 'video'
   if (item.source === 'generated-image') return 'generated'
   if (item.source === 'asset' || item.source === 'project-image') return 'project'
   return 'manual'
+}
+
+export function lexiconToPickItem(entry: {
+  key: string
+  cn: string
+  en: string
+  url: string
+  lexiconCategory: 'camera-move' | 'shot-grammar'
+}): PickItem {
+  return {
+    key: `lexicon:${entry.key}`,
+    lexiconKey: entry.key,
+    lexiconCategory: entry.lexiconCategory,
+    source: 'lexicon',
+    kind: 'video',
+    mediaType: 'video',
+    title: `${entry.cn} · ${entry.en}`,
+    url: entry.url,
+    name: `${entry.key}.mp4`,
+  }
 }

@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS designs (
   sort       INTEGER DEFAULT 0,
   UNIQUE(project_id, design_id)
 );
+CREATE TABLE IF NOT EXISTS lexicon_whitebox (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  sheet_id   TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  sort       INTEGER DEFAULT 0,
+  updated_at TEXT,
+  UNIQUE(project_id, sheet_id)
+);
 CREATE TABLE IF NOT EXISTS scene_layouts (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -117,6 +126,7 @@ CREATE TABLE IF NOT EXISTS episodes (
   no       INTEGER NOT NULL,
   title    TEXT DEFAULT '',
   hook     TEXT DEFAULT '',
+  target_seconds INTEGER,
   sort     INTEGER DEFAULT 0,
   UNIQUE(project_id, no)
 );
@@ -496,8 +506,11 @@ function importProject(d, name, data) {
   }
   for (const [i, ep] of (data.episodes || []).entries()) {
     const no = Number(ep.no) || i + 1
-    d.prepare(`INSERT INTO episodes (project_id,no,title,hook,sort) VALUES (?,?,?,?,?)`).run(
-      pid, no, String(ep.title || ''), String(ep.hook || ''), i,
+    d.prepare(
+      `INSERT INTO episodes (project_id,no,title,hook,target_seconds,sort) VALUES (?,?,?,?,?,?)`,
+    ).run(
+      pid, no, String(ep.title || ''), String(ep.hook || ''),
+      ep.targetSeconds == null ? null : Number(ep.targetSeconds), i,
     )
     for (const [si, sc] of (ep.scenes || []).entries()) {
       d.prepare(
@@ -942,6 +955,7 @@ function assemble(p) {
       no: Number(e.no),
       title: e.title,
       hook: e.hook,
+      ...(e.target_seconds == null ? {} : { targetSeconds: Number(e.target_seconds) }),
       scenes: db
         .prepare('SELECT * FROM scenes WHERE project_id = ? AND ep_no = ? ORDER BY sort, id')
         .all(pid, e.no)
@@ -956,6 +970,19 @@ function assemble(p) {
           ...(sc.tone ? { tone: sc.tone } : {}),
         })),
     }))
+  const lexiconWhitebox = db
+    .prepare('SELECT * FROM lexicon_whitebox WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((row) => {
+      try {
+        const parsed = JSON.parse(row.payload || '{}')
+        if (!parsed || typeof parsed !== 'object') return null
+        return { ...parsed, id: String(parsed.id || row.sheet_id) }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
   const sceneLayouts = db
     .prepare('SELECT * FROM scene_layouts WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
@@ -983,6 +1010,7 @@ function assemble(p) {
     characters,
     assets,
     designs,
+    lexiconWhitebox,
     sceneLayouts,
     episodes,
     shots,
@@ -1077,6 +1105,24 @@ export function writeProject(root, name, data = {}) {
     }
   }
 
+  if (data.lexiconWhitebox !== undefined) {
+    if (!Array.isArray(data.lexiconWhitebox)) throw new Error('lexiconWhitebox 必须是数组')
+    const clean = data.lexiconWhitebox.map((d, i) => {
+      const id = String(d?.id || '').trim()
+      if (!id) throw new Error(`镜头语言白模第 ${i + 1} 项缺少 id`)
+      const title = String(d?.title || id).trim()
+      const payload = { ...d, id, title }
+      if (JSON.stringify(payload).length > 2_000_000) throw new Error(`白模 ${id} 数据过大`)
+      return { id, payload }
+    })
+    db.prepare('DELETE FROM lexicon_whitebox WHERE project_id = ?').run(pid)
+    for (const [i, { id, payload }] of clean.entries()) {
+      db.prepare(
+        `INSERT INTO lexicon_whitebox (project_id,sheet_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
+      ).run(pid, id, JSON.stringify(payload), i, now)
+    }
+  }
+
   if (data.sceneLayouts !== undefined) {
     if (!Array.isArray(data.sceneLayouts)) throw new Error('sceneLayouts 必须是数组')
     const clean = data.sceneLayouts.map((d, i) => {
@@ -1123,8 +1169,11 @@ export function writeProject(root, name, data = {}) {
     db.prepare('DELETE FROM scenes WHERE project_id = ?').run(pid)
     for (const [i, ep] of data.episodes.entries()) {
       const no = Number(ep?.no) || i + 1
-      db.prepare(`INSERT INTO episodes (project_id,no,title,hook,sort) VALUES (?,?,?,?,?)`).run(
-        pid, no, String(ep?.title || ''), String(ep?.hook || ''), i,
+      db.prepare(
+        `INSERT INTO episodes (project_id,no,title,hook,target_seconds,sort) VALUES (?,?,?,?,?,?)`,
+      ).run(
+        pid, no, String(ep?.title || ''), String(ep?.hook || ''),
+        ep?.targetSeconds == null ? null : Number(ep.targetSeconds), i,
       )
       for (const [si, sc] of (ep?.scenes || []).entries()) {
         db.prepare(

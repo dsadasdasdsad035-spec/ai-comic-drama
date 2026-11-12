@@ -1,10 +1,10 @@
 # 聊天执行引擎
 
-应用内所有聊天（3D 调度、五个工作台、发布助手、创意会话）共用**一个**执行引擎：`@earendil-works/pi-agent-core` 的 `Agent`，并且**只走渠道原生工具调用**。没有第二个引擎，也没有文本动作（JSON action）回退路径。
+应用内所有聊天（3D/白模工作台、五个工作台、发布助手、创意会话）共用**一个**执行引擎：`@earendil-works/pi-agent-core` 的 `Agent`，并且**只走渠道原生工具调用**。没有第二个引擎，也没有文本动作（JSON action）回退路径。
 
 | 位置 | 作用 |
 |---|---|
-| `src/agent/pi/engine.ts` | 3D 调度的运行器：渲染试运行门禁、视觉验收、`finish` 终止 |
+| `src/agent/pi/engine.ts` | 3D/白模工作台运行器：渲染试运行门禁、视觉验收、`finish` 终止 |
 | `src/agent/pi/stageRunner.ts` | 通用聊天运行器：工作台、发布、创意共用；无门禁，工具调用结束即完成 |
 | `src/agent/pi/toolAdapter.ts` | `ToolDef` → pi `AgentTool`：参数声明、结果拆分、错误映射 |
 | `src/agent/pi/streamFn.ts` | 把项目 `/api/text` 代理包装成 pi 的 `StreamFn` |
@@ -69,7 +69,7 @@
 | 聊天 | 附件去向 | 说明 |
 | --- | --- | --- |
 | 五个工作台技能聊天 | 本轮用户消息里的「【本轮附件】」块 | 不写宿主数据；角色技能的 `referenceDigest` 保持原样 |
-| 3D 调度 | 该镜头的 `shot_3d_context.imageUrls` / `videoUrls` | 与左侧选择器编辑同一份数据，按镜头持久化 |
+| 3D/白模工作台 | 无条目级参考持久化 | 聊天以文字与当前代码为主；VGGT 摘要由用户粘贴发送 |
 | 创意会话 | 会话级 source（摄取链路） | 入口在输入区内，但产物是 session source |
 | 发布助手 | 不声明附件 | 封面需要比例维度，通用附件表达不了 |
 

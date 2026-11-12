@@ -7,7 +7,7 @@ const READ_LABELS: Record<string, string> = {
   read_episodes: '分集',
   read_characters: '角色表',
   read_episode: '本集',
-  read_shots: '镜头表',
+  read_shots: '分镜',
   read_designs: '场景/道具',
   read_skill: '技能全文',
 }

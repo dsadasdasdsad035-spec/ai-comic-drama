@@ -26,11 +26,14 @@ function relationColor(relation: Relation, colors: ThemeColors): string {
 }
 
 function ShotEdge(props: EdgeProps<ShotEdgeType>) {
-  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, selected, data } = props
+  const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data } = props
   const relation: Relation = data?.relation ?? 'cut'
   const s = STYLE[relation]
   const { colors } = useTheme()
+  const { openEdgeMenu } = useContext(CanvasCtx)
   const color = relationColor(relation, colors)
+  // 分镜边不可选（selectable=false），高亮改由「正在编辑的转场边」派生
+  const active = Boolean(data?.active)
 
   const [path, labelX, labelY] = getBezierPath({
     sourceX,
@@ -47,11 +50,17 @@ function ShotEdge(props: EdgeProps<ShotEdgeType>) {
       <BaseEdge
         id={id}
         path={path}
+        onContextMenu={(e) => {
+          // 线身右击：打开关系菜单，且不再冒泡给 React Flow 自己的边菜单回调
+          e.preventDefault()
+          e.stopPropagation()
+          openEdgeMenu(e, id)
+        }}
         style={{
           stroke: color,
-          strokeWidth: selected ? 2.6 : 1.6,
+          strokeWidth: active ? 2.6 : 1.6,
           strokeDasharray: s.dash,
-          filter: selected ? `drop-shadow(0 0 6px ${color})` : undefined,
+          filter: active ? `drop-shadow(0 0 6px ${color})` : undefined,
         }}
       />
       <EdgeChip
@@ -88,49 +97,32 @@ function EdgeChip({
   label: string
   state: 'ready' | 'pending' | 'stale' | 'inactive'
 }) {
-  const { cycleEdge, openTransition } = useContext(CanvasCtx)
+  const { openEdgeMenu } = useContext(CanvasCtx)
   const zoom = useStore((st) => st.transform[2])
   const hint =
     state === 'inactive'
-      ? '未参与成片：两镜在播放序列里不相邻'
+      ? '未参与成片：两镜在播放序列里不相邻；右击连线设置'
       : state === 'stale'
-        ? '生成转场依赖的边界已变化，需要重生成'
+        ? '生成转场依赖的边界已变化，需要重生成；右击连线设置'
         : state === 'pending'
-          ? '生成转场还没出片，暂按效果兜底'
-          : relation === 'transition'
-            ? '点击切换关系；⋯ 打开转场设置'
-            : '点击切换镜头关系'
+          ? '生成转场还没出片，暂按效果兜底；右击连线设置'
+          : '右击连线设置'
   return (
     <EdgeLabelRenderer>
       <span
         className="edge-chip-wrap nodrag nopan"
         style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px) scale(${1 / zoom})` }}
+        onContextMenu={(e) => {
+          // 标签是独立浮层，事件不会冒泡到边，必须单独挂
+          e.preventDefault()
+          e.stopPropagation()
+          openEdgeMenu(e, id)
+        }}
       >
-        <button
-          className={`edge-chip ${state === 'ready' ? '' : state}`}
-          style={{ borderColor: color, color }}
-          onClick={(e) => {
-            e.stopPropagation()
-            cycleEdge(id)
-          }}
-          title={hint}
-        >
+        <span className={`edge-chip ${state === 'ready' ? '' : state}`} style={{ borderColor: color, color }} title={hint}>
           {label}
           {relation === 'transition' && state !== 'ready' && <i className={`edge-dot ${state}`} />}
-        </button>
-        {relation === 'transition' && (
-          <button
-            className="edge-chip-more"
-            style={{ borderColor: color, color }}
-            onClick={(e) => {
-              e.stopPropagation()
-              openTransition(id)
-            }}
-            title="打开转场设置"
-          >
-            ⋯
-          </button>
-        )}
+        </span>
       </span>
     </EdgeLabelRenderer>
   )

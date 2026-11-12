@@ -242,7 +242,7 @@ export type TransitionGenerated = {
   audioMode?: ShotAudioMode
   audioRef?: AudioRef | null
   audioMeta?: AudioMeta
-  /** Agent / 镜头表接缝：主分类 */
+  /** Agent / 画布接缝：主分类 */
   taxonomy?: 'scene' | 'character' | 'space' | 'vfx' | 'camera' | 'ai_video'
   /** video-shotcraft 等食谱卡片 id */
   recipeIds?: string[]
@@ -288,6 +288,12 @@ export type ShotData = {
   move: string
   dialogue: string
   prompt: string
+  /** 内置运镜库条目 key；空则用 move/size 主参照 */
+  lexiconRefKey?: string
+  /** 选用运镜库并导入后的项目内视频地址 */
+  lexiconRefUrl?: string
+  /** 为 true 时把 lexiconRefUrl 作为运镜 reference_video（默认关，不占画布连线） */
+  motionLexiconAsRef?: boolean
   /** 出片用的运动提示词（Seedance）：只写动作/运镜，不重复静态外观 */
   videoPrompt?: string
   /** 手改的出片提示词快照；有值时整段逐字发送，不再自动拼装 */
@@ -304,39 +310,15 @@ export type ShotData = {
   refIds?: string[]
   /** 到下一镜的转场配置；只有画布上关系为转场的连线才生效 */
   transitionOut?: TransitionOut
-  /** 旧版调度坐标：仅用于迁移；新数据写 shotBlocking */
-  layout?: ShotLayout
-  /** 所属场次（1 起）。同集同场共享 SceneLayout */
+  /** 所属场次（1 起） */
   sceneNo?: number
   sceneSlug?: string
-  /** 本镜独立 3D 空间（每镜一份，不与其他镜头共享） */
-  shotScene?: ShotScene
-  /** 生成时使用的上一镜 shot.id */
-  shotSceneSeed?: string
   /** 视觉模型输出的感知 brief */
   visualBrief?: VisualBrief
   /** brief 的资源指纹/模型/是否真的用了视觉 */
   visualBriefMeta?: VisualBriefMeta
-  /** 镜头级走位与机位关键帧 */
-  shotBlocking?: ShotBlocking
-  /** 代码优先 3D：每镜一段 Blender Python 代码 */
-  sceneCode?: SceneCode
-  /** 代码渲染的输入指纹与输出参数 */
-  sceneCodeMeta?: SceneCodeMeta
-  /** 代码优先 3D 的参考内容选择 */
-  shot3DContext?: Shot3DContext
-  /** 最近一次成功渲染的输入指纹与输出参数 */
-  scheduleMeta?: ScheduleMeta
-  /** 3D 调度动画（webm/mp4，本地路径）：提示词工作台审阅用 */
-  scheduleVideo?: string
-  /** 从调度视频抽出的关键帧：只留作旧数据/预览，不再作为参考图提交 */
-  scheduleFrames?: string[]
-  /** 从 3D 调度推出来的运镜/走位描述，出片时拼进 prompt */
+  /** 用户编写或模型生成的运镜说明，出片时拼进 prompt */
   motionNote?: string
-  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
-  useScheduleFrames?: boolean
-  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
-  useScheduleVideoRef?: boolean
   /** 视频出片是否带说话角色的表情单格；默认关，避免挤掉身份/场景 */
   useExpressionRef?: boolean
   /** 稳定业务 ID（E01-S03）。画布节点 id 是随机 uuid，跨会话对不上，同步一律靠它 */
@@ -426,81 +408,6 @@ export function migrateMarks(marks: Mark[]): Mark[] {
   })
 }
 
-/** 俯视调度：人物站位 + 机位，全部归一化到 0~1，渲染时乘画布尺寸 */
-export type LayoutActor = { name: string; x: number; y: number; face: number }
-export type LayoutCamera = { x: number; y: number; lookX: number; lookY: number }
-export type ShotLayout = {
-  actors: LayoutActor[]
-  camera: LayoutCamera
-  /** 场地尺寸（米），仅用于显示比例 */
-  w?: number
-  h?: number
-  /** 轴线说明（默认取前两名演员连线） */
-  axisNote?: string
-}
-
-export const DEFAULT_LAYOUT: ShotLayout = {
-  actors: [],
-  camera: { x: 0.5, y: 0.92, lookX: 0.5, lookY: 0.5 },
-  w: 10,
-  h: 8,
-}
-
-// ---------------------------------------------------------------- 场景级 3D 调度
-
-export type SceneWallOpening = {
-  /** 从墙起点沿墙方向的偏移（米） */
-  at: number
-  width: number
-  height: number
-  kind: 'door' | 'window'
-  /** 窗台高度（米）；门默认 0 */
-  sill?: number
-}
-
-export type SceneWall = {
-  id: string
-  /** 场地左上为原点，x 向右、z 向下，单位米 */
-  x1: number
-  z1: number
-  x2: number
-  z2: number
-  height: number
-  thickness: number
-  openings?: SceneWallOpening[]
-}
-
-export type SceneProp = {
-  id: string
-  name: string
-  designId?: string
-  shape: 'box' | 'cylinder'
-  /** 中心点，米 */
-  x: number
-  z: number
-  w: number
-  d: number
-  h: number
-  rotation: number
-}
-
-export type SceneZone = {
-  id: string
-  name: string
-  kind: 'floor' | 'blocked' | 'action'
-  x: number
-  z: number
-  w: number
-  d: number
-  color?: string
-}
-
-export type SceneAxis = {
-  a: { x: number; z: number }
-  b: { x: number; z: number }
-  label?: string
-}
-
 export type VisualBriefSubject = {
   name?: string
   screen: 'left' | 'center' | 'right'
@@ -532,56 +439,6 @@ export type VisualBriefMeta = {
   createdAt: string
 }
 
-export type ShotScene = SceneLayout & {
-  /** 从哪个镜头继承空间（可空） */
-  seedFrom?: string
-}
-
-export type SceneLayout = {
-  /** E01-SC02；项目内稳定键 */
-  id: string
-  episode: number
-  sceneNo: number
-  sceneSlug?: string
-  /** 关联的 scenes 设定卡 */
-  designId?: string
-  w: number
-  h: number
-  walls: SceneWall[]
-  props: SceneProp[]
-  zones: SceneZone[]
-  axis?: SceneAxis
-  source: 'ai' | 'manual' | 'legacy' | 'fallback'
-  updatedAt?: string
-}
-
-export type BlockingActor = { name: string; x: number; y: number; face: number }
-
-export type BlockingCamera = {
-  x: number
-  y: number
-  lookX: number
-  lookY: number
-  /** 机位高度，米 */
-  height: number
-  /** 垂直视场角，度 */
-  fov: number
-}
-
-export type BlockingKey = {
-  /** 0~1 */
-  t: number
-  actors: BlockingActor[]
-  camera: BlockingCamera
-}
-
-export type ShotBlocking = {
-  keys: BlockingKey[]
-  notes?: string
-  source: 'ai' | 'manual' | 'legacy' | 'fallback'
-  updatedAt?: string
-}
-
 export type ScheduleMeta = {
   version: 1
   fingerprint: string
@@ -601,7 +458,18 @@ export type SceneCodeSource = 'ai' | 'manual' | 'legacy-converted' | 'fallback'
 export type SceneCodeRuntime = 'three' | 'blender'
 
 /**
- * 每镜一段 Blender Python 代码；代码是场景真相，不再维护结构化空间清单。
+ * 代码生成与渲染需要的最小条目头。
+ * 不绑定分镜：白模条目和任何未来消费方都只提供这些运行元数据。
+ */
+export type SceneCodeShotHead = {
+  no: string
+  seconds: number
+  size?: string
+  move?: string
+}
+
+/**
+ * 白模/镜头语言条目一段 Blender Python 代码；代码是场景真相，不再维护结构化空间清单。
  * 旧记录（v1 / abiVersion 1）没有 runtime 与 engineVersion，按 three 只读处理。
  */
 export type SceneCode = {
@@ -662,35 +530,6 @@ export type SceneCodeMeta = {
   tier?: 'trial' | 'proxy' | 'final'
   mode: 'clean'
   renderedAt: string
-}
-
-export type Shot3DContextText = {
-  prompt: boolean
-  videoPrompt: boolean
-  /** all 或台词行索引；索引按 dialogue 原文顺序 */
-  dialogue: 'all' | number[]
-  cast: boolean
-  marks: boolean
-  sizeMove: boolean
-}
-
-/** 3D 工作台按镜头保存的参考内容选择。 */
-export type Shot3DContext = {
-  version: 1
-  characterIds: string[]
-  designIds: string[]
-  /** 手工素材卡的 URL（场景/道具/普通素材） */
-  assetUrls: string[]
-  imageUrls: string[]
-  videoUrls: string[]
-  /** 场景元数据键，例如 E01-SC02 */
-  sceneKeys: string[]
-  text: Shot3DContextText
-  /** 被排除媒体 brief 的附件键；缺省表示全部 brief 参与 */
-  briefOff?: string[]
-  /** 选择时的台词指纹；台词变化后逐句选择需要重置 */
-  dialogueHash?: string
-  updatedAt?: string
 }
 
 export const SCENE_LIMITS = { walls: 24, props: 32, zones: 12, keys: 3 } as const

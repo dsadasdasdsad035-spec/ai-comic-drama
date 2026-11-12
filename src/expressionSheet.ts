@@ -8,7 +8,7 @@ import {
   type CharacterSheet,
   type ExpressionSheetCell,
 } from './characters'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import type { PerformanceEmotion } from './types'
 
 export { EXPRESSION_SHEET_COLUMNS, EXPRESSION_SHEET_EMOTIONS, EXPRESSION_SHEET_ROWS }

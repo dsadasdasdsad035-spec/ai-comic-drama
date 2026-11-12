@@ -12,7 +12,7 @@ import type { ManifestSummary } from '../contextManifest'
 export type { SceneAgentSession } from './sceneAgentTools'
 export type { AgentEvent } from './sceneAgentTypes'
 
-/** 3D 调度聊天的运行输入；只有一个执行引擎，因此不再有引擎选择字段。 */
+  /** 白模工作台的运行输入；只有一个执行引擎，因此不再有引擎选择字段。 */
 export type RunSceneAgentInput = {
   prompt: string
   deps: SceneAgentDeps
@@ -51,7 +51,7 @@ export function sceneAgentCapability(input: SceneAgentEngineInput): SceneAgentCa
       available: false,
       model: '',
       provider: '',
-      reason: '没有可用的 3D 代码模型，请到设置页绑定「3D 代码」环节',
+      reason: '没有可用的白模 3D 代码模型，请到设置页绑定「白模 3D 代码」环节',
     }
   }
   const entry = input.settings?.models.find((m) => m.key === modelKey)
@@ -62,7 +62,7 @@ export function sceneAgentCapability(input: SceneAgentEngineInput): SceneAgentCa
 }
 
 /**
- * 3D 调度聊天的稳定门面。
+ * 白模工作台聊天的稳定门面。
  *
  * 只有一个执行引擎（pi），且只走原生工具调用；未绑定环节模型时才失败。
  */

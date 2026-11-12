@@ -307,7 +307,7 @@ const REGISTRY: Record<string, SkillContract> = {
   'script-v1': { id: 'script-v1', label: '分集剧本', schema: scriptV1 },
   'characters-v1': { id: 'characters-v1', label: '角色锚点', schema: charactersV1 },
   'designs-v1': { id: 'designs-v1', label: '场景/道具设定', schema: designsV1 },
-  'shots-v1': { id: 'shots-v1', label: '镜头表', schema: shotsV1 },
+  'shots-v1': { id: 'shots-v1', label: '分镜', schema: shotsV1 },
   'joins-v1': { id: 'joins-v1', label: '镜间接缝', schema: joinsV1 },
   'prompts-v1': { id: 'prompts-v1', label: '首帧/视频提示词', schema: promptsV1 },
   'prompt-renders-v1': { id: 'prompt-renders-v1', label: '九段出片渲染', schema: promptRendersV1 },

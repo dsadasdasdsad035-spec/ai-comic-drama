@@ -1,6 +1,6 @@
 /**
- * 四个内容工作台的技能聊天：角色 / 素材 / 镜头表 / 提示词。
- * 覆盖宿主技能、submit 草稿、只读技能、按集线程。
+ * 画布拆镜助手的技能聊天：宿主技能、submit 写回即落库、只读技能、按集线程。
+ * 镜头表已下线，分镜 Agent 挂在画布右侧；这里按画布入口验收。
  * 跑法：node verify-workbench-chats.mjs
  */
 import { spawn } from 'node:child_process'
@@ -137,48 +137,31 @@ await api('/api/settings', {
   body: JSON.stringify(settings),
 })
 
-const PAYLOADS = {
-  character: {
-    characters: [
-      {
-        name: '林岚',
-        role: '反派',
-        age: '28 岁上下',
-        look_cn: '女性，长发，银色义肢左手，黑色皮衣',
-        look_en: 'a woman with long hair, silver prosthetic left hand, black leather jacket',
-        palette: '银 + 黑',
-        keywords: ['银色义肢'],
-      },
-    ],
-  },
-  asset: {
-    scenes: [{ name: '雨夜街口', refs: ['E01-S01'], summary_cn: '霓虹雨夜的街口', prompt_en: 'rainy neon street corner, no people', keywords: ['霓虹'] }],
-    props: [],
-  },
-  shot: {
-    shots: [
-      {
-        no: 'S01',
-        scene_no: 1,
-        scene_slug: '街口',
-        seconds: 3,
-        size: '中景',
-        move: '固定',
-        desc: '雨夜追捕 · 聊天',
-        dialogue: [],
-        cast: ['陈默'],
-      },
-    ],
-  },
-  prompt: {
-    shots: [
-      {
-        no: 'S01',
-        keyframe_prompt: '{{陈默}} runs through a neon rainy street, medium shot',
-        video_prompt: 'camera pushes in as rain streaks across frame',
-      },
-    ],
-  },
+const SHOT_PAYLOAD = {
+  shots: [
+    {
+      no: 'S01',
+      scene_no: 1,
+      scene_slug: '街口',
+      seconds: 3,
+      size: '中景',
+      move: '固定',
+      desc: '雨夜追捕 · 聊天',
+      dialogue: [],
+      cast: ['陈默'],
+    },
+    {
+      no: 'S02',
+      scene_no: 1,
+      scene_slug: '街口',
+      seconds: 3,
+      size: '近景',
+      move: '推',
+      desc: '雨夜追捕 · 新增',
+      dialogue: [],
+      cast: ['陈默'],
+    },
+  ],
 }
 
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
@@ -187,32 +170,21 @@ try {
   const errors = []
   page.on('pageerror', (e) => errors.push(String(e)))
   const calls = []
-  const stageCalls = {}
+  let shotCalls = 0
   await page.route('**/api/text', async (route) => {
     const body = route.request().postDataJSON()
     calls.push(body)
-    // 原生工具调用模式下 system 在 messages 里，不再是顶层字段。
-    const system = (Array.isArray(body.messages) ? body.messages : [])
-      .filter((m) => m.role === 'system')
-      .map((m) => String(m.content || ''))
-      .join('\n')
-    let stage = ''
-    if (system.includes('角色设定师')) stage = 'character'
-    else if (system.includes('场景与道具设定师')) stage = 'asset'
-    else if (system.includes('你是分镜师')) stage = 'shot'
-    else if (system.includes('AI 影像提示词工程师')) stage = 'prompt'
-    // 原生工具调用：模型只认 toolCalls，不再有 JSON action 的 payload。
+    // 分镜宿主第一轮写回草稿，后续轮走纯文本
     let reply
-    if (stage && !stageCalls[stage]) {
-      stageCalls[stage] = 1
-      const writeTool = `submit_${stage === 'shot' ? 'shots' : stage === 'prompt' ? 'prompts' : stage === 'asset' ? 'designs' : 'characters'}`
+    if (shotCalls === 0) {
+      shotCalls = 1
       reply = {
-        text: `提交${stage}草稿`,
+        text: '提交分镜草稿',
         finishReason: 'tool_calls',
-        toolCalls: [{ id: `call_${stage}`, name: writeTool, arguments: JSON.stringify(PAYLOADS[stage]) }],
+        toolCalls: [{ id: 'call_shot', name: 'submit_shots', arguments: JSON.stringify(SHOT_PAYLOAD) }],
       }
     } else {
-      reply = { text: `${stage || 'chat'} 完成`, finishReason: 'stop', toolCalls: [] }
+      reply = { text: '分镜完成', finishReason: 'stop', toolCalls: [] }
     }
     await route.fulfill({
       status: 200,
@@ -221,90 +193,54 @@ try {
     })
   })
 
-  const openView = async (nav, attr) => {
+  // 画布是默认视图；分镜助理由上下文带的「拆镜助手」打开
+  const openCanvas = async () => {
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
     await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
     await page.locator('.topbar-project select').selectOption(NAME)
-    // 等项目真正加载完：集选择器出现说明 readyProject 已对上
-    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
     await page.waitForFunction((n) => {
       const sel = document.querySelector('.topbar-project select')
       return sel && sel.value === n
     }, NAME, { timeout: 15000 })
-    await page.getByRole('button', { name: nav, exact: true }).click()
-    await page.locator(`[data-${attr}-chat]`).waitFor({ timeout: 15000 })
-    await page.getByLabel(`${attr} 技能聊天输入`).waitFor({ timeout: 15000 })
-    // 空态要等技能加载完才渲染；批量跑时前序脚本拖慢加载，必须显式等它出现，
-    // 否则 innerText() 会读到「正在加载助手…」
-    await page.locator(`[data-${attr}-chat] [data-chat-empty]`).waitFor({ timeout: 20000 })
+    await page.getByRole('button', { name: '拆镜助手', exact: true }).click()
+    await page.locator('[data-shots-chat]').waitFor({ timeout: 15000 })
+    // 拆镜面是 compact 空态（不铺引导文案），等输入框可用即视为技能已加载
+    await page.getByLabel('shots 技能聊天输入').waitFor({ timeout: 20000 })
   }
-  const send = async (attr, text) => {
-    const chat = page.locator(`[data-${attr}-chat]`)
-    await chat.getByLabel(`${attr} 技能聊天输入`).fill(text)
+  const send = async (text) => {
+    const chat = page.locator('[data-shots-chat]')
+    await chat.getByLabel('shots 技能聊天输入').fill(text)
     await chat.getByRole('button', { name: '发送', exact: true }).click()
   }
 
-  // 角色
-  await openView('角色', 'characters')
-  check('角色聊天宿主技能', (await page.locator('[data-characters-chat] .skill-chip.host').textContent())?.includes('character'))
-  const charHeader = await page.locator('[data-characters-chat] [data-chat-header]').innerText()
-  check('角色头部身份/范围/模型（范围为范围词，不重复集号）', charHeader.includes('角色助手') && charHeader.includes('本集') && charHeader.includes('Mock Text'), charHeader.slice(0, 120))
-  const charEmpty = await page.locator('[data-characters-chat] [data-chat-empty]').innerText()
-  check('角色空态属于本工作台', charEmpty.includes('只改角色草稿') && !charEmpty.includes('抓帧'), charEmpty.slice(0, 100))
-  check('角色空态有三个示例', (await page.locator('[data-characters-chat] [data-chat-suggestion]').count()) === 3)
-  const charPlaceholder = await page.getByLabel('characters 技能聊天输入').getAttribute('placeholder')
-  check('角色 placeholder 属于本工作台', Boolean(charPlaceholder?.includes('lookEn') && !charPlaceholder.includes('第 3 集节奏')), charPlaceholder || '')
-  await page.screenshot({ path: path.join(EVIDENCE, 'workbench-chat-characters.png') })
-  await send('characters', '把林岚拆出来')
-  await page.locator('[data-chat-tool="submit_characters"]').waitFor({ timeout: 15000 })
-  check('角色卡写入草稿', (await page.locator('.char-name', { hasText: '林岚' }).count()) > 0)
-  check('已有角色未被覆盖', (await page.locator('.char-name', { hasText: '陈默' }).count()) > 0)
-
-  // 素材
-  await openView('素材', 'assets')
-  check('素材聊天宿主技能', (await page.locator('[data-assets-chat] .skill-chip.host').textContent())?.includes('asset'))
-  const assetHeader = await page.locator('[data-assets-chat] [data-chat-header]').innerText()
-  check('素材头部身份/范围/模型', assetHeader.includes('素材助手') && assetHeader.includes('本集') && assetHeader.includes('Mock Text'), assetHeader.slice(0, 120))
-  const assetEmpty = await page.locator('[data-assets-chat] [data-chat-empty]').innerText()
-  check('素材空态属于本工作台', assetEmpty.includes('写入后立即保存') && !assetEmpty.includes('抓帧'), assetEmpty.slice(0, 100))
-  check('素材空态有三个示例', (await page.locator('[data-assets-chat] [data-chat-suggestion]').count()) === 3)
-  const assetPlaceholder = await page.getByLabel('assets 技能聊天输入').getAttribute('placeholder')
-  check('素材 placeholder 属于本工作台', Boolean(assetPlaceholder?.includes('多角度') && !assetPlaceholder.includes('第 3 集节奏')), assetPlaceholder || '')
-  await page.screenshot({ path: path.join(EVIDENCE, 'workbench-chat-assets.png') })
-  await send('assets', '拆场景和道具')
-  await page.locator('[data-chat-tool="submit_designs"]').waitFor({ timeout: 15000 })
-  check('素材卡写入草稿', (await page.getByText('雨夜街口').count()) > 0)
-  const assetsPersisted = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.designs
-  check('素材按现有语义即时落库', (assetsPersisted || []).some((d) => d.name === '雨夜街口'))
-
-  // 镜头表 + 只读技能
-  await openView('镜头表', 'shots')
-  check('镜头表聊天宿主技能', (await page.locator('[data-shots-chat] .skill-chip.host').textContent())?.includes('shotlist'))
+  await openCanvas()
+  check('画布挂载分镜助手宿主技能', (await page.locator('[data-shots-chat] .skill-chip.host').textContent())?.includes('shotlist'))
   const shotHeader = await page.locator('[data-shots-chat] [data-chat-header]').innerText()
-  check('镜头表头部身份/范围/模型', shotHeader.includes('分镜助手') && shotHeader.includes('本集') && shotHeader.includes('Mock Text'), shotHeader.slice(0, 120))
-  const shotEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
-  check(
-    '镜头表空态属于本工作台',
-    shotEmpty.includes('左侧镜头草稿') && !shotEmpty.includes('抓帧'),
-    shotEmpty.slice(0, 100),
-  )
-  check('镜头表空态有三个示例', (await page.locator('[data-shots-chat] [data-chat-suggestion]').count()) === 3)
+  check('分镜头部身份/范围/模型', shotHeader.includes('拆镜') && shotHeader.includes('第 1 集') && shotHeader.includes('mock-text'), shotHeader.slice(0, 120))
   const shotPlaceholder = await page.getByLabel('shots 技能聊天输入').getAttribute('placeholder')
-  check('镜头表 placeholder 属于本工作台', Boolean(shotPlaceholder?.includes('12 个 3 秒') && !shotPlaceholder.includes('第 3 集节奏')), shotPlaceholder || '')
+  check('分镜 placeholder 属于本工作台', Boolean(shotPlaceholder?.includes('按场次拆镜') && !shotPlaceholder.includes('第 3 集节奏')), shotPlaceholder || '')
   await page.screenshot({ path: path.join(EVIDENCE, 'workbench-chat-shots.png') })
-  await send('shots', '把这一镜改成雨夜追捕')
+  await send('把这一镜改成雨夜追捕')
   await page.locator('[data-chat-tool="submit_shots"]').waitFor({ timeout: 15000 })
-  const descs = await page.locator('.wb-table textarea').evaluateAll((els) => els.map((e) => e.value))
-  check('镜头草稿写入表格', descs.some((v) => v.includes('雨夜追捕 · 聊天')), descs.slice(0, 5).join(' | '))
+  const persisted = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.shots
+  check('分镜草稿写回即落库', persisted.some((s) => s.id === 'E01-S01' && s.desc.includes('雨夜追捕 · 聊天')), persisted.map((s) => s.desc).join(' | '))
+  check('新增镜头也落库', persisted.some((s) => s.id === 'E01-S02'), persisted.map((s) => s.id).join(','))
+  // 落库后会重新水合：画布卡片数跟着本集镜头数走
+  await page.waitForFunction(
+    () => document.querySelectorAll('.react-flow__node-shot').length === 2,
+    undefined,
+    { timeout: 15000 },
+  )
+  check('画布同步水合出写回结果', (await page.locator('.react-flow__node-shot').count()) === 2)
 
   await page.locator('[data-shots-chat] select[aria-label="加载只读技能"]').selectOption('prompt')
-  check('镜头表可加载只读提示词技能', (await page.locator('[data-shots-chat] .skill-chip.readonly').textContent())?.includes('prompt'))
+  check('分镜助手可加载只读提示词技能', (await page.locator('[data-shots-chat] .skill-chip.readonly').textContent())?.includes('prompt'))
   const callsBeforeReadonly = calls.length
-  await send('shots', '用提示词技能看看这一镜')
-  await page.getByText('shot 完成').first().waitFor({ timeout: 15000 })
+  await send('用提示词技能看看这一镜')
+  await page.getByText('分镜完成').first().waitFor({ timeout: 15000 })
   for (let i = 0; i < 40 && calls.length <= callsBeforeReadonly; i++) await page.waitForTimeout(100)
   const readonlyCall = calls[calls.length - 1]
-  check('只读技能进入 system', systemOf(readonlyCall).includes('【只读技能：prompt】'), systemOf(readonlyCall).slice(0, 200))
+  check('只读技能进入 system', systemOf(readonlyCall).includes('已挂只读技能：prompt'), systemOf(readonlyCall).slice(0, 200))
   check('只读技能不获得写工具', !toolNamesOf(readonlyCall).includes('submit_prompts'), toolNamesOf(readonlyCall).join(','))
   check('宿主写工具仍在', toolNamesOf(readonlyCall).includes('submit_shots'), toolNamesOf(readonlyCall).join(','))
 
@@ -314,8 +250,8 @@ try {
   await page.waitForTimeout(900)
   const e02Panel = await page.locator('[data-shots-chat]').innerText()
   check('切集后旧线程不串', !e02Panel.includes('把这一镜改成雨夜追捕'), e02Panel.slice(0, 120))
-  await send('shots', 'E02 的聊天')
-  await page.getByText('shot 完成').first().waitFor({ timeout: 15000 })
+  await send('E02 的聊天')
+  await page.getByText('分镜完成').first().waitFor({ timeout: 15000 })
   await page.locator('.epbar-trigger').click()
   await page.locator('.epbar-tab', { hasText: 'E01' }).click()
   await page.waitForTimeout(900)
@@ -324,10 +260,8 @@ try {
   check('切回原集恢复只读技能', (await page.locator('[data-shots-chat] .skill-chip.readonly').count()) > 0)
 
   check('顶栏无独立提示词视图', (await page.getByRole('button', { name: '提示词', exact: true }).count()) === 0)
-  const shotHeaders = await page.locator('.wb-table thead th').allTextContents()
-  check('镜头表含首帧提示词列', shotHeaders.some((t) => t.includes('首帧提示词')), shotHeaders.join('|'))
-  const shotsEmpty = await page.locator('[data-shots-chat] [data-chat-empty]').innerText()
-  check('分镜助手空态提及提示词', shotsEmpty.includes('首帧') || shotsEmpty.includes('提示词'), shotsEmpty.slice(0, 120))
+  const chatText = await page.locator('[data-shots-chat]').innerText()
+  check('写回回执说明已落库', chatText.includes('已保存到项目'), chatText.slice(0, 120))
 
   check('页面无脚本错误', errors.length === 0, errors.join(' | '))
 } finally {

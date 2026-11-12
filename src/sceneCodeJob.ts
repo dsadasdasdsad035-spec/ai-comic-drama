@@ -8,8 +8,7 @@ import type {
 import { callText } from './api'
 import type { MediaBrief } from './mediaBrief'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
-import type { Shot3DContext, ShotData } from './types'
-import type { Shot3DContextCatalog } from './shot3dContextCatalog'
+import type { SceneCodeShotHead } from './types'
 import { stageModelKey, type StagePick } from './ModelSelect'
 import { checkSceneCode } from './sceneCodeSanitize'
 import { codeHashOf } from './sceneCodeFingerprint'
@@ -63,10 +62,8 @@ export type SceneCodeAsk = (opts: {
 }>
 
 export type SceneCodeJobInput = {
-  shot: ShotData
+  shot: SceneCodeShotHead
   project?: ProjectData | null
-  context: Shot3DContext
-  catalog: Shot3DContextCatalog
   assets: PreparedSceneAsset[]
   mediaBrief?: MediaBrief
   videoBrief?: string
@@ -127,7 +124,7 @@ function parseJsonText(text: string): unknown {
 export async function runSceneCodeJob(input: SceneCodeJobInput): Promise<SceneCodeJobResult> {
   const key = stageModelKey(input.settings, 'sceneCode', input.stagePick)
   if (!key) {
-    throw new Error('没有可用的 3D 代码文本模型，请到设置页「生成环节默认模型」绑定，或直接手写代码')
+    throw new Error('没有可用的白模 3D 代码模型，请到设置页「生成环节默认模型」绑定，或直接手写代码')
   }
   const ask: SceneCodeAsk =
     input.ask ||

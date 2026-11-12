@@ -34,14 +34,14 @@ type Props = {
   characterSheets?: CharacterSheet[]
   toast: (m: string) => void
   onClose: () => void
-  /** 应用结果：调用方负责写草稿/落库 */
+  /** 应用结果：调用方负责落库与水合，返回 Promise 时失败会保留对话框 */
   onApply: (result: {
     shots?: ProjectShot[]
     episodes?: ProjectEpisode[]
     characters?: CharacterSheet[]
     summary: string
     counts: Record<string, number>
-  }) => void
+  }) => void | Promise<void>
 }
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -74,6 +74,9 @@ export default function IntakeDialog({
   const [raw, setRaw] = useState('')
   const [fileName, setFileName] = useState('')
   const [busy, setBusy] = useState(false)
+  /** 落库中：禁止重复点击，失败时保留对话框可重试 */
+  const [applying, setApplying] = useState(false)
+  const [applyError, setApplyError] = useState('')
   const [error, setError] = useState('')
   const [replaceEpisode, setReplaceEpisode] = useState(false)
   /** 模型整理后的契约 JSON；有值就覆盖零模型路径的结果 */
@@ -106,7 +109,7 @@ export default function IntakeDialog({
 
     const source = organized ?? (format.kind === 'json' ? format.json : undefined)
 
-    // 镜头表（含纯 prompts-v1 JSON：只更新提示词列）
+    // 分镜表（含纯 prompts-v1 JSON：只更新提示词列）
     if (target === 'shots') {
       if (source) {
         const promptOnly = validateContract('prompts-v1', source)
@@ -146,7 +149,7 @@ export default function IntakeDialog({
           },
           notices: [
             ...(built.filledPerformance
-              ? [`系统为 ${built.filledPerformance} 个说话角色补了默认表演（平静/3 度/说话中），可在镜头表里改`]
+              ? [`系统为 ${built.filledPerformance} 个说话角色补了默认表演（平静/3 度/说话中），可在画布单镜里改`]
               : []),
             ...(built.sceneFallback ? [`${built.sceneFallback} 镜的场次号对不上，已归入第一场`] : []),
           ],
@@ -260,15 +263,24 @@ export default function IntakeDialog({
     }
   }
 
-  const apply = () => {
-    if (!plan || plan.blocked) return
-    onApply({
-      shots: plan.shots,
-      episodes: plan.episodes,
-      summary: plan.summary,
-      counts: plan.counts,
-    })
-    onClose()
+  const apply = async () => {
+    if (!plan || plan.blocked || applying) return
+    setApplying(true)
+    setApplyError('')
+    try {
+      // 落库成功才关对话框；失败时画布与项目都不动，留着可以重试
+      await onApply({
+        shots: plan.shots,
+        episodes: plan.episodes,
+        summary: plan.summary,
+        counts: plan.counts,
+      })
+      onClose()
+    } catch (e) {
+      setApplyError((e as Error).message || '写入项目失败')
+    } finally {
+      setApplying(false)
+    }
   }
 
   const needsModel = format.kind === 'free-text' && !organized
@@ -379,6 +391,11 @@ export default function IntakeDialog({
           {organizedBy ? <div className="st-hint">已由 {organizedBy} 整理，请核对下方预览</div> : null}
 
           {error ? <div className="gen-error">{error}</div> : null}
+          {applyError ? (
+            <div className="gen-error" data-intake-apply-error>
+              写入失败：{applyError}
+            </div>
+          ) : null}
           {blocked ? <div className="gen-error">{plan?.blocked}</div> : null}
 
           {plan && !blocked ? (
@@ -433,11 +450,11 @@ export default function IntakeDialog({
           <button
             type="button"
             className="btn primary"
-            disabled={!plan || blocked || !projectName}
-            onClick={apply}
+            disabled={!plan || blocked || !projectName || applying}
+            onClick={() => void apply()}
             data-intake-apply
           >
-            应用到草稿
+            {applying ? '写入中…' : '写入项目'}
           </button>
         </footer>
       </div>

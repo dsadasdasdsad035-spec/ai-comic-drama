@@ -7,7 +7,7 @@
 
 ### Requirement: 项目镜头参考摄取 API
 
-系统 SHALL 提供 `POST /api/shot-3d/ingest-reference`，接受当前 `projectName`、可选 `shotId`（仅审计）、以及 `url` 或 Base64 文件（`data`/`name`）。摄取 MUST 复用与创意室相同的 `ingest.mjs` 适配器与 SSRF 规则；配置 MUST 来自设置中的创意摄取段（yt-dlp、DTK），不得在 3D 单独维护一套密钥。
+系统 SHALL 提供 `POST /api/shot-3d/ingest-reference`，接受当前 `projectName`、可选 `entryId`（仅审计）、以及 `url` 或 Base64 文件（`data`/`name`）。摄取 MUST 复用与创意室相同的 `ingest.mjs` 适配器与 SSRF 规则；配置 MUST 来自设置中的创意摄取段（yt-dlp、DTK），不得为白模工作台单独维护一套密钥。入口 MUST 位于素材 → 镜头语言 → 自定义白模工作台的「几何」页签。
 
 #### Scenario: 平台链接成功
 
@@ -45,17 +45,17 @@
 
 ### Requirement: 摄取结果默认不自动写入调度真相
 
-摄取 API MUST NOT 修改 `sceneCode`、`schedule_video`、`scheduleMeta` 或 `sceneCodeMeta`。仅 MAY 由前端将返回 URL 加入当前镜头的 `Shot3DContext` 草稿。
+摄取 API MUST NOT 修改任何分镜字段，也 MUST NOT 修改白模条目的 `sceneCode`、`video`、`scheduleMeta` 或 `sceneCodeMeta`。摄取结果 MUST 只在本工作台会话内作为几何分析来源，MUST NOT 创建或改写任何按镜头保存的参考选择。
 
 #### Scenario: 仅工作台草稿
 
-- **WHEN** 摄取成功且用户未点保存
-- **THEN** 项目文件中尚无新 `videoUrls`，刷新前仅内存草稿可见
+- **WHEN** 摄取成功且用户未触发几何分析
+- **THEN** 项目文件中没有新增参考选择或视频字段，刷新前仅会话内来源列表可见
 
 #### Scenario: 摄取失败无脏数据
 
 - **WHEN** 摄取失败或中途取消
-- **THEN** 镜头已保存的 3D 字段与摄取前一致
+- **THEN** 白模条目与分镜数据都与摄取前一致
 
 ### Requirement: 与 VGGT 分析衔接
 
@@ -65,3 +65,8 @@
 
 - **WHEN** 用户摄取后点击几何分析
 - **THEN** 使用刚得到的 `videoRef` 创建 VGGT 作业，行为符合 `reference-video-geometry`
+
+#### Scenario: 已渲染条目也可分析
+
+- **WHEN** 当前白模条目已有渲染视频
+- **THEN** 该视频作为只读来源进入几何分析，分析结果 MUST NOT 回写代码或视频字段

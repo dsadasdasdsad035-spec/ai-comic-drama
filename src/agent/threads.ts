@@ -1,6 +1,6 @@
 import type { AgentMessage, AgentMessagePart } from './sceneAgentTypes'
 
-export type ChatSurface = 'characters' | 'assets' | 'shots' | 'scene3d'
+export type ChatSurface = 'characters' | 'assets' | 'shots' | 'lexicon'
 
 export type ChatThreadKey = {
   project: string

@@ -64,7 +64,7 @@ function assistantText(message: AgentMessage): string {
  */
 export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneAgentResult> {
   const modelKey = stageModelKey(input.settings, 'sceneCode', input.stagePick)
-  if (!modelKey) throw new Error('没有可用的 3D 代码模型，请到设置页绑定「3D 代码」环节')
+  if (!modelKey) throw new Error('没有可用的白模 3D 代码模型，请到设置页绑定「白模 3D 代码」环节')
 
   const configured = resolveAgentLimits(input.settings)
   const totalMs = Math.max(1, Math.round(input.limits?.totalMs ?? configured.totalMs))

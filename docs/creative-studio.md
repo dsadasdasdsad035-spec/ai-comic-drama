@@ -23,7 +23,7 @@
 
 创意反推**仅支持本地上传**（反推 / 复刻模式输入区「上传视频」或空态上传；单文件上限 200MB）。
 
-平台链接（抖音 / B 站 / TikTok）与公网直链**不在创意室解析**；若需要，请在 **3D 调度 → 参考片几何** 摄取到项目 `assets/`，或下载后本地上传到创意会话。yt-dlp / DTK 等配置见设置 **「平台链接下载（3D 参考摄取）」**，详见根目录 `README.md` 的 VGGT 参考视频摄取说明。
+平台链接（抖音 / B 站 / TikTok）与公网直链**不在创意室解析**；若需要，请在 **素材 → 镜头语言 → 自定义白模 → 几何** 摄取到项目 `assets/`，或下载后本地上传到创意会话。yt-dlp / DTK 等配置见设置 **「平台链接下载（3D 参考摄取）」**，详见根目录 `README.md` 的 VGGT 参考视频摄取说明。
 
 ## 反推链路
 
@@ -82,7 +82,7 @@
 | 现象 | 原因与处理 |
 | --- | --- |
 | 摄取报「不允许访问本机/内网地址」 | 直链或解析器返回了私网地址，被 SSRF 防护拦下；改用公网链接或本地上传 |
-| 粘贴了抖音/B 站链接想反推 | 创意室只接受本地上传；链接请到 3D 调度 VGGT 摄取或先下载再上传 |
+| 粘贴了抖音/B 站链接想反推 | 创意室只接受本地上传；链接请到素材 → 镜头语言 → 自定义白模的「几何」页签摄取，或先下载再上传 |
 | DTK 返回 `IDENTITY_POOL_EXHAUSTED` | 没启动 browser 容器。用 `--profile browser` 重启，然后再调一次「铸造身份」 |
 | DTK 返回 `INVALID_PARAM: wait max 30` | `?wait=` 上限是 30 秒，别传更大值 |
 | 反推报「没有可用的视觉模型」 | 设置页「创意 → 能力绑定」或「默认路由」里绑定 vision 模型 |
@@ -97,7 +97,7 @@
 node verify-creative-reverse-contract.mjs   # reverse-v1 契约与技能解析
 node verify-creative-session.mjs            # 会话 CRUD、线程上限、目录清理、前端 store
 node verify-creative-ingest.mjs             # 摄取适配器、SSRF、probe、切分、抽帧
-node verify-shot-3d-reference-ingest.mjs # 3D 调度参考视频摄取（共用 creative.ingest 配置）
+node verify-shot-3d-reference-ingest.mjs # 白模工作台参考视频摄取（共用 creative.ingest 配置）
 node verify-creative-export.mjs             # 导出与晋升（含手改保护、失败回滚）
 node verify-creative-ui.mjs                 # 八视图、会话列表、模式、窄屏、项目切换
 node verify-creative-reverse.mjs            # 端到端反推（media + vision + 契约）

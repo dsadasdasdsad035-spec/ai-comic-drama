@@ -46,6 +46,20 @@ src/sandbox/runtime.generated.js
 # 验证脚本自起的临时项目目录
 .verify-*/
 
+# Agent 作业目录（运行期临时产物，作业结束即失效）
+.agent-jobs/
+
+# 临时探针脚本目录（排查用，随手创建）
+.probe*/
+
+# 根目录遗留的本地数据库（含项目数据，不入库）
+storyboard.sqlite
+storyboard.sqlite-shm
+storyboard.sqlite-wal
+
+# 项目素材产物：任何层级的 assets 目录都不入库（project.json 仍入库）
+projects/**/assets/
+
 # Blender 渲染作业的临时目录（成功/失败/取消后自动清理）
 .blender-jobs/
 .vggt-jobs/

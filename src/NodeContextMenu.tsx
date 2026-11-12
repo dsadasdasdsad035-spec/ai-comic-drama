@@ -25,7 +25,7 @@ type Props = {
   onClickItem: (id: string) => void
   /** 点「连线」：写入分镜 refIds，供视频出片参考 */
   onFirstFrame?: (id: string) => void
-  /** 额外动作（生成调度、重出参考图等） */
+  /** 额外动作（重出参考图等） */
   actions?: { key: string; label: string; hint?: string; onClick: () => void }[]
   onEdit?: () => void
   onDelete?: () => void

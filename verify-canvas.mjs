@@ -21,12 +21,8 @@ const errors = []
 p.on('pageerror', (e) => errors.push(e.stack || e.message))
 await p.goto(URL, { waitUntil: 'networkidle' })
 await p.waitForTimeout(1500)
-await p.getByRole('button', { name: '镜头表', exact: true }).click()
-await p.waitForTimeout(1000)
-await p.getByRole('button', { name: '生成到画布' }).click()
-await p.waitForTimeout(1800)
-await p.getByRole('button', { name: '画布', exact: true }).click()
-await p.waitForTimeout(2000)
+// 画布是分镜的唯一视图：默认就是画布，镜头由 project.json 直接水合，不再有「镜头表 → 生成到画布」
+await p.waitForTimeout(2200)
 
 const base = await p.evaluate(() => ({
   nodes: document.querySelectorAll('.react-flow__node-shot').length,

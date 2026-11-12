@@ -6,6 +6,7 @@ import type { Skill } from '../skills/types'
 import type { Stage } from '../api'
 import { mergeCharacters, type ExtractedChar } from '../charExtract'
 import { mergeShotsDraft } from '../shotSync'
+import { blankShot } from '../shotRows'
 import { applyJoinsToShots, type JoinDraft } from '../shotJoins'
 import type { CharacterSheet } from '../characters'
 
@@ -84,11 +85,19 @@ export function createCreativeProjectAdapter(
           ? (payload as { shots: ProjectShot[] }).shots
           : []
         const { shots: merged, added, updated } = mergeShotsDraft(p.shots || [], shots, ctx.epNo, 'merge')
-        ctx.setSnapshot({ ...p, shots: merged })
-        void mergeProjectShots(ctx.projectName, merged).then(() => ctx.onProjectDataChanged?.())
+        // 技能只产出镜号，不产出 id；新镜在这里补上 `E{集}-{镜号}` 才能落库（服务端按 id 写入）
+        const withIds = merged.map((s) => {
+          const no = String(s.no ?? '').trim()
+          if (s.id || !no) return s
+          const ep = Number(s.episode) || ctx.epNo
+          const base = blankShot(ep, no)
+          return { ...base, ...s, id: base.id, episode: ep }
+        })
+        ctx.setSnapshot({ ...p, shots: withIds })
+        void mergeProjectShots(ctx.projectName, withIds).then(() => ctx.onProjectDataChanged?.())
         return {
           ok: true,
-          summary: `镜头表已合并：新增 ${added}，更新 ${updated}`,
+          summary: `分镜已写回：新增 ${added}，更新 ${updated}`,
           counts: { added, updated, total: shots.length },
         }
       }
@@ -137,14 +146,12 @@ export function createCreativeProjectAdapter(
         }
       }
       if (out === 'designs-v1') {
-        const rec = payload as { designs?: unknown[]; scenes?: unknown[]; props?: unknown[] }
+        const rec = payload as { designs?: unknown[]; scene3d?: unknown[]; props?: unknown[] }
         const next = { ...p }
         if (rec.designs) next.designs = rec.designs as ProjectData['designs']
-        if (rec.scenes) next.sceneLayouts = rec.scenes as ProjectData['sceneLayouts']
         ctx.setSnapshot(next)
         void patchProject(ctx.projectName, {
           ...(rec.designs ? { designs: rec.designs as ProjectData['designs'] } : {}),
-          ...(rec.scenes ? { sceneLayouts: rec.scenes as ProjectData['sceneLayouts'] } : {}),
         }).then(() => ctx.onProjectDataChanged?.())
         return { ok: true, summary: '素材设定已写回项目' }
       }

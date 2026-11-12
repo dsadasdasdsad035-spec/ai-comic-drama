@@ -2,7 +2,7 @@ import type { AppSettings } from './api'
 import { askVision } from './api'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
 import { stageModelKey, type StagePick } from './ModelSelect'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 
 export type MediaBriefItem = {
   key: string

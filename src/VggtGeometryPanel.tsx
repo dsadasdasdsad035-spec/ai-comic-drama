@@ -10,7 +10,7 @@ type Props = {
   effectiveSeconds: number
   sources: SourceOption[]
   onCopyToChat: (text: string) => void
-  onAddReference?: (videoUrl: string) => boolean
+  onIngested?: (videoUrl: string) => void
   onToast: (msg: string) => void
   geometryBusy?: boolean
 }
@@ -21,7 +21,7 @@ export default function VggtGeometryPanel({
   effectiveSeconds,
   sources,
   onCopyToChat,
-  onAddReference,
+  onIngested,
   onToast,
   geometryBusy,
 }: Props) {
@@ -80,7 +80,7 @@ export default function VggtGeometryPanel({
 
   const run = useCallback(async () => {
     if (!selected) {
-      onToast('请先选择要分析的参考片或调度片')
+      onToast('请先选择要分析的参考片或已渲染白模')
       return
     }
     setSubmitting(true)
@@ -112,7 +112,10 @@ export default function VggtGeometryPanel({
     setIngesting(true)
     try {
       const r = await ingestShot3dReference({ projectName, url })
-      setLastIngestUrl(r.videoUrl)
+      const u = r.videoUrl.split('?')[0]
+      setLastIngestUrl(u)
+      onIngested?.(u)
+      setPick(`reference:${u}`)
       onToast(`已下载：${r.adapterLabel || r.adapter || '参考视频'}`)
     } catch (e) {
       onToast((e as Error).message || '下载失败')
@@ -141,7 +144,10 @@ export default function VggtGeometryPanel({
           name: file.name,
           data,
         })
-        setLastIngestUrl(r.videoUrl)
+        const u = r.videoUrl.split('?')[0]
+        setLastIngestUrl(u)
+        onIngested?.(u)
+        setPick(`reference:${u}`)
         onToast('本地上传成功')
       } catch (e) {
         onToast((e as Error).message || '上传失败')
@@ -151,13 +157,6 @@ export default function VggtGeometryPanel({
     },
     [projectName, onToast],
   )
-
-  const addLastToContext = useCallback(() => {
-    if (!lastIngestUrl) return
-    if (onAddReference && !onAddReference(lastIngestUrl)) return
-    setPick(`reference:${lastIngestUrl}`)
-    onToast('已加入本镜参考（点保存后落库）')
-  }, [lastIngestUrl, onAddReference, onToast])
 
   const copySummary = useCallback(() => {
     if (!report?.motionSummaryZh) return
@@ -185,7 +184,7 @@ export default function VggtGeometryPanel({
           <span className="cw-vggt-tag">非调度真相</span>
         </summary>
         <p className="cw-vggt-note">
-          粘贴抖音/B 站链接或上传文件，落盘到项目素材后可选入本镜参考，再分析机位；不写 sceneCode / schedule_video。解析配置与创意室「下载与摄取」共用。
+          粘贴抖音/B 站链接或上传文件，落盘到项目素材后供本会话几何分析；不写 sceneCode / 视频引用 / 镜头参考字段。解析配置与创意室「下载与摄取」共用。
         </p>
 
         <div className="cw-vggt-ingest">
@@ -224,15 +223,11 @@ export default function VggtGeometryPanel({
               <span className="mono" title={lastIngestUrl}>
                 {lastIngestUrl.slice(-48)}
               </span>
-              <button type="button" className="btn-mini" onClick={addLastToContext} data-shot3d-add-ref>
-                加入本镜参考
-              </button>
               <button
                 type="button"
                 className="btn-mini"
                 disabled={!available || busy}
                 onClick={() => {
-                  addLastToContext()
                   void (async () => {
                     setSubmitting(true)
                     setJob(null)
@@ -267,7 +262,7 @@ export default function VggtGeometryPanel({
           <div className="cw-alert warn">未配置 VGGT Worker（见 README · VGGT 实验）。</div>
         )}
         {options.length === 0 && !lastIngestUrl ? (
-          <div className="cw-alert warn">下载参考片并「加入本镜参考」，或先渲染调度片。</div>
+          <div className="cw-alert warn">下载参考片并「加入几何分析」，或先渲染一条白模。</div>
         ) : options.length > 0 ? (
           <>
             <label className="cw-vggt-field">
@@ -281,7 +276,7 @@ export default function VggtGeometryPanel({
               </select>
             </label>
             {selected?.kind === 'schedule' && (
-              <div className="cw-alert warn">当前为「已保存调度片」只读分析，不验收、不替换 schedule_video。</div>
+              <div className="cw-alert warn">当前为「已渲染条目」只读分析，不验收、不替换已发布的视频引用。</div>
             )}
             <button
               type="button"

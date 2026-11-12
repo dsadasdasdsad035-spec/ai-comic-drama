@@ -14,6 +14,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'submit_prompt_renders',
   'read_prompt_render_bundle',
   'read_transition_recipes',
+  'list_camera_lexicon',
+  'get_camera_lexicon',
   'get_shot_context',
   'set_scene_code',
   'adopt_scene_from_job',
@@ -42,7 +44,13 @@ export const KNOWN_TOOL_IDS = new Set([
 
 /** 只读工具：只读技能只能拿到这些。 */
 export const READ_TOOL_IDS = new Set(
-  [...KNOWN_TOOL_IDS].filter((id) => id.startsWith('read_') || id === 'get_shot_context'),
+  [...KNOWN_TOOL_IDS].filter(
+    (id) =>
+      id.startsWith('read_') ||
+      id === 'get_shot_context' ||
+      id === 'list_camera_lexicon' ||
+      id === 'get_camera_lexicon',
+  ),
 )
 
 /** 写草稿的工具：只有宿主技能可用。 */

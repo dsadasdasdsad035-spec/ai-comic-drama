@@ -9,7 +9,7 @@ import type {
   TransitionOut,
   VideoPromptOverride,
 } from './types'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import { localPath } from './shotSync'
 import { getTransitionPreset, resolveTransitionPreset } from './transitionPresets'
 

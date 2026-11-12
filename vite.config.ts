@@ -3701,7 +3701,7 @@ function seedreamProxy(): Plugin {
                 if (pruned.cleared) patch.shots = pruned.shots
               }
               // 角色 / 场景道具设定 / 集 / 素材整体替换（都是人改的结果，不是 LLM 增量）
-              for (const k of ['characters', 'designs', 'sceneLayouts', 'episodes', 'assets']) {
+              for (const k of ['characters', 'designs', 'lexiconWhitebox', 'sceneLayouts', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]
@@ -4829,6 +4829,21 @@ function seedreamProxy(): Plugin {
               const project = safeProjectName(String(q.get('project') || '').trim())
               const meta = stockMetaForUrl(resolveRoot(root), project, String(q.get('url') || ''))
               res.end(JSON.stringify({ ok: true, meta }))
+              return
+            }
+
+            if (url === '/api/camera-lexicon/import' && req.method === 'POST') {
+              const body = await readJson(req)
+              const project = safeProjectName(String(body?.project || '').trim())
+              const key = String(body?.key || '').trim()
+              if (!project || !key) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '需要 project 与 key' }))
+                return
+              }
+              const { importCameraLexiconPreset } = await import('./server/cameraLexicon.mjs')
+              const result = importCameraLexiconPreset(root, project, key)
+              res.end(JSON.stringify({ ok: true, ...result }))
               return
             }
 

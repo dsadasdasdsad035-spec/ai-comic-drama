@@ -253,9 +253,9 @@ type Props = {
   settings: AppSettings | null
   stagePick?: StagePick
   manifest: ContextManifest
-  /** 3D 线程键：项目 + 镜头；关闭工作台后可恢复 */
-  threadKey: { project: string; surface: 'scene3d'; shotId: string }
-  onRemoveAttachment: (key: string) => void
+  /** 白模线程键：项目 + 白模条目；关闭工作台后可恢复 */
+  threadKey: { project: string; surface: 'lexicon'; shotId: string }
+  onRemoveAttachment?: (key: string) => void
   onToggleBrief?: (key: string) => void
   onClearAttachments?: () => void
   /** 上传一张本地图片并写进镜头上下文（宿主负责落盘 + 刷新 media + 写 context） */
@@ -319,7 +319,7 @@ export default function SceneAgentChat({
   const draftIdRef = useRef<string | null>(null)
   const requirementsList = requirements?.length ? requirements : undefined
   const capability = sceneAgentCapability({ settings, stagePick })
-  const protocolLabel = capability.available ? '原生 tool calls' : '未绑定 3D 代码模型'
+  const protocolLabel = capability.available ? '原生 tool calls' : '未绑定白模 3D 代码模型'
   const [threadLoaded, setThreadLoaded] = useState(false)
   const [sceneSkillMeta, setSceneSkillMeta] = useState<{
     id: string
@@ -577,7 +577,6 @@ export default function SceneAgentChat({
             await onVideoAccepted({
               code: persisted.code,
               codeHash: persisted.codeHash,
-              context: args.prepared.context,
               prepared: args.prepared,
               video: persisted.videoUrl,
               duration,
@@ -868,7 +867,6 @@ export default function SceneAgentChat({
       await onVideoAccepted({
         code: session.code,
         codeHash: session.codeHash,
-        context: session.prepared.context,
         prepared: session.prepared,
         video: result.videoUrl,
         duration: result.duration,
@@ -1039,7 +1037,7 @@ export default function SceneAgentChat({
         <ChatThreadShell
           runtime={runtime}
           running={running}
-          scope="scene3d"
+          scope="lexicon"
           toolUis={
             <>
               <RunSandboxUI />
@@ -1115,13 +1113,13 @@ export default function SceneAgentChat({
               // 这里只做展示上限，不让附件条把整份上下文渲染成一面墙
               limit: SCENE_CODE_LIMITS.images + SCENE_CODE_LIMITS.videos,
               locked: running,
-              onRemove: onRemoveAttachment,
+              ...(onRemoveAttachment ? { onRemove: onRemoveAttachment } : { onRemove: () => {} }),
               ...(onClearAttachments ? { onClear: onClearAttachments } : {}),
               ...(onUploadImage ? { onUpload: () => uploadInputRef.current?.click() } : {}),
               ...(uploading ? { uploadBusy: true } : {}),
               ...(onPickMedia ? { onPick: onPickMedia } : {}),
               ...(picking ? { picking: true } : {}),
-              hint: '这里是当前镜头会发给模型的全部参考；上传与从素材选都会写回镜头上下文',
+              hint: '仅显示本轮会发给模型的附件（若有）；不写入镜头参考字段',
               extra: onToggleBrief
                 ? (item) => {
                     if (item.kind === 'text') return null

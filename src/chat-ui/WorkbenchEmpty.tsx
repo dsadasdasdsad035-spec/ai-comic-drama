@@ -12,7 +12,7 @@ export function WorkbenchEmpty({
   actions,
   onRunAction,
   running,
-  /** 镜头表等：不展示空态引导与内置动作区 */
+  /** 分镜等产物视图：不展示空态引导与内置动作区 */
   compact,
 }: {
   profile: WorkbenchProfile

@@ -174,11 +174,12 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
   },
   shots: {
     title: '拆镜',
-    emptyTitle: '',
-    emptyBody: '',
-    suggestions: [],
-    placeholder: '',
-    saveMode: 'explicit',
+    emptyTitle: '在画布上拆这一集',
+    emptyBody:
+      '说清本集要几个镜头、节奏与关键画面；写回后直接落库并出现在画布上，不需要再点「保存」或「生成到画布」。',
+    suggestions: ['把本集拆成 12 镜，前 3 秒要抓人', '只补第 2、5 镜的提示词', '把这一集压到目标时长内'],
+    placeholder: '例如：按场次拆镜，冲突场景多给两个特写，别改已有镜号…',
+    saveMode: 'immediate',
     inputLabels: {
       style: '画风',
       aspect: '画幅',

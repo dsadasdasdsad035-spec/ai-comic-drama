@@ -1,9 +1,7 @@
 import type { ProjectData } from './api'
 import type { MediaBrief } from './mediaBrief'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
-import type { Shot3DContext, ShotData } from './types'
-import type { Shot3DContextCatalog } from './shot3dContextCatalog'
-import { buildManifest, manifestText } from './contextManifest'
+import type { SceneCodeShotHead } from './types'
 
 export const SCENE_CODE_ABI = `运行时会提供：
 - ctx.scene：bpy 场景；ctx.camera：相机对象；ctx.camera_data：相机数据（焦距/传感器）
@@ -26,10 +24,8 @@ def dispose():     # 释放自定义数据块/节点组/临时贴图
 最小结构：import bpy · def build(ctx) · def pose(t, mode) · def dispose()；build 内至少一个可见对象并设置 ctx.camera。`
 
 export type SceneCodePromptInput = {
-  shot: ShotData
+  shot: SceneCodeShotHead
   project?: ProjectData | null
-  context: Shot3DContext
-  catalog: Shot3DContextCatalog
   assets: PreparedSceneAsset[]
   mediaBrief?: MediaBrief
   videoBrief?: string
@@ -80,18 +76,23 @@ function assetMetaOf(assets: PreparedSceneAsset[]): Record<string, { width?: num
   return out
 }
 
-/** 代码生成/聊天共用的上下文；素材只给稳定键和 brief，不发 base64。 */
+/** 代码生成/聊天共用的上下文：仅运行元数据，不自动注入分镜表或参考选择。 */
 export function buildSceneCodeContext(input: SceneCodePromptInput): string {
   const lines: string[] = []
   lines.push(`【渲染引擎】Blender ${input.engineVersion || '4.2+'}（bpy）`)
-  const manifest = buildManifest({
-    context: input.context,
-    catalog: input.catalog,
-    shotNo: String(input.shot.no || ''),
-    duration: input.duration,
-    aspect: input.aspect,
-  })
-  lines.push(manifestText(manifest, briefsOf(input.mediaBrief), 12000, assetMetaOf(input.assets)))
+  lines.push(
+    `【镜头】${String(input.shot.no || '')}｜${Number(input.duration || 0).toFixed(1)}s｜${input.aspect}`,
+  )
+  if (input.assets.length) {
+    lines.push('【渲染素材键】')
+    for (const a of input.assets) {
+      const meta = assetMetaOf(input.assets)[a.ref.key]
+      const size = meta?.width && meta?.height ? `｜${meta.width}x${meta.height}` : ''
+      lines.push(`- key=${a.ref.key}｜${a.ref.label}${size}`)
+      const brief = briefsOf(input.mediaBrief)[a.ref.key]
+      if (brief) lines.push(`  brief：${brief}`)
+    }
+  }
 
   if (input.videoBrief) {
     lines.push('【原生视频理解（仅首次生成可用）】')

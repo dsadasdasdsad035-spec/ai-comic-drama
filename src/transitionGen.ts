@@ -34,7 +34,7 @@ import {
   templateVersionStale,
   videoPromptRenderStale,
 } from './promptRender'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import { localPath } from './shotSync'
 import { coerceTransitionVideoPromptOverride, boundarySourceLabel, normalizeGenerated, transitionOverrideText } from './transition'
 

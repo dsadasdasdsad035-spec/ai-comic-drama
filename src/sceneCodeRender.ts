@@ -1,4 +1,4 @@
-import { renderSize } from './scheduleGeometry'
+import { renderSize } from './renderSize'
 import type { PreparedSceneAsset } from './sceneCodeAssets'
 import {
   blenderErrorText,

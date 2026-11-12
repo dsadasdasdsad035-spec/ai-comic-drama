@@ -1,5 +1,5 @@
 import type { VisualBrief, VisualBriefMeta } from './types'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 
 /**
  * 视觉层只描述“看到了什么”，不产出米制坐标。

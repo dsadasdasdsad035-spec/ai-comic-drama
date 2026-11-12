@@ -23,25 +23,22 @@ const check = (name, cond, extra = '') => {
 const entry = path.join(tmp, 'entry.ts')
 fs.writeFileSync(
   entry,
-  `export * from ${JSON.stringify(path.join(root, 'src/shot3dContext.ts'))}\n` +
-    `export * from ${JSON.stringify(path.join(root, 'src/sceneCodeFingerprint.ts'))}\n`,
+  `export * from ${JSON.stringify(path.join(root, 'src/sceneCodeFingerprint.ts'))}\n`,
 )
 const bundle = path.join(tmp, 'bundle.mjs')
 execFileSync(esbuild, [entry, '--bundle', '--platform=node', '--format=esm', '--log-level=error', `--outfile=${bundle}`])
 const lib = await import(bundle)
 
-const dialogue = 'A：第一句\nB：第二句\nA：第三句'
-const lines = lib.parseDialogueLines(dialogue)
-check('台词逐句解析', lines.length === 3 && lines[1].speaker === 'B' && lines[1].index === 1)
-const hash = lib.dialogueHashOf(dialogue)
-const ctx = lib.defaultShot3DContext({
-  characterIds: ['chenmo', 'chenmo', 'crow'],
-  imageUrls: ['/generated/a.jpg', '/generated/a.jpg'],
-  dialogueHash: hash,
-})
-check('默认选择去重', ctx.characterIds.length === 2 && ctx.imageUrls.length === 1)
-check('逐句选择只返回选中行', lib.selectedDialogue({ ...ctx, text: { ...ctx.text, dialogue: [1] } }, dialogue)[0]?.text === '第二句')
-check('台词变化重置逐句', lib.inheritShot3DContext({ ...ctx, text: { ...ctx.text, dialogue: [1] } }, 'changed').text.dialogue === 'all')
+const ctx = {
+  text: { prompt: true, videoPrompt: false, cast: true, sizeMove: false, marks: false, dialogue: 'all' },
+  characterIds: ['chenmo', 'crow'],
+  designIds: [],
+  assetUrls: [],
+  imageUrls: [],
+  videoUrls: [],
+  sceneKeys: [],
+  briefOff: [],
+}
 const assets = [
   { key: 'image:a', kind: 'image', contentHash: '111' },
   { key: 'character:b', kind: 'image', contentHash: '222' },
@@ -76,6 +73,7 @@ const code = {
 }
 const selection = {
   ...ctx,
+  version: 1,
   designIds: ['scene-1'],
   sceneKeys: ['E01-SC02'],
   assetUrls: ['/generated/prop.jpg'],

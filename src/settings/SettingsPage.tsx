@@ -105,7 +105,7 @@ function normalizeLipSyncSettings(raw?: LipSyncSettings): LipSyncSettings {
 const CAP_META: { cap: Cap; label: string; hint: string }[] = [
   { cap: 'text', label: '文本 · 常规', hint: '拆镜/提示词之外的批量生成' },
   { cap: 'textPro', label: '文本 · 高质量', hint: '拆镜 / 拆角色 / 长输出' },
-  { cap: 'vision', label: '视觉 · 图像理解', hint: '3D 参考板 / 素材 brief；只选实际支持图像输入的模型' },
+  { cap: 'vision', label: '视觉 · 图像理解', hint: '素材 brief / 其它工作台视觉；只选实际支持图像输入的模型' },
   { cap: 'videoVision', label: '视觉 · 视频理解', hint: '首次 3D 代码生成的视频理解；本地视频不支持时回退关键帧' },
   { cap: 'image', label: '图像 · 出画面', hint: '画布生成画面' },
   { cap: 'view', label: '图像 · 角色三视图', hint: '角色板生成三视图' },
@@ -146,13 +146,13 @@ const KIND_META: { kind: ProviderKind; label: string }[] = [
 const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   { stage: 'character', label: '角色（拆角色）', hint: '分集梗概/分镜 → 角色外观锚点' },
   { stage: 'asset', label: '素材（拆场景/道具）', hint: '分集梗概/分镜 → 场景空镜与关键道具' },
-  { stage: 'shot', label: '镜头表（拆镜）', hint: '一集场次 → 镜头列表；3D 文本编排也用它' },
+  { stage: 'shot', label: '画布 · 拆镜', hint: '一集场次 → 镜头列表；3D 文本编排也用它' },
   {
     stage: 'prompt',
     label: '提示词（辅助）',
-    hint: '主路径在镜头表拆镜；仅「只刷提示词」与 prompt-intake 导入用',
+    hint: '画布单镜与 prompt-intake 导入用；整集拆镜走画布的拆镜助手',
   },
-  { stage: 'sceneCode', label: '3D 代码（生成/聊天）', hint: '参考内容 → Blender Python 代码；空则沿用文本默认' },
+  { stage: 'sceneCode', label: '白模 3D 代码（生成/聊天）', hint: '白模描述 → Blender Python 代码；空则沿用文本默认' },
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
   { stage: 'videoVision', label: '视频理解（首次 3D）', hint: '可选；本地视频不支持时回退关键帧，聊天不使用' },
   { stage: 'creative', label: '创意（对话助手）', hint: '创意工作室聊天主循环；空则沿用文本默认' },
@@ -756,7 +756,7 @@ export default function SettingsPage({
       )
     : undefined
   const sceneCapabilityText = !sceneResolution.entry
-    ? '未配置 3D 代码模型'
+    ? '未配置白模 3D 代码模型'
     : sceneCapability?.nativeTools
       ? `当前 ${sceneResolution.entry.label} · 支持原生工具调用（thinking ${sceneCapability.thinking === 'disable' ? '关闭' : '不设置'}）`
       : `当前 ${sceneResolution.entry.label} · 未验证，聊天不可用`
@@ -1204,8 +1204,8 @@ export default function SettingsPage({
       <header className="st-sec-head">
         <h3>Agent 运行上限</h3>
         <span className="st-hint">
-          3D 调度 agent 的总运行时长上限；超过会显示运行超时。线程按项目 + 镜头恢复，关闭工作台会释放 Blender
-          沙箱并取消运行中的本轮。
+          白模工作台（素材 → 镜头语言 → 自定义白模）agent 的总运行时长上限；超过会显示运行超时。线程按项目 +
+          白模条目恢复，关闭工作台会释放 Blender 沙箱并取消运行中的本轮。
         </span>
       </header>
       <div className="st-grid">
@@ -1233,7 +1233,7 @@ export default function SettingsPage({
           <em data-agent-capability>{sceneCapabilityText}</em>
         </label>
         <label className="st-field">
-          <span>3D Agent 宿主权限</span>
+          <span>白模工作台 Agent 宿主权限</span>
           <select
             value={agentHostMode}
             onChange={(e) => setAgentHostMode(normalizeAgentHostMode(e.target.value))}
@@ -1492,11 +1492,11 @@ export default function SettingsPage({
         <h3>创意会话</h3>
         <span className="st-hint">
           创意会话不绑定项目：反推用的源视频仅支持本地上传，存在 creatives/ 目录；只有「晋升项目」才写入项目数据。
-          下方平台链接下载仅用于 3D 调度参考视频摄取（VGGT 面板）。
+          下方平台链接下载仅用于白模工作台的参考视频摄取（VGGT 面板）。
         </span>
       </header>
 
-      <h4 className="st-subhead">平台链接下载（3D 参考摄取）</h4>
+      <h4 className="st-subhead">平台链接下载（创意室 / VGGT 摄取共用）</h4>
       <div className="st-grid">
         <label className="st-field">
           <span>yt-dlp 可执行文件</span>

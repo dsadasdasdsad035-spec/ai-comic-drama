@@ -9,7 +9,7 @@
 #### Scenario: 批量提交本集接缝
 
 - **WHEN** 用户在线头表聊天触发「规划本集镜间转场」且 Agent 返回合法 `joins-v1`
-- **THEN** 系统将各条合并进对应源镜 `transitionOut`，镜头表接缝行可预览更新；未保存前按工作台草稿语义提示用户
+- **THEN** 系统将各条合并进对应源镜 `transitionOut`，画布接缝边与转场面板可预览更新（写回即落库，回执说明条数）
 
 #### Scenario: 非法镜号拒绝
 
@@ -57,7 +57,7 @@ Agent MUST 可引用扩展后的转场食谱（对齐 video-shotcraft 卡片 id/
 
 ### Requirement: 确认后才写入
 
-Agent 或建议接口 MUST NOT 直接调用视频生成 API。用户确认保存草稿或点「应用建议」后，系统 MUST 将建议合并进 `transitionOut`；若存在 `videoPromptOverride`，应用生成类建议时 MUST 仅写入非 override 字段或先征得覆盖（默认不覆盖 override）。transition-planner 批量结果在未保存前 MUST 视为草稿，与镜头表 Agent 草稿语义一致。
+Agent 或建议接口 MUST NOT 直接调用视频生成 API。用户确认保存草稿或点「应用建议」后，系统 MUST 将建议合并进 `transitionOut`；若存在 `videoPromptOverride`，应用生成类建议时 MUST 仅写入非 override 字段或先征得覆盖（默认不覆盖 override）。transition-planner 批量结果经 `submit_joins` 写回后 MUST 立即落库并水合到画布，与画布分镜 Agent 的写回语义一致。
 
 #### Scenario: 应用效果建议
 

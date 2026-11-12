@@ -7,8 +7,8 @@ import {
 } from './nativeAudio'
 import { parseDialogue } from './prompts'
 import { performanceFingerprintPayload } from './performance'
-import { motionNoteOf, shortHash } from './scheduleGeometry'
-import type { ShotScheduleState } from './scheduleStatus'
+import { shortHash } from './hash'
+import { lexiconMoveLine } from './cameraLexicon'
 import {
   collectShotReferences,
   collectVideoReferences,
@@ -205,7 +205,6 @@ export function buildShotVideoRequest(input: {
   nodes: ShotNodeType[]
   characters: CharacterSheet[]
   missingMedia?: Set<string>
-  schedule: ShotScheduleState
   model?: VideoModelInput | null
   resolution?: string
 }): ShotVideoRequest {
@@ -263,13 +262,9 @@ export function buildShotVideoRequest(input: {
     : d.prompt?.trim()
       ? 'prompt_fallback'
       : 'fallback'
-  const fallback = `${d.size}，${
-    d.move === '固定' ? '机位固定不动，仅人物与环境的细微动态' : `镜头${d.move}`
-  }，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
-  const liveMotionNote =
-    motionNoteOf(input.schedule.scene, input.schedule.blocking, input.schedule.duration, d.move) ||
-    d.motionNote ||
-    ''
+  const fallback = `${d.size}，${lexiconMoveLine(d)}，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
+  /** 运镜文案只来自条目自身的 motion_note，不再从几何数据推导 */
+  const liveMotionNote = d.motionNote || ''
   /** 无模板渲染时仅用表内语义层正文，不再运行时拼接后缀 */
   const semantic = motion || fallback
 

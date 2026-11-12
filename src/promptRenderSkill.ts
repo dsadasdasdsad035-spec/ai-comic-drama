@@ -1,7 +1,7 @@
 import { buildSkillPrompt } from './skills/render'
 import { getSkill } from './skills/registry'
 import type { Skill, SkillInputs, SkillSource } from './skills/types'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 
 export const PROMPT_RENDER_SKILL_ID = 'seedance-prompt-render'
 export const PROMPT_RENDER_REFINE_SKILL_ID = 'seedance-prompt-refine'

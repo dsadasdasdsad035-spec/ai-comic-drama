@@ -9,13 +9,6 @@ import type {
   DialogueDelivery,
   LipSyncState,
   PerformanceEntry,
-  SceneCode,
-  SceneCodeMeta,
-  SceneLayout,
-  ScheduleMeta,
-  Shot3DContext,
-  ShotBlocking,
-  ShotScene,
   TransitionOut,
   VisualBrief,
   VisualBriefMeta,
@@ -161,7 +154,7 @@ export type VideoOpts = {
   lastFrame?: string
   /** 多参考图模式（方舟 reference_image，1~4 张）；有值时忽略 image */
   refImages?: string[]
-  /** 3D 调度视频参考（方舟 reference_video，1~3 段）；有值时进入全模态参考模式 */
+  /** 参考视频（方舟 reference_video，1~3 段）；有值时进入全模态参考模式 */
   refVideos?: string[]
   /** 原生音频：Seedance 2.5 开启 generate_audio */
   generateAudio?: boolean
@@ -670,32 +663,12 @@ export type ProjectShot = {
   refIds?: string[]
   /** 到下一镜的转场配置（按目标 shotId 关联）；null = 明确清除 */
   transition_out?: TransitionOut | null
-  /** 旧调度坐标；只用于迁移 */
-  layout?: unknown
-  /** 所属场次；同集同场共享 SceneLayout */
+  /** 所属场次 */
   scene_no?: number
   scene_slug?: string
-  shot_scene?: ShotScene
-  shot_scene_seed?: string
   visual_brief?: VisualBrief
   visual_brief_meta?: VisualBriefMeta
-  shot_blocking?: ShotBlocking
-  /** 代码优先 3D：每镜一段 Blender Python 代码 */
-  scene_code?: SceneCode
-  scene_code_meta?: SceneCodeMeta
-  shot_3d_context?: Shot3DContext
-  /** camelCase 兼容：旧项目/本地快照可能直接透传 */
-  sceneCode?: SceneCode
-  sceneCodeMeta?: SceneCodeMeta
-  shot3DContext?: Shot3DContext
-  schedule_meta?: ScheduleMeta
-  schedule_video?: string
-  schedule_frames?: string[]
   motion_note?: string
-  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
-  use_schedule_frames?: boolean
-  /** @deprecated 3D 参考开关已移除；字段保留只为旧项目读写兼容 */
-  use_schedule_video_ref?: boolean
   /** 视频出片是否带说话角色表情单格；缺失按 false，避免旧项目自动占槽 */
   use_expression_ref?: boolean
 }
@@ -762,8 +735,8 @@ export type ProjectData = {
   assets?: ProjectAsset[]
   /** 场景/道具设定卡：发布前的工作区，不随 assets 整表回写 */
   designs?: DesignSheet[]
-  /** 按集/场次复用的 3D 场景布局 */
-  sceneLayouts?: SceneLayout[]
+  /** 素材·镜头语言：项目级自定义白模（Blender 代码 + 渲染 MP4） */
+  lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   shots?: ProjectShot[]
   updated_at?: string
   /** GET /api/project 附带：本次打开迁移了几张旧图、哪些引用文件缺失 */
@@ -873,7 +846,7 @@ export type ProjectPatch = {
   deleteShotIds?: string[]
   characters?: unknown[]
   designs?: DesignSheet[]
-  sceneLayouts?: SceneLayout[]
+  lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   episodes?: unknown[]
   source?: string
   logline?: string
@@ -910,10 +883,6 @@ export async function mergeProjectShots(
 }
 
 /** 场景布局是独立顶层数据：整表替换，不跟 episodes 一起被剧本站覆盖 */
-export async function saveSceneLayouts(name: string, sceneLayouts: SceneLayout[]): Promise<void> {
-  await patchProject(name, { sceneLayouts })
-}
-
 export async function saveProject(name: string, project: ProjectData): Promise<void> {
   const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
     method: 'PUT',
@@ -1379,6 +1348,29 @@ export type MediaItem = { name: string; url: string; size: number; mtime: number
 export type ProjectAssetItem = { kind: string; title: string; url: string; note?: string }
 export type MediaBundle = { images: MediaItem[]; videos: MediaItem[]; assets: ProjectAssetItem[] }
 
+export type CameraLexiconImportResult = {
+  ok?: boolean
+  url: string
+  file: string
+  key: string
+  title: string
+  attribution: string
+}
+
+export async function importCameraLexiconPreset(
+  projectName: string,
+  key: string,
+): Promise<CameraLexiconImportResult> {
+  const r = await fetch('/api/camera-lexicon/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project: projectName, key }),
+  })
+  const j = await readJsonRes(r)
+  if (!j.ok) throw new Error(j.message || '运镜库导入失败')
+  return j as CameraLexiconImportResult
+}
+
 export async function listMedia(projectName: string): Promise<MediaBundle> {
   try {
     const r = await fetch(`/api/media?name=${encodeURIComponent(projectName)}`)
@@ -1390,23 +1382,6 @@ export async function listMedia(projectName: string): Promise<MediaBundle> {
   }
 }
 
-/** 保存浏览器录制的调度视频（webm dataURL），后端转 mp4 后返回站内路径 */
-export async function saveScheduleVideo(
-  dataUrl: string,
-  signal?: AbortSignal,
-  duration?: number,
-): Promise<string> {
-  const r = await fetch('/api/save-video', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl, ...(duration && duration > 0 ? { duration } : {}) }),
-    signal,
-  }).then((x) => x.json())
-  if (!r.ok) throw new Error(r.message || '调度视频保存失败')
-  return r.url as string
-}
-
-/** 从调度视频抽关键帧，供出片时作结构性参考 */
 /** VGGT 参考片几何报告（只读 POC，version 1） */
 export type VggtConfidence = 'high' | 'medium' | 'low'
 export type VggtKeyframe = {

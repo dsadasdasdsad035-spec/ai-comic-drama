@@ -3,7 +3,7 @@ name: shotlist
 description: 把一集剧本拆成可直接生产的镜头表与首帧/视频提示词，含景别、运镜、时长、台词、表演与出场角色
 stage: shot
 runtime: tools
-tools: [read_episode, read_shots, read_characters, submit_shots]
+tools: [read_episode, read_shots, read_characters, list_camera_lexicon, get_camera_lexicon, submit_shots]
 inputs: [style, aspect, brief, target]
 output: shots-v1
 contracts: [shots-v1]

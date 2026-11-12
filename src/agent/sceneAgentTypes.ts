@@ -1,6 +1,5 @@
 import type { SceneCodeCheck } from '../sceneCodeSanitize'
 import type { PreparedCodeContext } from '../sceneCodePrepare'
-import type { Shot3DContext } from '../types'
 import type { DraftScope, SceneDraftClient } from '../sceneDraft'
 import { AGENT_LIMIT_DEFAULTS } from './agentLimits'
 import type { BuiltinResult } from './workbenchChat'
@@ -218,7 +217,6 @@ export type AgentVideoReviewPart = {
 export type AgentVideoAcceptedInput = {
   code: string
   codeHash: string
-  context: Shot3DContext
   prepared: PreparedCodeContext
   video: string
   duration: number

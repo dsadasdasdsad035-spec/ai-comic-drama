@@ -59,7 +59,7 @@ export function CreativeComposerBar({
           {busy === 'ingest' ? '上传中…' : '上传视频'}
         </button>
         <span className="text-[10px] text-muted-foreground">
-          单文件 ≤200MB；平台链接请在 3D 调度工作台摄取
+          单文件 ≤200MB；平台链接请在素材 → 镜头语言 → 自定义白模工作台摄取
         </span>
         <input
           ref={fileRef}

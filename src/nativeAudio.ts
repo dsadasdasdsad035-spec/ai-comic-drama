@@ -1,5 +1,5 @@
 import { isVoiceSampleUsable, type CharacterSheet } from './characters'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import type { AudioMeta, AudioRef, PerformanceEntry } from './types'
 
 export type AudioRefCapabilities = {

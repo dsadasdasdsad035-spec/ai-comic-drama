@@ -15,7 +15,7 @@ type Props = {
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /**
- * 集选择器。集号是「镜头表 / 提示词 / 剧本」等视图共用的数据维度，
+ * 集选择器。集号是「画布 / 3D 调度」等视图共用的数据维度，
  * 所以放在全局带上；横条形态已取消，改成下拉列表，避免再占一行高度。
  */
 export default function EpPicker({ projectName, epNo, setEpNo, version }: Props) {
@@ -171,7 +171,7 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
           >
             {eps.length === 0 ? (
               <div className="epbar-empty">
-                {projectName ? '这个项目还没有集。在镜头表里建镜头，或在项目设置里维护分集。' : '先在全局带选择项目。'}
+                {projectName ? '这个项目还没有集。在画布里建镜头，或在项目设置里维护分集。' : '先在全局带选择项目。'}
               </div>
             ) : (
               eps.map((e, i) => (

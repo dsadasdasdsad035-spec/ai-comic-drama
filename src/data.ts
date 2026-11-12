@@ -9,6 +9,8 @@ export type ShotEdgeDataType = {
     summary: string
     state: 'ready' | 'pending' | 'stale' | 'inactive'
   }
+  /** 只用于画布显示：这条边是不是正在编辑的转场边（替代被关掉的 EdgeProps.selected） */
+  active?: boolean
 }
 export type ShotEdgeType = Edge<ShotEdgeDataType, 'shot'>
 

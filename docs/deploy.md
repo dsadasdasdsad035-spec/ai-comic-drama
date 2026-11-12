@@ -81,7 +81,7 @@ DTK 是**独立的 compose 项目**（`-p dtk`），不用 `docker compose down`
 
 | 能力 | 状态 | 原因 |
 | --- | --- | --- |
-| 3D 调度（Blender） | 不可用 | 镜像不装 Blender（体积与 GPU 依赖）；需要时挂载宿主 Blender 或改镜像 |
+| 3D/白模工作台（Blender） | 不可用 | 镜像不装 Blender（体积与 GPU 依赖）；需要时挂载宿主 Blender 或改镜像 |
 | macOS `say` 配音 | 不可用 | Linux 无此命令；用 MiniMax / 火山 / ElevenLabs / APIMart 任一 |
 | yt-dlp 读浏览器 cookies | 不可用 | 容器里没有浏览器；抖音交给 DTK，B 站不需要 cookies |
 

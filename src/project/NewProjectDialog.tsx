@@ -12,7 +12,7 @@ type Props = {
 
 /**
  * 新建项目对话框。目录名同时是项目目录，因此只允许字母/数字/下划线/短横。
- * 入口在全局带，不再依赖镜头表工具条（窄宽度会整块隐藏）。
+ * 入口在全局带，不依赖具体视图的工具条（窄宽度会整块隐藏）。
  */
 export default function NewProjectDialog({ open, onClose, onCreated }: Props) {
   const [name, setName] = useState('')

@@ -1,6 +1,5 @@
 import type { ProjectShot } from './api'
 import { dialogueToText, parseDialogue } from './prompts'
-import { legacyLayoutToBlocking } from './scheduleGeometry'
 import type { ShotData } from './types'
 
 /**
@@ -157,23 +156,11 @@ export function bizSignature(d: ShotData): string {
     refExtras: d.refExtras ?? [],
     refIds: d.refIds ?? [],
     transitionOut: d.transitionOut ?? null,
-    layout: d.layout ?? null,
     sceneNo: d.sceneNo ?? null,
     sceneSlug: d.sceneSlug ?? '',
-    shotScene: d.shotScene ?? null,
-    shotSceneSeed: d.shotSceneSeed ?? '',
     visualBrief: d.visualBrief ?? null,
     visualBriefMeta: d.visualBriefMeta ?? null,
-    shotBlocking: d.shotBlocking ?? null,
-    sceneCode: d.sceneCode ?? null,
-    sceneCodeMeta: d.sceneCodeMeta ?? null,
-    shot3DContext: d.shot3DContext ?? null,
-    scheduleMeta: d.scheduleMeta ?? null,
-    scheduleVideo: d.scheduleVideo ?? '',
-    scheduleFrames: d.scheduleFrames ?? [],
     motionNote: d.motionNote ?? '',
-    useScheduleFrames: d.useScheduleFrames ? 1 : 0,
-    useScheduleVideoRef: d.useScheduleVideoRef ? 1 : 0,
     useExpressionRef: d.useExpressionRef ? 1 : 0,
   })
 }
@@ -209,23 +196,11 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     refIds: d.refIds,
     // null 是明确清除：mergeShots 会跳过 undefined，写 undefined 会让旧转场复活
     transition_out: d.transitionOut ?? null,
-    layout: d.layout,
     scene_no: d.sceneNo,
     scene_slug: d.sceneSlug,
-    shot_scene: d.shotScene,
-    shot_scene_seed: d.shotSceneSeed,
     visual_brief: d.visualBrief,
     visual_brief_meta: d.visualBriefMeta,
-    shot_blocking: d.shotBlocking ?? legacyLayoutToBlocking(d.layout),
-    scene_code: d.sceneCode,
-    scene_code_meta: d.sceneCodeMeta,
-    shot_3d_context: d.shot3DContext,
-    schedule_meta: d.scheduleMeta,
-    schedule_video: localPath(d.scheduleVideo),
-    schedule_frames: (d.scheduleFrames ?? []).map((u) => localPath(u)).filter((x): x is string => Boolean(x)),
     motion_note: d.motionNote ?? '',
-    use_schedule_frames: Boolean(d.useScheduleFrames),
-    use_schedule_video_ref: Boolean(d.useScheduleVideoRef),
     use_expression_ref: Boolean(d.useExpressionRef),
     ...(d.handEdited?.length ? { handEdited: d.handEdited } : {}),
   }
@@ -263,26 +238,11 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     // 字段缺失（旧项目）才沿用画布上的值；显式 null 表示已经删掉，不能复活
     transitionOut:
       s.transition_out === undefined ? fallback.transitionOut : s.transition_out ?? undefined,
-    layout: (s.layout as ShotData['layout']) ?? fallback.layout,
     sceneNo: s.scene_no ?? fallback.sceneNo,
     sceneSlug: s.scene_slug ?? fallback.sceneSlug,
-    shotScene: (s.shot_scene as ShotData['shotScene']) ?? fallback.shotScene,
-    shotSceneSeed: s.shot_scene_seed ?? fallback.shotSceneSeed,
     visualBrief: s.visual_brief ?? fallback.visualBrief,
     visualBriefMeta: s.visual_brief_meta ?? fallback.visualBriefMeta,
-    shotBlocking:
-      s.shot_blocking ??
-      fallback.shotBlocking ??
-      legacyLayoutToBlocking((s.layout as ShotData['layout']) ?? fallback.layout),
-    sceneCode: s.scene_code ?? s.sceneCode ?? fallback.sceneCode,
-    sceneCodeMeta: s.scene_code_meta ?? s.sceneCodeMeta ?? fallback.sceneCodeMeta,
-    shot3DContext: s.shot_3d_context ?? s.shot3DContext ?? fallback.shot3DContext,
-    scheduleMeta: s.schedule_meta ?? fallback.scheduleMeta,
-    scheduleVideo: s.schedule_video ?? fallback.scheduleVideo,
-    scheduleFrames: (s.schedule_frames as string[] | undefined) ?? fallback.scheduleFrames,
     motionNote: s.motion_note ?? fallback.motionNote,
-    useScheduleFrames: Boolean(s.use_schedule_frames ?? fallback.useScheduleFrames),
-    useScheduleVideoRef: Boolean(s.use_schedule_video_ref ?? fallback.useScheduleVideoRef),
     useExpressionRef: Boolean(s.use_expression_ref ?? fallback.useExpressionRef),
     refIds: s.refIds,
     shotId: s.id,

@@ -5,10 +5,13 @@ import {
   assetMediaType,
   buildPickItems,
   KIND_LABEL,
+  lexiconToPickItem,
   pickerTabOf,
   SOURCE_LABEL,
   type PickItem,
 } from './mediaPick'
+import { listCameraLexicon } from './cameraLexicon'
+import { importCameraLexiconPreset } from './api'
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockItem } from './stock/types'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
@@ -16,12 +19,22 @@ import { CharacterImageCropModal } from './CharacterImageCropModal'
 import type { MaterialCropPlan } from './imageMaterialCrop'
 import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialImageGate'
 
-type Tab = 'project' | 'generated' | 'video' | 'audio' | 'stock' | 'manual'
+type Tab =
+  | 'project'
+  | 'generated'
+  | 'video'
+  | 'audio'
+  | 'stock'
+  | 'lexicon-move'
+  | 'lexicon-grammar'
+  | 'manual'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'project', label: '项目素材' },
   { key: 'generated', label: '生成图片' },
   { key: 'video', label: '视频' },
+  { key: 'lexicon-move', label: '运镜库' },
+  { key: 'lexicon-grammar', label: '镜头语法' },
   { key: 'audio', label: '音频' },
   { key: 'stock', label: '在线素材' },
   { key: 'manual', label: '手填地址' },
@@ -180,6 +193,12 @@ export default function MediaPicker({
   const [uploadError, setUploadError] = useState('')
   const [cropPending, setCropPending] = useState<MaterialCropPlan | null>(null)
   const [cropBusy, setCropBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+
+  const lexiconItems = useMemo(
+    () => listCameraLexicon().map(lexiconToPickItem),
+    [],
+  )
 
   const dialogRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -289,11 +308,13 @@ export default function MediaPicker({
     // 入口就按 accept 过滤：调用方声明只收图片时，视频/音频不该出现在候选里
     const allowed = accept && accept.length ? new Set(accept) : null
     const kept = allowed ? base.filter((i) => allowed.has(i.mediaType)) : base
+    const lex = allowed?.has('video') || !allowed ? lexiconItems : []
+  const merged = [...lex, ...kept]
     // 刚上传的排在同类最前：用户刚选完文件，最想看到的就是它
-    if (!uploaded.length) return kept
+    if (!uploaded.length) return merged
     const seen = new Set(uploaded.map((u) => u.url))
-    return [...uploaded, ...kept.filter((b) => !seen.has(b.url))]
-  }, [media, currentUrl, currentKind, uploaded, accept])
+    return [...uploaded, ...merged.filter((b) => !seen.has(b.url))]
+  }, [media, currentUrl, currentKind, uploaded, accept, lexiconItems])
 
   /** 只显示 accept 允许的页签；避免出现一个永远是空列表的分类 */
   const visibleTabs = useMemo(() => {
@@ -301,6 +322,7 @@ export default function MediaPicker({
     const allowed = new Set(accept)
     return TABS.filter((t) => {
       if (t.key === 'video') return allowed.has('video')
+      if (t.key === 'lexicon-move' || t.key === 'lexicon-grammar') return allowed.has('video')
       if (t.key === 'audio') return allowed.has('audio')
       if (t.key === 'project' || t.key === 'generated' || t.key === 'stock') return allowed.has('image')
       return true
@@ -310,6 +332,28 @@ export default function MediaPicker({
   const countFor = (key: Tab) => {
     if (key === 'manual' || key === 'stock') return 0
     return items.filter((i) => pickerTabOf(i) === key).length
+  }
+
+  const confirmSelected = async (item: PickItem) => {
+    if (item.source === 'lexicon' && item.lexiconKey) {
+      setConfirming(true)
+      try {
+        const r = await importCameraLexiconPreset(projectName, item.lexiconKey)
+        onConfirm({
+          ...item,
+          key: r.url,
+          url: r.url,
+          title: r.title,
+          source: 'project-image',
+        })
+      } catch (e) {
+        setLoadError((e as Error).message || '运镜库导入失败')
+      } finally {
+        setConfirming(false)
+      }
+      return
+    }
+    onConfirm(item)
   }
 
   const tabItems = useMemo(() => {
@@ -624,7 +668,7 @@ export default function MediaPicker({
                       onFocus={() => playThumb(item)}
                       onBlur={() => stopThumb(item)}
                       onDoubleClick={() => {
-                        if (!isBroken) onConfirm(item)
+                        if (!isBroken) void confirmSelected(item)
                       }}
                     >
                       <div className="mp-thumb">
@@ -763,7 +807,7 @@ export default function MediaPicker({
               className="mp-btn primary"
               disabled={!canConfirm}
               onClick={() => {
-                if (selected && canConfirm) onConfirm(selected)
+                if (selected && canConfirm) void confirmSelected(selected)
               }}
             >
               使用这个

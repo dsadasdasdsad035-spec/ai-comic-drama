@@ -1,4 +1,4 @@
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import type { PerformanceEmotion } from './types'
 
 export type CharacterExpression = {

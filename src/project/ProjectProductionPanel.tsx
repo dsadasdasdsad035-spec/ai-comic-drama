@@ -94,7 +94,7 @@ export default function ProjectProductionPanel({ projectName, onSaved }: Props) 
       )}
       {error && <p className="proj-error">{error}</p>}
       {ok && <p className="proj-ok">{ok}</p>}
-      <p className="st-hint">每集目标时长在剧本分集与镜头表按集编辑；Agent 未设画风时将无法发送。</p>
+      <p className="st-hint">每集目标时长在项目分集与画布上下文带里按集编辑；Agent 未设画风时将无法发送。</p>
     </div>
   )
 }

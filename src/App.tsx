@@ -32,8 +32,6 @@ import AssetBoard from './AssetBoard'
 import ThemeToggle from './ThemeToggle'
 import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
-import ShotTable from './ShotTable'
-import Schedule3DBoard from './Schedule3DBoard'
 import EpPicker from './EpisodeBar'
 import ProjectSelect from './ProjectSelect'
 import ProjectMenu from './project/ProjectMenu'
@@ -48,7 +46,27 @@ import {
 import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
 import NodeContextMenu from './NodeContextMenu'
+import EdgeContextMenu from './EdgeContextMenu'
 import Settings, { type SettingsInitialSection } from './Settings'
+import IntakeDialog from './intake/IntakeDialog'
+import WorkbenchBar from './WorkbenchBar'
+import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
+import SkillChat from './agent/SkillChat'
+import { createCreativeProjectAdapter } from './creative/projectStageAdapter'
+import { loadSkills } from './skills/registry'
+import type { Skill } from './skills/types'
+import { auditKeyframePrompt } from './promptAudit'
+import {
+  planAddShot,
+  planDeleteShot,
+  planDeleteShots,
+  planFixAnchors,
+  planInsertAfter,
+  planRenameShotNo,
+  planShotImport,
+  validateShotNos,
+} from './canvasShotOps'
+import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import CreativeStudio from './creative/CreativeStudio'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
@@ -57,7 +75,7 @@ import { isSheetUsable } from './expressionSheet'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
 import { assetMediaType } from './mediaPick'
-import { cardWidth, effectiveSeconds, isRenderableSceneCode, migrateMarks, uid, type Relation, type ScheduleMeta, type SceneCodeMeta, type SceneLayout, type ShotData, type Tool, type TransitionOut } from './types'
+import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ShotData, type Tool, type TransitionOut } from './types'
 import {
   callText,
   checkHealth,
@@ -65,7 +83,6 @@ import {
   generateVoice,
   extractFrames,
   getSettings,
-  saveScheduleVideo,
   listProjects,
   listVoicesCached,
   getProject,
@@ -95,9 +112,7 @@ import {
   resolveVoiceForSpeaker,
 } from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
-import { fallbackBlocking, isScheduleFresh, legacyLayoutToBlocking, motionNoteOf, renderSize, rosterOf, scheduleFingerprint, validateBlocking } from './scheduleGeometry'
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, SHOT_NEXT, SHOT_PREV } from './shotReferences'
-import { resolveShotSchedule } from './scheduleStatus'
 import {
   buildShotPromptRenderBundle,
   buildTransitionPromptRenderBundle,
@@ -116,11 +131,16 @@ import {
   type VideoModelInput,
 } from './videoPrompt'
 import { resolveVideoUpstreamRecover } from './videoRecover'
-import { type Ask } from './scheduleAI'
-import { resolveShotScene } from './shotScene'
 import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
+import {
+  buildShotNodes,
+  composeShotCanvasEdges,
+  composeShotCanvasNodes,
+  isShotCanvasNode,
+  repairTransitionEdges,
+} from './canvasShots'
 import { toProject, toSheet, type ProjectChar } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 import { ensureSkillsMigrated } from './skills/migrate'
@@ -286,109 +306,9 @@ function loadProjectSaved(name: string, shots: ProjectShot[]): Saved | null {
   return null
 }
 
-/** project.shots → 画布节点；保留同 shotId 节点的位置，新增镜头按集栅格排 */
-function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): ShotNodeType[] {
-  const byShot = new Map<string, ShotNodeType>()
-  for (const n of prev) if (n.data?.shotId) byShot.set(String(n.data.shotId), n)
-  const counters = new Map<number, { col: number; row: number }>()
-  return shots.map((sh, i) => {
-    const old = byShot.get(sh.id)
-    const ep = Number(sh.episode) || 1
-    const c = counters.get(ep) ?? { col: 0, row: 0 }
-    const position = old?.position ?? {
-      x: c.col * (cardWidth(Number(sh.seconds) || 3) + 56),
-      y: (ep - 1) * 380 + c.row * 340,
-    }
-    c.col += 1
-    if (c.col >= 6) {
-      c.col = 0
-      c.row += 1
-    }
-    counters.set(ep, c)
-    const base: ShotData = old?.data ?? {
-      no: sh.no ?? `S${String(i + 1).padStart(2, '0')}`,
-      seconds: 3,
-      size: '中景',
-      move: '固定',
-      dialogue: '',
-      prompt: '',
-      marks: [],
-    }
-    return {
-      id: old?.id ?? uid(),
-      type: 'shot' as const,
-      position,
-      data: shotToData(sh, base),
-    }
-  })
-}
-
-/** 每个集内按镜头号串一条边，画布没有项目级边时用；转场按 source.transitionOut 恢复 */
-function chainEdges(shotNodes: ShotNodeType[]): ShotEdgeType[] {
-  const byEp = new Map<number, ShotNodeType[]>()
-  for (const n of shotNodes) {
-    const ep = Number(n.data?.episode) || 1
-    const list = byEp.get(ep) ?? []
-    list.push(n)
-    byEp.set(ep, list)
-  }
-  const out: ShotEdgeType[] = []
-  for (const list of byEp.values()) {
-    list.sort((a, b) => String(a.data?.no ?? '').localeCompare(String(b.data?.no ?? ''), undefined, { numeric: true }))
-    for (let i = 1; i < list.length; i++) {
-      const src = list[i - 1]
-      const tgt = list[i]
-      const to = tgt.data.shotId || tgt.id
-      const isTransition = src.data.transitionOut?.to === to
-      out.push({
-        id: `seq-${src.id}-${tgt.id}`,
-        source: src.id,
-        target: tgt.id,
-        type: 'shot',
-        data: { relation: isTransition ? 'transition' : 'cut' },
-      })
-    }
-  }
-  return out
-}
-
-/**
- * 按源镜头的 transitionOut.to 找回转场边：
- * 节点重建、画布清空、项目重新加载后，线都还能回到正确的一对镜头上。
- */
-function repairTransitionEdges(nodes: ShotNodeType[], edges: ShotEdgeType[]): ShotEdgeType[] {
-  const byId = new Map(nodes.map((n) => [n.id, n]))
-  const byShot = new Map<string, ShotNodeType>()
-  for (const n of nodes) if (n.data.shotId) byShot.set(String(n.data.shotId), n)
-  const out = edges.map((e) => ({ ...e }))
-  for (const src of nodes) {
-    const t = src.data.transitionOut
-    if (!t?.to) continue
-    const tgt = byShot.get(t.to) ?? byId.get(t.to)
-    if (!tgt || tgt.id === src.id) continue
-    const hit = out.find((e) => e.source === src.id && e.target === tgt.id)
-    if (hit) {
-      if ((hit.data?.relation ?? 'cut') !== 'transition') {
-        hit.data = { ...hit.data, relation: 'transition' }
-      }
-      continue
-    }
-    out.push({
-      id: `tr-repair-${src.id}-${tgt.id}`,
-      source: src.id,
-      target: tgt.id,
-      type: 'shot',
-      data: { relation: 'transition' },
-    })
-  }
-  return out
-}
-
-/** 画布节点里哪些是分镜（素材卡/角色卡不进播放序列） */
-const isShotCanvasNode = (n: ShotNodeType) => {
-  const type = (n as unknown as { type?: string }).type
-  return type === 'shot' || type == null
-}
+/** 派生边（参考连线、转场参考、cast 虚线）不参与关系菜单 */
+const isDerivedEdgeId = (id: string) =>
+  id.startsWith('ref-') || id.startsWith('ref-tr|') || id.startsWith('cast-')
 
 function Shell() {
   const saved = useMemo(loadSaved, [])
@@ -401,8 +321,6 @@ function Shell() {
     | 'board'
     | 'chars'
     | 'assets'
-    | 'table'
-    | 'schedule3d'
     | 'settings'
     | 'creative'
   >('board')
@@ -410,13 +328,28 @@ function Shell() {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
   const [readyProject, setReadyProject] = useState('')
-  const [schedule3dEditorDirty, setSchedule3dEditorDirty] = useState(false)
+  /** 素材页「镜头语言」白模工作台有未保存代码 */
+  const [assetsEditorDirty, setAssetsEditorDirty] = useState(false)
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsInitialSection | undefined>(
     undefined,
   )
   const projectEpochRef = useRef(0)
-  /** 当前集：镜头表 / 3D / 画布等共用 */
+  /** 最近一次加载的项目快照：Agent 的 ownDraft / projectSnapshot 读它 */
+  const projectSnapRef = useRef<ProjectData | null>(null)
+  /** 改镜号的正式处理函数（patch 层拦截，避免 Inspector 直接改本地 no） */
+  const renameShotNoRef = useRef<(node: ShotNodeType, no: string) => void>(() => {})
+  /** 当前集：画布 / 3D 等视图共用 */
   const [epNo, setEpNo] = useState(1)
+  /** 项目镜头快照：画布、导入、Agent 写回都以它为输入（真相仍在 project.json） */
+  const [projectShots, setProjectShots] = useState<ProjectShot[]>([])
+  /** 项目分集快照：集摘要与目标时长从这里取 */
+  const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
+  /** 画布导入对话框 */
+  const [intakeOpen, setIntakeOpen] = useState(false)
+  /** 画布分身助手（分镜 Agent）停靠栏 */
+  const [shotsChatOpen, setShotsChatOpen] = useState(false)
+  /** 宿主技能：从技能注册表里取 shotlist，与导入共用同一份技能定义 */
+  const [shotSkill, setShotSkill] = useState<Skill | null>(null)
   /** 工作台保存后自增，用来刷新集栏的镜数 */
   const [epVersion, setEpVersion] = useState(0)
   const [toast, setToast] = useState('')
@@ -425,8 +358,10 @@ function Shell() {
   const [color, setColor] = useState(COLORS[0])
   const [relation, setRelation] = useState<Relation>('cut')
   const [selId, setSelId] = useState<string | null>(null)
-  /** 选中的转场连线（与 selId 互斥） */
+  /** 选中的转场连线（与 selId 互斥）：只由右键菜单「转场设置」写入 */
   const [selEdgeId, setSelEdgeId] = useState<string | null>(null)
+  /** 连线右键菜单：同一时刻与节点右键菜单互斥 */
+  const [edgeCtx, setEdgeCtx] = useState<{ x: number; y: number; id: string } | null>(null)
   const [ratio, setRatio] = useState('16:9')
   const [refMode, setRefMode] = useState(false)
   const [marksAsGuide, setMarksAsGuide] = useState(true)
@@ -444,9 +379,7 @@ function Shell() {
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
   const [assets, setAssets] = useState<ProjectAsset[]>([])
-  /** 项目级场景布局：同集同场镜头共享 */
-  const [sceneLayouts, setSceneLayouts] = useState<SceneLayout[]>([])
-  /** 项目画幅：3D 预演与出片共用 */
+  /** 项目画幅：白模渲染与出片共用 */
   const [projectAspect, setProjectAspect] = useState('16:9')
   const [projectStyle, setProjectStyle] = useState('')
   const [templateRenderBusy, setTemplateRenderBusy] = useState(false)
@@ -463,11 +396,16 @@ function Shell() {
   const charSnapRef = useRef<string>('')
 
   const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
   const voicesRef = useRef<VoiceOption[]>([])
   const charactersRef = useRef(characters)
   useEffect(() => {
     nodesRef.current = nodes
   }, [nodes])
+
+  useEffect(() => {
+    edgesRef.current = edges
+  }, [edges])
 
   useEffect(() => {
     charactersRef.current = characters
@@ -501,16 +439,16 @@ function Shell() {
     (next: string) => {
       if (next === projectName) return
       if (
-        schedule3dEditorDirty &&
-        !window.confirm('3D 调度页有未保存的代码修改，切换项目会丢失。继续？')
+        assetsEditorDirty &&
+        !window.confirm('白模工作台有未保存的代码修改，切换项目会丢失。继续？')
       ) {
         return
       }
-      setSchedule3dEditorDirty(false)
+      setAssetsEditorDirty(false)
       setReadyProject('')
       setProjectName(next)
     },
-    [projectName, schedule3dEditorDirty],
+    [projectName, assetsEditorDirty],
   )
 
   /**
@@ -532,13 +470,14 @@ function Shell() {
       }
       const ps = await reloadProjects()
       if (gone.has(projectName)) {
-        setSchedule3dEditorDirty(false)
+        setAssetsEditorDirty(false)
         setEpNo(1)
         setNodes([])
         setEdges([])
+        setProjectShots([])
+        setEpisodes([])
         setCharacters([])
         setAssets([])
-        setSceneLayouts([])
         setSelId(null)
         setSelEdgeId(null)
         setMissingMedia(new Set())
@@ -570,13 +509,13 @@ function Shell() {
     (next: typeof view, opts?: { settingsSection?: SettingsInitialSection }) => {
       if (next === view && !opts?.settingsSection) return
       if (
-        view === 'schedule3d' &&
-        schedule3dEditorDirty &&
-        !window.confirm('3D 调度页有未保存的代码修改，离开会丢失。继续？')
+        view === 'assets' &&
+        assetsEditorDirty &&
+        !window.confirm('素材页的白模工作台有未保存的代码修改，离开会丢失。继续？')
       ) {
         return
       }
-      setSchedule3dEditorDirty(false)
+      setAssetsEditorDirty(false)
       if (next === 'settings') {
         setSettingsInitialSection(opts?.settingsSection)
       } else {
@@ -584,8 +523,167 @@ function Shell() {
       }
       setView(next)
     },
-    [view, schedule3dEditorDirty],
+    [view, assetsEditorDirty],
   )
+
+  /**
+   * 唯一的「项目镜头 → 画布」水合入口：加载、导入、Agent 写回、增删镜都调它。
+   * - 按 shotId 复用节点与位置，素材卡与其他卡原样保留；
+   * - 保留仍然有效的连线，补齐顺序链，再按 transitionOut 修回转场；
+   * - 水合后重置 syncedRef，避免防抖写回把旧值或已删镜头写回去。
+   */
+  const hydrateCanvasShots = useCallback(
+    (shots: ProjectShot[], opts: { episode?: number; fit?: boolean; emptyShots?: boolean } = {}) => {
+      const prevNodes = nodesRef.current
+      const nextNodes = composeShotCanvasNodes(prevNodes, shots, { emptyShots: opts.emptyShots })
+      const shotNodes = nextNodes.filter(isShotCanvasNode)
+      const nextEdges = composeShotCanvasEdges(edgesRef.current, shotNodes)
+      nodesRef.current = nextNodes
+      edgesRef.current = nextEdges
+      setNodes(nextNodes)
+      setEdges(nextEdges)
+      syncedRef.current = new Map()
+      for (const n of shotNodes) {
+        if (n.data.shotId) syncedRef.current.set(String(n.data.shotId), bizSignature(n.data))
+      }
+      if (!opts.fit) return
+      const ep = opts.episode ?? epNo
+      const targets = shotNodes
+        .filter((n) => (Number(n.data.episode) || 1) === ep)
+        .map((n) => ({ id: n.id }))
+      if (!targets.length) return
+      window.setTimeout(() => fitView({ nodes: targets, padding: 0.25, duration: 450 }), 80)
+    },
+    [epNo, fitView, setEdges, setNodes],
+  )
+
+  /** 重读项目：Agent 写回后用它把新增/改动的镜头水合到画布 */
+  const refreshProjectSnapshot = useCallback(
+    async (opts: { fit?: boolean } = {}) => {
+      if (!readyProject) return
+      const p = await getProject(readyProject)
+      projectSnapRef.current = p
+      const shots = (p.shots ?? []) as ProjectShot[]
+      setProjectShots(shots)
+      setEpisodes(((p.episodes ?? []) as ProjectEpisode[]) ?? [])
+      hydrateCanvasShots(shots, { episode: epNo, fit: opts.fit })
+      setEpVersion((v) => v + 1)
+    },
+    [readyProject, epNo, hydrateCanvasShots],
+  )
+
+  /**
+   * 画布导入确认：先校验镜号唯一，再落库，成功后才更新快照与水合。
+   * 失败直接抛给对话框：画布与项目都不动，用户可改文件重试。
+   */
+  const applyShotImport = useCallback(
+    async (result: {
+      shots?: ProjectShot[]
+      episodes?: ProjectEpisode[]
+      summary: string
+    }) => {
+      if (!readyProject) throw new Error('项目尚未加载完成')
+      let saved = projectShots
+      if (result.shots) {
+        const plan = planShotImport(projectShots, result.shots)
+        if (plan.error) throw new Error(plan.error)
+        const r = await mergeProjectShots(readyProject, plan.shots, plan.deletes)
+        saved = r.shots
+        setProjectShots(saved)
+      }
+      if (result.episodes) setEpisodes(result.episodes)
+      setEpVersion((v) => v + 1)
+      hydrateCanvasShots(saved, { episode: epNo, fit: true })
+      setToast(result.summary)
+      window.setTimeout(() => setToast(''), 3200)
+    },
+    [readyProject, projectShots, epNo, hydrateCanvasShots],
+  )
+
+  /**
+   * 正式镜头写回：唯一的「镜头增删改 → project.json → 画布」通道。
+   * 写入前做集内镜号唯一校验，成功后整批水合；失败不动快照与节点。
+   */
+  const persistProjectShots = useCallback(
+    async (
+      next: ProjectShot[],
+      deletes: string[] = [],
+      opts: { fit?: boolean } = {},
+    ): Promise<ProjectShot[]> => {
+      if (!readyProject) throw new Error('项目尚未加载完成')
+      const invalid = validateShotNos(next)
+      if (invalid) throw new Error(invalid)
+      const r = await mergeProjectShots(readyProject, next, deletes)
+      setProjectShots(r.shots)
+      hydrateCanvasShots(r.shots, { episode: epNo, fit: opts.fit })
+      setEpVersion((v) => v + 1)
+      return r.shots
+    },
+    [readyProject, epNo, hydrateCanvasShots],
+  )
+
+  /**
+   * 改镜号 = 新镜 + 删旧镜：id 由集号+镜号生成，原地改号会留下指向旧 id 的边与引用。
+   * 冲突时只提示，不写入；成功后顺序边由水合重建。
+   */
+  const renameShotNo = useCallback(
+    async (node: ShotNodeType, rawNo: string) => {
+      const no = String(rawNo ?? '').trim()
+      const oldId = node.data.shotId ? String(node.data.shotId) : ''
+      const ep = Number(node.data.episode) || epNo
+      if (!no || no === node.data.no) return
+      if (!readyProject || !oldId) {
+        // 无业务 ID 的实验卡仍按本地字段处理
+        setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, data: { ...n.data, no } } : n)))
+        return
+      }
+      const dup = projectShots.some(
+        (s) => (Number(s.episode) || 1) === ep && String(s.no ?? '').trim() === no && s.id !== oldId,
+      )
+      if (dup) {
+        setToast(`E${String(ep).padStart(2, '0')} 已有镜号「${no}」，未修改`)
+        window.setTimeout(() => setToast(''), 2600)
+        return
+      }
+      const src = projectShots.find((s) => s.id === oldId)
+      if (!src) return
+      const plan = planRenameShotNo(projectShots, oldId, no)
+      if (!plan.ok) {
+        if (plan.error) {
+          setToast(plan.error)
+          window.setTimeout(() => setToast(''), 2600)
+        }
+        return
+      }
+      try {
+        await persistProjectShots(plan.next, plan.deletes)
+        const fresh = nodesRef.current.find((n) => n.data.shotId === plan.newId)
+        if (fresh) setSelId(fresh.id)
+        setToast(`镜号已改为 ${no}`)
+        window.setTimeout(() => setToast(''), 2000)
+      } catch (e) {
+        setToast((e as Error).message || '改镜号失败')
+        window.setTimeout(() => setToast(''), 3000)
+      }
+    },
+    [readyProject, projectShots, epNo, persistProjectShots, setNodes],
+  )
+  renameShotNoRef.current = (node, no) => void renameShotNo(node, no)
+
+  /** 宿主技能只需加载一次：拆镜与提示词写回共用 shotlist 的定义 */
+  useEffect(() => {
+    let alive = true
+    loadSkills()
+      .then((r) => {
+        if (alive) setShotSkill(r.skills.get('shotlist') ?? null)
+      })
+      .catch(() => {
+        /* 技能加载失败时聊天面板显示占位，不影响画布 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
   useEffect(() => {
@@ -594,15 +692,16 @@ function Shell() {
     setReadyProject('')
     setSelId(null)
     setSelEdgeId(null)
-    setSceneLayouts([])
     setProjectAspect('16:9')
     if (!projectName) {
+      projectSnapRef.current = null
       setNodes(initialNodes)
       setEdges(initialEdges)
       setCharacters(defaultCharacters)
       setAssets([])
-      setSceneLayouts([])
-      setProjectAspect('16:9')
+        setProjectAspect('16:9')
+      setProjectShots([])
+      setEpisodes([])
       setMissingMedia(new Set())
       setEpNo(1)
       syncedRef.current = new Map()
@@ -616,14 +715,13 @@ function Shell() {
       try {
         const p = await getProject(projectName)
         if (!alive || epoch !== projectEpochRef.current) return
+        projectSnapRef.current = p
         const shots = (p.shots ?? []) as ProjectShot[]
         const stored = loadProjectSaved(projectName, shots)
         const storedNodes = stored?.nodes ?? []
         const storedAssets = storedNodes.filter(
           (n) => (n as unknown as { type?: string }).type === 'asset',
         )
-        const hydrateShots = stored?.cleared !== true
-        const shotNodes = hydrateShots ? buildShotNodes(storedNodes, shots) : []
         const projectAssets = (p.assets ?? []) as ProjectAsset[]
         const assetCards: ShotNodeType[] = storedAssets.length
           ? storedAssets
@@ -640,22 +738,31 @@ function Shell() {
         const maxEp = Math.max(1, ...epSet)
         const wantedEp = Number(stored?.epNo) || 1
 
-        setNodes([...assetCards, ...shotNodes])
-        setEdges(
-          repairTransitionEdges(
-            shotNodes,
-            stored?.edges?.length ? stored.edges : chainEdges(shotNodes),
-          ),
-        )
+        // 与导入/Agent 写回共用同一条水合路径：项目是唯一真源，画布只是它的投影
+        const loadedNodes = composeShotCanvasNodes(assetCards, shots, {
+          emptyShots: stored?.cleared === true,
+        })
+        const shotNodes = loadedNodes.filter(isShotCanvasNode)
+        setNodes(loadedNodes)
+        setEdges(composeShotCanvasEdges(stored?.edges?.length ? stored.edges : [], shotNodes))
         setCharacters(sheets)
         setAssets(projectAssets)
-        setSceneLayouts((p.sceneLayouts ?? []) as SceneLayout[])
         setProjectAspect(p.aspect || '16:9')
         setProjectStyle(String(p.style || ''))
-        setEpNo(Math.min(Math.max(1, wantedEp), maxEp))
+        setProjectShots(shots)
+        setEpisodes(((p.episodes ?? []) as ProjectEpisode[]) ?? [])
+        const focusEp = Math.min(Math.max(1, wantedEp), maxEp)
+        setEpNo(focusEp)
         syncedRef.current = new Map()
         for (const n of shotNodes) {
           if (n.data.shotId) syncedRef.current.set(String(n.data.shotId), bizSignature(n.data))
+        }
+        // 切项目后视口要跟到新项目：只渲染可视元素时，沿用上一个项目的缩放会把镜头挡在画外
+        const focusTargets = shotNodes
+          .filter((n) => (Number(n.data.episode) || 1) === focusEp)
+          .map((n) => ({ id: n.id }))
+        if (focusTargets.length) {
+          window.setTimeout(() => fitView({ nodes: focusTargets, padding: 0.25, minZoom: 0.4, duration: 400 }), 80)
         }
         charSnapRef.current = JSON.stringify(sheets.map(toProject))
         assetsSnapRef.current = JSON.stringify(projectAssets)
@@ -667,13 +774,15 @@ function Shell() {
         setReadyProject(projectName)
       } catch (e) {
         if (!alive || epoch !== projectEpochRef.current) return
+        projectSnapRef.current = null
         setNodes([])
         setEdges([])
         setCharacters([])
         setAssets([])
-        setSceneLayouts([])
         setProjectAspect('16:9')
         setProjectStyle('')
+        setProjectShots([])
+        setEpisodes([])
         setMissingMedia(new Set())
         setToast(`加载项目失败：${(e as Error).message}`)
         window.setTimeout(() => setToast(''), 3200)
@@ -700,8 +809,17 @@ function Shell() {
   }, [])
 
   const patch = useCallback(
-    (id: string, p: Partial<ShotData>) =>
-      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...p } } : n))),
+    (id: string, p: Partial<ShotData>) => {
+      // 改镜号要动 shotId：走高层的「新镜 + 删旧镜」，不能只改本地字段
+      if (p.no !== undefined) {
+        const node = nodesRef.current.find((n) => n.id === id)
+        if (node && node.data.shotId && String(node.data.no ?? '') !== String(p.no)) {
+          renameShotNoRef.current(node, String(p.no))
+          return
+        }
+      }
+      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...p } } : n)))
+    },
     [setNodes],
   )
 
@@ -1151,8 +1269,8 @@ function Shell() {
         if (!sceneText.trim() && !shotText.trim()) {
           throw new Error(
             scope === 'episode'
-              ? `第 ${epNo} 集还没有镜头。先在「镜头表」拆镜，或把项目镜头推到画布。`
-              : '当前项目没有可用素材（原著梗概与分集元数据都为空）。请在项目设置写 source，或在镜头表建分镜。',
+              ? `第 ${epNo} 集还没有镜头。在画布导入分镜表，或让分镜助手拆这一集。`
+              : '当前项目没有可用素材（原著梗概与分集元数据都为空）。请在项目设置写 source，或在画布建分镜。',
           )
         }
         const scopeLabel =
@@ -1282,14 +1400,12 @@ function Shell() {
     [edges, setEdges, patch],
   )
 
-  const cycleEdge = useCallback(
-    (id: string) => {
-      const order: Relation[] = ['cut', 'transition', 'flashback', 'branch']
-      const cur = edges.find((e) => e.id === id)?.data?.relation ?? 'cut'
-      setEdgeRelation(id, order[(order.indexOf(cur) + 1) % order.length])
-    },
-    [edges, setEdgeRelation],
-  )
+  /** 右击连线 → 关系菜单；与节点右键菜单互斥 */
+  const openEdgeMenu = useCallback((e: { clientX: number; clientY: number }, id: string) => {
+    if (isDerivedEdgeId(id)) return
+    setCtx(null)
+    setEdgeCtx({ x: e.clientX, y: e.clientY, id })
+  }, [])
 
   const onConnect = useCallback(
     (c: Connection) => {
@@ -1352,44 +1468,110 @@ function Shell() {
     [relation, setEdges, patch, selEdgeId, edges, toggleTransitionRef],
   )
 
-  /** 删除参考连线 = 从目标镜头的 refIds 里移除；删除转场连线 = 清掉源镜头的 transitionOut */
-  const onEdgesDeleted = useCallback(
-    (eds: Edge[]) => {
-      for (const e of eds) {
-        const tr = parseTransitionRefEdgeId(e.id)
-        if (tr) {
-          removeTransitionRef(tr.edgeId, tr.refSourceId)
-          continue
-        }
-        if (e.id.startsWith('ref-')) {
-          const tgt = nodesRef.current.find((n) => n.id === e.target)
-          if (!tgt) continue
-          const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
-          if (cur.includes(e.source)) patch(e.target, { refIds: cur.filter((x) => x !== e.source) } as never)
-          continue
-        }
-        const src = nodesRef.current.find((n) => n.id === e.source)
-        const tgt = nodesRef.current.find((n) => n.id === e.target)
-        if (!src || !tgt) continue
-        const to = tgt.data.shotId || tgt.id
-        if (src.data.transitionOut?.to !== to) continue
-        patch(src.id, { transitionOut: undefined })
+  /** 单条连线的删除副作用：参考连线移出 refIds，转场连线清掉源镜头的 transitionOut */
+  const applyEdgeRemoval = useCallback(
+    (e: Edge) => {
+      const tr = parseTransitionRefEdgeId(e.id)
+      if (tr) {
+        removeTransitionRef(tr.edgeId, tr.refSourceId)
+        return
       }
+      if (e.id.startsWith('ref-')) {
+        const tgt = nodesRef.current.find((n) => n.id === e.target)
+        if (!tgt) return
+        const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+        if (cur.includes(e.source)) patch(e.target, { refIds: cur.filter((x) => x !== e.source) } as never)
+        return
+      }
+      const src = nodesRef.current.find((n) => n.id === e.source)
+      const tgt = nodesRef.current.find((n) => n.id === e.target)
+      if (!src || !tgt) return
+      const to = tgt.data.shotId || tgt.id
+      if (src.data.transitionOut?.to !== to) return
+      patch(src.id, { transitionOut: undefined })
     },
     [patch, removeTransitionRef],
   )
-  const addShot = () => {
-    const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x), 0)
-    const no = `S${String(nodes.length + 1).padStart(2, '0')}`
-    const node: ShotNodeType = {
-      id: uid(),
-      type: 'shot',
-      position: { x: nodes.length === 0 ? 0 : maxX + 360, y: nodes.length % 2 === 0 ? 0 : 90 },
-      data: { no, seconds: 3, size: '中景', move: '固定', dialogue: '', prompt: '', marks: [] },
+
+  /** 删除参考连线 = 从目标镜头的 refIds 里移除；删除转场连线 = 清掉源镜头的 transitionOut */
+  const onEdgesDeleted = useCallback(
+    (eds: Edge[]) => {
+      for (const e of eds) applyEdgeRemoval(e)
+    },
+    [applyEdgeRemoval],
+  )
+
+  /** 删除已生成关键帧/视频的转场连线要二次确认（菜单与 Delete 共用一份判定） */
+  const needsEdgeDeleteConfirm = useCallback((e: Edge) => {
+    if (e.id.startsWith('ref-') || parseTransitionRefEdgeId(e.id)) return false
+    if ((e.data?.relation ?? 'cut') !== 'transition') return false
+    const src = nodesRef.current.find((n) => n.id === e.source)
+    const tgt = nodesRef.current.find((n) => n.id === e.target)
+    if (!src || !tgt) return false
+    const to = tgt.data.shotId || tgt.id
+    const cur = src.data.transitionOut
+    return Boolean(
+      cur && cur.to === to && (cur.generated?.video?.url || cur.generated?.keyframe?.candidates?.length),
+    )
+  }, [])
+
+  /** 菜单「删除连线」：先按需确认，再移边并清掉对应的持久化字段 */
+  const deleteEdgeFromMenu = useCallback(
+    (id: string) => {
+      const e = edges.find((x) => x.id === id)
+      if (!e) return
+      if (needsEdgeDeleteConfirm(e) && !window.confirm('删除这条转场连线会同时清除已生成的关键帧/视频配置。继续？')) {
+        return
+      }
+      setEdges((eds) => eds.filter((x) => x.id !== id))
+      applyEdgeRemoval(e)
+      setSelEdgeId((curId) => (curId === id ? null : curId))
+      setEdgeCtx(null)
+    },
+    [edges, setEdges, applyEdgeRemoval, needsEdgeDeleteConfirm],
+  )
+  /** 新增镜头：生成正式 `E{集}-{镜号}` 镜头并落库，再水合到画布 */
+  const addShot = async () => {
+    if (!readyProject) {
+      setToast('先选择项目再新增镜头')
+      window.setTimeout(() => setToast(''), 2200)
+      return
     }
-    setNodes((ns) => [...ns, node])
-    setSelId(node.id)
-    window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.62, duration: 400 }), 60)
+    const { shot, next } = planAddShot(projectShots, epNo)
+    try {
+      await persistProjectShots(next, [], { fit: true })
+      const fresh = nodesRef.current.find((n) => n.data.shotId === shot.id)
+      if (fresh) setSelId(fresh.id)
+      setToast(`已新增 E${String(epNo).padStart(2, '0')}·${shot.no}`)
+      window.setTimeout(() => setToast(''), 2200)
+    } catch (e) {
+      setToast((e as Error).message || '新增镜头失败')
+      window.setTimeout(() => setToast(''), 3200)
+    }
+  }
+
+  /** 在某镜之后插入：镜号避让已有值，成功后顺序边由水合重建 */
+  const insertShotAfter = async (afterShotId: string) => {
+    if (!readyProject) {
+      setToast('先选择项目再插入镜头')
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    const target = projectShots.find((s) => s.id === afterShotId)
+    if (!target) return
+    const plan = planInsertAfter(projectShots, afterShotId)
+    if (!plan) return
+    const { shot } = plan
+    try {
+      await persistProjectShots(plan.next, [], { fit: false })
+      const fresh = nodesRef.current.find((n) => n.data.shotId === shot.id)
+      if (fresh) setSelId(fresh.id)
+      setToast(`已在 ${target.no} 之后插入 ${shot.no}`)
+      window.setTimeout(() => setToast(''), 2400)
+    } catch (e) {
+      setToast((e as Error).message || '插入镜头失败')
+      window.setTimeout(() => setToast(''), 3200)
+    }
   }
 
   /** 加一张素材卡（场景/道具/图/视频），数据存画布 localStorage */
@@ -1411,10 +1593,33 @@ function Shell() {
       void purgeRefIds([id])
       setToast('已删除素材卡，相关镜头参考连线已解除')
       window.setTimeout(() => setToast(''), 2600)
+      setNodes((ns) => ns.filter((n) => n.id !== id))
+      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
+      setSelId(null)
+      return
     }
-    setNodes((ns) => ns.filter((n) => n.id !== id))
-    setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
-    setSelId(null)
+    const shotId = node?.data.shotId ? String(node.data.shotId) : ''
+    if (!shotId || !readyProject) {
+      // 无业务 ID 的实验卡：只从画布移除
+      setNodes((ns) => ns.filter((n) => n.id !== id))
+      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
+      setSelId(null)
+      return
+    }
+    const label = node?.data.no || shotId
+    if (!window.confirm(`删除 ${label}？项目里的该镜头与指向它的转场会一并移除。`)) return
+    // 上一镜指向它的 transition_out 必须一起清掉，否则水合时会把边修回来
+    const plan = planDeleteShot(projectShots, shotId)
+    void persistProjectShots(plan.next, plan.deletes)
+      .then(() => {
+        setSelId(null)
+        setToast(`已删除 ${label}`)
+        window.setTimeout(() => setToast(''), 2200)
+      })
+      .catch((e: Error) => {
+        setToast(e.message || '删除镜头失败')
+        window.setTimeout(() => setToast(''), 3200)
+      })
   }
 
   /**
@@ -1610,6 +1815,16 @@ function Shell() {
     setSelRef(null)
     setSelEdgeId(id)
   }, [])
+  /** 菜单「转场设置…」：非转场先落到默认转场，再打开面板 */
+  const openTransitionFromMenu = useCallback(
+    (id: string) => {
+      const e = edges.find((x) => x.id === id)
+      setEdgeCtx(null)
+      if (e && (e.data?.relation ?? 'cut') !== 'transition') setEdgeRelation(id, 'transition')
+      openTransition(id)
+    },
+    [edges, setEdgeRelation, openTransition],
+  )
   const focusShotFromTransition = useCallback((nodeId: string) => {
     saveInspectorPrefs({ ...loadInspectorPrefs(), tab: 'video' })
     setSelEdgeId(null)
@@ -1908,8 +2123,31 @@ function Shell() {
   }
 
   const deleteSelected = () => {
-    const ids = new Set(nodesRef.current.filter((n) => n.selected).map((n) => n.id))
-    if (ids.size === 0) return
+    const sel = nodesRef.current.filter((n) => n.selected)
+    if (sel.length === 0) return
+    const ids = new Set(sel.map((n) => n.id))
+    const shotIds = sel
+      .map((n) => (n.data.shotId ? String(n.data.shotId) : ''))
+      .filter(Boolean)
+    if (shotIds.length > 0 && readyProject) {
+      if (!window.confirm(`删除所选 ${sel.length} 张卡片？其中 ${shotIds.length} 镜会从项目里移除。`)) return
+      const gone = new Set(shotIds)
+      const plan = planDeleteShots(projectShots, shotIds)
+      void persistProjectShots(plan.next, plan.deletes)
+        .then(() => {
+          // 素材卡 / 实验卡不在项目里，单独从画布移除
+          setNodes((ns) => ns.filter((n) => !ids.has(n.id) || Boolean(n.data.shotId)))
+          setEdges((es) => es.filter((e) => !ids.has(e.source) && !ids.has(e.target)))
+          setSelId(null)
+          setToast(`已删除 ${sel.length} 张`)
+          window.setTimeout(() => setToast(''), 2200)
+        })
+        .catch((e: Error) => {
+          setToast(e.message || '删除镜头失败')
+          window.setTimeout(() => setToast(''), 3200)
+        })
+      return
+    }
     setNodes((ns) => ns.filter((n) => !ids.has(n.id)))
     setEdges((es) => es.filter((e) => !ids.has(e.source) && !ids.has(e.target)))
     setSelId(null)
@@ -1931,6 +2169,114 @@ function Shell() {
     return [...m.entries()].filter(([e]) => e !== epNo).sort((a, b) => a[0] - b[0])
   }, [nodes, epNo])
 
+  /** 当前集的项目镜头（真相在 project.json，不是画布节点） */
+  const epProjectShots = useMemo(
+    () => projectShots.filter((s) => (Number(s.episode) || 1) === epNo),
+    [projectShots, epNo],
+  )
+  const charsForAudit = characters
+  /** 集摘要口径与画布一致：空首帧只用于提示，不拦水合 */
+  const epPromptStat = useMemo(() => {
+    const audits = epProjectShots.map((s) => auditKeyframePrompt(s, characters))
+    return {
+      empty: audits.filter((a) => a.empty).length,
+      miss: audits.filter((a) => !a.empty && a.missing.length > 0).length,
+    }
+  }, [epProjectShots, characters])
+  const epSeconds = useMemo(
+    () => epProjectShots.reduce((a, s) => a + (Number(s.seconds) || 0), 0),
+    [epProjectShots],
+  )
+  const epTargetSeconds = resolveEpisodeTarget(episodes, epNo)
+
+  /** 目标时长：写回当前集元数据，其他集不动 */
+  const changeEpisodeTarget = async (raw: number) => {
+    if (!readyProject) return
+    const next = setEpisodeTargetSeconds(episodes, epNo, raw)
+    setEpisodes(next)
+    try {
+      await patchProject(readyProject, { episodes: next })
+      setEpVersion((v) => v + 1)
+    } catch (e) {
+      setToast((e as Error).message || '目标时长保存失败')
+      window.setTimeout(() => setToast(''), 3000)
+    }
+  }
+
+  /** 补齐锚点：只作用于当前集，把无法展开的角色占位换成外观锚点并标记人改 */
+  const fixEpisodeAnchors = async () => {
+    if (!readyProject) {
+      setToast('先选择项目')
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    const plan = planFixAnchors(projectShots, epNo, characters)
+    if (plan.fixed === 0) {
+      setToast(epPromptStat.miss > 0 ? '缺失角色没有可用的外观锚点' : '当前集没有需要补的锚点')
+      window.setTimeout(() => setToast(''), 2800)
+      return
+    }
+    try {
+      await persistProjectShots(plan.shots)
+      setToast(`已为 ${plan.fixed} 镜补齐角色锚点`)
+      window.setTimeout(() => setToast(''), 2600)
+    } catch (e) {
+      setToast((e as Error).message || '补齐锚点失败')
+      window.setTimeout(() => setToast(''), 3200)
+    }
+  }
+
+  /** 画布分镜 Agent：写回后与导入共用同一套落库 + 水合 */
+  const shotsChatAdapter = useMemo(() => {
+    if (!shotSkill || !readyProject) return null
+    const base = createCreativeProjectAdapter(shotSkill, {
+      projectName: readyProject,
+      epNo,
+      getSnapshot: () => projectSnapRef.current,
+      setSnapshot: (p) => {
+        projectSnapRef.current = p
+        setProjectShots(((p.shots ?? []) as ProjectShot[]) ?? [])
+      },
+      onProjectDataChanged: () => {
+        void refreshProjectSnapshot()
+      },
+    })
+    if (!base) return null
+    const ep = episodes.find((x) => Number(x.no) === Number(epNo))
+    const brief = ep
+      ? [
+          ep.title ? `第 ${ep.no} 集《${ep.title}》` : `第 ${ep.no} 集`,
+          ep.hook ? `结尾钩子：${ep.hook}` : '',
+          ...(ep.scenes ?? []).map(
+            (sc) =>
+              `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}` +
+              `${sc.beats ? `｜${sc.beats}` : ''}${sc.characters?.length ? `｜在场：${sc.characters.join('、')}` : ''}`,
+          ),
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : ''
+    return {
+      ...base,
+      // 分镜技能要画风、画幅、本集摘要与目标时长作为输入
+      inputs: () => ({
+        style: projectStyle,
+        aspect: projectAspect,
+        brief,
+        target: `${epTargetSeconds} 秒`,
+      }),
+    }
+  }, [
+    shotSkill,
+    readyProject,
+    epNo,
+    episodes,
+    projectStyle,
+    projectAspect,
+    epTargetSeconds,
+    refreshProjectSnapshot,
+  ])
+
   /** 当前集真正的分镜（素材卡/角色卡不进播放序列） */
   const episodeShots = useMemo(
     () => shownNodes.filter(isShotCanvasNode),
@@ -1949,10 +2295,12 @@ function Shell() {
     const decorated = edges
       .filter((e) => ids.has(e.source) && ids.has(e.target))
       .map((e) => {
-        if ((e.data?.relation ?? 'cut') !== 'transition') return e as Edge
+        // 分镜边不可选：单击不产生任何效果，高亮只跟随「正在编辑的转场边」
+        const base = { ...e, selectable: false, data: { ...e.data, active: e.id === selEdgeId } }
+        if ((e.data?.relation ?? 'cut') !== 'transition') return base as Edge
         const src = shotsById.get(e.source)
         const tgt = shotsById.get(e.target)
-        if (!src || !tgt) return e as Edge
+        if (!src || !tgt) return base as Edge
         const t = transitionFor(src, tgt)
         const fp = transitionFingerprint(src.data, tgt.data, t.generated)
         const pending = t.mode === 'generated' && !t.generated?.video?.url
@@ -1970,12 +2318,12 @@ function Shell() {
               ? 'pending'
               : 'ready'
         return {
-          ...e,
-          data: { ...e.data, transition: { summary: transitionSummary(t), state } },
+          ...base,
+          data: { ...base.data, transition: { summary: transitionSummary(t), state } },
         } as Edge
       })
     return [...decorated, ...castEdges, ...refEdges]
-  }, [edges, canvasNodes, castEdges, refEdges, episodeShots, inactiveEdgeIds])
+  }, [edges, canvasNodes, castEdges, refEdges, episodeShots, inactiveEdgeIds, selEdgeId])
 
   /** 点角色节点 → 聚焦到它的出场镜头（名单带修饰也能命中） */
   const focusChar = (name: string) => {
@@ -1989,125 +2337,6 @@ function Shell() {
     }
     fitView({ nodes: targets, padding: 0.35, duration: 500 })
   }
-
-  /** 画布上已有的业务 ID，给工作台标「在画布」 */
-  const onCanvasIds = useMemo(() => {
-    const s = new Set<string>()
-    for (const n of nodes) if (n.data.shotId) s.add(n.data.shotId)
-    return s
-  }, [nodes])
-
-  /** 工作台 → 画布：按 shot.id 幂等推送，本次没推到的旧节点只标灰不删 */
-  const pushShotsToCanvas = useCallback(
-    (shots: ProjectShot[]) => {
-      // 新节点 id 必须提前生成，才能同时把连线接上
-      const existing = new Map<string, ShotNodeType>()
-      for (const n of nodesRef.current) if (n.data.shotId) existing.set(n.data.shotId, n)
-      const ids = shots.map((sh) => existing.get(sh.id)?.id ?? uid())
-
-      // 分镜栅格：每行 6 格，左→右、再换行，保证一眼能顺着读
-      const PER_ROW = 6
-      const GAP_X = 56
-      const GAP_Y = 340
-      const grid: { x: number; y: number }[] = []
-      let cx = 0
-      let row = 0
-      let col = 0
-      for (const sh of shots) {
-        grid.push({ x: cx, y: row * GAP_Y })
-        cx += cardWidth(Number(sh.seconds) || 3) + GAP_X
-        col += 1
-        if (col >= PER_ROW) {
-          col = 0
-          row += 1
-          cx = 0
-        }
-      }
-
-      setNodes((prev) => {
-        const byShot = new Map<string, ShotNodeType>()
-        for (const n of prev) if (n.data.shotId) byShot.set(n.data.shotId, n)
-        const incoming = new Set(shots.map((s) => s.id))
-
-        const next: ShotNodeType[] = shots.map((sh, i) => {
-          const old = byShot.get(sh.id)
-          const base: ShotData = old?.data ?? {
-            no: sh.no ?? `S${String(i + 1).padStart(2, '0')}`,
-            seconds: 3,
-            size: '中景',
-            move: '固定',
-            dialogue: '',
-            prompt: '',
-            marks: [],
-          }
-          return {
-            id: ids[i],
-            type: 'shot' as const,
-            // 已有节点保留手工拖过的位置，新节点落在栅格里
-            position: old?.position ?? grid[i],
-            data: shotToData(sh, base),
-          }
-        })
-
-        for (const n of prev) {
-          if (n.data.shotId && !incoming.has(n.data.shotId)) {
-            next.push({ ...n, data: { ...n.data, orphan: true } })
-          } else if (!n.data.shotId) {
-            // 示例卡（id 形如 S01）在有真实镜头后退场，避免与推送的卡片重叠
-            if (/^S\d+$/.test(n.id)) continue
-            next.push(n)
-          }
-        }
-        return next
-      })
-
-      // 顺序连线：把这一集的镜头按顺序串起来，重推时整条重建（幂等）
-      setEdges((prev) => {
-        const pushed = new Set(ids)
-        const kept = prev.filter((e) => !pushed.has(e.source) && !pushed.has(e.target))
-        const chain: ShotEdgeType[] = []
-        for (let i = 1; i < ids.length; i++) {
-          const prevShot = shots[i - 1]
-          const to = shots[i].id
-          const rel: Relation =
-            prevShot?.transition_out?.to === to ? 'transition' : 'cut'
-          chain.push({
-            id: `seq-${ids[i - 1]}-${ids[i]}`,
-            source: ids[i - 1],
-            target: ids[i],
-            type: 'shot',
-            data: { relation: rel },
-          })
-        }
-        return [...kept, ...chain]
-      })
-      // 记下快照：之后的改动才算「画布侧编辑」
-      const snap = new Map<string, string>()
-      for (const s of shots) {
-        snap.set(
-          s.id,
-          bizSignature({
-            no: s.no ?? '',
-            seconds: Number(s.seconds) || 0,
-            size: s.size ?? '',
-            move: s.move ?? '',
-            dialogue: typeof s.dialogue === 'string' ? s.dialogue : dialogueToText(s.dialogue),
-            prompt: s.keyframe_prompt ?? '',
-            refImage: s.keyframe,
-            videoUrl: s.clip,
-            marks: [],
-          }),
-        )
-      }
-      // 只更新本次推送的镜头，别把其他集的快照冲掉 ——
-      // 整份替换会让别集节点全部变成「脏」，下次写回时被无谓地重写一遍
-      for (const [k, v] of snap) syncedRef.current.set(k, v)
-      setToast(`已推送 ${shots.length} 镜到画布`)
-      window.setTimeout(() => setToast(''), 2200)
-      window.setTimeout(() => fitView({ padding: 0.2, minZoom: 0.55, duration: 400 }), 80)
-    },
-    [setNodes, fitView],
-  )
 
   /**
    * 素材设定 → 画布：按 designId 幂等 upsert。
@@ -2487,19 +2716,12 @@ function Shell() {
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      const schedule = resolveShotSchedule({
-        data: node.data,
-        shotId: node.id,
-        sceneLayouts,
-        projectAspect,
-      })
       const request = buildShotVideoRequest({
         data: node.data,
         nodeId: node.id,
         nodes: nodesRef.current,
         characters: charactersRef.current,
         missingMedia,
-        schedule,
         model: selectedVideoModel,
         resolution: vidRes,
       })
@@ -2608,7 +2830,7 @@ function Shell() {
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, ratio, vidRes, selectedVideoModel, sceneLayouts, projectAspect, missingMedia],
+    [patch, ratio, vidRes, selectedVideoModel, projectAspect, missingMedia],
   )
 
   /** 本地轮询超时但上游已完成时，凭 task_id 拉取成片 */
@@ -2668,19 +2890,12 @@ function Shell() {
       if (!node) return
       setTemplateRenderBusy(true)
       try {
-        const schedule = resolveShotSchedule({
-          data: node.data,
-          shotId: node.id,
-          sceneLayouts,
-          projectAspect,
-        })
         const request = buildShotVideoRequest({
           data: node.data,
           nodeId: node.id,
           nodes: nodesRef.current,
           characters: charactersRef.current,
           missingMedia,
-          schedule,
           model: selectedVideoModel,
           resolution: vidRes,
         })
@@ -2690,7 +2905,6 @@ function Shell() {
           nodes: nodesRef.current,
           characters: charactersRef.current,
           missingMedia,
-          schedule,
           model: selectedVideoModel,
           resolution: vidRes,
           style: projectStyle,
@@ -2720,7 +2934,6 @@ function Shell() {
       }
     },
     [
-      sceneLayouts,
       projectAspect,
       projectStyle,
       missingMedia,
@@ -3354,7 +3567,7 @@ function Shell() {
       color,
       charImages,
       patch,
-      cycleEdge,
+      openEdgeMenu,
       setEdgeRelation,
       openTransition,
       generate: generateOne,
@@ -3367,7 +3580,7 @@ function Shell() {
       color,
       charImages,
       patch,
-      cycleEdge,
+      openEdgeMenu,
       setEdgeRelation,
       openTransition,
       generateOne,
@@ -3380,53 +3593,62 @@ function Shell() {
   const selectedVideoRequest = useMemo(() => {
     const type = (selected as unknown as { type?: string } | null)?.type
     if (!selected || (type && type !== 'shot')) return null
-    const schedule = resolveShotSchedule({
-      data: selected.data,
-      shotId: selected.id,
-      sceneLayouts,
-      projectAspect,
-    })
     return buildShotVideoRequest({
       data: selected.data,
       nodeId: selected.id,
       nodes,
       characters,
       missingMedia,
-      schedule,
       model: selectedVideoModel,
       resolution: vidRes,
     })
-  }, [
-    selected,
-    nodes,
-    characters,
-    missingMedia,
-    sceneLayouts,
-    projectAspect,
-    selectedVideoModel,
-    vidRes,
-  ])
+  }, [selected, nodes, characters, missingMedia, selectedVideoModel, vidRes])
   const selEdge = selEdgeId ? edges.find((e) => e.id === selEdgeId) ?? null : null
   const selEdgeSource = selEdge ? nodes.find((n) => n.id === selEdge.source) ?? null : null
   const selEdgeTarget = selEdge ? nodes.find((n) => n.id === selEdge.target) ?? null : null
+
+  /** 连线右键菜单的数据：两镜、当前关系、接缝摘要与是否参与成片 */
+  const edgeCtxData = useMemo(() => {
+    if (!edgeCtx) return null
+    const e = edges.find((x) => x.id === edgeCtx.id)
+    if (!e) return null
+    const src = nodes.find((n) => n.id === e.source)
+    const tgt = nodes.find((n) => n.id === e.target)
+    if (!src || !tgt) return null
+    const relation: Relation = e.data?.relation ?? 'cut'
+    const to = tgt.data.shotId || tgt.id
+    const summary =
+      relation === 'transition' ? transitionSummary(normalizeTransitionOut(src.data.transitionOut, to)) : '直接拼接'
+    const stateText =
+      relation !== 'transition' ? '不参与成片' : inactiveEdgeIds.has(e.id) ? '未参与成片' : '已参与成片'
+    return {
+      id: e.id,
+      relation,
+      headTitle: `${src.data.no} → ${tgt.data.no}`,
+      headSub: `${summary} · ${stateText}`,
+      options: [
+        { id: 'cut', label: '硬切', note: relation === 'cut' ? '当前' : '直接拼接' },
+        {
+          id: 'transition',
+          label: '转场',
+          note: relation === 'transition' ? summary : '叠化 0.5s 起',
+        },
+        { id: 'flashback', label: '闪回', note: '叙事标注' },
+        { id: 'branch', label: '分支', note: '叙事标注' },
+      ],
+    }
+  }, [edgeCtx, edges, nodes, inactiveEdgeIds])
 
   const shotRefineAdapter = useMemo(() => {
     if (!refineShotNodeId || !projectName) return null
     const node = nodes.find((n) => n.id === refineShotNodeId)
     if (!node) return null
-    const schedule = resolveShotSchedule({
-      data: node.data,
-      shotId: node.id,
-      sceneLayouts,
-      projectAspect,
-    })
     const request = buildShotVideoRequest({
       data: node.data,
       nodeId: node.id,
       nodes,
       characters,
       missingMedia,
-      schedule,
       model: selectedVideoModel,
       resolution: vidRes,
     })
@@ -3444,7 +3666,6 @@ function Shell() {
           nodes,
           characters,
           missingMedia,
-          schedule,
           model: selectedVideoModel,
           resolution: vidRes,
           style: projectStyle,
@@ -3479,7 +3700,6 @@ function Shell() {
     nodes,
     characters,
     missingMedia,
-    sceneLayouts,
     selectedVideoModel,
     vidRes,
     epNo,
@@ -3627,21 +3847,6 @@ function Shell() {
               素材
             </button>
             <button
-              className={view === 'table' ? 'on' : ''}
-              aria-current={view === 'table' ? 'page' : undefined}
-              onClick={() => changeView('table')}
-            >
-              镜头表
-            </button>
-            <button
-              className={view === 'schedule3d' ? 'on' : ''}
-              aria-current={view === 'schedule3d' ? 'page' : undefined}
-              onClick={() => changeView('schedule3d')}
-              title="Blender 预演：按镜代码与调度视频"
-            >
-              3D 调度
-            </button>
-            <button
               className={view === 'board' ? 'on' : ''}
               aria-current={view === 'board' ? 'page' : undefined}
               onClick={() => changeView('board')}
@@ -3689,52 +3894,6 @@ function Shell() {
             projectName={readyProject === projectName ? projectName : ''}
             epNo={epNo}
           />
-        ) : view === 'table' ? (
-          <ShotTable
-            projectName={projectName}
-            setProjectName={changeProject}
-            onProjectsChanged={reloadProjects}
-            onCanvas={onCanvasIds}
-            epNo={epNo}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            onSaved={() => setEpVersion((v) => v + 1)}
-            onPush={pushShotsToCanvas}
-            onGotoTransition={(sourceId, targetId) => {
-              changeView('board')
-              const edge = edges.find((e) => e.source === sourceId && e.target === targetId)
-              if (edge) {
-                openTransition(edge.id)
-              } else {
-                focusShotFromTransition(sourceId)
-                setToast('画布上尚无该连线；已选中源镜头，连接两镜后可编辑转场面板')
-                window.setTimeout(() => setToast(''), 3200)
-              }
-            }}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 2600)
-            }}
-          />
-        ) : view === 'schedule3d' ? (
-          <Schedule3DBoard
-            projectName={projectName}
-            onCanvas={onCanvasIds}
-            epNo={epNo}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            canvasNodes={nodes}
-            assets={assets}
-            sceneLayouts={sceneLayouts}
-            projectAspect={projectAspect}
-            onEditorDirtyChange={setSchedule3dEditorDirty}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 2600)
-            }}
-          />
         ) : view === 'settings' ? (
           <Settings
             currentProjectName={projectName}
@@ -3761,6 +3920,8 @@ function Shell() {
             price={price}
             missing={missingMedia}
             onImageMissing={markMissing}
+            projectAspect={projectAspect}
+            onEditorDirtyChange={setAssetsEditorDirty}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)
@@ -3807,7 +3968,86 @@ function Shell() {
             onToggleChars={toggleChars}
           />
         ) : (
-        <main className="main">
+        <div className="board-with-chat" data-canvas-shots>
+          <div className="canvas-workspace">
+            <WorkbenchBar
+              scope={
+                <>
+                  <span className="wb-bar-title">画布 · 拆镜</span>
+                  <span className="ep-chip">E{String(epNo).padStart(2, '0')}</span>
+                </>
+              }
+              scopeDetail={
+                epProjectShots.length === 0 ? (
+                  <>0 镜</>
+                ) : (
+                  <>
+                    {epProjectShots.length} 镜 · 总时长{' '}
+                    <b className={epSeconds > epTargetSeconds ? 'over' : ''}>{epSeconds.toFixed(1)}s</b> / 目标{' '}
+                    {epTargetSeconds}s
+                    {epSeconds > epTargetSeconds ? (
+                      <span className="wb-warn">超 {(epSeconds - epTargetSeconds).toFixed(1)}s</span>
+                    ) : null}
+                    {' · '}缺首帧 <b className={epPromptStat.empty ? 'over' : ''}>{epPromptStat.empty}</b>
+                    {' · '}缺锚点 <b className={epPromptStat.miss ? 'over' : ''}>{epPromptStat.miss}</b>
+                  </>
+                )
+              }
+              settings={
+                <div className="wb-field">
+                  <span className="label">目标时长</span>
+                  <input
+                    type="number"
+                    min={10}
+                    step={5}
+                    key={`${epNo}:${epTargetSeconds}`}
+                    defaultValue={epTargetSeconds}
+                    onBlur={(e) => void changeEpisodeTarget(Number(e.target.value) || epTargetSeconds)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                    style={{ width: 64 }}
+                    aria-label="当前集目标时长（秒）"
+                  />
+                  <span className="label">秒</span>
+                </div>
+              }
+              actions={
+                <>
+                  <button
+                    className="btn"
+                    disabled={!readyProject}
+                    title={readyProject ? '上传或粘贴分镜表，确认后直接写入项目并出现在画布' : '先在顶栏选择项目'}
+                    onClick={() => setIntakeOpen(true)}
+                  >
+                    导入
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={epPromptStat.miss === 0}
+                    onClick={() => void fixEpisodeAnchors()}
+                    title="把首帧提示词里无法展开的角色占位替换为外观锚点（只作用于当前集）"
+                  >
+                    补齐锚点
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={!selected || !selected.data.shotId || !readyProject}
+                    onClick={() => {
+                      const sid = selected?.data.shotId
+                      if (sid) void insertShotAfter(String(sid))
+                    }}
+                    title="在所选镜头之后插入一个正式镜头"
+                  >
+                    插入
+                  </button>
+                  <button className="btn" onClick={() => setShotsChatOpen((v) => !v)}>
+                    {shotsChatOpen ? '收起助手' : '拆镜助手'}
+                  </button>
+                </>
+              }
+            />
+            <main className="main">
           <div className={`canvas ${zoomLite ? 'zoom-lite' : ''}`}>
             <div className="canvas-tools">
               <ToolMenu
@@ -3946,22 +4186,7 @@ function Shell() {
               onConnect={onConnect}
               onEdgesDelete={onEdgesDeleted}
               onBeforeDelete={async ({ edges: delEdges }) => {
-                const trans = delEdges.filter(
-                  (e) => !e.id.startsWith('ref-') && (e.data?.relation ?? 'cut') === 'transition',
-                )
-                if (trans.length === 0) return true
-                const risky = trans.some((e) => {
-                  const src = nodesRef.current.find((n) => n.id === e.source)
-                  const tgt = nodesRef.current.find((n) => n.id === e.target)
-                  if (!src || !tgt) return false
-                  const to = tgt.data.shotId || tgt.id
-                  const cur = src.data.transitionOut
-                  return Boolean(
-                    cur &&
-                      cur.to === to &&
-                      (cur.generated?.video?.url || cur.generated?.keyframe?.candidates?.length),
-                  )
-                })
+                const risky = delEdges.some((e) => needsEdgeDeleteConfirm(e))
                 return (
                   !risky ||
                   window.confirm('删除这条转场连线会同时清除已生成的关键帧/视频配置。继续？')
@@ -3976,32 +4201,40 @@ function Shell() {
                 else setSelId(n.id)
               }}
               onEdgeClick={(_, e) => {
+                // 分镜边不再响应单击（关系由右键菜单改），只有参考连线保留点选
                 if (e.id.startsWith('ref-') || e.id.startsWith('ref-tr|')) {
                   setSelId(null)
                   setSelEdgeId(null)
                   setSelRef(e.id)
-                  return
                 }
-                if ((e.data?.relation ?? 'cut') === 'transition') {
-                  setSelId(null)
-                  setSelRef(null)
-                  setSelEdgeId(e.id)
-                }
+              }}
+              onEdgeContextMenu={(e, ed) => {
+                if (isDerivedEdgeId(ed.id)) return
+                e.preventDefault()
+                setSelId(null)
+                setSelRef(null)
+                setCtx(null)
+                setEdgeCtx({ x: e.clientX, y: e.clientY, id: ed.id })
               }}
               onPaneClick={() => {
                 setSelRef(null)
                 setSelId(null)
                 setSelEdgeId(null)
                 setCtx(null)
+                setEdgeCtx(null)
               }}
               onNodeContextMenu={(e, n) => {
                 e.preventDefault()
                 setSelRef(null)
                 setSelEdgeId(null)
+                setEdgeCtx(null)
                 setSelId(n.id)
                 setCtx({ x: e.clientX, y: e.clientY, id: n.id })
               }}
-              onPaneContextMenu={() => setCtx(null)}
+              onPaneContextMenu={() => {
+                setCtx(null)
+                setEdgeCtx(null)
+              }}
               onNodesDelete={() => setSelId(null)}
               defaultEdgeOptions={{ type: 'shot' }}
               connectionLineStyle={{ stroke: themeColors.edgeCut, strokeWidth: 2 }}
@@ -4061,6 +4294,29 @@ function Shell() {
                     : undefined
                 }
                 onClose={() => setCtx(null)}
+              />
+            )}
+
+            {edgeCtx && edgeCtxData && (
+              <EdgeContextMenu
+                x={edgeCtx.x}
+                y={edgeCtx.y}
+                headTitle={edgeCtxData.headTitle}
+                headSub={edgeCtxData.headSub}
+                sectionTitle="关系"
+                options={edgeCtxData.options}
+                value={edgeCtxData.relation}
+                onPick={(id) => setEdgeRelation(edgeCtxData.id, id as Relation)}
+                extraActions={[
+                  {
+                    key: 'panel',
+                    label: '转场设置…',
+                    hint: edgeCtxData.relation === 'transition' ? '打开转场面板' : '会先落到转场',
+                    onClick: () => openTransitionFromMenu(edgeCtxData.id),
+                  },
+                ]}
+                onDelete={() => deleteEdgeFromMenu(edgeCtxData.id)}
+                onClose={() => setEdgeCtx(null)}
               />
             )}
 
@@ -4146,10 +4402,56 @@ function Shell() {
             pick={modelPick}
             onPick={pickModelKey}
             canvasProdMode={canvasProdMode}
+            onAddAssetCard={addAssetCardFromStock}
           />
           )}
         </main>
+          </div>
+          <WorkbenchChatAside
+            surface="shots"
+            open={shotsChatOpen}
+            onClose={() => setShotsChatOpen(false)}
+          >
+            {shotsChatAdapter ? (
+              <SkillChat
+                adapter={shotsChatAdapter}
+                settings={appSettings}
+                stagePick={stagePick}
+                onPickStage={pickStageModel}
+                onToast={(m) => {
+                  setToast(m)
+                  window.setTimeout(() => setToast(''), 3200)
+                }}
+                onClose={() => setShotsChatOpen(false)}
+              />
+            ) : (
+              <div className="sb-chat-placeholder">
+                {readyProject ? '正在准备分镜技能…' : '先在顶栏选择项目，再让助手拆镜。'}
+              </div>
+            )}
+          </WorkbenchChatAside>
+        </div>
         )}
+
+        {intakeOpen ? (
+          <IntakeDialog
+            target="shots"
+            projectName={readyProject}
+            epNo={epNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            shots={projectShots}
+            episodes={episodes}
+            chars={characters}
+            characterSheets={characters}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2800)
+            }}
+            onClose={() => setIntakeOpen(false)}
+            onApply={applyShotImport}
+          />
+        ) : null}
 
         {preview && (
           <Preview

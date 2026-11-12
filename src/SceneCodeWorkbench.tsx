@@ -1,40 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CharacterSheet } from './characters'
-import type { AppSettings, MediaBundle, ProjectAsset, ProjectData } from './api'
-import { getProject, listMedia } from './api'
-import { uploadImageFile } from './mediaUpload'
-import { useMediaPicker } from './agent/useMediaPicker'
-import type { ScheduleMeta, SceneCode, SceneCodeMeta, Shot3DContext, ShotData } from './types'
-import { SCENE_CODE_LIMITS, effectiveSeconds, isRenderableSceneCode, sceneCodeRuntime } from './types'
-import type { ShotNodeType } from './data'
+import type { AppSettings, ProjectData } from './api'
+import { getProject } from './api'
+import type { ScheduleMeta, SceneCode, SceneCodeMeta } from './types'
+import { effectiveSeconds, isRenderableSceneCode } from './types'
 import type { StagePick } from './ModelSelect'
 import { stageModelKey, StageModelSelect } from './ModelSelect'
-import { renderSize } from './scheduleGeometry'
-import Shot3DContextPicker from './Shot3DContextPicker'
+import { renderSize } from './renderSize'
 import VggtGeometryPanel from './VggtGeometryPanel'
-import {
-  allCatalogItems,
-  buildShot3DContextCatalog,
-  itemIsSelected,
-  missingSelectionItems,
-  toggleContextItem,
-  type Shot3DContextCatalog,
-} from './shot3dContextCatalog'
-import {
-  contextCount,
-  contextFingerprint,
-  dialogueHashOf,
-  emptyShot3DContext,
-  inheritShot3DContext,
-  sanitizeShot3DContext,
-  selectedDialogue,
-} from './shot3dContext'
-import type { PreparedSceneAsset } from './sceneCodeAssets'
 import { prepareSceneCodeContext, type PreparedCodeContext } from './sceneCodePrepare'
 import { renderSceneCode, trialSceneCode, sceneCodeRenderError } from './sceneCodeRender'
 import { abortError, blenderHealth, type BlenderHealth } from './sceneBlender'
 import { codeHashOf, sceneCodeFingerprint } from './sceneCodeFingerprint'
-import { buildManifest, shotScopeTitle, type ContextManifest } from './contextManifest'
+import { buildShotOnlyManifest } from './contextManifest'
 import { isSceneCodeFresh } from './sceneCodeFreshness'
 import { runSceneCodeJob } from './sceneCodeJob'
 import { checkSceneCode } from './sceneCodeSanitize'
@@ -42,13 +19,29 @@ import type { AgentVideoAcceptedInput } from './agent/sceneAgentTypes'
 
 const LazySceneAgentChat = lazy(() => import('./agent/SceneAgentChat'))
 
+/**
+ * 工作台条目：素材 → 镜头语言里的自定义白模。
+ * 只带代码、代码元数据、渲染产物与运行所需的时长信息；
+ * 不与分镜类型耦合，分镜也不再保存或渲染 Blender 代码。
+ */
+export type WorkbenchEntry = {
+  id: string
+  /** 条目标题，显示在命令栏 */
+  title: string
+  /** 有效时长（秒，未夹取） */
+  seconds: number
+  /** 条目自带的运镜说明，替代已删除的几何推导 */
+  motionNote?: string
+  code?: SceneCode
+  codeMeta?: SceneCodeMeta
+  /** 最近一次渲染成功的 MP4（项目内路径） */
+  video?: string
+  scheduleMeta?: ScheduleMeta
+}
+
 type Props = {
   projectName: string
-  node: ShotNodeType
-  nodes: ShotNodeType[]
-  characters: CharacterSheet[]
-  assets: ProjectAsset[]
-  sceneLayouts: import('./types').SceneLayout[]
+  entry: WorkbenchEntry
   projectAspect: string
   settings: AppSettings | null
   stagePick: StagePick
@@ -62,7 +55,6 @@ type Props = {
 
 export type CodeEditorSave = {
   sceneCode: SceneCode
-  shot3DContext: Shot3DContext
   sceneCodeMeta?: SceneCodeMeta
 }
 
@@ -75,14 +67,12 @@ export type CodeEditorRendered = CodeEditorSave & {
 
 type Snapshot = {
   code: string
-  context: Shot3DContext | null
   motionNote: string
 }
 
 type PreparedContext = PreparedCodeContext & { cacheKey: string }
 
 type PreparedInfo = {
-  contextFp: string
   count: number
   missing: number
   usedVision: boolean
@@ -121,7 +111,7 @@ function dispose() {}
 `
 
 const snapshotKey = (s: Snapshot | null) =>
-  s ? JSON.stringify({ code: s.code, context: s.context, motionNote: s.motionNote }) : ''
+  s ? JSON.stringify({ code: s.code, motionNote: s.motionNote }) : ''
 
 const isAbort = (e: unknown) => (e as Error)?.name === 'AbortError'
 
@@ -142,11 +132,7 @@ const sourceLabel = (source: SceneCode['source'] | 'none') =>
  */
 export default function SceneCodeWorkbench({
   projectName,
-  node,
-  nodes,
-  characters,
-  assets,
-  sceneLayouts,
+  entry,
   projectAspect,
   settings,
   stagePick,
@@ -157,38 +143,22 @@ export default function SceneCodeWorkbench({
   onDirtyChange,
   toast,
 }: Props) {
-  const shotId = node.data.shotId || node.id
-  const episodeNo = Number(node.data.episode) || 1
-  const sceneNo = Math.max(1, Number(node.data.sceneNo) || 1)
-  const duration = effectiveSeconds(node.data.seconds)
+  const duration = effectiveSeconds(entry.seconds)
   const { width, height } = renderSize(projectAspect)
-  const legacyAvailable = !node.data.sceneCode && Boolean(node.data.shotScene || node.data.shotBlocking || node.data.layout)
 
   const [project, setProject] = useState<ProjectData | null>(null)
-  const [media, setMedia] = useState<MediaBundle | null>(null)
   const [loaded, setLoaded] = useState(false)
-  const [chatUploading, setChatUploading] = useState(false)
-  const [chatPicking, setChatPicking] = useState(false)
-  /** 聊天里的「从素材选」：复用既有缩略图选择器 */
-  const chatMediaPicker = useMediaPicker(projectName)
-  const [catalog, setCatalog] = useState<Shot3DContextCatalog | null>(null)
-  const [context, setContext] = useState<Shot3DContext | null>(() =>
-    node.data.shot3DContext ? sanitizeShot3DContext(node.data.shot3DContext) : null,
-  )
-  const [savedCode, setSavedCode] = useState<SceneCode | undefined>(node.data.sceneCode)
-  const [draftCode, setDraftCode] = useState(node.data.sceneCode?.code || '')
-  const [draftMotionNote, setDraftMotionNote] = useState(
-    node.data.sceneCode?.motionNote || node.data.motionNote || '',
-  )
-  const [codeSource, setCodeSource] = useState<SceneCode['source']>(node.data.sceneCode?.source || 'ai')
-  const [lastValidatedCode, setLastValidatedCode] = useState(node.data.sceneCode?.code || '')
-  const [lastValidatedHash, setLastValidatedHash] = useState(node.data.sceneCode?.codeHash || '')
-  const [lastValidatedContextFp, setLastValidatedContextFp] = useState('')
-  const [legacyMode, setLegacyMode] = useState(Boolean(legacyAvailable))
+  const [vggtSessionUrls, setVggtSessionUrls] = useState<string[]>([])
+  const [savedCode, setSavedCode] = useState<SceneCode | undefined>(entry.code)
+  const [draftCode, setDraftCode] = useState(entry.code?.code || '')
+  const [draftMotionNote, setDraftMotionNote] = useState(entry.code?.motionNote || entry.motionNote || '')
+  const [codeSource, setCodeSource] = useState<SceneCode['source']>(entry.code?.source || 'ai')
+  const [lastValidatedCode, setLastValidatedCode] = useState(entry.code?.code || '')
+  const [lastValidatedHash, setLastValidatedHash] = useState(entry.code?.codeHash || '')
   const [baseline, setBaseline] = useState<Snapshot | null>(null)
   const [past, setPast] = useState<Snapshot[]>([])
   const [future, setFuture] = useState<Snapshot[]>([])
-  const [sideTab, setSideTab] = useState<'chat' | 'code'>('chat')
+  const [sideTab, setSideTab] = useState<'chat' | 'code' | 'geom'>('chat')
   const [composerSeed, setComposerSeed] = useState<string | undefined>()
   const chatScrollRef = useRef(0)
   const [previewState, setPreviewState] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle')
@@ -212,10 +182,9 @@ export default function SceneCodeWorkbench({
   const [generateError, setGenerateError] = useState('')
   const [renderBusy, setRenderBusy] = useState<{ progress: number } | null>(null)
   const [renderError, setRenderError] = useState('')
-  const [renderedVideo, setRenderedVideo] = useState(node.data.scheduleVideo || '')
+  const [renderedVideo, setRenderedVideo] = useState(entry.video || '')
   const [saveError, setSaveError] = useState('')
   const [closeAsk, setCloseAsk] = useState(false)
-  const [ctxOpen, setCtxOpen] = useState(true)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const previewHostRef = useRef<HTMLDivElement>(null)
@@ -229,8 +198,8 @@ export default function SceneCodeWorkbench({
   const previewSeqRef = useRef(0)
 
   const currentSnapshot = useMemo<Snapshot>(
-    () => ({ code: draftCode, context, motionNote: draftMotionNote }),
-    [draftCode, context, draftMotionNote],
+    () => ({ code: draftCode, motionNote: draftMotionNote }),
+    [draftCode, draftMotionNote],
   )
   useEffect(() => {
     snapshotRef.current = currentSnapshot
@@ -247,23 +216,22 @@ export default function SceneCodeWorkbench({
   const renderedVideoFresh = Boolean(
     renderedVideo &&
       savedCode &&
-      node.data.sceneCodeMeta &&
+      entry.codeMeta &&
       savedCode.code === draftCode &&
       isSceneCodeFresh({
         sceneCode: savedCode,
-        meta: node.data.sceneCodeMeta,
-        context: context ?? undefined,
+        meta: entry.codeMeta,
         seconds: duration,
         aspect: projectAspect,
         hasVideo: true,
       }),
   )
   const renderedVideoStatus = !renderedVideo ? '未渲染' : renderedVideoFresh ? '生效' : '已过期'
-  /** 旧结构化数据或 v1（Three.js）代码：只读，不能渲染，只能显式转换。 */
+  /** v1（Three.js）代码：浏览器运行时产物，不能进 Blender，只读。 */
   const legacyCode = Boolean(savedCode && !isRenderableSceneCode(savedCode))
-  const readOnly3d = legacyMode || legacyCode
+  const readOnly3d = legacyCode
 
-  const switchSideTab = (next: 'chat' | 'code') => {
+  const switchSideTab = (next: 'chat' | 'code' | 'geom') => {
     if (next === sideTab) return
     const viewport = document.querySelector<HTMLElement>('[data-chat-viewport]')
     if (sideTab === 'chat' && viewport) chatScrollRef.current = viewport.scrollTop
@@ -283,66 +251,29 @@ export default function SceneCodeWorkbench({
   }
 
   const modelKey = stageModelKey(settings, 'sceneCode', stagePick)
-  const selectedItems = useMemo(() => {
-    if (!catalog || !context) return []
-    return [
-      ...allCatalogItems(catalog).filter((item) => itemIsSelected(context, item)),
-      ...missingSelectionItems(catalog, context),
-    ]
-  }, [catalog, context])
-  const manifest = useMemo<ContextManifest>(() => {
-    if (!context || !catalog) {
-      const head = { no: String(node.data.no || ''), duration, aspect: projectAspect }
-      return {
-        version: 1,
-        scope: { title: shotScopeTitle(head), shot: head },
-        attachments: [],
-      }
-    }
-    return buildManifest({
-      context,
-      catalog,
-      shotNo: String(node.data.no || ''),
-      duration,
-      aspect: projectAspect,
-    })
-  }, [context, catalog, node.data.no, duration, projectAspect])
-  const contextChanged = Boolean(
-    context && preparedInfo && preparedInfo.contextFp !== contextFingerprint(context),
+  /** 生成与渲染只需要最小条目头，不把分镜数据带进来。 */
+  const shotHead = useMemo(
+    () => ({ no: entry.title, seconds: entry.seconds }),
+    [entry.title, entry.seconds],
   )
-  const selectedTextCount =
-    context === null
-      ? 0
-      : Number(context.text.prompt) +
-        Number(context.text.videoPrompt) +
-        Number(context.text.cast) +
-        Number(context.text.marks) +
-        Number(context.text.sizeMove) +
-        (context.text.dialogue === 'all' ? catalog?.text.dialogue.length || 0 : context.text.dialogue.length)
-
-  const previousSelection = useMemo(() => {
-    if (!project?.shots) return null
-    const idx = project.shots.findIndex((s) => s.id === shotId)
-    if (idx <= 0) return null
-    const ep = Number(project.shots[idx].episode) || 1
-    const sn = Math.max(1, Number(project.shots[idx].scene_no) || 1)
-    for (let i = idx - 1; i >= 0; i--) {
-      const s = project.shots[i]
-      if ((Number(s.episode) || 1) !== ep) continue
-      if (Math.max(1, Number(s.scene_no) || 1) !== sn) continue
-      const raw = s.shot_3d_context ?? s.shot3DContext
-      if (raw) return sanitizeShot3DContext(raw)
-    }
-    return null
-  }, [project, shotId])
+  const manifest = useMemo(
+    () =>
+      buildShotOnlyManifest({
+        shotId: entry.id,
+        shotNo: entry.title,
+        duration,
+        aspect: projectAspect,
+      }),
+    [entry.id, entry.title, duration, projectAspect],
+  )
 
   useEffect(() => {
     let alive = true
-    Promise.all([getProject(projectName).catch(() => null), listMedia(projectName)])
-      .then(([p, m]) => {
+    getProject(projectName)
+      .catch(() => null)
+      .then((p) => {
         if (!alive) return
         setProject(p)
-        setMedia(m)
       })
       .finally(() => {
         if (alive) setLoaded(true)
@@ -352,52 +283,8 @@ export default function SceneCodeWorkbench({
     }
   }, [projectName])
 
-  /**
-   * 只刷新媒体清单。catalog 由 media 派生，所以上传/选素材后必须走这里，
-   * 否则新文件在上下文里却没有对应的 catalog 条目，生成时就读不到。
-   */
-  const refreshMedia = useCallback(async () => {
-    if (!projectName) return
-    const next = await listMedia(projectName)
-    setMedia(next)
-  }, [projectName])
-
-  useEffect(() => {
-    if (!loaded) return
-    const c = buildShot3DContextCatalog({
-      project,
-      characters,
-      shot: {
-        ...node.data,
-        episode: episodeNo,
-        sceneNo,
-        sceneSlug: node.data.sceneSlug || '',
-      },
-      media,
-      nodes,
-      sceneNo,
-      sceneSlug: node.data.sceneSlug || '',
-    })
-    setCatalog(c)
-    setContext((prev) =>
-      prev ??
-      (node.data.shot3DContext
-        ? sanitizeShot3DContext(node.data.shot3DContext)
-        : emptyShot3DContext(dialogueHashOf(node.data.dialogue))),
-    )
-  }, [loaded, project, media, characters, nodes, node.id, node.data.sceneNo, node.data.sceneSlug, node.data.shot3DContext])
-
   useEffect(() => {
     rootRef.current?.focus()
-    // 窄屏优先保证预览和 agent 聊天宽度；参考内容仍可从顶部按钮打开。
-    const mq = window.matchMedia?.('(max-width: 980px)')
-    if (!mq) return
-    const apply = () => {
-      if (mq.matches) setCtxOpen(false)
-    }
-    apply()
-    mq.addEventListener?.('change', apply)
-    return () => mq.removeEventListener?.('change', apply)
   }, [])
 
   useEffect(() => {
@@ -453,20 +340,6 @@ export default function SceneCodeWorkbench({
     setFuture([])
   }, [])
 
-  /**
-   * 写镜头上下文并作废已准备快照（参考变了，旧的 prepared 就不能再用）。
-   * 接受函数式更新：异步流程里（上传/选素材后刷新 media）闭包里的 context 可能已过期。
-   */
-  const setContextSafe = useCallback(
-    (next: Shot3DContext | ((prev: Shot3DContext | null) => Shot3DContext)) => {
-      pushCurrent()
-      setContext((prev) => (typeof next === 'function' ? next(prev) : next))
-      preparedRef.current = null
-      setPreparedInfo(null)
-    },
-    [pushCurrent],
-  )
-
   const updateCode = useCallback(
     (next: string) => {
       if (next === draftCode) return
@@ -481,16 +354,15 @@ export default function SceneCodeWorkbench({
     async (s: Snapshot) => {
       const codeChanged = s.code !== draftCode
       setDraftCode(s.code)
-      setContext(s.context)
       setDraftMotionNote(s.motionNote)
       preparedRef.current = null
       setPreparedInfo(null)
-      if (codeChanged && s.code.trim() && s.context && catalog) {
-        const prepared = await ensurePrepared(s.context, catalog)
+      if (codeChanged && s.code.trim()) {
+        const prepared = await ensurePrepared()
         await startPreview(s.code, prepared)
       }
     },
-    [catalog, draftCode],
+    [draftCode],
   )
 
   const undo = async () => {
@@ -512,22 +384,14 @@ export default function SceneCodeWorkbench({
   }
 
   const ensurePrepared = useCallback(
-    async (ctx: Shot3DContext, cat: Shot3DContextCatalog, signal?: AbortSignal, allowVideoVision = false): Promise<PreparedContext> => {
-      const fp = `${contextFingerprint(ctx)}|${stageModelKey(settings, 'vision', stagePick)}`
-      if (preparedRef.current?.cacheKey === fp) return preparedRef.current
-      const prepared = await prepareSceneCodeContext({
-        context: ctx,
-        catalog: cat,
-        settings,
-        stagePick,
-        signal,
-        allowVideoVision,
-      })
-      const value: PreparedContext = { ...prepared, cacheKey: fp }
+    async (signal?: AbortSignal): Promise<PreparedContext> => {
+      const cacheKey = stageModelKey(settings, 'vision', stagePick)
+      if (preparedRef.current?.cacheKey === cacheKey) return preparedRef.current
+      const prepared = await prepareSceneCodeContext({ settings, stagePick, signal })
+      const value: PreparedContext = { ...prepared, cacheKey }
       if (!signal?.aborted) {
         preparedRef.current = value
         setPreparedInfo({
-          contextFp: prepared.contextFp,
           count: prepared.assets.length,
           missing: prepared.missing.length,
           usedVision: prepared.mediaBrief.usedVision,
@@ -566,7 +430,7 @@ export default function SceneCodeWorkbench({
           aspect: projectAspect,
           tier: 'proxy',
           mode: 'clean',
-          shot: { no: node.data.no, seconds: node.data.seconds, size: node.data.size, move: node.data.move },
+          shot: shotHead,
           signal: ac.signal,
           onProgress: (value) => {
             if (seq === previewSeqRef.current) setPreviewProgress(value)
@@ -584,7 +448,7 @@ export default function SceneCodeWorkbench({
         if (previewAbortRef.current === ac) previewAbortRef.current = null
       }
     },
-    [disposePreview, duration, projectAspect, node.data.no, node.data.seconds, node.data.size, node.data.move],
+    [disposePreview, duration, projectAspect, shotHead],
   )
 
   const runTrial = useCallback(
@@ -611,45 +475,27 @@ export default function SceneCodeWorkbench({
       setCodeSource(source)
       setLastValidatedCode(result.code)
       setLastValidatedHash(result.codeHash)
-      setLastValidatedContextFp(context ? contextFingerprint(context) : '')
-      setLegacyMode(false)
       await startPreview(result.code, prepared)
     },
     [draftMotionNote, pushCurrent, startPreview],
   )
 
-  const generateCode = async (auto = false, convert = false) => {
-    if (generating || !context || !catalog) return
-    if (!contextCount(context)) {
-      setGenerateError('请至少选择一项参考内容')
-      return
-    }
+  const generateCode = async () => {
+    if (generating) return
     if (!modelKey) {
-      setGenerateError('没有可用的 3D 代码文本模型，请到设置页绑定「3D 代码」环节；也可以直接手写代码')
+      setGenerateError('没有可用的白模 3D 代码模型，请到设置页绑定「白模 3D 代码」环节；也可以直接手写代码')
       return
     }
     const ac = new AbortController()
     generateAbortRef.current = ac
     setGenerating(true)
     setGenerateError('')
-    setGenerateLabel(convert ? '正在把旧结构化 3D 转成代码…' : auto ? '正在生成 3D 代码…' : '正在重写 3D 代码…')
+    setGenerateLabel(draftCode ? '正在重写白模代码…' : '正在生成白模代码…')
     try {
-      const prepared = await ensurePrepared(context, catalog, ac.signal, true)
-      const legacyScene = convert
-        ? {
-            shotScene: node.data.shotScene,
-            shotBlocking: node.data.shotBlocking,
-            layout: node.data.layout,
-            sceneLayouts,
-            // v1 Three.js 代码只作转换参考；新代码必须是 bpy。
-            ...(legacyCode && savedCode ? { legacyCode: savedCode.code } : {}),
-          }
-        : undefined
+      const prepared = await ensurePrepared(ac.signal)
       const result = await runSceneCodeJob({
-        shot: { ...node.data, episode: episodeNo, sceneNo, sceneSlug: node.data.sceneSlug || '' },
+        shot: shotHead,
         project,
-        context,
-        catalog,
         assets: prepared.assets,
         mediaBrief: prepared.mediaBrief,
         videoBrief: prepared.videoBrief,
@@ -657,25 +503,12 @@ export default function SceneCodeWorkbench({
         aspect: projectAspect,
         settings,
         stagePick,
-        legacyScene,
         signal: ac.signal,
         trial: async (code) => runTrial(code, prepared, ac.signal),
       })
       if (ac.signal.aborted) return
-      await applyGeneratedCode(result, convert ? 'legacy-converted' : 'ai', prepared)
-      if (convert) {
-        const code = await buildSceneCode(result.code, 'legacy-converted', result.motionNote || draftMotionNote)
-        await onSave({
-          sceneCode: code,
-          shot3DContext: context,
-          ...(node.data.sceneCodeMeta ? { sceneCodeMeta: node.data.sceneCodeMeta } : {}),
-        })
-        setSavedCode(code)
-        setBaseline({ code: result.code, context, motionNote: result.motionNote || draftMotionNote })
-        toast('旧结构化 3D 已转换为代码并保存')
-      } else {
-        toast('3D 代码已生成，可试运行后保存')
-      }
+      await applyGeneratedCode(result, 'ai', prepared)
+      toast('白模代码已生成，可试运行后保存')
     } catch (e) {
       if (!isAbort(e)) {
         const message = sceneCodeRenderError(e)
@@ -690,9 +523,9 @@ export default function SceneCodeWorkbench({
   }
 
   const init = useCallback(async () => {
-    if (!catalog || !context || initRef.current) return
+    if (!loaded || initRef.current) return
     initRef.current = true
-    const base: Snapshot = { code: draftCode, context, motionNote: draftMotionNote }
+    const base: Snapshot = { code: draftCode, motionNote: draftMotionNote }
     setBaseline(base)
     if (draftCode) {
       // v1 Three.js 代码只读，不能送进 Blender；打开时不要自动渲染。
@@ -701,30 +534,29 @@ export default function SceneCodeWorkbench({
         setPreviewError('')
         return
       }
-      const saved = node.data.sceneCode
-      const meta = node.data.sceneCodeMeta
+      const saved = entry.code
+      const meta = entry.codeMeta
       const fresh = Boolean(
         saved &&
           meta &&
-          node.data.scheduleVideo &&
+          entry.video &&
           isSceneCodeFresh({
             sceneCode: saved,
             meta,
-            context,
             seconds: duration,
             aspect: projectAspect,
             hasVideo: true,
           }),
       )
-      if (fresh && node.data.scheduleVideo) {
+      if (fresh && entry.video) {
         // 已有生效视频直接当代理片，省掉一次整段渲染。
-        setPreviewUrl(node.data.scheduleVideo)
+        setPreviewUrl(entry.video)
         setPreviewState('ready')
         setTime(0)
         return
       }
       try {
-        const prepared = await ensurePrepared(context, catalog)
+        const prepared = await ensurePrepared()
         await startPreview(draftCode, prepared)
       } catch (e) {
         setPreviewState('error')
@@ -732,23 +564,22 @@ export default function SceneCodeWorkbench({
       }
     }
   }, [
-    catalog,
-    context,
+    loaded,
     draftCode,
     draftMotionNote,
     ensurePrepared,
     startPreview,
     legacyCode,
-    node.data.sceneCode,
-    node.data.sceneCodeMeta,
-    node.data.scheduleVideo,
+    entry.code,
+    entry.codeMeta,
+    entry.video,
     duration,
     projectAspect,
   ])
 
   useEffect(() => {
-    if (loaded && catalog && context) void init()
-  }, [loaded, catalog, context, init])
+    if (loaded) void init()
+  }, [loaded, init])
 
   const buildSceneCode = async (
     code: string,
@@ -795,7 +626,6 @@ export default function SceneCodeWorkbench({
       runtime,
       engineVersion,
       assets,
-      selectionFingerprint: contextFingerprint(input.context),
       duration: input.duration,
       aspect: input.aspect,
       width: size.width,
@@ -818,7 +648,6 @@ export default function SceneCodeWorkbench({
     }
     await onRendered({
       sceneCode: code,
-      shot3DContext: input.context,
       sceneCodeMeta,
       video: input.video,
       scheduleMeta,
@@ -826,19 +655,15 @@ export default function SceneCodeWorkbench({
     })
     setSavedCode(code)
     setDraftCode(input.code)
-    setContext(input.context)
     setCodeSource('ai')
-    setLegacyMode(false)
     setRenderedVideo(input.video)
     setLastValidatedCode(input.code)
     setLastValidatedHash(code.codeHash)
-    setLastValidatedContextFp(contextFingerprint(input.context))
     // 保留 onDraftCode 推入的撤销栈：应用验收结果不应清空「改之前」的快照。
-    setBaseline({ code: input.code, context: input.context, motionNote: draftMotionNote })
+    setBaseline({ code: input.code, motionNote: draftMotionNote })
   }
 
   const saveNow = async (): Promise<boolean> => {
-    if (!context || !catalog) return false
     const checked = checkSceneCode(draftCode)
     if (!checked.ok) {
       setSaveError(checked.errors[0] || '代码不可用')
@@ -847,27 +672,25 @@ export default function SceneCodeWorkbench({
     setSaveError('')
     try {
       let prepared = preparedRef.current
-      if (!prepared || prepared.cacheKey !== `${contextFingerprint(context)}|${stageModelKey(settings, 'vision', stagePick)}`) {
-        prepared = await ensurePrepared(context, catalog)
+      const visionKey = stageModelKey(settings, 'vision', stagePick)
+      if (!prepared || prepared.cacheKey !== visionKey) {
+        prepared = await ensurePrepared()
       }
-      const currentContextFp = contextFingerprint(context)
-      if (draftCode !== lastValidatedCode || currentContextFp !== lastValidatedContextFp) {
+      if (draftCode !== lastValidatedCode) {
         await runTrial(draftCode, prepared)
         setLastValidatedCode(draftCode)
         setLastValidatedHash(await codeHashOf(draftCode))
-        setLastValidatedContextFp(currentContextFp)
       }
       const code = await buildSceneCode(draftCode, codeSource, draftMotionNote)
       await onSave({
         sceneCode: code,
-        shot3DContext: context,
-        ...(node.data.sceneCodeMeta ? { sceneCodeMeta: node.data.sceneCodeMeta } : {}),
+        ...(entry.codeMeta ? { sceneCodeMeta: entry.codeMeta } : {}),
       })
       setSavedCode(code)
-      setBaseline({ code: draftCode, context, motionNote: draftMotionNote })
+      setBaseline({ code: draftCode, motionNote: draftMotionNote })
       setPast([])
       setFuture([])
-      toast('已保存 3D 代码和参考内容')
+      toast('已保存白模代码')
       return true
     } catch (e) {
       setSaveError(sceneCodeRenderError(e))
@@ -876,7 +699,7 @@ export default function SceneCodeWorkbench({
   }
 
   const renderNow = async () => {
-    if (!context || !catalog || renderBusy) return
+    if (renderBusy) return
     if (!draftCode.trim()) {
       setRenderError('当前没有代码')
       return
@@ -891,7 +714,7 @@ export default function SceneCodeWorkbench({
     setRenderBusy({ progress: 0 })
     setRenderError('')
     try {
-      const prepared = await ensurePrepared(context, catalog, ac.signal)
+      const prepared = await ensurePrepared(ac.signal)
       const result = await renderSceneCode({
         code: draftCode,
         assets: prepared.assets,
@@ -931,7 +754,6 @@ export default function SceneCodeWorkbench({
         runtime,
         engineVersion,
         assets: prepared.assets.map((a) => a.ref),
-        selectionFingerprint: contextFingerprint(context),
         duration,
         aspect: projectAspect,
         width: result.job.width,
@@ -955,7 +777,6 @@ export default function SceneCodeWorkbench({
       const frames: string[] | undefined = result.frameUrls.length ? result.frameUrls : undefined
       await onRendered({
         sceneCode: code,
-        shot3DContext: context,
         sceneCodeMeta: meta,
         video: url,
         scheduleMeta,
@@ -966,8 +787,7 @@ export default function SceneCodeWorkbench({
       setRenderedVideo(url)
       setLastValidatedCode(draftCode)
       setLastValidatedHash(code.codeHash)
-      setLastValidatedContextFp(contextFingerprint(context))
-      setBaseline({ code: draftCode, context, motionNote: draftMotionNote })
+      setBaseline({ code: draftCode, motionNote: draftMotionNote })
       setPast([])
       setFuture([])
       toast('3D 代码视频已生成')
@@ -993,119 +813,12 @@ export default function SceneCodeWorkbench({
   }
 
   const useEmptyCode = async () => {
-    if (!context || !catalog) return
     try {
-      const prepared = await ensurePrepared(context, catalog)
+      const prepared = await ensurePrepared()
       const hash = await codeHashOf(FALLBACK_SCENE_CODE)
       await applyGeneratedCode({ code: FALLBACK_SCENE_CODE, codeHash: hash, motionNote: '空白模板场景' }, 'fallback', prepared)
     } catch (e) {
       setGenerateError(sceneCodeRenderError(e))
-    }
-  }
-
-  const inheritSelection = () => {
-    if (!previousSelection) {
-      toast('没有同集同场上一镜的选择可沿用')
-      return
-    }
-    setContextSafe(inheritShot3DContext(previousSelection, dialogueHashOf(node.data.dialogue)))
-    toast('已沿用上一镜的参考内容选择')
-  }
-
-  const removeSelected = (key: string) => {
-    if (!context || !catalog) return
-    const item = selectedItems.find((x) => x.key === key)
-    if (!item) return
-    setContextSafe(toggleContextItem(context, item))
-  }
-
-  const removeAttachment = (key: string) => {
-    if (!context) return
-    if (key.startsWith('text:')) {
-      const text = context.text
-      if (key === 'text:prompt') setContextSafe({ ...context, text: { ...text, prompt: false } })
-      else if (key === 'text:videoPrompt') setContextSafe({ ...context, text: { ...text, videoPrompt: false } })
-      else if (key === 'text:cast') setContextSafe({ ...context, text: { ...text, cast: false } })
-      else if (key === 'text:sizeMove') setContextSafe({ ...context, text: { ...text, sizeMove: false } })
-      else if (key === 'text:marks') setContextSafe({ ...context, text: { ...text, marks: false } })
-      else if (key === 'text:dialogue') setContextSafe({ ...context, text: { ...text, dialogue: [] } })
-      else if (key.startsWith('text:scene:')) {
-        const sceneKey = key.slice('text:scene:'.length)
-        setContextSafe({ ...context, sceneKeys: context.sceneKeys.filter((k) => k !== sceneKey) })
-      }
-      return
-    }
-    removeSelected(key)
-  }
-
-  const toggleBrief = (key: string) => {
-    if (!context) return
-    const off = new Set(context.briefOff || [])
-    if (off.has(key)) off.delete(key)
-    else off.add(key)
-    setContextSafe({ ...context, briefOff: [...off] })
-  }
-
-  const clearAttachments = () => {
-    if (!context) return
-    setContextSafe(emptyShot3DContext(dialogueHashOf(node.data.dialogue)))
-  }
-
-  /**
-   * 聊天里上传图片：三步不可拆，顺序错了图就进不了生成。
-   * 1) 落成项目媒体文件  2) 刷新 media（catalog 由它派生）  3) 写回镜头上下文
-   * 只做第 3 步会得到「上下文里有、catalog 里没有」，表现是加了图但 Blender 看不到。
-   */
-  const uploadChatImage = async (file: File) => {
-    if (!projectName) {
-      toast('先在顶栏选择项目，再上传图片')
-      return
-    }
-    setChatUploading(true)
-    try {
-      const url = await uploadImageFile(file, { project: projectName, prefix: 'chat-3d' })
-      await refreshMedia()
-      // 同 pickChatMedia：刷新 media 后旧 context 已过期，必须用函数式更新
-      setContextSafe((prev) => {
-        const base = prev ?? emptyShot3DContext(dialogueHashOf(node.data.dialogue))
-        return { ...base, imageUrls: [...new Set([...base.imageUrls, url])] }
-      })
-      toast('图片已加入本镜参考')
-    } catch (e) {
-      toast((e as Error).message || '上传图片失败')
-    } finally {
-      setChatUploading(false)
-    }
-  }
-
-  /** 聊天里从项目素材选：图片写 imageUrls，视频写 videoUrls，都是同一份镜头上下文 */
-  const pickChatMedia = async () => {
-    if (!context) return
-    setChatPicking(true)
-    try {
-      const item = await chatMediaPicker.open()
-      if (!item) return
-      if (item.mediaType === 'audio') {
-        toast('镜头上下文不接受音频')
-        return
-      }
-      // 新选的媒体可能还没进 catalog（例如刚在别处生成）；刷新一次再写，避免选了却看不到
-      await refreshMedia()
-      /**
-       * 必须用函数式更新：refreshMedia 会让 catalog 重建，期间 context 引用已经变了；
-       * 用闭包里的旧 context 展开会把这次选择覆盖掉（表现为选了但附件条没变）。
-       */
-      setContextSafe((prev) => {
-        const base = prev ?? emptyShot3DContext(dialogueHashOf(node.data.dialogue))
-        return item.mediaType === 'video'
-          ? { ...base, videoUrls: [...new Set([...base.videoUrls, item.url])] }
-          : { ...base, imageUrls: [...new Set([...base.imageUrls, item.url])] }
-      })
-      toast(item.mediaType === 'video' ? '视频已加入本镜参考' : '图片已加入本镜参考')
-    } catch (e) {
-      toast((e as Error).message || '选择素材失败')
-    } finally {
-      setChatPicking(false)
     }
   }
 
@@ -1155,10 +868,7 @@ export default function SceneCodeWorkbench({
     }
   }
 
-  const prepareAgent = async () => {
-    if (!context || !catalog) throw new Error('镜头上下文还没有加载完成')
-    return ensurePrepared(context, catalog)
-  }
+  const prepareAgent = async () => ensurePrepared()
 
   const applyAgentDraft = async (
     code: string,
@@ -1170,32 +880,30 @@ export default function SceneCodeWorkbench({
     setCodeSource('ai')
     setLastValidatedCode(code)
     setLastValidatedHash(await codeHashOf(code))
-    setLastValidatedContextFp(context ? contextFingerprint(context) : '')
-    setLegacyMode(false)
     await startPreview(code, prepared)
   }
 
+  const onVggtIngested = useCallback((videoUrl: string) => {
+    const u = videoUrl.split('?')[0]
+    if (!u.startsWith('/')) return
+    setVggtSessionUrls((prev) => [...new Set([...prev, u])])
+  }, [])
+
   const hashLabel = lastValidatedCode === draftCode && lastValidatedHash ? lastValidatedHash.slice(0, 10) : '未验证'
   const displaySource = draftCode ? codeSource : 'none'
-  const legacyScene = {
-    shotScene: node.data.shotScene,
-    shotBlocking: node.data.shotBlocking,
-    layout: node.data.layout,
-    sceneLayouts,
-  }
 
   const vggtSources = useMemo(() => {
     const out: { kind: 'reference' | 'schedule'; label: string; url: string }[] = []
-    for (const url of context?.videoUrls ?? []) {
+    for (const url of vggtSessionUrls) {
       const u = String(url || '').split('?')[0]
       if (u.startsWith('/')) out.push({ kind: 'reference', label: '参考片', url: u })
     }
-    const sched = String(renderedVideo || node.data.scheduleVideo || '').split('?')[0]
+    const sched = String(renderedVideo || entry.video || '').split('?')[0]
     if (sched.startsWith('/')) {
-      out.push({ kind: 'schedule', label: '当前调度片（只读）', url: sched })
+      out.push({ kind: 'schedule', label: '当前白模 MP4（只读）', url: sched })
     }
     return out
-  }, [context?.videoUrls, renderedVideo, node.data.scheduleVideo])
+  }, [vggtSessionUrls, renderedVideo, entry.video])
 
   const injectVggtToChat = useCallback((text: string) => {
     setComposerSeed(undefined)
@@ -1205,54 +913,51 @@ export default function SceneCodeWorkbench({
     })
   }, [])
 
-  const addReferenceVideoUrl = useCallback(
-    (videoUrl: string) => {
-      if (!context) {
-        toast('上下文未就绪')
-        return false
-      }
-      const u = videoUrl.split('?')[0]
-      if (context.videoUrls.includes(u)) {
-        toast('该视频已在参考列表中')
-        return true
-      }
-      if (context.videoUrls.length >= SCENE_CODE_LIMITS.videos) {
-        toast(`视频参考上限为 ${SCENE_CODE_LIMITS.videos} 个`)
-        return false
-      }
-      setContextSafe({ ...context, videoUrls: [...context.videoUrls, u] })
-      return true
-    },
-    [context, setContextSafe, toast],
-  )
-
   return (
-    <div className="cw-backdrop" role="dialog" aria-modal="true" aria-label="3D 代码工作台" ref={rootRef} tabIndex={-1}>
+    <div
+      className="cw-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="白模代码工作台"
+      ref={rootRef}
+      tabIndex={-1}
+    >
       <div className="cw-shell">
-        <header className="cw-head">
-          <div className="cw-title">
-            <b>3D 调度</b>
-            <span>
-              {node.data.no} · E{String(episodeNo).padStart(2, '0')} · {duration.toFixed(1)}s · {projectAspect}
-            </span>
-            <span className={`cw-source ${readOnly3d ? 'legacy' : displaySource}`}>{sourceLabel(displaySource)}</span>
-            {readOnly3d && <span className="cw-badge legacy">{legacyCode ? '旧 Three.js 代码只读' : '旧结构化只读'}</span>}
-            <span className="mono cw-hash">{hashLabel}</span>
+        <header className="cw-head cw-command-bar">
+          <div className="cw-command-meta">
+            <b className="cw-command-title">白模工作台</b>
+            <div className="cw-chip-row" role="list">
+              <span className="cw-chip" role="listitem">
+                {entry.title}
+              </span>
+              <span className="cw-chip muted" role="listitem">
+                {duration.toFixed(1)}s · {projectAspect}
+              </span>
+              <span className={`cw-chip ${readOnly3d ? 'legacy' : displaySource}`} role="listitem">
+                {readOnly3d ? '旧 Three.js' : sourceLabel(displaySource)}
+              </span>
+              <span className="cw-chip mono subtle" role="listitem" title="代码 hash">
+                {hashLabel}
+              </span>
+            </div>
           </div>
-          <div className="cw-actions">
-            <button className="btn-mini" onClick={() => void undo()} disabled={!past.length} title="撤销">
-              撤销
-            </button>
-            <button className="btn-mini" onClick={() => void redo()} disabled={!future.length} title="重做">
-              重做
-            </button>
-            <button className="btn-mini cw-ctx-toggle" onClick={() => setCtxOpen((v) => !v)}>
-              参考内容 {selectedItems.length + selectedTextCount}
-            </button>
+          <div className="cw-command-actions">
+            <div className="cw-history-group" role="group" aria-label="编辑历史">
+              <button className="btn-mini" onClick={() => void undo()} disabled={!past.length} title="撤销">
+                撤销
+              </button>
+              <button className="btn-mini" onClick={() => void redo()} disabled={!future.length} title="重做">
+                重做
+              </button>
+            </div>
             <button className="btn" onClick={() => void saveNow()} disabled={!!renderBusy || generating}>
               保存
             </button>
-            <button className="btn primary" onClick={() => void renderNow()} disabled={!!renderBusy || generating || !draftCode || readOnly3d}>
+            <button
+              className="btn primary"
+              onClick={() => void renderNow()}
+              disabled={!!renderBusy || generating || !draftCode || readOnly3d}
+            >
               {renderBusy ? `渲染 ${Math.round(renderBusy.progress * 100)}%` : '渲染视频'}
             </button>
             <button className="btn-ghost" onClick={requestClose}>
@@ -1285,61 +990,21 @@ export default function SceneCodeWorkbench({
 
         {readOnly3d && (
           <div className="cw-legacy-bar">
-            <b>{legacyCode ? '旧 Three.js 代码只读' : '旧结构化 3D 只读'}</b>
+            <b>旧 Three.js 代码只读</b>
             <span>
-              {legacyCode
-                ? '这版代码由浏览器 Three.js 运行时生成，不能在本机 Blender 中渲染；转换后会得到可渲染的 Blender Python 代码。'
-                : '这里展示的是旧 shotScene / shotBlocking 数据；旧白模预览已下线。转成 Blender Python 代码并试运行通过后才写入 sceneCode。'}
+              这版代码由浏览器 Three.js 运行时生成，不能在本机 Blender 中渲染。请新建一条白模，用 Blender Python 代码重写运镜。
             </span>
-            <button
-              className="btn-mini"
-              onClick={() => void generateCode(false, true)}
-              disabled={generating || !modelKey || !engine?.ok || !context || !catalog}
-              title={
-                !engine?.ok
-                  ? '需要先安装受支持的 Blender'
-                  : !context || !catalog
-                    ? '正在加载镜头上下文…'
-                    : undefined
-              }
-            >
-              {generating ? '转换中…' : '转换为 Blender 代码'}
-            </button>
           </div>
         )}
 
-        <div className={`cw-body ${ctxOpen ? '' : 'ctx-collapsed'}`}>
-          {ctxOpen && catalog && context && (
-            <aside className="cw-context">
-              <Shot3DContextPicker
-                catalog={catalog}
-                value={context}
-                projectName={projectName}
-                currentEpisode={episodeNo}
-                onChange={setContextSafe}
-                onInherit={inheritSelection}
-                onToast={toast}
-              />
-              <VggtGeometryPanel
-                projectName={projectName}
-                projectAspect={projectAspect}
-                effectiveSeconds={duration}
-                sources={vggtSources}
-                onCopyToChat={injectVggtToChat}
-                onAddReference={addReferenceVideoUrl}
-                onToast={toast}
-                geometryBusy={Boolean(renderBusy) || generating}
-              />
-            </aside>
-          )}
-
-          <main className="cw-main">
+        <div className="cw-body cw-body--stage">
+          <main className="cw-main cw-stage">
             <div className="cw-preview-head">
               <div>
-                <b>3D 预览</b>
+                <b>白模预览</b>
                 <span className="cw-preview-status">
                   {readOnly3d
-                    ? '旧数据只读 · 需转换'
+                    ? '旧代码只读'
                     : previewState === 'starting'
                       ? `代理渲染中… ${Math.round(previewProgress * 100)}%`
                       : previewState === 'error'
@@ -1353,17 +1018,11 @@ export default function SceneCodeWorkbench({
                 {!readOnly3d && (
                   <button
                     className="btn-mini"
-                    onClick={() => void generateCode(false, false)}
-                    disabled={generating || !modelKey || !context || contextCount(context) === 0 || !engine?.ok}
-                    title={
-                      !engine?.ok
-                        ? '需要先安装受支持的 Blender'
-                        : !context || contextCount(context) === 0
-                          ? '先在左侧选择参考'
-                          : undefined
-                    }
+                    onClick={() => void generateCode()}
+                    disabled={generating || !modelKey || !engine?.ok}
+                    title={!engine?.ok ? '需要先安装受支持的 Blender' : undefined}
                   >
-                    {generating ? '生成中…' : '生成 3D 代码'}
+                    {generating ? '生成中…' : '生成白模代码'}
                   </button>
                 )}
                 {generating && <button className="btn-mini" onClick={cancelGenerate}>取消</button>}
@@ -1379,7 +1038,7 @@ export default function SceneCodeWorkbench({
                     title={
                       renderedVideoStatus === '生效'
                         ? '最近渲染的视频与当前草稿一致'
-                        : '旧视频：当前代码/参考内容已变化，需要重新渲染'
+                        : '旧视频：当前代码已变化，需要重新渲染'
                     }
                   >
                     最近视频 · {renderedVideoStatus}
@@ -1420,16 +1079,14 @@ export default function SceneCodeWorkbench({
                   <b>还没有代码</b>
                   <span>
                     {!engine?.ok
-                      ? '需要先安装受支持的 Blender，才能生成和渲染 3D 代码。'
+                      ? '需要先安装受支持的 Blender，才能生成和渲染白模代码。'
                       : !modelKey
-                        ? '没有配置 3D 代码模型；可以在代码页签手写。'
-                        : context && contextCount(context) > 0
-                          ? '生成一版代码，或在右侧聊天里描述场景；也可以切到代码页签手写。'
-                          : '先从左侧选择参考，或在右侧聊天里描述场景；也可以切到代码页签手写。'}
+                        ? '没有配置白模 3D 代码模型；可以在代码页签手写。'
+                        : '生成一版代码，或在右侧聊天里描述场景；也可以切到代码页签手写。'}
                   </span>
-                  {engine?.ok && modelKey && context && contextCount(context) > 0 && (
-                    <button className="btn primary" onClick={() => void generateCode(true)}>
-                      生成 3D 代码
+                  {engine?.ok && modelKey && (
+                    <button className="btn primary" onClick={() => void generateCode()}>
+                      生成白模代码
                     </button>
                   )}
                 </div>
@@ -1441,7 +1098,8 @@ export default function SceneCodeWorkbench({
               )}
             </div>
 
-            {!readOnly3d && <div className="cw-timeline">
+            {!readOnly3d && (
+              <div className="cw-transport-dock">
               <button className="btn-mini" onClick={togglePlay} disabled={previewState !== 'ready'}>
                 {playing ? '暂停' : '播放'}
               </button>
@@ -1459,30 +1117,48 @@ export default function SceneCodeWorkbench({
                 {time.toFixed(2)} / {duration.toFixed(1)}s
               </span>
               {renderBusy && <button className="btn-mini" onClick={cancelRender}>取消渲染</button>}
-            </div>}
+              </div>
+            )}
 
             <div className="cw-footnotes">
-              <span>{readOnly3d ? '旧数据只读；转换为 Blender 代码并试运行通过后才会切换。' : '纯代码模式：不做角色名单、穿墙/碰撞或空间连续性校验；请以代码、渲染结果和运行错误为准。'}</span>
-              {preparedInfo && (
-                <span>
-                  素材 {preparedInfo.count} 个{preparedInfo.missing ? `，缺失 ${preparedInfo.missing}` : ''} ·{' '}
-                  {preparedInfo.usedVision ? '媒体 brief 已参与' : '素材未参与理解'}
-                </span>
-              )}
-              {contextChanged && <span className="cw-warn">上下文已变化；重新运行/渲染会使用新选择。</span>}
+              <span>
+                {readOnly3d
+                  ? '旧代码只读：浏览器 Three.js 产物无法在本机 Blender 渲染。'
+                  : '白模只对齐运镜与构图意图，不进成片人物外观；渲染出的 MP4 可发布为素材卡或在分镜里当运镜参照。VGGT 几何在右侧「几何」页签摄取，不写镜级参考板。'}
+              </span>
               {renderError && <span className="cw-danger">{renderError}</span>}
               {saveError && <span className="cw-danger">{saveError}</span>}
             </div>
           </main>
 
-          <aside className="cw-side">
-            <div className="cw-side-tabs">
-              <button className={sideTab === 'chat' ? 'on' : ''} onClick={() => switchSideTab('chat')}>
-                聊天
+          <aside className="cw-side cw-work-pane">
+            <div className="cw-work-tabs" role="tablist" aria-label="工作台页签">
+              <button
+                role="tab"
+                aria-selected={sideTab === 'chat'}
+                className={sideTab === 'chat' ? 'on' : ''}
+                onClick={() => switchSideTab('chat')}
+              >
+                对话
               </button>
-              <button className={sideTab === 'code' ? 'on' : ''} onClick={() => switchSideTab('code')}>
+              <button
+                role="tab"
+                aria-selected={sideTab === 'code'}
+                className={sideTab === 'code' ? 'on' : ''}
+                onClick={() => switchSideTab('code')}
+              >
                 代码
               </button>
+              {!readOnly3d && (
+                <button
+                  role="tab"
+                  aria-selected={sideTab === 'geom'}
+                  className={sideTab === 'geom' ? 'on' : ''}
+                  onClick={() => switchSideTab('geom')}
+                >
+                  几何
+                </button>
+              )}
             </div>
             {onPickStageModel && (
               <div className="cw-model-row">
@@ -1503,14 +1179,7 @@ export default function SceneCodeWorkbench({
                   settings={settings}
                   stagePick={stagePick}
                   manifest={manifest}
-                  threadKey={{ project: projectName, surface: 'scene3d', shotId }}
-                  onRemoveAttachment={removeAttachment}
-                  onToggleBrief={toggleBrief}
-                  onClearAttachments={clearAttachments}
-                  onUploadImage={uploadChatImage}
-                  onPickMedia={() => void pickChatMedia()}
-                  picking={chatPicking}
-                  uploading={chatUploading}
+                  threadKey={{ project: projectName, surface: 'lexicon', shotId: entry.id }}
                   prepareAgent={prepareAgent}
                   onDraftCode={applyAgentDraft}
                   onVideoAccepted={acceptAgentVideo}
@@ -1554,13 +1223,11 @@ export default function SceneCodeWorkbench({
                   <button
                     className="btn"
                     onClick={async () => {
-                      if (!context || !catalog) return
                       try {
-                        const prepared = await ensurePrepared(context, catalog)
+                        const prepared = await ensurePrepared()
                         await runTrial(draftCode, prepared)
                         setLastValidatedCode(draftCode)
                         setLastValidatedHash(await codeHashOf(draftCode))
-                        setLastValidatedContextFp(contextFingerprint(context))
                         await startPreview(draftCode, prepared)
                         toast('代码试运行通过')
                       } catch (e) {
@@ -1578,6 +1245,28 @@ export default function SceneCodeWorkbench({
                 </div>
               </div>
             </div>
+            {!readOnly3d && (
+              <div
+                className="cw-side-pane cw-geom-pane"
+                hidden={sideTab !== 'geom'}
+                aria-hidden={sideTab !== 'geom'}
+                role="tabpanel"
+              >
+                <p className="cw-geom-lead">
+                  从参考片或面板内上传摄取几何；摘要可一键贴到对话，不会写入镜级参考板。
+                </p>
+                <VggtGeometryPanel
+                  projectName={projectName}
+                  projectAspect={projectAspect}
+                  effectiveSeconds={duration}
+                  sources={vggtSources}
+                  onCopyToChat={injectVggtToChat}
+                  onIngested={onVggtIngested}
+                  onToast={toast}
+                  geometryBusy={Boolean(renderBusy) || generating}
+                />
+              </div>
+            )}
           </aside>
         </div>
       </div>
@@ -1595,7 +1284,6 @@ export default function SceneCodeWorkbench({
           </div>
         </div>
       )}
-      {chatMediaPicker.node}
     </div>
   )
 }

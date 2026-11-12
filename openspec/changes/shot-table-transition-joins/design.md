@@ -1,5 +1,8 @@
 # Design
 
+> 宿主变更（2026-11-11）：`canvas-only-shots-workbench` 下线镜头表，接缝的展示与编辑面改为画布顺序边 + 转场面板；本文中的「镜头表接缝行」一律按画布接缝理解，数据契约不变。
+
+
 ## Context
 
 - 转场持久化已在源镜 `transition_out`（见 `shotSync`、`TransitionPanel`、`transitionGen`）。

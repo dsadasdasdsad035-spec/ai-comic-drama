@@ -7,6 +7,7 @@ import {
   type AppSettings,
   type DesignKind,
   type DesignSheet,
+  type ProjectAsset,
   type ProjectData,
   type Stage,
 } from './api'
@@ -28,6 +29,10 @@ import {
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
 import { builtinFailure, type BuiltinResult } from './agent/workbenchChat'
+import CameraLexiconBrowser from './CameraLexiconBrowser'
+import LexiconWhiteboxStudio from './LexiconWhiteboxStudio'
+import { getCameraLexiconCatalog } from './cameraLexicon'
+import { listLexiconWhitebox, type LexiconWhiteboxSheet } from './lexiconWhitebox'
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
 import WorkbenchBar from './WorkbenchBar'
@@ -53,6 +58,9 @@ type Props = {
   missing: Set<string>
   /** <img> 加载失败时补记缺失 */
   onImageMissing: (ref: string) => void
+  /** 镜头语言「自定义白模」工作台需要的项目画幅与未保存回调 */
+  projectAspect: string
+  onEditorDirtyChange?: (dirty: boolean) => void
 }
 
 const KIND_LABEL: Record<DesignKind, string> = { scene: '场景', prop: '道具' }
@@ -76,10 +84,15 @@ export default function AssetBoard({
   price,
   missing,
   onImageMissing,
+  projectAspect,
+  onEditorDirtyChange,
 }: Props) {
   const [project, setProject] = useState<ProjectData | null>(null)
   const [designs, setDesigns] = useState<DesignSheet[]>([])
   const [tab, setTab] = useState<DesignKind>('scene')
+  const [lexiconOpen, setLexiconOpen] = useState(false)
+  const [lexiconView, setLexiconView] = useState<'preset' | 'custom'>('preset')
+  const [whiteboxSheets, setWhiteboxSheets] = useState<LexiconWhiteboxSheet[]>([])
   const [loading, setLoading] = useState(false)
   const [stockOpen, setStockOpen] = useState(false)
   const [ready, setReady] = useState('')
@@ -124,6 +137,7 @@ export default function AssetBoard({
     setReady('')
     setProject(null)
     setDesigns([])
+    setWhiteboxSheets([])
     setErrors({})
     if (!projectName) {
       setLoading(false)
@@ -138,6 +152,7 @@ export default function AssetBoard({
         const ds = (p.designs ?? []) as DesignSheet[]
         setProject(p)
         setDesigns(ds)
+        setWhiteboxSheets(listLexiconWhitebox(p))
         savedSigRef.current = JSON.stringify(ds)
         setReady(projectName)
         setLoading(false)
@@ -551,12 +566,19 @@ export default function AssetBoard({
         scope={<span className="wb-bar-title">素材</span>}
         scopeDetail={
           <span className="board-hint">
-            {projectName
-              ? `E${String(epNo).padStart(2, '0')} · 场景 ${sceneCount} · 道具 ${propCount}`
-              : '先选择项目'}
+            {lexiconOpen
+              ? projectName
+                ? lexiconView === 'preset'
+                  ? `镜头语言 · ${getCameraLexiconCatalog().count} 段预置运镜（非场景/道具设定）`
+                  : `镜头语言 · 自定义白模 ${whiteboxSheets.length} 条`
+                : '镜头语言 · 先选择项目再导入'
+              : projectName
+                ? `E${String(epNo).padStart(2, '0')} · 场景 ${sceneCount} · 道具 ${propCount}`
+                : '先选择项目'}
           </span>
         }
         settings={
+          lexiconOpen ? null : (
           <>
             <StageModelSelect
               stage="asset"
@@ -576,8 +598,18 @@ export default function AssetBoard({
             />
             <span className="board-hint wb-bar-optional">默认 2 张候选</span>
           </>
+          )
         }
         actions={
+          lexiconOpen ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => setLexiconOpen(false)}
+            >
+              返回场景/道具
+            </button>
+          ) : (
           <>
             <button
               className="btn-ghost"
@@ -630,20 +662,80 @@ export default function AssetBoard({
               全部加入画布
             </button>
           </>
+          )
         }
       />
 
       <div className="asset-tabs">
-        <button className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>
+        <button
+          className={!lexiconOpen && tab === 'scene' ? 'on' : ''}
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('scene')
+          }}
+        >
           场景 <span>{sceneCount}</span>
         </button>
-        <button className={tab === 'prop' ? 'on' : ''} onClick={() => setTab('prop')}>
+        <button className={tab === 'prop' && !lexiconOpen ? 'on' : ''} onClick={() => { setLexiconOpen(false); setTab('prop') }}>
           道具 <span>{propCount}</span>
         </button>
-        <span className="asset-tabs-hint">{withImage} 张有图 · {designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布</span>
+        <button className={lexiconOpen ? 'on' : ''} onClick={() => setLexiconOpen(true)}>
+          镜头语言
+        </button>
+        <span className="asset-tabs-hint">
+          {lexiconOpen
+            ? lexiconView === 'preset'
+              ? '镜头语言：先预览再发布素材卡 · 白膜仅供运镜参照'
+              : '自定义白模：用 3D 工作台写代码并渲染 MP4，再发布为素材卡'
+            : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
+        </span>
       </div>
 
-      <div className="char-grid">
+      {lexiconOpen ? (
+        <>
+          <div className="lex-mode-tabs" role="tablist" aria-label="镜头语言来源">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={lexiconView === 'preset'}
+              className={lexiconView === 'preset' ? 'on' : ''}
+              onClick={() => setLexiconView('preset')}
+            >
+              预置库
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={lexiconView === 'custom'}
+              className={lexiconView === 'custom' ? 'on' : ''}
+              onClick={() => setLexiconView('custom')}
+            >
+              自定义白模 <span>{whiteboxSheets.length}</span>
+            </button>
+          </div>
+          {lexiconView === 'preset' ? (
+            <CameraLexiconBrowser
+              projectName={projectName}
+              onPublishAsset={onAddAssetCard}
+              toast={toast}
+            />
+          ) : (
+            <LexiconWhiteboxStudio
+              projectName={projectName}
+              projectAspect={projectAspect}
+              sheets={whiteboxSheets}
+              onSheetsChange={setWhiteboxSheets}
+              settings={settings}
+              stagePick={stagePick}
+              onPickStage={onPickStage}
+              onPublishAsset={onAddAssetCard}
+              onEditorDirtyChange={onEditorDirtyChange}
+              toast={toast}
+            />
+          )}
+        </>
+      ) : (
+      <div className="char-grid" data-asset-design-grid>
         {loading ? (
           <div className="char-empty-board">正在读取素材设定…</div>
         ) : !projectName ? (
@@ -685,6 +777,7 @@ export default function AssetBoard({
           ))
         )}
       </div>
+      )}
       {stockOpen && (
         <div className="mp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setStockOpen(false)}>
           <div className="mp-dialog stock-dialog" role="dialog" aria-modal="true" aria-label="在线素材库">

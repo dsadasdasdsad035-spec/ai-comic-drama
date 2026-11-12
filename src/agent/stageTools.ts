@@ -140,7 +140,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 
   const readShots = defineTool({
     name: 'read_shots',
-    description: '读取镜头表。只读；可用 episode / shotIds 过滤，limit 控制条数。',
+    description: '读取分镜（项目镜头数据）。只读；可用 episode / shotIds 过滤，limit 控制条数。',
     schema: z.object({
       episode: z.number().int().min(1).optional().describe('只读第 N 集'),
       shotIds: z.array(z.string()).max(100).optional().describe('只读这些 shot.id'),
@@ -157,6 +157,67 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       if (limit) list = list.slice(0, limit)
       const maxChars = shotIds?.length && shotIds.length <= 4 ? 200_000 : 8000
       return { ok: true, shots: boundJson(list, maxChars), total: all.length }
+    },
+  })
+
+  const listCameraLexicon = defineTool({
+    name: 'list_camera_lexicon',
+    description:
+      '只读：列出内置运镜/镜头语法白膜库。可按 category、move、size、章节关键词过滤；返回 key/cn/en/url/sectionTitle。',
+    schema: z.object({
+      category: z.enum(['camera-move', 'shot-grammar']).optional(),
+      move: z.string().optional().describe('运镜枚举，如 推、拉'),
+      size: z.string().optional().describe('景别枚举，如 中景、特写'),
+      q: z.string().optional(),
+      limit: z.number().int().min(1).max(80).optional(),
+    }),
+    run: async ({ category, move, size, q, limit }) => {
+      const { listCameraLexicon: list } = await import('../cameraLexicon')
+      const rows = list({ category, move, size, q, limit })
+      return {
+        ok: true,
+        entries: boundJson(
+          rows.map((e) => ({
+            key: e.key,
+            cn: e.cn,
+            en: e.en,
+            url: e.url,
+            sectionTitle: e.sectionTitle,
+            lexiconCategory: e.lexiconCategory,
+            mapsToMove: e.mapsToMove,
+            mapsToSize: e.mapsToSize,
+          })),
+        ),
+        total: rows.length,
+        attribution: 'hong hou zi',
+      }
+    },
+  })
+
+  const getCameraLexicon = defineTool({
+    name: 'get_camera_lexicon',
+    description: '只读：按 key 读取一条内置运镜/镜头语法条目。',
+    schema: z.object({
+      key: z.string().min(1),
+    }),
+    run: async ({ key }) => {
+      const { getCameraLexiconEntry } = await import('../cameraLexicon')
+      const e = getCameraLexiconEntry(String(key).trim())
+      if (!e) return { ok: false, error: `未知 key：${key}` }
+      return {
+        ok: true,
+        entry: boundJson({
+          key: e.key,
+          cn: e.cn,
+          en: e.en,
+          url: e.url,
+          sectionTitle: e.sectionTitle,
+          lexiconCategory: e.lexiconCategory,
+          grammarGroup: e.grammarGroup,
+          mapsToMove: e.mapsToMove,
+          mapsToSize: e.mapsToSize,
+        }),
+      }
     },
   })
 
@@ -232,6 +293,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     [readDesigns.name, readDesigns],
     [readShots.name, readShots],
     [readTransitionRecipes.name, readTransitionRecipes],
+    [listCameraLexicon.name, listCameraLexicon],
+    [getCameraLexicon.name, getCameraLexicon],
     [readEpisode.name, readEpisode],
   ])
 

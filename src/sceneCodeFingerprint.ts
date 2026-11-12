@@ -1,5 +1,5 @@
 import type { SceneCodeAssetRef, SceneCodeMeta } from './types'
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 
 export type SceneCodeFingerprintInput = {
   codeHash: string

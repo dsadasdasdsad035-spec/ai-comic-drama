@@ -294,6 +294,19 @@ export function collectVideoReferences(input: {
   const missing: MissingShotReference[] = []
   const seen = new Set<string>()
 
+  if (data.motionLexiconAsRef && data.lexiconRefUrl) {
+    const url = String(data.lexiconRefUrl).trim()
+    if (url && !missingMedia.has(url) && !seen.has(url)) {
+      seen.add(url)
+      refs.push({
+        token: 'lexicon-motion-ref',
+        url,
+        label: '运镜参照（内置库）',
+        title: data.lexiconRefKey || '运镜库',
+      })
+    }
+  }
+
   for (const rid of refIds) {
     if (!rid.startsWith('asset-')) continue
     const asset = input.nodes.find((n) => n.id === rid)

@@ -24,7 +24,7 @@ export const INTAKE_CONTRACT: Record<IntakeTarget, string> = {
 }
 
 export const INTAKE_LABEL: Record<IntakeTarget, string> = {
-  shots: '镜头表',
+  shots: '分镜',
   prompts: '提示词',
 }
 

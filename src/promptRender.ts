@@ -1,11 +1,11 @@
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import { parseDialogue } from './prompts'
-import type { ShotScheduleState } from './scheduleStatus'
 import type { ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
 import { transitionDialogueText, transitionRecipePromptBlock, type TransitionInputMode } from './transitionGen'
 import { getTransitionRecipe } from './transitionRecipes'
-import { shortHash } from './scheduleGeometry'
+import { resolveShotLexiconRef } from './cameraLexicon'
+import { shortHash } from './hash'
 import {
   buildShotVideoRequest,
   type ShotVideoRequest,
@@ -196,7 +196,6 @@ export function buildShotPromptRenderBundle(input: {
   nodes: ShotNodeType[]
   characters: CharacterSheet[]
   missingMedia?: Set<string>
-  schedule: ShotScheduleState
   model?: VideoModelInput | null
   resolution?: string
   style: string
@@ -232,7 +231,10 @@ export function buildShotPromptRenderBundle(input: {
       keyframePrompt: d.prompt,
       videoPromptBrief: d.videoPrompt || '',
       size: d.size,
-      move: d.move,
+      move: (() => {
+        const ref = resolveShotLexiconRef(d)
+        return ref?.en ? `${d.move} (${ref.en})` : d.move
+      })(),
       cameraHint: vb?.cameraHint ? JSON.stringify(vb.cameraHint) : '',
       performance: d.performance,
       dialogue: d.dialogue,

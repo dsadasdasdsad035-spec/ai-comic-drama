@@ -1,4 +1,4 @@
-import { shortHash } from './scheduleGeometry'
+import { shortHash } from './hash'
 import type {
   DialogueDelivery,
   PerformanceEmotion,
