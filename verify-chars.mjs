@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core'
+import { openProject } from './verify-lib.mjs'
 
 const URL = 'http://127.0.0.1:5273/'
 const OUT = '/tmp/sb-shots'
@@ -13,7 +14,8 @@ const logs = []
 page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`))
 page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`))
 
-await page.goto(URL, { waitUntil: 'networkidle' })
+// 大厅是唯一入口：先落大厅，再按 hash 进项目画布
+const PROJECT = await openProject(page, undefined, 'board', { base: URL, waitUntil: 'networkidle' })
 await page.waitForTimeout(1200)
 
 // 1. board view
@@ -57,12 +59,11 @@ const ta = page.locator('.inspector textarea').first()
 console.log('prompt:', (await ta.inputValue().catch(() => '(none)')).slice(0, 60))
 
 // 6. persistence check
-const saved = await page.evaluate(() => {
-  const project = document.querySelector('.topbar-project select')?.value || ''
+const saved = await page.evaluate((project) => {
   const raw = localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`)
   const p = JSON.parse(raw || '{}')
   return { project, hasNodes: Array.isArray(p.nodes), nodeCount: p.nodes?.length }
-})
+}, PROJECT)
 console.log('saved:', JSON.stringify(saved))
 
 await page.reload({ waitUntil: 'networkidle' })

@@ -33,8 +33,24 @@ import ThemeToggle from './ThemeToggle'
 import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
 import EpPicker from './EpisodeBar'
-import ProjectSelect from './ProjectSelect'
 import ProjectMenu from './project/ProjectMenu'
+import AppShell from './shell/AppShell'
+import ProjectHub from './shell/ProjectHub'
+import OverviewPage from './shell/OverviewPage'
+import { EPISODE_VIEWS, type ViewId } from './shell/nav'
+import {
+  ROUTE_EVENT,
+  clearLastView,
+  hubHash,
+  navigate,
+  parseHash,
+  projectHash,
+  readLastView,
+  replaceWithHub,
+  writeLastView,
+  type Route,
+} from './shell/route'
+import { useRailCollapsed } from './shell/useRail'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
@@ -317,15 +333,17 @@ function Shell() {
     repairTransitionEdges(saved?.nodes ?? initialNodes, saved?.edges ?? initialEdges),
   )
   const [characters, setCharacters] = useState<CharacterSheet[]>(saved?.characters ?? defaultCharacters)
-  const [view, setView] = useState<
-    | 'board'
-    | 'chars'
-    | 'assets'
-    | 'settings'
-    | 'creative'
-  >('board')
-  const [projectName, setProjectName] = useState('')
+  /** 两级路由：#/ 是项目大厅，#/p/<项目>/<视图> 是工作区；视图完全由 route 派生 */
+  const [route, setRoute] = useState<Route>(() => parseHash(
+    typeof window === 'undefined' ? '#/' : window.location.hash,
+  ))
+  const view: ViewId = route.kind === 'project' ? route.view : 'overview'
+  /** 项目名是路由的派生值：大厅没有当前项目，因此不会去拉项目详情 */
+  const projectName = route.kind === 'project' ? route.project : ''
+  const { collapsed: railCollapsed, toggle: toggleRail } = useRailCollapsed(view)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
+  /** 是否已经成功拉过一次项目列表：大厅用它区分「加载中」与「一个项目都没有」 */
+  const [projectsLoaded, setProjectsLoaded] = useState(false)
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
   const [readyProject, setReadyProject] = useState('')
   /** 素材页「镜头语言」白模工作台有未保存代码 */
@@ -415,24 +433,48 @@ function Shell() {
     voicesRef.current = voices
   }, [voices])
 
-  // 项目选择必须在 App 层引导：否则先进入工作台标签时 projectName 还是空，
-  // 工作台加载不到数据、按钮全灰（实测踩到过）
+  /**
+   * 项目列表只在大厅首屏与生命周期操作后拉取；打开项目时不再重复拉列表。
+   * loaded 标记让大厅区分「加载中」与「真的一个项目都没有」。
+   */
   const reloadProjects = useCallback(async () => {
     try {
       const { projects: ps } = await listProjects()
       setProjects(ps)
+      setProjectsLoaded(true)
       return ps
     } catch {
       setProjects([])
+      setProjectsLoaded(true)
       return [] as ProjectSummary[]
     }
   }, [])
 
   useEffect(() => {
-    reloadProjects().then((ps) => {
-      setProjectName((cur) => cur || ps[0]?.name || '')
-    })
+    void reloadProjects()
   }, [reloadProjects])
+
+  // hash 是唯一路由来源：冷启动、刷新、返回/前进、手输链接都走同一条解析。
+  useEffect(() => {
+    const sync = () => setRoute(parseHash(window.location.hash))
+    const initial = window.location.hash
+    // 地址栏规范：空 hash / 单独的 # 视为大厅，补成 #/；未知视图保留原 hash（回落概览）
+    if (!initial || initial === '#' || !initial.startsWith('#/')) {
+      window.history.replaceState(null, '', hubHash())
+    }
+    sync()
+    window.addEventListener('hashchange', sync)
+    window.addEventListener(ROUTE_EVENT, sync)
+    return () => {
+      window.removeEventListener('hashchange', sync)
+      window.removeEventListener(ROUTE_EVENT, sync)
+    }
+  }, [])
+
+  // 上次视图按项目记：刷新、从大厅重开都回到离开时的视图
+  useEffect(() => {
+    if (route.kind === 'project') writeLastView(route.project, route.view)
+  }, [route])
 
   /** 切项目：剧本有未保存分集时先确认；切换期间禁止写回旧数据 */
   const changeProject = useCallback(
@@ -446,15 +488,21 @@ function Shell() {
       }
       setAssetsEditorDirty(false)
       setReadyProject('')
-      setProjectName(next)
+      navigate(projectHash(next, readLastView(next)))
     },
     [projectName, assetsEditorDirty],
   )
 
+  /** 打开项目：有上次视图就恢复，没有落概览 */
+  const openProject = useCallback((name: string, target?: ViewId) => {
+    navigate(projectHash(name, target ?? readLastView(name)))
+  }, [])
+
   /**
    * 项目删除后的上下文回退。顺序不能改：
    * 先把 readyProject 脱钩，画布防抖才不会再往被删项目写一次；
-   * 再清浏览器画布状态，最后才重载列表并决定新的当前项目。
+   * 再清浏览器画布状态与上次视图，最后才重载列表。
+   * 删除的是当前项目时用 replace 回大厅，避免返回键再跳进已删项目。
    */
   const applyProjectDeletion = useCallback(
     async (names: string[]) => {
@@ -467,8 +515,9 @@ function Shell() {
         } catch {
           /* 存储不可用时忽略 */
         }
+        clearLastView(name)
       }
-      const ps = await reloadProjects()
+      await reloadProjects()
       if (gone.has(projectName)) {
         setAssetsEditorDirty(false)
         setEpNo(1)
@@ -481,7 +530,7 @@ function Shell() {
         setSelId(null)
         setSelEdgeId(null)
         setMissingMedia(new Set())
-        setProjectName(ps[0]?.name || '')
+        replaceWithHub()
       }
       setEpVersion((v) => v + 1)
       setToast(names.length === 1 ? `已删除项目 ${names[0]}` : `已删除 ${names.length} 个项目`)
@@ -490,15 +539,12 @@ function Shell() {
     [projectName, reloadProjects],
   )
 
-  /**
-   * 新建项目：全局带入口用。刷新列表后挂到新项目上，
-   * 不能只 setProjectName——顶栏下拉的数据源是 projects。
-   */
+  /** 新建项目：刷新列表后直接进新项目概览，而不是像旧版那样切「当前项目」 */
   const applyProjectCreated = useCallback(
     async (name: string) => {
       await reloadProjects()
       setReadyProject('')
-      setProjectName(name)
+      navigate(projectHash(name, 'overview'))
       setToast(`已新建项目 ${name}`)
       window.setTimeout(() => setToast(''), 2800)
     },
@@ -506,7 +552,7 @@ function Shell() {
   )
 
   const changeView = useCallback(
-    (next: typeof view, opts?: { settingsSection?: SettingsInitialSection }) => {
+    (next: ViewId, opts?: { settingsSection?: SettingsInitialSection }) => {
       if (next === view && !opts?.settingsSection) return
       if (
         view === 'assets' &&
@@ -521,9 +567,10 @@ function Shell() {
       } else {
         setSettingsInitialSection(undefined)
       }
-      setView(next)
+      if (route.kind !== 'project') return
+      navigate(projectHash(route.project, next))
     },
-    [view, assetsEditorDirty],
+    [view, assetsEditorDirty, route],
   )
 
   /**
@@ -784,6 +831,11 @@ function Shell() {
         setProjectShots([])
         setEpisodes([])
         setMissingMedia(new Set())
+        // 深链指向不存在的项目：回大厅并把地址规范成 #/，别停在半截工作区
+        if (String((e as Error)?.message || '').includes('项目不存在')) {
+          replaceWithHub()
+          return
+        }
         setToast(`加载项目失败：${(e as Error).message}`)
         window.setTimeout(() => setToast(''), 3200)
       }
@@ -3791,93 +3843,86 @@ function Shell() {
 
   const promptRefineAdapter = shotRefineAdapter ?? transitionRefineAdapter
 
+  /** 概览页要项目摘要：列表还没回来时用占位，避免整页空白 */
+  const currentSummary: ProjectSummary = useMemo(
+    () =>
+      projects.find((p) => p.name === projectName) ??
+      ({
+        name: projectName,
+        title: projectName,
+        aspect: projectAspect,
+        style: projectStyle,
+      } as ProjectSummary),
+    [projects, projectName, projectAspect, projectStyle],
+  )
+
   return (
     <CanvasCtx.Provider value={api}>
-      <div className="app">
-        <header className="topbar">
-          <div className="brand">
-            <span className="brand-dot" />
-            <b>分镜画布</b>
-            <span className="brand-sub">React Flow × Konva</span>
-          </div>
-
-          {/* 创意会话不绑定项目：选择器在该视图隐藏，但保留占位几何，
-              否则导航会在进出创意时整体左移。slot-hidden 用 visibility + inert 语义
-              让它不可见、不可聚焦、不被朗读，同时宽度照旧。 */}
-          <div
-            className={`topbar-project-slot ${view === 'creative' ? 'slot-hidden' : ''}`}
-            aria-hidden={view === 'creative'}
-            {...(view === 'creative' ? { inert: '' as unknown as boolean } : {})}
-          >
-            <ProjectSelect projects={projects} value={projectName} onChange={changeProject} />
-            <ProjectMenu
-              currentProjectName={projectName}
-              onCreated={applyProjectCreated}
-              onDeleted={applyProjectDeletion}
-            />
-            <EpPicker
-              projectName={projectName}
-              epNo={epNo}
-              setEpNo={setEpNo}
-              version={epVersion}
-            />
-          </div>
-
-          <div className="viewtabs" role="navigation" aria-label="工作台视图">
-            <button
-              className={view === 'creative' ? 'on' : ''}
-              aria-current={view === 'creative' ? 'page' : undefined}
-              onClick={() => changeView('creative')}
-              title="创意工作室：不绑定项目，聊天即主界面"
-            >
-              创意
+      {route.kind === 'hub' ? (
+        <div className="app">
+          <ProjectHub
+            projects={projects}
+            loaded={projectsLoaded}
+            onOpen={openProject}
+            onCreate={applyProjectCreated}
+            onDeleted={applyProjectDeletion}
+            themeToggle={<ThemeToggle />}
+          />
+        </div>
+      ) : (
+      <AppShell
+        view={view}
+        projectTitle={currentSummary.title || projectName}
+        onNavigate={changeView}
+        onReturnHub={replaceWithHub}
+        projectSlot={
+          <ProjectMenu
+            currentProjectName={projectName}
+            projects={projects}
+            variant="rail"
+            onOpenProject={changeProject}
+            onReturnHub={replaceWithHub}
+            onCreated={applyProjectCreated}
+            onDeleted={applyProjectDeletion}
+          />
+        }
+        episodeSlot={
+          EPISODE_VIEWS.includes(view) ? (
+            <EpPicker projectName={projectName} epNo={epNo} setEpNo={setEpNo} version={epVersion} />
+          ) : null
+        }
+        globalTools={
+          <>
+            {hasKey === false && (
+              <span className="warn-chip" title="未在 ~/.canghe-skills/.env 找到 ARK_API_KEY">
+                未配置密钥
+              </span>
+            )}
+            <TaskCenter />
+            <button className="btn" onClick={exportJson}>
+              导出 JSON
             </button>
-            <button
-              className={view === 'chars' ? 'on' : ''}
-              aria-current={view === 'chars' ? 'page' : undefined}
-              onClick={() => changeView('chars')}
-            >
-              角色
-            </button>
-            <button
-              className={view === 'assets' ? 'on' : ''}
-              aria-current={view === 'assets' ? 'page' : undefined}
-              onClick={() => changeView('assets')}
-            >
-              素材
-            </button>
-            <button
-              className={view === 'board' ? 'on' : ''}
-              aria-current={view === 'board' ? 'page' : undefined}
-              onClick={() => changeView('board')}
-            >
-              画布
-            </button>
-            <button
-              className={view === 'settings' ? 'on' : ''}
-              aria-current={view === 'settings' ? 'page' : undefined}
-              onClick={() => changeView('settings')}
-              title="大模型 / 技能 / 存储"
-            >
-              设置
-            </button>
-          </div>
-
-          <div className="spacer" />
-
-          {hasKey === false && (
-            <span className="warn-chip" title="未在 ~/.canghe-skills/.env 找到 ARK_API_KEY">
-              未配置密钥
-            </span>
-          )}
-          <ThemeToggle />
-          <TaskCenter />
-          <button className="btn" onClick={exportJson}>
-            导出 JSON
-          </button>
-        </header>
-
-        {view === 'creative' ? (
+          </>
+        }
+        railFooter={<ThemeToggle />}
+        counts={{ characters: characters.length, assets: assets.length }}
+        collapsed={railCollapsed}
+        onToggleCollapsed={toggleRail}
+      >
+        {view === 'overview' ? (
+          <OverviewPage
+            project={currentSummary}
+            shots={projectShots}
+            episodes={episodes}
+            charactersCount={characters.length}
+            onNavigate={changeView}
+            onIntake={() => setIntakeOpen(true)}
+            onOpenEpisode={(no) => {
+              setEpNo(no)
+              changeView('board')
+            }}
+          />
+        ) : view === 'creative' ? (
           <CreativeStudio
             settings={appSettings}
             stagePick={stagePick}
@@ -4432,6 +4477,8 @@ function Shell() {
           </WorkbenchChatAside>
         </div>
         )}
+      </AppShell>
+      )}
 
         {intakeOpen ? (
           <IntakeDialog
@@ -4486,7 +4533,6 @@ function Shell() {
         ) : null}
 
         {toast && <div className="toast">{toast}</div>}
-      </div>
     </CanvasCtx.Provider>
   )
 }

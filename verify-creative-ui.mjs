@@ -112,43 +112,28 @@ try {
     })
   })
 
-  await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
+  // 大厅是唯一入口：直接按 hash 打开种子项目的创意视图
+  await page.goto(`${APP}/#/p/${encodeURIComponent(NAME)}/creative`, { waitUntil: 'domcontentloaded' })
+  await page.locator('.rail').waitFor({ timeout: 15000 })
+  await page.locator('[data-creative-studio]').waitFor({ timeout: 15000 })
 
-  // 1) 导航：创意是本变更新增的第八个视图；其它变更可能继续加视图，
-  //    所以只断言「至少八个且含创意」，不锁死总数。
-  const navNames = await page.locator('.viewtabs button').allInnerTexts()
-  check('导航至少八个视图', navNames.length >= 8, navNames.join('/'))
-  check('导航含创意视图', navNames.includes('创意'), navNames.join('/'))
+  // 1) 导航全部落在左栏：只断言含创意，不锁死条目总数（分组会继续调整）
+  const navNames = await page.locator('.rail-nav button').allInnerTexts()
+  check('导航不少于六个视图', navNames.length >= 6, navNames.join('/'))
+  check('导航含创意视图', navNames.some((t) => t.includes('创意')), navNames.join('/'))
 
   // 2) 进入创意视图
   await page.getByRole('button', { name: '创意', exact: true }).click()
   await page.locator('[data-creative-studio]').waitFor({ timeout: 15000 })
   check('创意视图已打开', true)
-  // 选择器保留占位几何以稳住导航位置，但必须不可见、不可点、不进可访问树
-  const slotState = await page.evaluate(() => {
-    const slot = document.querySelector('.topbar-project-slot')
-    if (!slot) return { present: false }
-    const cs = getComputedStyle(slot)
-    return {
-      present: true,
-      visibility: cs.visibility,
-      pointerEvents: cs.pointerEvents,
-      ariaHidden: slot.getAttribute('aria-hidden'),
-      hasInert: slot.hasAttribute('inert'),
-      width: Math.round(slot.getBoundingClientRect().width),
-    }
-  })
+  // 创意已绑定项目：项目名与视图名同时出现在面包屑里，取代原先隐藏的顶部项目选择器
+  const crumbText = (await page.locator('.crumbs').innerText()).replace(/\s+/g, ' ')
   check(
-    '创意视图隐藏项目与集选择器',
-    slotState.present &&
-      slotState.visibility === 'hidden' &&
-      slotState.pointerEvents === 'none' &&
-      slotState.ariaHidden === 'true' &&
-      slotState.hasInert,
-    JSON.stringify(slotState),
+    '面包屑显示项目与创意',
+    crumbText.includes('种子项目') && crumbText.includes('创意'),
+    crumbText,
   )
-  const navXCreative = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  const navXCreative = await page.locator('.rail-nav').evaluate((el) => Math.round(el.getBoundingClientRect().x))
   check('创意导航标记为当前', (await page.getByRole('button', { name: '创意', exact: true }).getAttribute('aria-current')) === 'page')
 
   // 3) 会话列表与自动创建
@@ -195,20 +180,19 @@ try {
   const title = await page.locator('[data-creative-session][data-active="true"]').innerText()
   check('首条消息后自动起标题', title.includes('给我三个') || title.includes('三个'), title.slice(0, 60))
 
-  // 8) 切换项目不影响创意会话
+  // 8) 离开再回到本项目：会话与消息仍在（会话按项目持久化，跨项目隔离另有脚本覆盖）
   const beforeSwitch = await page.locator('[data-chat-message]').count()
   await page.evaluate(() => {
-    // 创意视图没有项目选择器：直接调用全局状态无法做到，所以先切回项目视图再切项目
-    const nav = [...document.querySelectorAll('.viewtabs button')].find((b) => b.textContent.includes('剧本'))
-    nav?.click()
+    window.location.hash = '#/'
   })
-  await page.locator('.topbar-project select').waitFor({ timeout: 10000 })
-  await page.locator('.topbar-project select').selectOption(NAME)
-  await page.getByRole('button', { name: '创意', exact: true }).click()
+  await page.locator('.hub').waitFor({ timeout: 15000 })
+  await page.evaluate((name) => {
+    window.location.hash = `#/p/${encodeURIComponent(name)}/creative`
+  }, NAME)
   await page.locator('[data-creative-studio]').waitFor({ timeout: 15000 })
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(900)
   const afterSwitch = await page.locator('[data-chat-message]').count()
-  check('切换项目后创意会话仍保留', afterSwitch === beforeSwitch, `${beforeSwitch} → ${afterSwitch}`)
+  check('离开再回来创意会话仍保留', afterSwitch === beforeSwitch, `${beforeSwitch} → ${afterSwitch}`)
 
   // 9) 窄屏：会话列表收起，对话仍在主位
   await page.setViewportSize({ width: 820, height: 900 })
@@ -229,13 +213,13 @@ try {
   check('默认不弹晋升确认', hasPromote === 0)
 
   // 11) 导航位置稳定：进出创意不位移
-  const navNow = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
-  await page.getByRole('button', { name: '镜头表', exact: true }).click()
+  const navNow = await page.locator('.rail-nav').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.waitForTimeout(900)
-  const navProject = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  const navProject = await page.locator('.rail-nav').evaluate((el) => Math.round(el.getBoundingClientRect().x))
   await page.getByRole('button', { name: '创意', exact: true }).click()
   await page.waitForTimeout(900)
-  const navBack = await page.locator('.viewtabs').evaluate((el) => Math.round(el.getBoundingClientRect().x))
+  const navBack = await page.locator('.rail-nav').evaluate((el) => Math.round(el.getBoundingClientRect().x))
   check(
     '进出创意导航不位移',
     Math.abs(navProject - navBack) <= 2,

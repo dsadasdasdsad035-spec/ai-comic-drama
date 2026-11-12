@@ -161,7 +161,24 @@ const chipTexts = () => page.locator('.edge-chip').allTextContents()
 const timelineText = () => page.locator('.ntl-sum').innerText()
 const shot = (n) => page.screenshot({ path: path.join(shotsDir, n) })
 
-await page.goto(APP_URL, { waitUntil: 'networkidle' })
+await page.goto(`${APP_URL.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
+// 大厅是唯一入口：按 hash 打开被 mock 的项目（项目列表在页面里读，mock 才生效）
+const trName = await page.evaluate(async () => {
+  try {
+    const r = await fetch('/api/project')
+    const d = await r.json()
+    return (d.projects || [])[0]?.name || ''
+  } catch {
+    return ''
+  }
+})
+if (trName) {
+  await page.evaluate((n) => {
+    window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+  }, trName)
+}
+await page.locator('.rail').waitFor({ timeout: 20000 })
+await page.waitForLoadState('networkidle').catch(() => {})
 await page.waitForTimeout(1800)
 
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)

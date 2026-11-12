@@ -615,7 +615,12 @@ export type ProjectSummary = {
   seconds: number
   /** 最后写入时间；用于项目管理列表排序与展示 */
   updated_at?: string
+  /** 第一张非空首帧（大厅卡片封面） */
+  cover?: string
+  /** 服务端判定的损坏项目：入口禁用 */
   broken?: boolean
+  /** 缺首帧 / 缺锚点 / 空项目；服务端健康计算失败时不返回 */
+  health?: { empty: boolean; missing_keyframe: number; missing_anchor: number }
 }
 
 export type ProjectShot = {

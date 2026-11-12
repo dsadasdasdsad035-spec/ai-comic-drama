@@ -1,6 +1,7 @@
 import type { ProjectShot } from './api'
 import type { CharacterSheet } from './characters'
 import { parseDialogue } from './prompts'
+import { auditKeyframePromptCore } from './promptAuditCore.mjs'
 
 export type PromptAudit = {
   cast: string[]
@@ -12,62 +13,17 @@ export type PromptAudit = {
   empty: boolean
 }
 
-function auditByCast(s: ProjectShot, chars: CharacterSheet[], declared: string[]): PromptAudit {
-  const kf = s.keyframe_prompt || ''
-  const missing: string[] = []
-  const unknown: string[] = []
-  for (const name of declared) {
-    const c = chars.find((x) => x.name === name)
-    if (!c) {
-      unknown.push(name)
-      continue
-    }
-    if (c.lookEn && !kf.includes(c.lookEn)) missing.push(name)
-  }
-  return { cast: [...declared], missing, maybe: [], unknown, empty: !kf.trim() }
-}
-
-function auditByHeuristic(s: ProjectShot, chars: CharacterSheet[]): PromptAudit {
-  const dlg = Array.isArray(s.dialogue) ? s.dialogue : []
-  const spoken = new Set<string>()
-  for (const d of dlg) if (d?.speaker) spoken.add(d.speaker)
-  const desc = s.desc || ''
-  const mentioned = new Set<string>()
-  for (const c of chars) if (c.name && desc.includes(c.name)) mentioned.add(c.name)
-
-  const kf = s.keyframe_prompt || ''
-  const missing: string[] = []
-  const maybe: string[] = []
-  const unknown: string[] = []
-
-  const judge = (name: string, hard: boolean) => {
-    const c = chars.find((x) => x.name === name)
-    if (!c) {
-      if (hard) unknown.push(name)
-      return
-    }
-    if (!c.lookEn) return
-    if (kf.includes(c.lookEn)) return
-    ;(hard ? missing : maybe).push(name)
-  }
-
-  for (const n of spoken) judge(n, true)
-  for (const n of mentioned) if (!spoken.has(n)) judge(n, false)
-
-  return {
-    cast: [...new Set([...spoken, ...mentioned])],
-    missing,
-    maybe,
-    unknown,
-    empty: !kf.trim(),
-  }
-}
-
-/** 首帧提示词锚点审计：cast 权威时以 cast 为准，否则台词+描述启发式 */
+/**
+ * 首帧提示词锚点审计：cast 权威时以 cast 为准，否则台词+描述启发式。
+ *
+ * 判定逻辑已抽到 `promptAuditCore.mjs`（服务端大厅健康统计复用同一份），
+ * 这里只做「浏览器角色卡 → 核心入参」的字段映射，避免两边口径漂移。
+ */
 export function auditKeyframePrompt(s: ProjectShot, chars: CharacterSheet[]): PromptAudit {
-  const declared = Array.isArray(s.cast) && s.cast.length > 0 ? s.cast : null
-  if (declared) return auditByCast(s, chars, declared)
-  return auditByHeuristic(s, chars)
+  return auditKeyframePromptCore(
+    s,
+    chars.map((c) => ({ name: c.name, lookEn: c.lookEn })),
+  )
 }
 
 export function promptCastLabel(s: ProjectShot): string {

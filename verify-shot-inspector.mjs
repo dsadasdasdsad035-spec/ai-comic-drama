@@ -151,7 +151,24 @@ const selectShot = async (no) => {
   await p.waitForTimeout(350)
 }
 
-await p.goto(BASE, { waitUntil: 'networkidle' })
+await p.goto(`${BASE.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
+// 大厅是唯一入口：按 hash 打开被 mock 的项目（openProject 在页面内读列表，能拿到 mock 数据）
+const siName = await p.evaluate(async () => {
+  try {
+    const r = await fetch('/api/project')
+    const d = await r.json()
+    return (d.projects || [])[0]?.name || ''
+  } catch {
+    return ''
+  }
+})
+if (siName) {
+  await p.evaluate((n) => {
+    window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+  }, siName)
+}
+await p.locator('.rail').waitFor({ timeout: 20000 })
+await p.waitForLoadState('networkidle').catch(() => {})
 await p.waitForTimeout(1800)
 
 const layout = await p.evaluate(async () => {

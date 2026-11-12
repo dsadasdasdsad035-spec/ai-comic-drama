@@ -56,6 +56,20 @@ dim 底色用对应 `rgba(x, 0.12)`。
 - 时长三档：`--dur-fast/base/slow = 150/200/300ms`，缓动 `--ease`
 - 键盘焦点：`--focus-ring: 0 0 0 2px rgba(56,189,248,.55)`
 
+### 外壳尺寸（左栏 / 头部）
+| Token | 值 | 用途 |
+|---|---|---|
+| `--rail-w` | `240px` | 左栏展开宽度；`.rail` 的 `width` 与 `flex-basis` 同源 |
+| `--rail-w-collapsed` | `64px` | 左栏折叠宽度（只剩图标，标签 `display:none` 退出布局） |
+| `--header-h` | `52px` | `.topbar` / `.hub-top` 高度；切主题不许改变这个矩形 |
+
+宽度切换只在外层 `.app` 上算一次：`data-rail='collapsed'` 写 `--rail-current`，
+`.rail` 只读 `--rail-current`，过渡统一用 `--dur-base` + `--ease`。
+
+左栏激活态（当前视图）：背景 `--accent-dim`、文字 `--accent`、
+左侧 2px 强调边条（`::before`），并同时设置 `aria-current="page"`——
+颜色与可访问性双通道，不许只靠颜色区分。
+
 ## ⚠️ 历史事故（不许再犯）
 
 2026-10-21 审查发现：9 个 token 曾被写成自引用（`--muted: var(--muted);`），

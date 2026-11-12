@@ -25,8 +25,7 @@ const check = (name, cond, extra = '') => {
 
 const dbm = await import('./server/db.mjs')
 const lifecycle = await import('./server/project-lifecycle.mjs')
-const { createDeliverable, deleteDeliverable } = await import('./server/deliverables.mjs')
-const { createJob } = await import('./server/publish-jobs.mjs')
+// 发布台与成片模块已下线：生命周期脚本只覆盖仍存在的项目域表。
 
 // ---------------------------------------------------------------- 种子数据
 
@@ -74,54 +73,6 @@ function seedProject(name, { shots = 2 } = {}) {
   ])
 }
 
-function seedPublish(name, { state = 'draft' } = {}) {
-  const rec = createDeliverable(TMP, {
-    project: name,
-    episode: 1,
-    title: `${name} 成片`,
-    url: '/exports/placeholder.mp4',
-    source: 'export',
-  })
-  const { job } = createJob(TMP, {
-    deliverableId: rec.id,
-    project: name,
-    episode: 1,
-    platform: 'douyin',
-    accountId: 'acc-test',
-    mode: 'draft',
-  })
-  return { deliverable: rec, job }
-}
-
-function seedIntent(name, deliverableId) {
-  const db = dbm.openDatabase(TMP)
-  try {
-    db.prepare(
-      `INSERT INTO publish_intents
-       (id,deliverable_id,project,episode,source,config_hash,config,targets,preflight,state,job_ids,reason,created_at,expires_at,confirmed_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).run(
-      `intent-${name}`,
-      deliverableId,
-      name,
-      1,
-      'manual',
-      'hash-test',
-      '{}',
-      '[]',
-      '{}',
-      'staged',
-      '[]',
-      '',
-      new Date().toISOString(),
-      new Date(Date.now() + 3600_000).toISOString(),
-      '',
-    )
-  } finally {
-    db.close()
-  }
-}
-
 function rowsOf(name) {
   const db = dbm.openDatabase(TMP)
   try {
@@ -146,8 +97,7 @@ function rowsOf(name) {
 
 const PROJECT_TABLES = [
   'shots', 'characters', 'assets', 'designs', 'scenes', 'episodes',
-  'scene_layouts', 'stock_imports', 'chat_threads', 'publish_events',
-  'publish_jobs', 'publish_intents', 'deliverables',
+  'scene_layouts', 'stock_imports', 'chat_threads',
 ]
 
 function writeMedia(name) {
@@ -167,22 +117,14 @@ function cleanupDrafts(name) {
 console.log('\n== 1. 服务端删除能力 ==')
 
 check(
-  'PROJECT_CASCADE 覆盖 12 张项目域表 + publish_events',
-  lifecycle.PROJECT_CASCADE.length === 13 &&
+  'PROJECT_CASCADE 覆盖全部项目域表',
+  lifecycle.PROJECT_CASCADE.length >= PROJECT_TABLES.length &&
     PROJECT_TABLES.every((t) => lifecycle.PROJECT_CASCADE.some((e) => e.table === t)),
   `entries=${lifecycle.PROJECT_CASCADE.length}`,
 )
 
 seedProject('demo', { shots: 3 })
 writeMedia('demo')
-const { deliverable } = seedPublish('demo')
-seedIntent('demo', deliverable.id)
-// 发布任务默认 queued 属于活动状态，先取消，才能测正常删除
-{
-  const db = dbm.openDatabase(TMP)
-  db.prepare("UPDATE publish_jobs SET state='cancelled' WHERE project='demo'").run()
-  db.close()
-}
 seedProject('keep', { shots: 2 })
 writeMedia('keep')
 
@@ -254,7 +196,7 @@ check(
   PROJECT_TABLES.every((t) => Array.isArray(snap?.tables?.[t])),
 )
 check('快照保留镜头行', snap?.tables?.shots?.length === 3, `shots=${snap?.tables?.shots?.length}`)
-check('快照保留聊天与发布记录', snap?.tables?.chat_threads?.length === 1 && snap?.tables?.publish_jobs?.length === 1)
+check('快照保留聊天记录', snap?.tables?.chat_threads?.length === 1)
 
 check('项目目录已删除', !fs.existsSync(path.join(TMP, 'demo')))
 check('3D 草稿目录已删除', !fs.existsSync(path.join(ROOT, '.scene-drafts', 'demo')))
@@ -264,29 +206,13 @@ dbm.createProject(TMP, 'demo', { title: '重建' })
 const rebuilt = dbm.readProject(TMP, 'demo')
 check('同名重建为空项目', (rebuilt.shots ?? []).length === 0 && (rebuilt.characters ?? []).length === 0)
 check('同名重建无旧聊天', dbm.getChatThread({ project: 'demo', surface: 'script', episode: 0, shotId: '' }) === undefined)
-check('同名重建无旧成片', (await import('./server/deliverables.mjs')).listDeliverables(TMP, { project: 'demo' }).length === 0)
 
-// 活动任务拦截
-seedProject('busy', { shots: 1 })
-const busy = seedPublish('busy', { state: 'queued' })
-const busyBefore = rowsOf('busy')
-const busyDel = lifecycle.deleteProject(TMP, 'busy', { appRoot: ROOT })
-check(
-  '活动发布任务时删除被拒',
-  busyDel.ok === false && busyDel.code === 'active_jobs' && busyDel.jobs?.length === 1,
-  JSON.stringify(busyDel),
-)
-check('拒绝后任务行仍在', rowsOf('busy').publish_jobs === busyBefore.publish_jobs)
-check('拒绝后项目仍在', rowsOf('busy').project === true)
-const busyPreview = lifecycle.previewProjectDelete(TMP, 'busy')
-check('预览能看到活动任务', busyPreview.activeJobs.length === 1 && busyPreview.activeJobs[0].state === 'queued')
-
-// 批量：一项被拒，另一项成功
+// 批量：一项不存在、一项成功
 seedProject('fresh', { shots: 1 })
-const batch = lifecycle.deleteProjects(TMP, ['busy', 'fresh'], { appRoot: ROOT })
+const batch = lifecycle.deleteProjects(TMP, ['ghost-busy', 'fresh'], { appRoot: ROOT })
 check('批量返回逐项结果', batch.ok && batch.results.length === 2)
 check('批量中成功项已删除', batch.deleted.includes('fresh') && rowsOf('fresh').project === false)
-check('批量中被拒项保留', batch.results.find((r) => r.name === 'busy')?.code === 'active_jobs')
+check('批量中不存在的项报 not_found', batch.results.find((r) => r.name === 'ghost-busy')?.code === 'not_found')
 check('批量中成功项有快照', fs.readdirSync(snapDir).some((f) => f.startsWith('fresh-')))
 
 // 批量不设上限：120 个名字必须全部进入结果（不存在记为 not_found，而不是被整批拒绝）
@@ -320,7 +246,6 @@ check('共享产物池文件未被删除', fs.existsSync(sharedFile))
 fs.rmSync(sharedFile, { force: true })
 
 cleanupDrafts('keep')
-cleanupDrafts('busy')
 cleanupDrafts('demo')
 cleanupDrafts('fresh')
 cleanupDrafts('shared')
@@ -342,7 +267,6 @@ console.log('\n== 2. 项目 API ==')
 // API 段用的种子：server 与 verify 进程共享同一个 SB_PROJECTS_DIR
 seedProject('api-one', { shots: 2 })
 seedProject('api-two', { shots: 1 })
-seedProject('api-busy', { shots: 1 })
 seedProject('api-batch-a', { shots: 1 })
 seedProject('api-batch-b', { shots: 1 })
 writeMedia('api-one')
@@ -385,9 +309,6 @@ if (!up) {
 
 let browser = null
 try {
-  // 活动任务必须在服务启动之后再建：服务启动会把未完成任务标 unknown（不是活动态）
-  seedPublish('api-busy', { state: 'queued' })
-
   const previewRes = await api('/api/project?name=api-one&preview=delete')
   check('API 预览 200', previewRes.status === 200, `status=${previewRes.status}`)
   check('API 预览返回 exists 与 counts', previewRes.json?.exists === true && previewRes.json?.counts?.shots === 2)
@@ -398,10 +319,6 @@ try {
 
   const badPreview = await api('/api/project?name=..%2Fetc&preview=delete')
   check('API 预览非法名 400', badPreview.status === 400 && badPreview.json?.ok === false, `status=${badPreview.status}`)
-
-  const busyDel = await api('/api/project?name=api-busy', { method: 'DELETE' })
-  check('API 活动任务删除 409', busyDel.status === 409 && busyDel.json?.code === 'active_jobs', `status=${busyDel.status}`)
-  check('API 409 返回任务清单', busyDel.json?.jobs?.length === 1)
 
   const missingDel = await api('/api/project?name=nope-missing', { method: 'DELETE' })
   check('API 删除不存在项目 404', missingDel.status === 404, `status=${missingDel.status}`)
@@ -417,13 +334,13 @@ try {
   check('API 单删返回快照与共享标记', Boolean(oneDel.json?.snapshot) && oneDel.json?.sharedFilesKept === true)
   check('API 单删后列表无该项目', !(await api('/api/project')).json.projects.some((p) => p.name === 'api-one'))
 
-  // 批量：一项被拒（api-busy 还挂着 queued），另一项成功；名字走请求体
+  // 批量：一项不存在、两项成功；名字走请求体
   const batchDel = await api('/api/project', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ names: ['api-batch-a', 'api-busy', 'api-batch-b'] }),
+    body: JSON.stringify({ names: ['api-batch-a', 'ghost-missing', 'api-batch-b'] }),
   })
-  check('API 批量部分失败仍 200', batchDel.status === 200 && batchDel.json?.ok === true, `status=${batchDel.status}`)
+  check('API 批量含不存在项仍 200', batchDel.status === 200 && batchDel.json?.ok === true, `status=${batchDel.status}`)
   check(
     'API 批量逐项返回结果',
     Array.isArray(batchDel.json?.results) && batchDel.json.results.length === 3 &&
@@ -431,7 +348,10 @@ try {
     JSON.stringify(batchDel.json?.results?.map((r) => `${r.name}:${r.code || 'ok'}`)),
   )
   check('API 批量成功项已删', batchDel.json?.deleted?.includes('api-batch-a') && batchDel.json?.deleted?.includes('api-batch-b'))
-  check('API 批量被拒项仍在', (await api('/api/project')).json.projects.some((p) => p.name === 'api-busy'))
+  check(
+    'API 批量不存在项报 not_found',
+    batchDel.json?.results?.find((r) => r.name === 'ghost-missing')?.code === 'not_found',
+  )
 
   // 查询串写法保留兼容
   seedProject('api-qs', { shots: 1 })
@@ -504,16 +424,28 @@ try {
   const page = await browser.newPage({ viewport: { width: 1560, height: 940 } })
   const errs = []
   page.on('pageerror', (e) => errs.push(e.message))
-  await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.waitForTimeout(1500)
+  await page.goto(`${APP}/#/`, { waitUntil: 'domcontentloaded' })
+  await page.locator('.hub').waitFor({ timeout: 20000 })
+  await page.waitForTimeout(800)
 
-  // 镜头表不再有新建入口
-  await page.getByRole('button', { name: '镜头表', exact: true }).click()
-  await page.waitForTimeout(600)
-  const shotTableNew = await page.locator('.wb-new').count()
-  const shotTableNewBtn = await page.getByRole('button', { name: /新建项目/ }).count()
-  check('镜头表没有 wb-new 表单', shotTableNew === 0, `count=${shotTableNew}`)
-  check('镜头表没有新建项目按钮', shotTableNewBtn === 0, `count=${shotTableNewBtn}`)
+  // 左栏导航已收拢：镜头表与提示词都不再是视图，工作台也没有新建项目入口
+  const probe = (await api('/api/project')).json.projects[0]?.name
+  if (probe) {
+    await page.evaluate((n) => {
+      window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+    }, probe)
+    await page.locator('.rail').waitFor({ timeout: 15000 })
+    await page.waitForTimeout(800)
+    const navLabels = await page.locator('.rail-nav button').allInnerTexts()
+    check('左栏不含镜头表视图', !navLabels.some((t) => t.includes('镜头表')), navLabels.join('/'))
+    check('左栏不含提示词视图', !navLabels.some((t) => t.includes('提示词')), navLabels.join('/'))
+    check('工作台没有 wb-new 新建项目表单', (await page.locator('.wb-new').count()) === 0)
+    await page.evaluate(() => {
+      window.location.hash = '#/'
+    })
+    await page.locator('.hub').waitFor({ timeout: 15000 })
+    await page.waitForTimeout(500)
+  }
 
   // 全局带新建入口
   const projectMenu = page.locator('[data-project-menu]')
@@ -541,8 +473,9 @@ try {
   await page.waitForTimeout(900)
   const afterCreate = await api('/api/project')
   check('界面新建成功', afterCreate.json.projects.some((p) => p.name === created), created)
-  const topValue = await page.locator('.topbar-project select').inputValue()
-  check('新建后切换到新项目', topValue === created, `value=${topValue}`)
+  await page.waitForTimeout(400)
+  const newHash = await page.evaluate(() => decodeURIComponent(window.location.hash))
+  check('新建后切换到新项目', newHash.includes(`/p/${created}/`), newHash)
 
   // 非法名被拦
   await projectMenu.click()
@@ -589,8 +522,13 @@ try {
   check('删除后总项目数减一', afterDelete.length === beforeCount - 1, `${beforeCount} -> ${afterDelete.length}`)
 
   // 删除当前项目后上下文回退
-  const currentAfter = await page.locator('.topbar-project select').inputValue()
-  check('删除当前项目后切到剩余项目', currentAfter !== created && currentAfter !== '', `value=${currentAfter}`)
+  await page.waitForTimeout(400)
+  const afterHash = await page.evaluate(() => decodeURIComponent(window.location.hash))
+  check(
+    '删除当前项目后不再指向已删项目',
+    afterHash !== '' && !afterHash.includes(`/p/${created}`),
+    afterHash,
+  )
   const canvasKey = await page.evaluate((n) => localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(n)}`), created)
   check('被删项目的画布状态已清除', canvasKey === null)
 
@@ -625,14 +563,35 @@ try {
   const canvasProjectGone = !(await api('/api/project')).json.projects.some((p) => p.name === 'canvas-check')
   check('界面删除后项目已不存在', canvasProjectGone)
 
-  // 删除最后一个项目 → 未选项目
-  // api-busy 的活动任务会在启动时被标成 unknown（终态），这里显式落成终态再清空，
-  // 让「删除到空库」这个分支能确定性地跑到。
+  // 删除非当前项目：当前工作区保持不变
   {
-    const db = dbm.openDatabase(TMP)
-    db.prepare("UPDATE publish_jobs SET state='cancelled' WHERE state IN ('draft','queued','uploading','awaiting_user','awaiting_confirmation','submitted')").run()
-    db.close()
+    const list = (await api('/api/project')).json.projects.map((p) => p.name)
+    const stayName = list[0]
+    const otherName = list[1]
+    if (stayName && otherName) {
+      await page.evaluate((n) => {
+        window.location.hash = `#/p/${encodeURIComponent(n)}/overview`
+      }, stayName)
+      await page.locator('.rail').waitFor({ timeout: 15000 })
+      await page.waitForTimeout(700)
+      const beforeStay = await page.evaluate(() => window.location.hash)
+      await page.locator('[data-project-menu]').click()
+      await page.waitForTimeout(250)
+      await page.locator('[data-project-manage]').click()
+      await page.waitForTimeout(600)
+      await page.locator('[data-project-search]').fill(otherName)
+      await page.waitForTimeout(400)
+      await page.locator(`[data-project-row="${otherName}"] [data-project-delete]`).click()
+      await page.waitForTimeout(600)
+      await page.locator('[data-delete-confirm-input]').fill(otherName)
+      await page.locator('[data-delete-confirm-submit]').click()
+      await page.waitForTimeout(1200)
+      const afterStay = await page.evaluate(() => window.location.hash)
+      check('删除非当前项目后留在当前工作区', afterStay === beforeStay, `${beforeStay} -> ${afterStay}`)
+    }
   }
+
+  // 删除到空库 → 回到项目大厅并显示空态
   const remaining = (await api('/api/project')).json.projects.map((p) => p.name)
   check('剩余项目非空，可测清空分支', remaining.length > 0, `count=${remaining.length}`)
   if (remaining.length) {
@@ -642,10 +601,11 @@ try {
     if (!failedNames.length) {
       await page.reload({ waitUntil: 'domcontentloaded' })
       await page.waitForTimeout(1500)
-      const emptyValue = await page.locator('.topbar-project select').inputValue()
-      check('没有项目时顶栏回到未选', emptyValue === '', `value=${emptyValue}`)
-      const optionText = await page.locator('.topbar-project select option').first().innerText()
-      check('未选项目显示占位', /无项目|未选/.test(optionText), optionText)
+      const emptyHash = await page.evaluate(() => window.location.hash)
+      check('没有项目时回到项目大厅', emptyHash === '#/' || emptyHash === '', emptyHash)
+      await page.locator('.hub').waitFor({ timeout: 15000 })
+      const emptyText = await page.locator('.hub').innerText()
+      check('大厅显示空态', /还没有项目/.test(emptyText), emptyText.replace(/\s+/g, ' ').slice(0, 80))
       const autoCreated = (await api('/api/project')).json.projects.length
       check('不自动创建项目', autoCreated === 0, `count=${autoCreated}`)
     }

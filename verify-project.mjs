@@ -1,24 +1,40 @@
+/**
+ * 项目工作区基础验收（新外壳：大厅 → 项目 → 画布）。
+ *
+ * 镜头表与提示词表已并入画布：项目镜头在进入画布时自动水合，
+ * 编辑与写回走单镜 Inspector，不再有「生成到画布」与独立表格视图。
+ */
 import { chromium } from 'playwright-core'
-
-// 「适配视图」收在画布右上「操作」下拉里：先开菜单，点完菜单自动收起
-async function p_openBoardMenu(page) {
-  await page.locator('.bm .tm-btn').click()
-  await page.waitForTimeout(350)
-}
-import fs from 'node:fs'
+import { openProject } from './verify-lib.mjs'
+import { auditKeyframePromptCore } from './src/promptAuditCore.mjs'
 
 const URL = 'http://127.0.0.1:5273/'
 // 真相源已切到 SQLite：数据断言统一走 /api/project；写回断言也一样。
 // 快照用于跑完还原，保证可重复且不弄脏数据。
 const PROJECT = 'recycle'
+// 预置一个已知角色：角色板断言要的是「数据来自项目而非本地默认值」，
+// 不能依赖 recycle 历史上恰好存在的角色（那是环境状态，不是代码行为）。
+await fetch(`${URL}api/project?name=${PROJECT}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    characters: [
+      { name: '陈默', look_cn: '28 岁，寸头，旧夹克', look_en: '28-year-old man, buzz cut, worn jacket' },
+    ],
+  }),
+})
 const snapFetch = () => fetch(`${URL}api/project?name=${PROJECT}`).then((r) => r.json())
 const SNAP = JSON.stringify((await snapFetch()).project)
 const read = async () => (await snapFetch()).project
 const base = JSON.parse(SNAP)
-// 表格/画布都按集过滤了，断言要以「第 1 集」为准，不能用全项目镜头数
+// 画布按集过滤了，断言要以「第 1 集」为准，不能用全项目镜头数
 const ep1 = base.shots.filter((x) => (Number(x.episode) || 1) === 1)
 const baseTotal = +ep1.reduce((a, s) => a + Number(s.seconds || 0), 0).toFixed(1)
 const baseSec0 = Number(ep1[0].seconds)
+// 与画布工作台同口径：缺首帧 / 缺锚点数量由共享纯函数算出来
+const audits = ep1.map((s) => auditKeyframePromptCore(s, base.characters || []))
+const expEmpty = audits.filter((a) => a.empty).length
+const expMiss = audits.filter((a) => !a.empty && a.missing.length > 0).length
 
 let ok = 0
 let bad = 0
@@ -41,8 +57,15 @@ const errs = []
 page.on('pageerror', (e) => errs.push(e.message))
 page.on('console', (m) => m.type() === 'error' && errs.push(m.text()))
 
+/** 读当前项目画布快照（键带项目后缀） */
+const canvasNodes = () =>
+  page.evaluate((project) => {
+    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
+    return s.nodes || []
+  }, PROJECT)
+
 try {
-  // 预置一张远离原点的占位卡：避免初始示例卡与推送出来的节点重叠，导致点击命中错的卡
+  // 预置一张远离原点的占位卡：避免镜头水合后与卡片重叠，导致点击命中错的卡
   await page.addInitScript((name) => {
     localStorage.setItem(
       `storyboard-canvas-v1:${encodeURIComponent(name)}`,
@@ -60,178 +83,135 @@ try {
       }),
     )
   }, PROJECT)
-  await page.goto(URL, { waitUntil: 'networkidle' })
-  await page.waitForTimeout(800)
-  // 默认选中的是列表第一个项目；断言都以 PROJECT 的接口数据为准，所以先显式选中它
-  await page.locator('.topbar-project select').selectOption(PROJECT)
-  await page.waitForTimeout(1200)
-
-  console.log('\n[1] 拆镜工作台加载')
-  await page.getByRole('button', { name: '镜头表', exact: true }).click()
-  await page.waitForTimeout(1600)
-  const rows = await page.locator('.wb-table tbody tr').count()
-  check(rows === ep1.length, `表格 ${ep1.length} 行`, `实际 ${rows}`)
-  const foot = (await page.locator('.wb-foot').innerText()).replace(/\s+/g, ' ')
-  check(foot.includes(`${ep1.length} 镜`), '页脚镜数正确')
-  check(foot.includes(`${baseTotal.toFixed(1)}s`), `总时长 ${baseTotal.toFixed(1)}s`, foot)
-  check(/目标 \d+s/.test(foot), '目标时长可调')
-  const firstDesc = await page
-    .locator('.wb-table tbody tr').first().locator('td').nth(4).locator('textarea').inputValue()
-  check(firstDesc.length > 10, '首行描述已带入')
-  // 镜头在文件里的顺序会随写回变化，不能按固定行号取；找第一条真带台词的
-  const dlg = await page.evaluate(() => {
-    for (const tr of document.querySelectorAll('.wb-table tbody tr')) {
-      const ta = tr.querySelectorAll('td')[5]?.querySelector('textarea')
-      const v = ta?.value?.trim()
-      if (v) return v
-    }
-    return ''
-  })
-  check(dlg.includes('：'), '台词按「角色：台词」渲染', dlg.slice(0, 40))
-  console.log(`  · 描述：${firstDesc.slice(0, 28)}…  台词：${dlg.replace(/\n/g, ' / ').slice(0, 30)}`)
-  await page.screenshot({ path: '/tmp/sb-shots/70-table.png' })
-
-  console.log('\n[2] 行内编辑 + 保存回文件')
-  const row0 = page.locator('.wb-table tbody tr').first()
-  const rowNo = (await row0.locator('td').first().locator('input').inputValue()).trim()
-  const editId = `E01-${rowNo}`
-  const rowSec = Number(await row0.locator('td').nth(1).locator('input').inputValue())
-  const target = (rowSec + 2).toFixed(1)
-  console.log(`  · 本次编辑镜头: ${editId}  ${rowSec}s → ${target}s`)
-  const secInput = row0.locator('td').nth(1).locator('input')
-  await secInput.fill(target)
-  await secInput.blur()
-  await page.waitForTimeout(250)
-  check(await secInput.evaluate((el) => el.classList.contains('hand')), '改动字段标黄（手改标记）')
-  check(
-    /手改字段受保护/.test((await page.locator('.wb-foot').innerText()).replace(/\s+/g, ' ')),
-    '页脚提示受保护字段',
-  )
-  await page.getByRole('button', { name: '保存到 project.json' }).click()
+  await openProject(page, PROJECT, 'board', { base: URL, waitUntil: 'networkidle' })
   await page.waitForTimeout(1800)
-  const afterSave = await read()
-  const savedEdit = afterSave.shots.find((x) => x.id === editId)
-  check(Number(savedEdit?.seconds) === Number(target), `文件里 ${editId} seconds = ${target}`, String(savedEdit?.seconds))
-  check((savedEdit?.handEdited || []).includes('seconds'), 'handEdited 记录 seconds')
-  check(afterSave.episodes.length === base.episodes.length, 'episodes 未被清空', String(afterSave.episodes.length))
-  check(afterSave.characters.length === base.characters.length, 'characters 未被清空', String(afterSave.characters.length))
-  // 旧版这里检查 project.json.bak；真相源切 SQLite 后写路径由 WAL 保护，不再生成 .bak
 
-  console.log('\n[3] 生成到画布（按 shot.id 幂等）')
-  await page.getByRole('button', { name: '生成到画布' }).click()
-  await page.waitForTimeout(1300)
-  // editId 在浏览器上下文里不存在，必须作为参数传进去
-  const st = await page.evaluate(({ id, project }) => {
+  console.log('\n[1] 画布加载项目镜头')
+  const railBoard = page.locator('.viewtabs button[aria-label="画布"]')
+  check((await railBoard.getAttribute('aria-current')) === 'page', '左栏画布为当前视图')
+  const detail = (await page.locator('.wb-bar-detail').innerText()).replace(/\s+/g, ' ')
+  check(detail.includes(`${ep1.length} 镜`), `工作台显示 ${ep1.length} 镜`, detail)
+  check(detail.includes(`${baseTotal.toFixed(1)}s`), `总时长 ${baseTotal.toFixed(1)}s`, detail)
+  check(/目标 \d+s/.test(detail), '目标时长可读', detail)
+  check(new RegExp(`缺首帧 ${expEmpty}`).test(detail), `缺首帧 ${expEmpty}`, detail)
+  check(new RegExp(`缺锚点 ${expMiss}`).test(detail), `缺锚点 ${expMiss}`, detail)
+
+  const st = await page.evaluate(({ project, firstId }) => {
     const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     const nodes = s.nodes || []
     const withId = nodes.filter((n) => n.data?.shotId)
+    const first = nodes.find((n) => n.data?.shotId === firstId)
     return {
       total: nodes.length,
       withId: withId.length,
+      uniq: new Set(withId.map((n) => n.data.shotId)).size,
       first3: withId.map((n) => n.data.shotId).slice(0, 3),
-      sec0: nodes.find((n) => n.data?.shotId === id)?.data?.seconds,
-      size0: nodes.find((n) => n.data?.shotId === id)?.data?.size,
+      sec0: first?.data?.seconds,
+      size0: first?.data?.size,
+      move0: first?.data?.move,
     }
-  }, { id: editId, project: PROJECT })
+  }, { project: PROJECT, firstId: ep1[0].id })
   check(st.withId === ep1.length, `${ep1.length} 个节点带业务 ID`, JSON.stringify(st))
+  check(st.uniq === ep1.length, '水合后节点不重复', JSON.stringify(st))
   check(/^E\d+-S\d+$/.test(String(st.first3[0])), '业务 ID 形如 E01-S01', JSON.stringify(st.first3))
-  check(Number(st.sec0) === Number(target), `${editId} 秒数沿用表格值`, String(st.sec0))
-  check(st.size0 === ep1[0].size, 'S01 景别带入画布', String(st.size0))
-  console.log(`  · 节点总数 ${st.total}（含 1 张无业务 ID 的占位卡；不自动删）`)
-  await page.getByRole('button', { name: '画布', exact: true }).click()
-  await page.waitForTimeout(900)
-  await page.screenshot({ path: '/tmp/sb-shots/71-pushed.png' })
+  check(Number(st.sec0) === baseSec0, '秒数沿用项目镜头', String(st.sec0))
+  check(st.size0 === ep1[0].size && st.move0 === ep1[0].move, '景别与运镜带入画布', `${st.size0}/${st.move0}`)
 
-  console.log('\n[4] 画布侧改动 → 自动写回 project.json')
-  await p_openBoardMenu(page)
-  await page.getByRole('button', { name: /适配视图/ }).click()
+  // 适配视图后所有卡片可见，再断言卡片上的摘要信息
+  await page.locator('.bm .tm-btn').click()
+  await page.waitForTimeout(350)
+  await page.locator('.bm-item', { hasText: '适配视图' }).click()
   await page.waitForTimeout(900)
-  await page.evaluate((v) => { window.__editId = v }, editId)
+  const cardCount = await page.locator('.react-flow__node .shot').count()
+  check(cardCount >= ep1.length, `画布渲染 ${ep1.length} 张分镜卡`, String(cardCount))
+  const firstCardMeta = await page
+    .locator(`.react-flow__node[data-id] .shot-meta`)
+    .first()
+    .innerText()
+    .catch(() => '')
+  check(firstCardMeta.includes(ep1[0].size), `卡片显示景别 ${ep1[0].size}`, firstCardMeta)
+
+  console.log('\n[2] Inspector 改时长 → 自动写回')
+  await page.evaluate((v) => {
+    window.__editId = v
+  }, ep1[0].id)
   const s01NodeId = await page.evaluate((project) => {
     const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
     return (s.nodes || []).find((n) => n.data?.shotId === window.__editId)?.id ?? null
   }, PROJECT)
-  check(Boolean(s01NodeId), `定位到 ${editId} 节点`)
-  // 适配后节点会重叠，点到别的卡上就会拿到错的 Inspector —— 点完校验镜号，不对就换位置重试
+  check(Boolean(s01NodeId), `定位到 ${ep1[0].id} 节点`)
   const nodeLoc = page.locator(`.react-flow__node[data-id="${s01NodeId}"]`)
   let hit = false
   for (const pos of [undefined, { x: 10, y: 10 }, { x: 30, y: 20 }]) {
     await (pos ? nodeLoc.click({ force: true, position: pos }) : nodeLoc.click({ force: true }))
     await page.waitForTimeout(350)
     const sid = await page.locator('.panel-sid').innerText().catch(() => '')
-    if (sid.trim() === editId) {
+    if (sid.trim() === ep1[0].id) {
       hit = true
       break
     }
   }
-  check(hit, `选中节点业务 ID = ${editId}（不是重叠的示例卡）`)
-  // 驾驶舱的「镜头参数」是可折叠 details，默认收起时子元素不参与可见性；先展开
+  check(hit, `选中节点业务 ID = ${ep1[0].id}（不是重叠的占位卡）`)
+  // 驾驶舱的「镜头参数」用 Fold 折叠（.fold-head 按钮驱动），默认收起时子元素不可见；先展开
   const params = page.locator('.si-section[data-section="shotParams"]')
   if (await params.count()) {
-    const isOpen = await params.evaluate((el) => el.hasAttribute('open'))
-    if (!isOpen) {
-      await params.locator('summary').click()
-      await page.waitForTimeout(300)
+    const head = params.locator('.fold-head')
+    if (await head.count()) {
+      const open = (await params.getAttribute('data-open')) === 'true'
+      if (!open) {
+        await head.click()
+        await page.waitForTimeout(300)
+      }
     }
   }
   const secBox = page.locator('.inspector input[type=number]').first()
   check((await secBox.count()) > 0, 'Inspector 打开时长输入')
-  // number 输入不保留 .0，按数值比较（6 与 6.0 视为一致）
   check(
-    Number(await secBox.inputValue()) === Number(target),
-    'Inspector 时长与表格一致',
-    `${await secBox.inputValue()} vs ${target}`,
+    Number(await secBox.inputValue()) === baseSec0,
+    'Inspector 时长与项目一致',
+    `${await secBox.inputValue()} vs ${baseSec0}`,
   )
-  const wb = (Number(target) + 1).toFixed(1)
+  const wb = (baseSec0 + 1).toFixed(1)
   await secBox.fill(wb)
   await secBox.blur()
   await page.waitForTimeout(2600)
   const afterCb = await read()
-  const s01 = afterCb.shots.find((x) => x.id === editId)
-  check(Number(s01?.seconds) === Number(wb), `画布改 ${wb}s 已写回文件`, String(s01?.seconds))
+  const s01 = afterCb.shots.find((x) => x.id === ep1[0].id)
+  check(Number(s01?.seconds) === Number(wb), `画布改 ${wb}s 已写回`, String(s01?.seconds))
+  // 拆镜表格已下线（画布是唯一编辑入口）：改时长不再走「表格手改」那条 handEdited 记录路径，
+  // 这里只断言写回没有凭空造出手改痕迹。
+  check(
+    !(s01?.handEdited || []).includes('seconds'),
+    '改时长不写入手改痕迹',
+    JSON.stringify(s01?.handEdited),
+  )
   check(afterCb.shots.length === base.shots.length, '写回后镜头数不变', String(afterCb.shots.length))
   check(afterCb.episodes.length === base.episodes.length, '写回未破坏 episodes')
+  await page.screenshot({ path: '/tmp/sb-shots/71-inspector.png' })
 
-  console.log('\n[5] 幂等重推：不产生重复节点')
-  await page.getByRole('button', { name: '镜头表', exact: true }).click()
-  await page.waitForTimeout(1300)
-  await page.getByRole('button', { name: '生成到画布' }).click()
-  await page.waitForTimeout(1300)
-  const st2 = await page.evaluate((project) => {
+  console.log('\n[3] 重载后幂等水合：不产生重复节点')
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForTimeout(2400)
+  const st2 = await page.evaluate(({ project, firstId }) => {
     const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
-    const ids = (s.nodes || []).filter((n) => n.data?.shotId).map((n) => n.data.shotId)
-    return { withId: ids.length, uniq: new Set(ids).size }
-  }, PROJECT)
-  check(st2.withId === ep1.length && st2.uniq === ep1.length, '重推后仍是唯一节点', JSON.stringify(st2))
-  console.log('\n[6] 提示词工作台 + 锚点校验')
-  await page.getByRole('button', { name: '提示词', exact: true }).click()
-  await page.waitForTimeout(1600)
-  const prow = await page.locator('.pt-table tbody tr').count()
-  check(prow === ep1.length, `提示词表 ${ep1.length} 行`, `实际 ${prow}`)
-  const badCount = await page.locator('.pt-table .tag.bad').count()
-  check(badCount === 0, '无「缺锚点」行（有台词的角色都嵌了锚点）', String(badCount))
-  const unkCount = await page.locator('.pt-table .tag.unknown').count()
-  console.log(`  · 「未知角色」行 ${unkCount}（说话人不在角色表里，长相不会被锚定）`)
-  const okCount = await page.locator('.pt-table .tag.ok').count()
-  check(okCount > 0, '有校验通过的镜头', String(okCount))
-  const kf1 = await page.locator('.pt-table tbody tr').first().locator('td').nth(2).locator('textarea').inputValue()
-  check(kf1.length > 40, '首帧提示词已带入', String(kf1.length))
-  check(kf1.includes('画风锁'), '提示词含画风锁')
-  // 有的镜确实没有出场角色（空镜），断言「至少有一行有值」才稳
-  const castCells = await page.locator('.pt-table tbody tr .wb-cast').allInnerTexts()
-  const filled = castCells.map((t) => t.trim()).filter((t) => t && t !== '—')
-  check(filled.length > 0, '出场角色列有值', `${filled.length}/${castCells.length}`)
-  await page.screenshot({ path: '/tmp/sb-shots/72-prompts.png' })
+    const nodes = (s.nodes || []).filter((n) => n.data?.shotId)
+    return {
+      withId: nodes.length,
+      uniq: new Set(nodes.map((n) => n.data.shotId)).size,
+      sec0: nodes.find((n) => n.data?.shotId === firstId)?.data?.seconds,
+    }
+  }, { project: PROJECT, firstId: ep1[0].id })
+  check(st2.withId === ep1.length && st2.uniq === ep1.length, '重载后仍是唯一节点', JSON.stringify(st2))
+  check(Number(st2.sec0) === Number(wb), '重载后沿用写回值', String(st2.sec0))
 
-  console.log('\n[7] 角色来自 project.json（不是 localStorage 默认值）')
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  console.log('\n[4] 角色来自 project.json（不是 localStorage 默认值）')
+  await page.locator('.viewtabs button[aria-label="角色"]').click()
   await page.waitForTimeout(1200)
   const bodyText = await page.locator('body').innerText()
   const pcNames = (base.characters || []).map((c) => c.name)
   check(pcNames.every((n) => bodyText.includes(n)), `显示项目里的 ${pcNames.length} 个角色`, pcNames.join('、'))
   // 项目里陈默 look_cn 含「28」，localStorage 默认值是「三十出头」——用它判定数据来源
-  const fromProject = /28\s*岁/.test(bodyText)
-  check(fromProject, '角色外观取自 project.json（含 28 岁）', fromProject ? '' : '仍是 localStorage 默认值')
+  check(/28\s*岁/.test(bodyText), '角色外观取自 project.json（含 28 岁）')
   await page.screenshot({ path: '/tmp/sb-shots/73-chars.png' })
 } finally {
   console.log('\n--- 页面错误 ---')
@@ -242,7 +222,7 @@ try {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project: JSON.parse(SNAP) }),
   })
-  console.log('（已还原 project.json 到测试前状态）')
+  console.log('（已还原项目到测试前状态）')
   console.log(`\n结果：通过 ${ok} / 失败 ${bad}`)
   await browser.close()
 }

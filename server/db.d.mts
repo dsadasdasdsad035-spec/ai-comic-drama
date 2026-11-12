@@ -10,7 +10,15 @@ export declare function listProjects(root: string): {
   episodes: number
   shots: number
   seconds: number
+  updated_at?: string
+  /** 第一张非空首帧，供大厅卡片封面 */
+  cover?: string
+  /** 任一 JSON 列损坏：大厅显示「损坏」并禁用入口 */
+  broken?: boolean
+  /** 缺首帧 / 缺锚点 / 空项目；健康计算失败时不返回 */
+  health?: { empty: boolean; missing_keyframe: number; missing_anchor: number }
 }[]
+export declare function invalidateProjectHealth(): void
 export declare function readProject(root: string, name: string): Record<string, any>
 export declare function writeProject(
   root: string,

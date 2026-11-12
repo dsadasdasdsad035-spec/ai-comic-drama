@@ -16,6 +16,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { projectHealthCore } from '../src/promptAuditCore.mjs'
 
 const NAME_RE = /^[a-zA-Z0-9_-]{1,40}$/
 const SCHEMA_VERSION = 1
@@ -797,6 +798,20 @@ export function listProjects(root) {
        FROM projects p ORDER BY p.name`,
     )
     .all()
+  // 大厅首屏要显示封面与健康徽标：这里一次批量算完，避免前端逐项目拉详情（N+1）。
+  // 计算异常只降级为「不带 cover/health」，列表本身必须照常返回。
+  let coverMap = new Map()
+  let healthMap = new Map()
+  let brokenSet = new Set()
+  try {
+    coverMap = firstKeyframeByProject()
+    healthMap = projectHealthMap()
+    brokenSet = brokenProjectSet()
+  } catch {
+    coverMap = new Map()
+    healthMap = new Map()
+    brokenSet = new Set()
+  }
   return rows.map((r) => ({
     name: r.name,
     title: r.title || r.name,
@@ -806,7 +821,108 @@ export function listProjects(root) {
     shots: Number(r.shots) || 0,
     seconds: Math.round((Number(r.seconds) || 0) * 10) / 10,
     updated_at: r.updated_at || '',
+    ...(coverMap.get(r.name) ? { cover: coverMap.get(r.name) } : {}),
+    ...(brokenSet.has(r.name) ? { broken: true } : {}),
+    ...(healthMap.get(r.name) ? { health: healthMap.get(r.name) } : {}),
   }))
+}
+
+// ---------------------------------------------------------------- 大厅健康数据
+
+/** 健康计算是派生数据：60 秒内存缓存，避免每次列表都全量审计 */
+const HEALTH_TTL_MS = 60_000
+let healthCache = null
+
+/** 项目写入后让缓存失效，否则刚补完锚点回大厅还显示旧徽标 */
+export function invalidateProjectHealth() {
+  healthCache = null
+}
+
+/** 每个项目第一张非空首帧（按集号、镜号取），供大厅卡片封面 */
+function firstKeyframeByProject() {
+  const rows = db
+    .prepare(
+      `SELECT p.name AS project, s.keyframe
+       FROM shots s JOIN projects p ON p.id = s.project_id
+       WHERE s.keyframe IS NOT NULL AND s.keyframe <> ''
+       ORDER BY p.name, COALESCE(s.episode, 1), COALESCE(s.no, ''), s.sort`,
+    )
+    .all()
+  const map = new Map()
+  for (const r of rows) if (!map.has(r.project)) map.set(r.project, r.keyframe)
+  return map
+}
+
+/** 每项目镜头与角色，按项目分组；JSON 列损坏时按空值处理（broken 单独标记） */
+function projectHealthMap() {
+  const now = Date.now()
+  if (healthCache && now - healthCache.at < HEALTH_TTL_MS) return healthCache.map
+  const chars = new Map()
+  for (const r of db
+    .prepare(
+      `SELECT p.name AS project, c.name, c.look_en
+       FROM characters c JOIN projects p ON p.id = c.project_id
+       ORDER BY c.sort`,
+    )
+    .all()) {
+    const list = chars.get(r.project) ?? []
+    list.push({ name: r.name, lookEn: r.look_en || '' })
+    chars.set(r.project, list)
+  }
+  const shots = new Map()
+  for (const r of db
+    .prepare(
+      `SELECT p.name AS project, s.episode, s.no, s.desc,
+              s.keyframe, s.keyframe_prompt, s.dialogue, s.cast
+       FROM shots s JOIN projects p ON p.id = s.project_id
+       ORDER BY COALESCE(s.episode, 1), COALESCE(s.no, ''), s.sort`,
+    )
+    .all()) {
+    const list = shots.get(r.project) ?? []
+    list.push({
+      episode: r.episode,
+      no: r.no,
+      desc: r.desc,
+      keyframe: r.keyframe,
+      keyframe_prompt: r.keyframe_prompt,
+      dialogue: safeJson(r.dialogue, []),
+      cast: safeJson(r.cast, []),
+    })
+    shots.set(r.project, list)
+  }
+  const map = new Map()
+  // 空项目（无镜无角色）也要有 health，否则大厅显示不出「空项目」徽标
+  const names = new Set([...chars.keys(), ...shots.keys()])
+  for (const r of db.prepare('SELECT name FROM projects').all()) names.add(r.name)
+  for (const name of names) {
+    map.set(name, projectHealthCore(shots.get(name) ?? [], chars.get(name) ?? []))
+  }
+  healthCache = { at: now, map }
+  return map
+}
+
+/** 损坏项目：任一 JSON 列不是合法 JSON，大厅只显示「损坏」并禁用入口 */
+function brokenProjectSet() {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT p.name AS project
+       FROM shots s JOIN projects p ON p.id = s.project_id
+       WHERE json_valid(s.dialogue) = 0
+          OR json_valid(s.cast) = 0
+          OR json_valid(s.hand_edited) = 0
+          OR json_valid(s.extra) = 0`,
+    )
+    .all()
+  return new Set(rows.map((r) => r.project))
+}
+
+function safeJson(raw, fallback) {
+  try {
+    const v = JSON.parse(raw)
+    return v ?? fallback
+  } catch {
+    return fallback
+  }
 }
 
 function rowToShot(r) {
@@ -1024,6 +1140,7 @@ function assemble(p) {
  */
 export function writeProject(root, name, data = {}) {
   open(root)
+  invalidateProjectHealth()
   const n = safeProjectName(name)
   const now = new Date().toISOString()
   const cur = readProjectRow(db, n)
@@ -1198,6 +1315,7 @@ export function writeProject(root, name, data = {}) {
 /** 新建项目。已存在则报错（不覆盖） */
 export function createProject(root, name, init = {}) {
   open(root)
+  invalidateProjectHealth()
   const n = safeProjectName(name)
   if (readProjectRow(db, n)) throw new Error(`项目已存在：${n}`)
   const now = new Date().toISOString()

@@ -70,18 +70,22 @@ p.on('pageerror', (e) => errors.push(e.stack || e.message))
   })
 }
 
-await p.goto(URL, { waitUntil: 'networkidle' })
-await p.waitForTimeout(1500)
+await p.goto(`${URL}/#/`, { waitUntil: 'networkidle' })
+await p.waitForTimeout(1200)
 // 顺序很重要：先清掉 recycle 的旧画布快照（同一 profile 内才有效），
-// 再切到 recycle。切完不能再 reload —— 选中不持久，重载会退回默认项目 a。
+// 再按 hash 打开 recycle。打开后不能再 reload —— 选中不持久，重载会退回默认项目。
 await p.evaluate(() => {
   localStorage.removeItem('storyboard-canvas-v1:recycle')
   localStorage.removeItem('storyboard-canvas-v1:recycle:legacy-backup')
 })
-// 必须显式选 recycle：默认项目现在是 a，不选会整场跑在 a 上，而 refIds 断言读的是 recycle
-await p.locator('.topbar-project select').selectOption('recycle')
+// 必须显式打开 recycle：大厅不会自动选项目，不指路会整场跑在别的项目上，而 refIds 断言读的是 recycle
+await p.evaluate(() => {
+  window.location.hash = '#/p/recycle/board'
+})
+await p.locator('.rail').waitFor({ timeout: 20000 })
 await p.waitForTimeout(2500)
-check('已切到 recycle 项目', (await p.locator('.topbar-project select').inputValue()) === 'recycle', await p.locator('.topbar-project select').inputValue())
+const hashNow = await p.evaluate(() => window.location.hash)
+check('已切到 recycle 项目', hashNow === '#/p/recycle/board', hashNow)
 
 // ---- 1. 加素材卡 ----
 await p.locator('.canvas-tools').getByRole('button', { name: '+ 素材', exact: true }).click()
@@ -130,13 +134,9 @@ check('素材卡标题保留手填值', afterPick.title === '废土夜市', JSON
 check('场景徽标', afterPick.badge === '场景', JSON.stringify(afterPick))
 check('卡片预览图', (await assetNode.locator('img.asset-media').count()) === 1)
 
-// ---- 推送镜头到画布（新浏览器实例 localStorage 是空的） ----
-await p.getByRole('button', { name: '镜头表', exact: true }).click()
-await p.waitForTimeout(1200)
-await p.getByRole('button', { name: '生成到画布' }).click()
-await p.waitForTimeout(1400)
+// ---- 项目镜头在进入画布时自动水合（原「镜头表 → 生成到画布」已随表格下线） ----
 await p.getByRole('button', { name: '画布', exact: true }).click()
-await p.waitForTimeout(1400)
+await p.waitForTimeout(1800)
 // 画布只显示当前集；先确认集号与镜头所在集一致，否则分镜卡不可见
 const epNow = await p.evaluate(() => document.querySelector('.ep-chip')?.textContent || '')
 
