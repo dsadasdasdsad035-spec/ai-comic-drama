@@ -100,7 +100,7 @@ export default function EdgeContextMenu(p: Props) {
             ))}
           </div>
         )}
-        <div className="ctx-hint">点关系即时生效；单击连线不会改动任何设置。</div>
+        <div className="ctx-hint">点关系即时生效；单击连线只打开菜单，不改动任何设置。</div>
         <div className="ctx-foot">
           {p.onDelete && (
             <button className="danger" onClick={p.onDelete}>

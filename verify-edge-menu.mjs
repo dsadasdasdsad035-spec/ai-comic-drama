@@ -1,6 +1,6 @@
 /**
- * 连线右键菜单回归：单击不改数据、右击线身/标签弹菜单、关系单选、转场设置入口、
- * 正在编辑的边高亮、贴边翻面、菜单删除连线（镜头数据不变）。
+ * 连线单击菜单回归：画布连线无标签、单击线身弹菜单、右击不弹菜单、关系单选、
+ * 转场设置入口、正在编辑的边高亮、贴边翻面、菜单删除连线（镜头数据不变）。
  * 跑法：先 npm run dev，再 node verify-edge-menu.mjs
  */
 import path from 'node:path'
@@ -91,58 +91,88 @@ await page.route('**/api/project**', async (route) => {
   })
 })
 
-const chipText = async () => (await page.locator('.edge-chip').first().innerText()).trim()
+// 画布不再有标签，关系与状态一律读边上的类名（edge-rel-* / edge-state-*）
+const edgeSel = '.react-flow__edge-shot'
+const interactionSel = `${edgeSel} .react-flow__edge-interaction`
+const edgeClass = async () =>
+  (await page.locator(edgeSel).count()) > 0
+    ? (await page.locator(edgeSel).first().getAttribute('class')) ?? ''
+    : ''
+const relationOf = async () => (await edgeClass()).match(/edge-rel-(\w+)/)?.[1] ?? ''
+const ctxMenuCount = () => page.locator('.ctx-menu--edge').count()
+const headText = async () =>
+  (await ctxMenuCount()) > 0 ? (await page.locator('.ctx-head').first().innerText()).trim() : ''
+/** 单击线身：React Flow 的 20px 交互条，坐标直接决定菜单落点 */
+const clickEdge = async (x = 700, y = 420) => {
+  await page.locator(interactionSel).first().dispatchEvent('click', { clientX: x, clientY: y })
+  await page.waitForTimeout(400)
+}
+const closeMenu = async () => {
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+}
 
-await page.goto(APP_URL, { waitUntil: 'networkidle' })
+// 大厅是唯一入口：先按 hash 打开被 mock 的项目，再进画布
+await page.goto(`${APP_URL.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
+const edgeProjectName = await page.evaluate(async () => {
+  try {
+    const r = await fetch('/api/project')
+    const d = await r.json()
+    return (d.projects || [])[0]?.name || ''
+  } catch {
+    return ''
+  }
+})
+if (edgeProjectName) {
+  await page.evaluate((n) => {
+    window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+  }, edgeProjectName)
+}
+await page.locator('.rail').waitFor({ timeout: 20000 })
+await page.waitForLoadState('networkidle').catch(() => {})
 await page.waitForTimeout(1800)
 
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
+check('画布上没有任何连线标签', (await page.locator('.edge-chip').count()) === 0)
 const edgeId = await page.evaluate(() => {
   const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1:edge-menu-e2e') || '{}')
   return (s.edges || []).find((e) => !e.id.startsWith('ref-'))?.id ?? null
 })
 check('找到分镜顺序连线', !!edgeId, String(edgeId))
-// 水合可能重建边、换掉 id，后续一律按类名找（当前项目只有一条分镜边）
-const edgeSel = '.react-flow__edge'
+check('初始关系为硬切', (await relationOf()) === 'cut', await edgeClass())
 
-// 单击：不改关系、不开面板
-await page.locator('.edge-chip').first().click()
-await page.waitForTimeout(400)
-check('单击标签不改关系', (await chipText()) === '硬切', await chipText())
-await page.locator(`${edgeSel} .react-flow__edge-interaction`).dispatchEvent('click')
-await page.waitForTimeout(400)
-check('单击线身不开面板', (await page.locator('.tr-panel').count()) === 0)
-
-// 右击线身（React Flow 的宽交互条）→ 菜单
-await page
-  .locator(`${edgeSel} .react-flow__edge-interaction`)
-  .dispatchEvent('contextmenu', { clientX: 700, clientY: 420, button: 2 })
-await page.waitForTimeout(400)
-check('右击线身弹出菜单', (await page.locator('.ctx-menu--edge').count()) === 1)
+// 单击线身 → 菜单
+await clickEdge()
+check('单击线身弹出关系菜单', (await ctxMenuCount()) === 1)
 check('四个关系单选齐全', (await page.locator('.ctx-radio-row').count()) === 4)
 check('当前值打点', (await page.locator('.ctx-radio-row.on[data-edge-rel="cut"]').count()) === 1)
+check('头部带接缝摘要', (await headText()).includes('直接拼接'), await headText())
 await page.screenshot({ path: path.join(shotsDir, 'edge-menu-01-open.png') })
 
-// 点关系：菜单不关、chip 同步
+// 点关系：菜单不关，关系跟着变
 await page.locator('.ctx-radio-row[data-edge-rel="flashback"] .ctx-main').click()
 await page.waitForTimeout(400)
-check('点关系后菜单不关闭', (await page.locator('.ctx-menu--edge').count()) === 1)
-check('关系切到闪回', (await chipText()).includes('闪回'), await chipText())
+check('点关系后菜单不关闭', (await ctxMenuCount()) === 1)
+check('关系切到闪回', (await relationOf()) === 'flashback', await edgeClass())
 check('打点跟随', (await page.locator('.ctx-radio-row.on[data-edge-rel="flashback"]').count()) === 1)
-await page.keyboard.press('Escape')
-await page.waitForTimeout(300)
-check('Esc 关闭菜单', (await page.locator('.ctx-menu--edge').count()) === 0)
+await closeMenu()
+check('Esc 关闭菜单', (await ctxMenuCount()) === 0)
+check('关闭菜单后关系仍是闪回', (await relationOf()) === 'flashback', await edgeClass())
 
-// 右击标签 → 落到转场 → 转场设置
-await page.locator('.edge-chip').first().click({ button: 'right' })
+// 右击不再是入口，也不弹浏览器原生菜单（页面里没有 dialog 说明拦截生效）
+await page.locator(interactionSel).first().dispatchEvent('contextmenu', { clientX: 700, clientY: 420 })
 await page.waitForTimeout(400)
-check('右击标签弹出菜单', (await page.locator('.ctx-menu--edge').count()) === 1)
+check('右击连线不弹菜单', (await ctxMenuCount()) === 0)
+
+// 单击进入转场 → 转场设置
+await clickEdge()
 await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click()
 await page.waitForTimeout(700)
-check('落到转场 → 默认叠化 0.5s', (await chipText()) === '叠化 0.5s', await chipText())
+check('落到转场 → 默认叠化 0.5s', (await headText()).includes('叠化 0.5s'), await headText())
+check('边类名已切到转场', (await relationOf()) === 'transition', await edgeClass())
 await page.locator('.ctx-menu .ctx-actions button', { hasText: '转场设置' }).click()
 await page.waitForTimeout(500)
-check('菜单关闭', (await page.locator('.ctx-menu--edge').count()) === 0)
+check('菜单关闭', (await ctxMenuCount()) === 0)
 check('转场面板打开', (await page.locator('.tr-panel').count()) === 1)
 const strokeOn = await page
   .locator(`${edgeSel} .react-flow__edge-path`)
@@ -158,12 +188,8 @@ const strokeOff = await page
   .evaluate((el) => getComputedStyle(el).strokeWidth)
 check('关闭面板后高亮复原', parseFloat(strokeOff) < 2, strokeOff)
 
-// 贴边翻面：靠右下角右击也不能出视口
-const box = await page.locator('.edge-chip').first().boundingBox()
-await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-await page.mouse.down({ button: 'right' })
-await page.mouse.up({ button: 'right' })
-await page.waitForTimeout(400)
+// 贴边翻面：在视口右下角单击线身，菜单也不能出视口
+await clickEdge(1500, 900)
 const mbox = await page.locator('.ctx-menu--edge').boundingBox()
 check(
   '菜单不出视口',
@@ -172,20 +198,19 @@ check(
 )
 await page.screenshot({ path: path.join(shotsDir, 'edge-menu-03-flip.png') })
 
-// 删除连线：先回到硬切（不触发确认），镜头数据保持不变
+// 回到硬切（不触发删除确认）
 await page.locator('.ctx-radio-row[data-edge-rel="cut"] .ctx-main').click()
 await page.waitForTimeout(300)
-await page.keyboard.press('Escape')
-await page.waitForTimeout(200)
+await closeMenu()
 
 // 键盘 Delete 不再能删边（selectable=false），仍能删节点
-await page.locator(`${edgeSel} .react-flow__edge-interaction`).dispatchEvent('click')
+await clickEdge()
 await page.keyboard.press('Delete')
 await page.waitForTimeout(500)
 check('键盘 Delete 不删边', (await page.locator(edgeSel).count()) === 1)
+await closeMenu()
 
-await page.locator('.edge-chip').first().click({ button: 'right' })
-await page.waitForTimeout(300)
+await clickEdge()
 await page.locator('.ctx-foot button', { hasText: '删除连线' }).click()
 await page.waitForTimeout(2600)
 check('删除后连线消失', (await page.locator(edgeSel).count()) === 0)
@@ -205,7 +230,7 @@ check('节点仍可用 Delete 删除', (await page.locator('.react-flow__node').
 check('无 pageerror', errs.length === 0, errs[0] || '')
 await page.screenshot({ path: path.join(shotsDir, 'edge-menu-04-deleted.png') })
 
-// 旧项目：接缝只在镜头数据里（画布 localStorage 为空），水合出的线要显示当前关系
+// 旧项目：接缝只在镜头数据里（画布 localStorage 为空），水合出的线要能读出当前关系
 state.project.shots[0].transition_out = {
   to: 'T2',
   mode: 'effect',
@@ -214,13 +239,11 @@ state.project.shots[0].transition_out = {
 await page.evaluate(() => localStorage.removeItem('storyboard-canvas-v1:edge-menu-e2e'))
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(1800)
-check('旧项目水合出转场线', (await chipText()) === '叠化 0.5s', await chipText())
-await page.locator('.edge-chip').first().click({ button: 'right' })
-await page.waitForTimeout(400)
+check('旧项目水合出转场线', (await relationOf()) === 'transition', await edgeClass())
+await clickEdge()
 check('菜单显示当前关系为转场', (await page.locator('.ctx-radio-row.on[data-edge-rel="transition"]').count()) === 1)
-check('菜单头部标明参与成片', (await page.locator('.ctx-head').innerText()).includes('已参与成片'))
-await page.keyboard.press('Escape')
-await page.waitForTimeout(300)
+check('菜单头部标明参与成片', (await headText()).includes('已参与成片'), await headText())
+await closeMenu()
 check('旧项目 transition_out 未被改写', state.project.shots[0].transition_out?.mode === 'effect')
 await browser.close()
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

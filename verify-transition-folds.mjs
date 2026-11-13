@@ -108,12 +108,32 @@ await page.route('**/api/project**', async (route) => {
   })
 })
 
-await page.goto(APP_URL, { waitUntil: 'networkidle' })
+// 大厅是唯一入口：先按 hash 打开被 mock 的项目，再进画布
+await page.goto(`${APP_URL.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
+const foldsProjectName = await page.evaluate(async () => {
+  try {
+    const r = await fetch('/api/project')
+    const d = await r.json()
+    return (d.projects || [])[0]?.name || ''
+  } catch {
+    return ''
+  }
+})
+if (foldsProjectName) {
+  await page.evaluate((n) => {
+    window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+  }, foldsProjectName)
+}
+await page.locator('.rail').waitFor({ timeout: 20000 })
+await page.waitForLoadState('networkidle').catch(() => {})
 await page.waitForTimeout(1800)
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
 
-// 标记为转场并打开面板
-await page.locator('.edge-chip').first().click({ button: 'right' })
+// 标记为转场并打开面板：单击连线弹菜单
+await page
+  .locator('.react-flow__edge-shot .react-flow__edge-interaction')
+  .first()
+  .dispatchEvent('click', { clientX: 700, clientY: 420 })
 await page.waitForTimeout(400)
 await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click()
 await page.waitForTimeout(500)

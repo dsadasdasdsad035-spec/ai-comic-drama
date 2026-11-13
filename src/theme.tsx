@@ -23,6 +23,8 @@ export type ThemeColors = {
   edgeTransition: string
   edgeFlashback: string
   edgeBranch: string
+  /** 边界已变需要重生成的转场线描边：刻意用橙而非 --warn 的琥珀，避免与「分支」线撞色 */
+  edgeStale: string
 }
 
 /** React Flow / Konva 不解析 CSS 变量，这些颜色必须给出具体值 */
@@ -38,6 +40,7 @@ export const THEME_COLORS: Record<ThemeMode, ThemeColors> = {
     edgeTransition: '#a3e635',
     edgeFlashback: '#c084fc',
     edgeBranch: '#fbbf24',
+    edgeStale: '#f97316',
   },
   day: {
     canvasDot: '#cfc6b8',
@@ -50,6 +53,7 @@ export const THEME_COLORS: Record<ThemeMode, ThemeColors> = {
     edgeTransition: '#4d7c0f',
     edgeFlashback: '#7e22ce',
     edgeBranch: '#b45309',
+    edgeStale: '#c2410c',
   },
 }
 

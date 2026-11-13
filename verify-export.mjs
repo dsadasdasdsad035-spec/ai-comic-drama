@@ -113,7 +113,24 @@ const waitExport = async () => {
   return msg
 }
 
-await page.goto(`${API}/`, { waitUntil: 'networkidle' })
+// 大厅是唯一入口：先按 hash 打开被 mock 的项目，再进画布
+await page.goto(`${API.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
+const exportProjectName = await page.evaluate(async () => {
+  try {
+    const r = await fetch('/api/project')
+    const d = await r.json()
+    return (d.projects || [])[0]?.name || ''
+  } catch {
+    return ''
+  }
+})
+if (exportProjectName) {
+  await page.evaluate((n) => {
+    window.location.hash = `#/p/${encodeURIComponent(n)}/board`
+  }, exportProjectName)
+}
+await page.locator('.rail').waitFor({ timeout: 20000 })
+await page.waitForLoadState('networkidle').catch(() => {})
 await page.waitForTimeout(1800)
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
 await page.getByRole('button', { name: '▶ 连播' }).click()
@@ -127,7 +144,15 @@ await page.screenshot({ path: `${OUT}/41-export-plain.png` })
 await page.locator('.pv-x[aria-label="关闭连播"]').click()
 await page.waitForTimeout(300)
 
-await page.locator('.edge-chip').first().click()
+// 单击连线 → 菜单里落到转场（默认叠化 0.5s）
+await page
+  .locator('.react-flow__edge-shot .react-flow__edge-interaction')
+  .first()
+  .dispatchEvent('click', { clientX: 700, clientY: 420 })
+await page.waitForTimeout(500)
+await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click()
+await page.waitForTimeout(500)
+await page.keyboard.press('Escape')
 await page.waitForTimeout(700)
 check('标记转场 → 5.5s', (await page.locator('.ntl-sum').innerText()).includes('5.5s'))
 await page.getByRole('button', { name: '▶ 连播' }).click()

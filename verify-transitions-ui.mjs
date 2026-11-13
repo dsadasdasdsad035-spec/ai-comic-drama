@@ -157,7 +157,30 @@ await page.route('**/api/seedance**', async (route) => {
   })
 })
 
-const chipTexts = () => page.locator('.edge-chip').allTextContents()
+// 画布连线不再有标签：关系与状态读边上的类名，接缝摘要读单击菜单的头部
+const edgeSel = '.react-flow__edge-shot'
+const edgeClass = async () =>
+  (await page.locator(edgeSel).count()) > 0
+    ? (await page.locator(edgeSel).first().getAttribute('class')) ?? ''
+    : ''
+const relationNow = async () => (await edgeClass()).match(/edge-rel-(\w+)/)?.[1] ?? ''
+const stateNow = async () => (await edgeClass()).match(/edge-state-(\w+)/)?.[1] ?? ''
+/** 单击线身打开关系菜单（坐标决定落点，取画布中部即可） */
+const clickEdge = async () => {
+  await page.locator(`${edgeSel} .react-flow__edge-interaction`).first().dispatchEvent('click', {
+    clientX: 700,
+    clientY: 420,
+  })
+  await page.waitForTimeout(500)
+}
+/** 打开菜单读头部摘要后关掉，用来替代原来读 chip 文本的断言 */
+const headOfEdge = async () => {
+  await clickEdge()
+  const t = (await page.locator('.ctx-head').innerText()).trim()
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  return t
+}
 const timelineText = () => page.locator('.ntl-sum').innerText()
 const shot = (n) => page.screenshot({ path: path.join(shotsDir, n) })
 
@@ -182,29 +205,29 @@ await page.waitForLoadState('networkidle').catch(() => {})
 await page.waitForTimeout(1800)
 
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
-check('初始一条硬切', (await chipTexts())[0] === '硬切', (await chipTexts()).join('|'))
+check('初始一条硬切', (await relationNow()) === 'cut', await edgeClass())
 check('初始 6.0s', (await timelineText()).includes('6.0s'), await timelineText())
 await shot('transition-01-cut.png')
 
-await page.locator('.edge-chip').first().click()
-await page.waitForTimeout(500)
-check('单击连线不改关系', (await chipTexts())[0] === '硬切', (await chipTexts()).join('|'))
+await clickEdge()
+check('单击连线弹出菜单', (await page.locator('.ctx-menu--edge').count()) === 1)
+check('单击连线不改关系', (await relationNow()) === 'cut', await edgeClass())
 check('单击连线不打开面板', (await page.locator('.tr-panel').count()) === 0)
-
-await page.locator('.edge-chip').first().click({ button: 'right' })
-await page.waitForTimeout(500)
-check('右击连线弹出菜单', (await page.locator('.ctx-menu--edge').count()) === 1)
 check('四个关系单选齐全', (await page.locator('.ctx-radio-row').count()) === 4)
 await page.locator('.ctx-radio-row[data-edge-rel="flashback"] .ctx-main').click()
 await page.waitForTimeout(500)
-check('菜单单选切到闪回', (await chipTexts())[0] === '闪回', (await chipTexts()).join('|'))
+check('菜单单选切到闪回', (await relationNow()) === 'flashback', await edgeClass())
 check('点关系后菜单不关闭', (await page.locator('.ctx-menu--edge').count()) === 1)
 await page.locator('.ctx-radio-row[data-edge-rel="cut"] .ctx-main').click()
 await page.waitForTimeout(500)
-check('菜单可切回硬切', (await chipTexts())[0] === '硬切', (await chipTexts()).join('|'))
+check('菜单可切回硬切', (await relationNow()) === 'cut', await edgeClass())
 await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click()
 await page.waitForTimeout(700)
-check('标记转场 → 叠化 0.5s', (await chipTexts())[0] === '叠化 0.5s', (await chipTexts()).join('|'))
+check(
+  '标记转场 → 叠化 0.5s',
+  (await page.locator('.ctx-head').innerText()).includes('叠化 0.5s'),
+  await page.locator('.ctx-head').innerText(),
+)
 check('叠化总长 5.5s', (await timelineText()).includes('5.5s'), await timelineText())
 await shot('transition-02-dissolve.png')
 
@@ -220,7 +243,7 @@ await page.locator('.tr-panel .fold-head', { hasText: '全部预设' }).click()
 await page.waitForTimeout(300)
 await page.locator('.tr-panel button', { hasText: '擦除→' }).first().click()
 await page.waitForTimeout(400)
-check('擦除→ 更新 chip', (await chipTexts())[0] === '擦除→ 0.5s', (await chipTexts()).join('|'))
+check('擦除→ 更新接缝摘要', (await headOfEdge()).includes('擦除→ 0.5s'), await relationNow())
 
 // 擦除/推移在预览里只是近似，提示文案在连播面板
 await page.getByRole('button', { name: '▶ 连播' }).click()
@@ -260,7 +283,7 @@ await page.waitForTimeout(400)
 await page.locator('.tr-panel footer button', { hasText: '生成视频' }).click()
 await page.waitForTimeout(4200)
 check('转场视频已生成', (await page.locator('.si-video-preview video').count()) === 1)
-check('chip → 生成 1.2s', (await chipTexts())[0] === '生成 1.2s', (await chipTexts()).join('|'))
+check('接缝摘要 → 生成 1.2s', (await headOfEdge()).includes('生成 1.2s'), await relationNow())
 check('生成转场总长 6.8s', (await timelineText()).includes('6.8s'), await timelineText())
 check(
   '视频请求带首帧边界',
@@ -279,7 +302,7 @@ await page.locator('.bm .tm-btn').click()
 await page.waitForTimeout(300)
 await page.locator('.bm-item', { hasText: '全片统一叠化' }).click()
 await page.waitForTimeout(700)
-check('批量叠化跳过生成转场', (await chipTexts())[0] === '生成 1.2s', (await chipTexts()).join('|'))
+check('批量叠化跳过生成转场', (await headOfEdge()).includes('生成 1.2s'), await relationNow())
 
 // 等写回项目，再清空画布边后重载：生成转场应能按 transition_out 修复
 await page.waitForTimeout(2200)
@@ -293,7 +316,7 @@ await page.evaluate((k) => {
 }, key)
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(1800)
-check('清空边后重载恢复转场线', (await chipTexts())[0] === '生成 1.2s', (await chipTexts()).join('|'))
+check('清空边后重载恢复转场线', (await headOfEdge()).includes('生成 1.2s'), await relationNow())
 check('恢复后总长仍 6.8s', (await timelineText()).includes('6.8s'), await timelineText())
 await shot('transition-05-repaired.png')
 
@@ -302,9 +325,8 @@ await page.waitForTimeout(2200)
 state.project.shots[0].keyframe = IMG3
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(1800)
-check('边界变化后 chip 标失效', (await page.locator('.edge-chip.stale').count()) === 1)
-await page.locator('.edge-chip').first().click({ button: 'right' })
-await page.waitForTimeout(400)
+check('边界变化后线条标失效', (await page.locator('.react-flow__edge-shot.edge-state-stale').count()) === 1)
+await clickEdge()
 await page.locator('.ctx-menu .ctx-actions button', { hasText: '转场设置' }).click()
 await page.waitForTimeout(400)
 check('面板提示需要重生成', (await page.locator('.tr-panel').innerText()).includes('出片条件已变'))
@@ -351,7 +373,7 @@ state.project.shots[0].transition_out = {
 await page.evaluate((k) => localStorage.removeItem(k), key)
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(1800)
-check('非相邻 chip 标 inactive', (await page.locator('.edge-chip.inactive').count()) === 1)
+check('非相邻线条标 inactive', (await page.locator('.react-flow__edge-shot.edge-state-inactive').count()) === 1)
 const warn = await page.locator('.ntl-warn').allTextContents()
 check('时间线提示未参与', warn.some((x) => x.includes('转场未参与')), warn.join('|'))
 check('非相邻不让总长变短', (await timelineText()).includes('9.0s'), await timelineText())

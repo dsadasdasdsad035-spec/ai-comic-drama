@@ -1452,7 +1452,7 @@ function Shell() {
     [edges, setEdges, patch],
   )
 
-  /** 右击连线 → 关系菜单；与节点右键菜单互斥 */
+  /** 单击连线 → 关系菜单；与节点右键菜单互斥 */
   const openEdgeMenu = useCallback((e: { clientX: number; clientY: number }, id: string) => {
     if (isDerivedEdgeId(id)) return
     setCtx(null)
@@ -2347,9 +2347,15 @@ function Shell() {
     const decorated = edges
       .filter((e) => ids.has(e.source) && ids.has(e.target))
       .map((e) => {
-        // 分镜边不可选：单击不产生任何效果，高亮只跟随「正在编辑的转场边」
-        const base = { ...e, selectable: false, data: { ...e.data, active: e.id === selEdgeId } }
-        if ((e.data?.relation ?? 'cut') !== 'transition') return base as Edge
+        // 分镜边不可选：单击只弹关系菜单，不产生选中态；高亮只跟随「正在编辑的转场边」
+        const relation: Relation = e.data?.relation ?? 'cut'
+        const base = {
+          ...e,
+          selectable: false,
+          className: `edge-rel-${relation}`,
+          data: { ...e.data, active: e.id === selEdgeId },
+        }
+        if (relation !== 'transition') return base as Edge
         const src = shotsById.get(e.source)
         const tgt = shotsById.get(e.target)
         if (!src || !tgt) return base as Edge
@@ -2369,9 +2375,11 @@ function Shell() {
             : pending
               ? 'pending'
               : 'ready'
+        // 状态只用线条样式表达：类名既给 CSS 着色，也给回归脚本作稳定钩子
         return {
           ...base,
-          data: { ...base.data, transition: { summary: transitionSummary(t), state } },
+          className: `edge-rel-${relation} edge-state-${state}`,
+          data: { ...base.data, state },
         } as Edge
       })
     return [...decorated, ...castEdges, ...refEdges]
@@ -3619,9 +3627,6 @@ function Shell() {
       color,
       charImages,
       patch,
-      openEdgeMenu,
-      setEdgeRelation,
-      openTransition,
       generate: generateOne,
       cancelGenerate,
       canvasProdMode,
@@ -3632,9 +3637,6 @@ function Shell() {
       color,
       charImages,
       patch,
-      openEdgeMenu,
-      setEdgeRelation,
-      openTransition,
       generateOne,
       cancelGenerate,
       canvasProdMode,
@@ -4245,21 +4247,23 @@ function Shell() {
                 if (n.id.startsWith('char-')) focusChar(charNameOf(n.id))
                 else setSelId(n.id)
               }}
-              onEdgeClick={(_, e) => {
-                // 分镜边不再响应单击（关系由右键菜单改），只有参考连线保留点选
-                if (e.id.startsWith('ref-') || e.id.startsWith('ref-tr|')) {
+              onEdgeClick={(e, ed) => {
+                // 参考连线仍以单击选中
+                if (ed.id.startsWith('ref-') || ed.id.startsWith('ref-tr|')) {
                   setSelId(null)
                   setSelEdgeId(null)
-                  setSelRef(e.id)
+                  setSelRef(ed.id)
+                  return
                 }
-              }}
-              onEdgeContextMenu={(e, ed) => {
                 if (isDerivedEdgeId(ed.id)) return
-                e.preventDefault()
+                // 分镜连线：单击弹出关系菜单。只开菜单，不改数据也不动正在编辑的转场边
                 setSelId(null)
                 setSelRef(null)
-                setCtx(null)
-                setEdgeCtx({ x: e.clientX, y: e.clientY, id: ed.id })
+                openEdgeMenu(e, ed.id)
+              }}
+              onEdgeContextMenu={(e, ed) => {
+                // 分镜连线不再用右击：只拦掉浏览器原生菜单，避免掉出无关菜单
+                if (!isDerivedEdgeId(ed.id)) e.preventDefault()
               }}
               onPaneClick={() => {
                 setSelRef(null)
