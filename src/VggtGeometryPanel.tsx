@@ -32,10 +32,13 @@ export default function VggtGeometryPanel({
   const [submitting, setSubmitting] = useState(false)
   const [linkUrl, setLinkUrl] = useState('')
   const [ingesting, setIngesting] = useState(false)
-  const [lastIngestUrl, setLastIngestUrl] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const options = useMemo(() => sources.filter((s) => s.url), [sources])
+  const referenceOptions = useMemo(
+    () => options.filter((o) => o.kind === 'reference'),
+    [options],
+  )
 
   useEffect(() => {
     void vggtWorkerStatus()
@@ -46,12 +49,6 @@ export default function VggtGeometryPanel({
   useEffect(() => {
     if (!pick && options.length) setPick(`${options[0].kind}:${options[0].url}`)
   }, [options, pick])
-
-  useEffect(() => {
-    if (lastIngestUrl && options.some((o) => o.url === lastIngestUrl)) {
-      setPick(`reference:${lastIngestUrl}`)
-    }
-  }, [lastIngestUrl, options])
 
   const selected = useMemo(() => {
     const [kind, ...rest] = pick.split(':')
@@ -80,7 +77,7 @@ export default function VggtGeometryPanel({
 
   const run = useCallback(async () => {
     if (!selected) {
-      onToast('请先选择要分析的参考片或已渲染白模')
+      onToast('请先选择项目视频或已渲染白模')
       return
     }
     setSubmitting(true)
@@ -113,16 +110,16 @@ export default function VggtGeometryPanel({
     try {
       const r = await ingestShot3dReference({ projectName, url })
       const u = r.videoUrl.split('?')[0]
-      setLastIngestUrl(u)
       onIngested?.(u)
       setPick(`reference:${u}`)
+      setLinkUrl('')
       onToast(`已下载：${r.adapterLabel || r.adapter || '参考视频'}`)
     } catch (e) {
       onToast((e as Error).message || '下载失败')
     } finally {
       setIngesting(false)
     }
-  }, [linkUrl, projectName, onToast])
+  }, [linkUrl, projectName, onIngested, onToast])
 
   const ingestFile = useCallback(
     async (file: File) => {
@@ -145,7 +142,6 @@ export default function VggtGeometryPanel({
           data,
         })
         const u = r.videoUrl.split('?')[0]
-        setLastIngestUrl(u)
         onIngested?.(u)
         setPick(`reference:${u}`)
         onToast('本地上传成功')
@@ -155,7 +151,7 @@ export default function VggtGeometryPanel({
         setIngesting(false)
       }
     },
-    [projectName, onToast],
+    [projectName, onIngested, onToast],
   )
 
   const copySummary = useCallback(() => {
@@ -180,94 +176,32 @@ export default function VggtGeometryPanel({
     <div className="cw-vggt" data-vggt-panel>
       <details open className="cw-vggt-details">
         <summary>
-          <b>参考视频 · 下载与几何（实验）</b>
+          <b>参考视频几何（实验）</b>
           <span className="cw-vggt-tag">非调度真相</span>
         </summary>
         <p className="cw-vggt-note">
-          粘贴抖音/B 站链接或上传文件，落盘到项目素材后供本会话几何分析；不写 sceneCode / 视频引用 / 镜头参考字段。解析配置与创意室「下载与摄取」共用。
+          从下方列表选择<strong>项目视频素材</strong>（仅视频）或已渲染白模；平台链请先在<strong>素材页 → 链接下载</strong>。不写
+          sceneCode / 视频引用 / 镜头参考字段。解析器在设置 → 素材库。
         </p>
-
-        <div className="cw-vggt-ingest">
-          <label className="cw-vggt-field">
-            <span>平台或直链</span>
-            <input
-              type="url"
-              placeholder="https://v.douyin.com/… 或 B 站分享链"
-              value={linkUrl}
-              onChange={(e) => setLinkUrl(e.target.value)}
-              disabled={busy}
-              data-shot3d-ingest-url
-            />
-          </label>
-          <div className="cw-vggt-ingest-actions">
-            <button type="button" className="btn-mini" disabled={busy} onClick={() => void ingestLink()} data-shot3d-ingest-link>
-              {ingesting ? '下载中…' : '下载到项目'}
-            </button>
-            <button type="button" className="btn-mini" disabled={busy} onClick={() => fileRef.current?.click()}>
-              上传本地视频
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                e.target.value = ''
-                if (f) void ingestFile(f)
-              }}
-            />
-          </div>
-          {lastIngestUrl && (
-            <div className="cw-vggt-ingest-result">
-              <span className="mono" title={lastIngestUrl}>
-                {lastIngestUrl.slice(-48)}
-              </span>
-              <button
-                type="button"
-                className="btn-mini"
-                disabled={!available || busy}
-                onClick={() => {
-                  void (async () => {
-                    setSubmitting(true)
-                    setJob(null)
-                    setJobId(null)
-                    try {
-                      const j = await submitVggtAnalyze({
-                        videoRef: lastIngestUrl,
-                        sourceKind: 'reference',
-                        projectAspect,
-                        effectiveSeconds,
-                        maxFrames: 24,
-                      })
-                      setJobId(j.id)
-                      setJob(j)
-                      setPick(`reference:${lastIngestUrl}`)
-                    } catch (e) {
-                      onToast((e as Error).message || '分析失败')
-                    } finally {
-                      setSubmitting(false)
-                    }
-                  })()
-                }}
-                data-shot3d-ingest-analyze
-              >
-                加入并分析几何
-              </button>
-            </div>
-          )}
-        </div>
 
         {available === false && (
           <div className="cw-alert warn">未配置 VGGT Worker（见 README · VGGT 实验）。</div>
         )}
-        {options.length === 0 && !lastIngestUrl ? (
-          <div className="cw-alert warn">下载参考片并「加入几何分析」，或先渲染一条白模。</div>
-        ) : options.length > 0 ? (
+
+        {options.length === 0 ? (
+          <div className="cw-alert warn" data-vggt-empty>
+            请先在素材页下载视频，或渲染一条白模 MP4，再回来选择分析来源。
+          </div>
+        ) : (
           <>
             <label className="cw-vggt-field">
-              <span>分析来源</span>
-              <select value={pick} onChange={(e) => setPick(e.target.value)} disabled={busy}>
+              <span>项目视频 / 参考片</span>
+              <select
+                value={pick}
+                onChange={(e) => setPick(e.target.value)}
+                disabled={busy}
+                data-vggt-project-video-select
+              >
                 {options.map((o) => (
                   <option key={`${o.kind}:${o.url}`} value={`${o.kind}:${o.url}`}>
                     {o.label} · {o.url.slice(-32)}
@@ -275,6 +209,9 @@ export default function VggtGeometryPanel({
                 ))}
               </select>
             </label>
+            {referenceOptions.length === 0 && (
+              <p className="cw-vggt-note">当前无项目视频；可在素材页链接下载后再打开本页。</p>
+            )}
             {selected?.kind === 'schedule' && (
               <div className="cw-alert warn">当前为「已渲染条目」只读分析，不验收、不替换已发布的视频引用。</div>
             )}
@@ -288,7 +225,44 @@ export default function VggtGeometryPanel({
               {running ? '分析中…' : '分析参考视频'}
             </button>
           </>
-        ) : null}
+        )}
+
+        <details className="cw-vggt-advanced">
+          <summary>高级：粘贴链接或上传（建议优先用素材页下载）</summary>
+          <div className="cw-vggt-ingest">
+            <label className="cw-vggt-field">
+              <span>平台或直链</span>
+              <input
+                type="url"
+                placeholder="https://v.douyin.com/… 或 B 站分享链"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                disabled={busy}
+                data-shot3d-ingest-url
+              />
+            </label>
+            <div className="cw-vggt-ingest-actions">
+              <button type="button" className="btn-mini" disabled={busy} onClick={() => void ingestLink()} data-shot3d-ingest-link>
+                {ingesting ? '下载中…' : '下载到项目'}
+              </button>
+              <button type="button" className="btn-mini" disabled={busy} onClick={() => fileRef.current?.click()}>
+                上传本地视频
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  e.target.value = ''
+                  if (f) void ingestFile(f)
+                }}
+              />
+            </div>
+          </div>
+        </details>
+
         {job?.status === 'failed' && <div className="cw-alert danger">{job.error || '分析失败'}</div>}
         {report && (
           <div className="cw-vggt-result" data-vggt-confidence={report.confidence}>

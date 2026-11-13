@@ -625,6 +625,8 @@ export type ProjectSummary = {
 
 export type ProjectShot = {
   id: string
+  /** 生图镜 image / 出片镜 video */
+  prod_kind?: 'image' | 'video'
   episode?: number
   no?: string
   seconds?: number
@@ -850,6 +852,7 @@ export type ProjectPatch = {
   /** 显式删除这些镜头 id（缺席不等于删除：缺席只标 orphan） */
   deleteShotIds?: string[]
   characters?: unknown[]
+  assets?: ProjectAsset[]
   designs?: DesignSheet[]
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   episodes?: unknown[]

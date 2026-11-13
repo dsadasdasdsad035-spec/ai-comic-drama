@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, ProjectData } from './api'
+import type { AppSettings, ProjectAsset, ProjectData } from './api'
 import { getProject } from './api'
+import { assetMediaType } from './mediaPick'
+import type { AssetKind } from './data'
 import type { ScheduleMeta, SceneCode, SceneCodeMeta } from './types'
 import { effectiveSeconds, isRenderableSceneCode } from './types'
 import type { StagePick } from './ModelSelect'
@@ -79,6 +81,16 @@ type PreparedInfo = {
   warnings: string[]
 }
 
+function videoAssetsFromProject(assets?: ProjectAsset[]) {
+  return (assets || [])
+    .filter((a) => assetMediaType(String(a.kind) as AssetKind, a.url) === 'video')
+    .map((a) => ({
+      title: a.title || a.url.split('/').pop() || '项目视频',
+      url: a.url.split('?')[0],
+    }))
+    .filter((v) => v.url.startsWith('/'))
+}
+
 const FALLBACK_SCENE_CODE = `let S;
 function init(ctx) {
   S = ctx;
@@ -149,6 +161,20 @@ export default function SceneCodeWorkbench({
   const [project, setProject] = useState<ProjectData | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [vggtSessionUrls, setVggtSessionUrls] = useState<string[]>([])
+  const [projectVideoSources, setProjectVideoSources] = useState<{ title: string; url: string }[]>([])
+
+  const reloadProjectVideoSources = useCallback(async () => {
+    if (!projectName) {
+      setProjectVideoSources([])
+      return
+    }
+    const p = await getProject(projectName)
+    setProjectVideoSources(videoAssetsFromProject(p?.assets))
+  }, [projectName])
+
+  useEffect(() => {
+    void reloadProjectVideoSources()
+  }, [reloadProjectVideoSources])
   const [savedCode, setSavedCode] = useState<SceneCode | undefined>(entry.code)
   const [draftCode, setDraftCode] = useState(entry.code?.code || '')
   const [draftMotionNote, setDraftMotionNote] = useState(entry.code?.motionNote || entry.motionNote || '')
@@ -883,27 +909,41 @@ export default function SceneCodeWorkbench({
     await startPreview(code, prepared)
   }
 
-  const onVggtIngested = useCallback((videoUrl: string) => {
-    const u = videoUrl.split('?')[0]
-    if (!u.startsWith('/')) return
-    setVggtSessionUrls((prev) => [...new Set([...prev, u])])
-  }, [])
+  const onVggtIngested = useCallback(
+    (videoUrl: string) => {
+      const u = videoUrl.split('?')[0]
+      if (!u.startsWith('/')) return
+      setVggtSessionUrls((prev) => [...new Set([...prev, u])])
+      void reloadProjectVideoSources()
+    },
+    [reloadProjectVideoSources],
+  )
 
   const hashLabel = lastValidatedCode === draftCode && lastValidatedHash ? lastValidatedHash.slice(0, 10) : '未验证'
   const displaySource = draftCode ? codeSource : 'none'
 
   const vggtSources = useMemo(() => {
     const out: { kind: 'reference' | 'schedule'; label: string; url: string }[] = []
+    const seen = new Set<string>()
+    for (const v of projectVideoSources) {
+      if (!seen.has(v.url)) {
+        seen.add(v.url)
+        out.push({ kind: 'reference', label: v.title, url: v.url })
+      }
+    }
     for (const url of vggtSessionUrls) {
       const u = String(url || '').split('?')[0]
-      if (u.startsWith('/')) out.push({ kind: 'reference', label: '参考片', url: u })
+      if (u.startsWith('/') && !seen.has(u)) {
+        seen.add(u)
+        out.push({ kind: 'reference', label: '参考片', url: u })
+      }
     }
     const sched = String(renderedVideo || entry.video || '').split('?')[0]
     if (sched.startsWith('/')) {
       out.push({ kind: 'schedule', label: '当前白模 MP4（只读）', url: sched })
     }
     return out
-  }, [vggtSessionUrls, renderedVideo, entry.video])
+  }, [projectVideoSources, vggtSessionUrls, renderedVideo, entry.video])
 
   const injectVggtToChat = useCallback((text: string) => {
     setComposerSeed(undefined)
@@ -1253,7 +1293,7 @@ export default function SceneCodeWorkbench({
                 role="tabpanel"
               >
                 <p className="cw-geom-lead">
-                  从参考片或面板内上传摄取几何；摘要可一键贴到对话，不会写入镜级参考板。
+                  从<strong>项目视频素材</strong>或已渲染白模选片做几何分析；平台链请先在素材页下载。摘要不写入镜级参考板。
                 </p>
                 <VggtGeometryPanel
                   projectName={projectName}

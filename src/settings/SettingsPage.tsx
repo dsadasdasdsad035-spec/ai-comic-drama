@@ -24,6 +24,10 @@ import { CAP_LABELS, CAP_ORDER, isRunnableModel, modelCaps, modelCapsLabel, mode
 import { normalizeRules } from '../skills/legacyPrompts'
 import { getContract } from '../skills/contracts'
 import { listSkillTexts, resetSkillOverride, saveSkillOverride } from '../skills/api'
+import { uninstallSkill } from '../skills/skillhubApi'
+import { reloadSkills } from '../skills/registry'
+import { SkillMarketPanel } from './SkillMarketPanel'
+import { McpSettingsPanel } from './McpSettingsPanel'
 import { composeSkillBody, parseSkillText } from '../skills/parse'
 import type { Skill, SkillTextRecord } from '../skills/types'
 import {
@@ -61,6 +65,7 @@ export type SettingsInitialSection =
   | 'lipsync'
   | 'voices'
   | 'skills'
+  | 'mcp'
   | 'data'
 
 type Props = {
@@ -84,6 +89,7 @@ type Section = SettingsInitialSection
   | 'lipsync'
   | 'voices'
   | 'skills'
+  | 'mcp'
   | 'data'
 
 const DEFAULT_LIP_SYNC: LipSyncSettings = {
@@ -150,7 +156,7 @@ const STAGE_META: { stage: Stage; label: string; hint: string }[] = [
   {
     stage: 'prompt',
     label: '提示词（辅助）',
-    hint: '画布单镜与 prompt-intake 导入用；整集拆镜走画布的拆镜助手',
+    hint: '画布单镜与 prompt-intake 导入用；整集分镜请用画布「导入」',
   },
   { stage: 'sceneCode', label: '白模 3D 代码（生成/聊天）', hint: '白模描述 → Blender Python 代码；空则沿用文本默认' },
   { stage: 'vision', label: '视觉（素材 brief）', hint: '选中图片/视频关键帧 → MediaBrief；未绑定则素材只给标签' },
@@ -250,6 +256,7 @@ const ADVANCED_META: { id: Section; label: string }[] = [
   { id: 'lipsync', label: '口型' },
   { id: 'voices', label: '音色' },
   { id: 'skills', label: '技能' },
+  { id: 'mcp', label: 'MCP' },
   { id: 'data', label: '数据' },
 ]
 
@@ -342,6 +349,7 @@ export default function SettingsPage({
   const [skillRows, setSkillRows] = useState<SkillRow[]>([])
   const [skillEdits, setSkillEdits] = useState<Record<string, { role: string; task: string }>>({})
   const [skillBusy, setSkillBusy] = useState<Record<string, boolean>>({})
+  const [skillsSubview, setSkillsSubview] = useState<'catalog' | 'market'>('catalog')
   const [dbFile, setDbFile] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -350,7 +358,10 @@ export default function SettingsPage({
   const [baseline, setBaseline] = useState('')
   const [section, setSection] = useState<Section>('providers')
   useEffect(() => {
-    if (initialSection) setSection(initialSection)
+    if (initialSection) {
+      setSection(initialSection)
+      if (initialSection === 'skills') setSkillsSubview('market')
+    }
   }, [initialSection])
   const [addMenu, setAddMenu] = useState(false)
   const [catalogProvider, setCatalogProvider] = useState<Provider | null>(null)
@@ -473,7 +484,26 @@ export default function SettingsPage({
     setSkillEdits((prev) => ({ ...prev, [id]: { ...(prev[id] || { role: '', task: '' }), [field]: value } }))
   }
 
+  const uninstallOneSkill = async (row: SkillRow) => {
+    if (row.record.source !== 'skillhub' && row.record.source !== 'upload') return
+    setSkillBusy((prev) => ({ ...prev, [row.record.id]: true }))
+    try {
+      await uninstallSkill(row.record.id)
+      await reloadSkills()
+      await refreshSkills()
+      toast(`已卸载技能「${row.record.id}」`)
+    } catch (e) {
+      toast((e as Error).message || '卸载失败')
+    } finally {
+      setSkillBusy((prev) => ({ ...prev, [row.record.id]: false }))
+    }
+  }
+
   const saveOneSkill = async (row: SkillRow) => {
+    if (row.record.source === 'skillhub' || row.record.source === 'upload') {
+      toast('市场来源技能只读，请卸载后重新安装或更新版本')
+      return
+    }
     const edit = skillEdits[row.record.id]
     if (!row.skill || !edit) return
     setSkillBusy((prev) => ({ ...prev, [row.record.id]: true }))
@@ -784,6 +814,16 @@ export default function SettingsPage({
     () => ({ providers, models, defaults, stageModels } as AppSettings),
     [providers, models, defaults, stageModels],
   )
+
+  const installedSkillIds = useMemo(() => new Set(skillRows.map((r) => r.record.id)), [skillRows])
+  const installedSkillSlugs = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of skillRows) {
+      const h = r.record.skillhub
+      if (h?.slug) s.add(`${h.namespace || ''}:${h.slug}`)
+    }
+    return s
+  }, [skillRows])
 
   if (loading) return <main className="settings"><div className="wb-empty">加载中…</div></main>
 
@@ -1408,6 +1448,123 @@ export default function SettingsPage({
         </button>
       </header>
 
+      <div data-settings-media-ingest className="st-media-ingest-block">
+        <h4 className="st-subhead">平台链接下载（素材页）</h4>
+        <span className="st-hint">
+          配置 yt-dlp / DTK 后，在<strong>素材页 → 链接下载</strong>将抖音、B 站等链落成视频素材；白模几何页从项目视频选片分析。创意会话反推仍仅支持本地上传。
+        </span>
+        <div className="st-grid">
+          <label className="st-field">
+            <span>yt-dlp 可执行文件</span>
+            <input
+              data-creative-ytdlp-bin
+              value={creative.ingest?.ytdlp?.bin || ''}
+              placeholder="/opt/homebrew/bin/yt-dlp"
+              onChange={(e) => setIngest({ ytdlp: { bin: e.target.value } })}
+            />
+            <em>未安装可执行文件时该适配器显示为不可用</em>
+          </label>
+          <label className="st-field">
+            <span>启用 yt-dlp</span>
+            <select
+              data-creative-ytdlp-enabled
+              value={creative.ingest?.ytdlp?.enabled ? 'on' : 'off'}
+              onChange={(e) => {
+                const on = e.target.value === 'on'
+                if (on && !String(creative.ingest?.ytdlp?.bin || '').trim()) {
+                  toast('先填写 yt-dlp 可执行文件路径，再启用')
+                  return
+                }
+                setIngest({ ytdlp: { enabled: on } })
+              }}
+            >
+              <option value="off">关闭</option>
+              <option value="on">启用</option>
+            </select>
+            <em>用于抖音 / B 站 / TikTok 链接；失败不会静默改用其他适配器</em>
+          </label>
+          <label className="st-field">
+            <span>读取浏览器 cookies</span>
+            <select
+              data-creative-ytdlp-cookies
+              value={creative.ingest?.ytdlp?.cookiesFromBrowser || ''}
+              onChange={(e) => setIngest({ ytdlp: { cookiesFromBrowser: e.target.value } })}
+            >
+              <option value="">不读取</option>
+              <option value="chrome">Chrome</option>
+              <option value="safari">Safari</option>
+              <option value="edge">Edge</option>
+              <option value="firefox">Firefox</option>
+            </select>
+            <em>抖音/TikTok 需要新鲜 cookies；只在本机读取，不上传不落盘</em>
+          </label>
+          <label className="st-field">
+            <span>cookies 文件（可选）</span>
+            <input
+              data-creative-ytdlp-cookies-file
+              value={creative.ingest?.ytdlp?.cookiesFile || ''}
+              placeholder="导出的 Netscape cookies.txt 路径"
+              onChange={(e) => setIngest({ ytdlp: { cookiesFile: e.target.value } })}
+            />
+            <em>填了浏览器来源时以浏览器为准</em>
+          </label>
+          <label className="st-field">
+            <span>DTK 服务地址</span>
+            <input
+              data-creative-dtk-url
+              value={creative.ingest?.dtk?.baseUrl || ''}
+              placeholder="http://127.0.0.1:8000"
+              onChange={(e) => setIngest({ dtk: { baseUrl: e.target.value } })}
+            />
+            <em>可选的独立下载服务；只用到 parse_url 与 download_media</em>
+          </label>
+          <label className="st-field">
+            <span>DTK API Key</span>
+            <input
+              type="password"
+              data-creative-dtk-key
+              value={creative.ingest?.dtk?.apiKey || ''}
+              placeholder={(creative.ingest?.dtk as { hasApiKey?: boolean })?.hasApiKey ? '已保存（留空保持不变）' : '可留空'}
+              onChange={(e) => setIngest({ dtk: { apiKey: e.target.value } })}
+            />
+            <em>只存本地设置库；不写进聊天消息与日志</em>
+          </label>
+          <label className="st-field">
+            <span>启用 DTK</span>
+            <select
+              data-creative-dtk-enabled
+              value={creative.ingest?.dtk?.enabled ? 'on' : 'off'}
+              onChange={(e) => setIngest({ dtk: { enabled: e.target.value === 'on' } })}
+            >
+              <option value="off">关闭</option>
+              <option value="on">启用</option>
+            </select>
+            <em>需要自己部署 DTK（Postgres + Redis + 浏览器容器）</em>
+          </label>
+          <div className="st-field">
+            <span>适配器状态</span>
+            <div className="flex flex-wrap items-center gap-1.5" data-creative-adapters>
+              {(adapters || []).map((a) => (
+                <span
+                  key={a.id}
+                  className={`st-status-chip ${a.ok ? 'ok' : 'warn'}`}
+                  title={a.reason || '可用'}
+                >
+                  {a.label}
+                  {a.ok ? '' : ' · 不可用'}
+                </span>
+              ))}
+              <button type="button" className="btn" onClick={() => void refreshAdapters()} data-creative-test-adapters>
+                检测可用性
+              </button>
+            </div>
+            <em>{adapterError || '检测只读本地配置，不发起下载'}</em>
+          </div>
+        </div>
+      </div>
+
+      <h4 className="st-subhead">在线图库</h4>
+
       <div className="st-grid">
         {STOCK_PROVIDERS.map((p) => {
           const cfg = stock.providers[p.id] || { enabled: false, baseUrl: '', hasApiKey: false }
@@ -1492,120 +1649,9 @@ export default function SettingsPage({
         <h3>创意会话</h3>
         <span className="st-hint">
           创意会话不绑定项目：反推用的源视频仅支持本地上传，存在 creatives/ 目录；只有「晋升项目」才写入项目数据。
-          下方平台链接下载仅用于白模工作台的参考视频摄取（VGGT 面板）。
+          平台链下载请在<strong>素材页</strong>完成，解析器配置在「素材库」分组。
         </span>
       </header>
-
-      <h4 className="st-subhead">平台链接下载（创意室 / VGGT 摄取共用）</h4>
-      <div className="st-grid">
-        <label className="st-field">
-          <span>yt-dlp 可执行文件</span>
-          <input
-            data-creative-ytdlp-bin
-            value={creative.ingest?.ytdlp?.bin || ''}
-            placeholder="/opt/homebrew/bin/yt-dlp"
-            onChange={(e) => setIngest({ ytdlp: { bin: e.target.value } })}
-          />
-          <em>未安装可执行文件时该适配器显示为不可用；创意室反推不依赖此配置</em>
-        </label>
-        <label className="st-field">
-          <span>启用 yt-dlp</span>
-          <select
-            data-creative-ytdlp-enabled
-            value={creative.ingest?.ytdlp?.enabled ? 'on' : 'off'}
-            onChange={(e) => {
-              const on = e.target.value === 'on'
-              // 禁止「启用但没路径」：那种状态只会在摄取时才报错
-              if (on && !String(creative.ingest?.ytdlp?.bin || '').trim()) {
-                toast('先填写 yt-dlp 可执行文件路径，再启用')
-                return
-              }
-              setIngest({ ytdlp: { enabled: on } })
-            }}
-          >
-            <option value="off">关闭</option>
-            <option value="on">启用</option>
-          </select>
-          <em>用于抖音 / B 站 / TikTok 链接；失败不会静默改用其他适配器</em>
-        </label>
-        <label className="st-field">
-          <span>读取浏览器 cookies</span>
-          <select
-            data-creative-ytdlp-cookies
-            value={creative.ingest?.ytdlp?.cookiesFromBrowser || ''}
-            onChange={(e) => setIngest({ ytdlp: { cookiesFromBrowser: e.target.value } })}
-          >
-            <option value="">不读取</option>
-            <option value="chrome">Chrome</option>
-            <option value="safari">Safari</option>
-            <option value="edge">Edge</option>
-            <option value="firefox">Firefox</option>
-          </select>
-          <em>抖音/TikTok 需要新鲜 cookies；只在本机读取，不上传不落盘。需先在浏览器登录过该平台</em>
-        </label>
-        <label className="st-field">
-          <span>cookies 文件（可选）</span>
-          <input
-            data-creative-ytdlp-cookies-file
-            value={creative.ingest?.ytdlp?.cookiesFile || ''}
-            placeholder="导出的 Netscape cookies.txt 路径"
-            onChange={(e) => setIngest({ ytdlp: { cookiesFile: e.target.value } })}
-          />
-          <em>填了浏览器来源时以浏览器为准</em>
-        </label>
-        <label className="st-field">
-          <span>DTK 服务地址</span>
-          <input
-            data-creative-dtk-url
-            value={creative.ingest?.dtk?.baseUrl || ''}
-            placeholder="http://127.0.0.1:8000"
-            onChange={(e) => setIngest({ dtk: { baseUrl: e.target.value } })}
-          />
-          <em>可选的独立下载服务；只用到 parse_url 与 download_media</em>
-        </label>
-        <label className="st-field">
-          <span>DTK API Key</span>
-          <input
-            type="password"
-            data-creative-dtk-key
-            value={creative.ingest?.dtk?.apiKey || ''}
-            placeholder={(creative.ingest?.dtk as { hasApiKey?: boolean })?.hasApiKey ? '已保存（留空保持不变）' : '可留空'}
-            onChange={(e) => setIngest({ dtk: { apiKey: e.target.value } })}
-          />
-          <em>只存本地设置库；不写进聊天消息与日志</em>
-        </label>
-        <label className="st-field">
-          <span>启用 DTK</span>
-          <select
-            data-creative-dtk-enabled
-            value={creative.ingest?.dtk?.enabled ? 'on' : 'off'}
-            onChange={(e) => setIngest({ dtk: { enabled: e.target.value === 'on' } })}
-          >
-            <option value="off">关闭</option>
-            <option value="on">启用</option>
-          </select>
-          <em>需要自己部署 DTK（Postgres + Redis + 浏览器容器）</em>
-        </label>
-        <div className="st-field">
-          <span>适配器状态</span>
-          <div className="flex flex-wrap items-center gap-1.5" data-creative-adapters>
-            {(adapters || []).map((a) => (
-              <span
-                key={a.id}
-                className={`st-status-chip ${a.ok ? 'ok' : 'warn'}`}
-                title={a.reason || '可用'}
-              >
-                {a.label}
-                {a.ok ? '' : ' · 不可用'}
-              </span>
-            ))}
-            <button type="button" className="btn" onClick={() => void refreshAdapters()} data-creative-test-adapters>
-              检测可用性
-            </button>
-          </div>
-          <em>{adapterError || '检测只读本地配置，不发起下载'}</em>
-        </div>
-      </div>
 
       <h4 className="st-subhead">能力绑定</h4>
       <span className="st-hint">
@@ -2017,6 +2063,23 @@ export default function SettingsPage({
     )
   }
 
+  const skillSourceLabel = (source: SkillTextRecord['source']) => {
+    if (source === 'override') return '用户覆盖'
+    if (source === 'skillhub') return 'SkillHub'
+    if (source === 'upload') return '本地上传'
+    return '内置'
+  }
+
+  const renderMcp = () => (
+    <section className="st-sec" data-settings-section="mcp">
+      <header className="st-sec-head">
+        <h3>MCP</h3>
+        <span className="st-hint">市场安装与凭据配置；勾选「创意聊天」后工具会进入创意工作室 Pi 循环。</span>
+      </header>
+      <McpSettingsPanel toast={toast} />
+    </section>
+  )
+
   const renderSkills = () => (
     <section className="st-sec" data-settings-section="skills">
       <header className="st-sec-head">
@@ -2026,9 +2089,38 @@ export default function SettingsPage({
           ABI、安全规则）只读。
         </span>
       </header>
+      <div className="mcp-scope-switch" style={{ margin: '0 0 12px' }} role="tablist" aria-label="技能视图">
+        <button
+          type="button"
+          className={skillsSubview === 'market' ? 'active' : ''}
+          onClick={() => setSkillsSubview('market')}
+        >
+          SkillHub 市场
+        </button>
+        <button
+          type="button"
+          className={skillsSubview === 'catalog' ? 'active' : ''}
+          onClick={() => setSkillsSubview('catalog')}
+        >
+          已安装 ({skillRows.length})
+        </button>
+      </div>
+      {skillsSubview === 'market' ? (
+        <SkillMarketPanel
+          installedIds={installedSkillIds}
+          installedSlugs={installedSkillSlugs}
+          onInstalled={(record) => {
+            applySkillRecord(record)
+            void refreshSkills()
+          }}
+          toast={toast}
+        />
+      ) : null}
+      {skillsSubview === 'catalog' ? (
+        <>
       <p className="st-hint" style={{ margin: '0 0 8px' }}>
-        创意工作室顶栏列出全部 <code>runtime: tools</code> 技能；选项目后可使用工作台读/写工具，完整目录见下方。
-        聊天里额外加载的技能只读，不会获得写工具；旧规则包只迁移一次成用户覆盖，恢复默认会删除覆盖。
+        创意工作室宿主仅显示 <code>stage: creative</code> 的已安装技能（不再随仓库内置）；请从 SkillHub
+        市场安装或上传 zip。内置目录技能仍可编辑正文覆盖；市场来源技能请卸载后重装。
       </p>
       <div className="st-rules">
         {skillRows.length === 0 && <p className="st-hint">正在读取技能…</p>}
@@ -2042,8 +2134,9 @@ export default function SettingsPage({
               <header>
                 <span className="st-skill-name">{row.record.id}</span>
                 <span className="st-src">
-                  {row.record.source === 'override' ? '用户覆盖' : '内置'}
+                  {skillSourceLabel(row.record.source)}
                   {skill ? ` · v${skill.manifest.version}` : ''}
+                  {row.record.skillhub?.version ? ` · SkillHub v${row.record.skillhub.version}` : ''}
                 </span>
                 <span className="spacer" />
                 {row.record.source === 'override' && (
@@ -2051,10 +2144,21 @@ export default function SettingsPage({
                     恢复默认
                   </button>
                 )}
+                {(row.record.source === 'skillhub' || row.record.source === 'upload') && (
+                  <button className="btn-mini danger" onClick={() => void uninstallOneSkill(row)} disabled={busy}>
+                    卸载
+                  </button>
+                )}
                 <button
                   className="btn-mini"
                   onClick={() => void saveOneSkill(row)}
-                  disabled={busy || !skill || !edit}
+                  disabled={
+                    busy ||
+                    !skill ||
+                    !edit ||
+                    row.record.source === 'skillhub' ||
+                    row.record.source === 'upload'
+                  }
                 >
                   {busy ? '保存中…' : '保存技能'}
                 </button>
@@ -2102,6 +2206,8 @@ export default function SettingsPage({
           )
         })}
       </div>
+        </>
+      ) : null}
     </section>
   )
 
@@ -2212,6 +2318,7 @@ export default function SettingsPage({
           {section === 'lipsync' && renderLipSync()}
           {section === 'voices' && renderVoices()}
           {section === 'skills' && renderSkills()}
+          {section === 'mcp' && renderMcp()}
           {section === 'data' && renderData()}
         </div>
       </div>

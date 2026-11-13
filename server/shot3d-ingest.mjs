@@ -7,7 +7,30 @@ import crypto from 'node:crypto'
 import { ingestSourceToDir, MAX_SOURCE_BYTES } from './ingest.mjs'
 import { probeMedia } from './video-analyze.mjs'
 import { projectMediaDir, projectMediaUrl } from './media.mjs'
-import { readProject, resolveRoot, safeProjectName } from './db.mjs'
+import { readProject, resolveRoot, safeProjectName, writeProject } from './db.mjs'
+
+function normAssetUrl(url) {
+  return String(url || '').split('?')[0]
+}
+
+/** 摄取成功后在 project.assets 登记视频条目（同 URL 去重更新） */
+function upsertIngestVideoAsset(project, { videoUrl, title, adapter }) {
+  const url = normAssetUrl(videoUrl)
+  const assets = Array.isArray(project.assets) ? [...project.assets] : []
+  const note = adapter ? `平台链接下载 · ${adapter}` : '平台链接下载'
+  const entry = {
+    kind: 'video',
+    title: String(title || '链接下载').slice(0, 120),
+    url,
+    note,
+    tags: [],
+    designId: '',
+  }
+  const idx = assets.findIndex((a) => normAssetUrl(a?.url) === url)
+  if (idx >= 0) assets[idx] = { ...assets[idx], ...entry }
+  else assets.push(entry)
+  return assets
+}
 
 export async function ingestShot3dReference(appRoot, body, creativeConfig = {}) {
   const projectName = safeProjectName(String(body?.projectName || ''))
@@ -54,6 +77,17 @@ export async function ingestShot3dReference(appRoot, body, creativeConfig = {}) 
     }
     throw new Error(probeError || '无法读取视频信息')
   }
+
+  const title =
+    String(got.meta?.title || got.meta?.description || '').trim() ||
+    path.basename(base, path.extname(base)) ||
+    '链接下载'
+  const assets = upsertIngestVideoAsset(project, {
+    videoUrl,
+    title,
+    adapter: got.adapterLabel || got.adapter,
+  })
+  writeProject(root, projectName, { assets })
 
   return {
     videoUrl,

@@ -256,17 +256,15 @@ try {
     const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } })
     const errors = []
     page.on('pageerror', (e) => errors.push(String(e)))
-    await page.goto(APP, { waitUntil: 'domcontentloaded' })
-    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.goto(`${APP}/#/p/${encodeURIComponent(projName)}/settings`, { waitUntil: 'networkidle' })
     await page.locator('.st-nav').waitFor({ timeout: 15000 })
     // 设置页分组里也有「创意」，限定在导航里点
     await page.locator('.st-nav').getByRole('button', { name: '创意', exact: true }).click()
     await page.locator('[data-settings-creative]').waitFor({ timeout: 10000 })
     const sec = page.locator('[data-settings-creative]')
     const text = await sec.innerText()
-    check('设置页有创意分组', text.includes('下载与摄取') && text.includes('能力绑定'), text.slice(0, 120))
-    check('yt-dlp 字段可见', (await sec.locator('[data-creative-ytdlp-bin]').count()) === 1)
-    check('DTK 字段可见', (await sec.locator('[data-creative-dtk-url]').count()) === 1)
+    check('设置页有创意分组', text.includes('能力绑定') && !text.includes('yt-dlp 可执行文件'), text.slice(0, 120))
+    check('创意分组不含 yt-dlp', (await sec.locator('[data-creative-ytdlp-bin]').count()) === 0)
     check('能力绑定七项', (await sec.locator('[data-creative-binding]').count()) === 7)
     check('成本开关可见', (await sec.locator('[data-creative-confirm]').count()) === 1)
 
@@ -279,8 +277,20 @@ try {
       visionOptions.slice(0, 4).join(' | '),
     )
 
+    await page.locator('.st-nav').getByRole('button', { name: '素材库', exact: true }).click()
+    await page.locator('[data-settings-stock]').waitFor({ timeout: 10000 })
+    const stockSec = page.locator('[data-settings-stock]')
+    const stockText = await stockSec.innerText()
+    check('素材库有平台链接下载', stockText.includes('平台链接下载'), stockText.slice(0, 160))
+    check('yt-dlp 字段可见', (await stockSec.locator('[data-creative-ytdlp-bin]').count()) === 1)
+    check('DTK 字段可见', (await stockSec.locator('[data-creative-dtk-url]').count()) === 1)
+
+  await page.locator('.st-nav').getByRole('button', { name: '创意', exact: true }).click()
+  await page.locator('[data-settings-creative]').waitFor({ timeout: 10000 })
+  const secSave = page.locator('[data-settings-creative]')
+
     // 改一个成本开关并保存（不依赖具体模型）
-    await sec.locator('[data-creative-confirm]').selectOption('off')
+    await secSave.locator('[data-creative-confirm]').selectOption('off')
     await page.getByRole('button', { name: /保存/ }).first().click()
     await page.waitForTimeout(1200)
     const afterSave = (await api('/api/settings')).settings

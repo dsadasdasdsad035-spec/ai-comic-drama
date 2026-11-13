@@ -20,9 +20,56 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { openBundle, getBundle, readBundleFile, cleanupBundle, cleanupAllBundles } from './server/bundle.mjs'
-import { createProject, listProjects, readProject, writeProject, mergeShots, deleteShots, pruneDanglingTransitions, findDuplicateShotNos, resolveRoot, getSetting, setSetting, dbPath, safeProjectName, listSkillOverrides, getSkillOverride, setSkillOverride, deleteSkillOverride, getChatThread, saveChatThread, deleteChatThread } from './server/db.mjs'
+import {
+  createProject,
+  listProjects,
+  readProject,
+  writeProject,
+  mergeShots,
+  deleteShots,
+  pruneDanglingTransitions,
+  findDuplicateShotNos,
+  resolveRoot,
+  getSetting,
+  setSetting,
+  dbPath,
+  safeProjectName,
+  listSkillOverrides,
+  getSkillOverride,
+  setSkillOverride,
+  deleteSkillOverride,
+  listSkillInstalls,
+  getSkillInstall,
+  getSkillInstallBySource,
+  upsertSkillInstall,
+  deleteSkillInstall,
+  getChatThread,
+  saveChatThread,
+  deleteChatThread,
+} from './server/db.mjs'
 import { deleteProjects, previewProjectDelete, previewProjectDeletes } from './server/project-lifecycle.mjs'
-import { MAX_SKILL_BYTES, listSkillFiles, readSkillFile, safeSkillId, splitSkillText, withBuiltinFrontmatter } from './server/skills.mjs'
+import {
+  MAX_SKILL_BYTES,
+  listSkillFiles,
+  mergeSkillCatalog,
+  readSkillFile,
+  safeSkillId,
+  splitSkillText,
+  withBuiltinFrontmatter,
+} from './server/skills.mjs'
+import { skillhubCategories, skillhubDetail, skillhubDownloadZip, skillhubHomepage, skillhubList } from './server/skillhub.mjs'
+import {
+  creativeMcpServers,
+  installMcpFromMarket,
+  listConfiguredMcpServers,
+  mcpMarketSearch,
+  removeMcpServer,
+  saveMcpServerPatch,
+  getMcpServerWithSecret,
+} from './server/mcpStore.mjs'
+import { callMcpTool, listCreativeMcpToolDescriptors, parseMcpToolExternalName } from './server/mcpHttp.mjs'
+import { extractSkillMdFromZip, manifestNameFromSkillText } from './server/skillZip.mjs'
+import { parseSkillText } from './src/skills/parse'
 /** 压缩包上传上限：7.4MB 的真实资料包留足余量，同时挡住误传大文件 */
 const MAX_BUNDLE_BYTES = 200 * 1024 * 1024
 
@@ -1222,6 +1269,24 @@ function effVideoModel(): string {
 /** 多参考图（reference_image）模式用的模型：默认 Lite I2V，可在设置页覆盖 */
 function effVideoRefModel(): string {
   return pickModel('videoRef').entry?.model || VIDEO_REF_MODEL
+}
+
+function readBody(req: any, maxBytes = 40 * 1024 * 1024): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > maxBytes) {
+        reject(new Error(`请求体超过 ${maxBytes} 字节`))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
 }
 
 function readJson(req: any): Promise<any> {
@@ -2823,7 +2888,7 @@ function seedreamProxy(): Plugin {
                   JSON.stringify({
                     ok: false,
                     message:
-                      '创意室仅支持本地上传视频。抖音 / B 站等平台链接请在「3D 调度 → 参考片几何」中摄取。',
+                      '创意室仅支持本地上传视频。抖音 / B 站等平台链接请在「素材页 → 链接下载」摄取。',
                   }),
                 )
                 return
@@ -3139,33 +3204,361 @@ function seedreamProxy(): Plugin {
           return
         }
 
-        // ---- 技能：内置 SKILL.md + 用户覆盖（只读文件、数据-only）----
+        // ---- MCP 市场与创意代理 ----
+        if (url === '/api/mcp/market' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const u = new URL(req.url || '/', 'http://local')
+            const items = mcpMarketSearch({
+              keyword: u.searchParams.get('keyword') || '',
+              category: u.searchParams.get('category') || '',
+            })
+            res.end(JSON.stringify({ ok: true, items }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url === '/api/mcp/servers' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            res.end(JSON.stringify({ ok: true, servers: listConfiguredMcpServers() }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url === '/api/mcp/install' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const body = await readJson(req)
+            const marketId = String(body.marketId || '').trim()
+            if (!marketId) throw new Error('缺少 marketId')
+            const server = installMcpFromMarket(marketId)
+            res.end(JSON.stringify({ ok: true, server }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url.startsWith('/api/mcp/servers/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const serverId = decodeURIComponent(url.slice('/api/mcp/servers/'.length).replace(/\/+$/, ''))
+          try {
+            if (req.method === 'PATCH') {
+              dbPath(resolveRoot(root))
+              const body = await readJson(req)
+              const server = saveMcpServerPatch(serverId, body || {})
+              res.end(JSON.stringify({ ok: true, server }))
+              return
+            }
+            if (req.method === 'DELETE') {
+              dbPath(resolveRoot(root))
+              removeMcpServer(serverId)
+              res.end(JSON.stringify({ ok: true }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 PATCH / DELETE' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url === '/api/mcp/creative-tools' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const tools = await listCreativeMcpToolDescriptors(creativeMcpServers())
+            res.end(JSON.stringify({ ok: true, tools }))
+          } catch (e: any) {
+            res.statusCode = 502
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url === '/api/mcp/call' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const body = await readJson(req)
+            const tool = String(body.tool || '').trim()
+            const args = body.arguments && typeof body.arguments === 'object' ? body.arguments : {}
+            const servers = creativeMcpServers()
+            const parsed = parseMcpToolExternalName(
+              tool,
+              servers.map((s: { id: string }) => s.id),
+            )
+            if (!parsed) throw new Error('未知或未启用的 MCP 工具')
+            const server = getMcpServerWithSecret(parsed.serverId)
+            if (!server) throw new Error('找不到 MCP 配置')
+            if (!server.creativeChat) throw new Error('该 MCP 未勾选创意聊天')
+            const result = await callMcpTool(server, parsed.toolName, args)
+            res.end(JSON.stringify({ ok: result.ok !== false, result: result.text, raw: result.raw }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- SkillHub 市场（服务端代理）----
+        if (url === '/api/skillhub/categories' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const items = await skillhubCategories()
+            res.end(JSON.stringify({ ok: true, items }))
+          } catch (e: any) {
+            res.statusCode = 502
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url.startsWith('/api/skillhub/skills')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const tail = url.slice('/api/skillhub/skills'.length).replace(/^\/+/, '')
+          try {
+            if (!tail && req.method === 'GET') {
+              const u = new URL(req.url || '/', 'http://local')
+              const out = await skillhubList({
+                keyword: u.searchParams.get('keyword') || '',
+                category: u.searchParams.get('category') || '',
+                sortBy: u.searchParams.get('sortBy') || 'downloads',
+                page: Number(u.searchParams.get('page')) || 1,
+                pageSize: Number(u.searchParams.get('pageSize')) || 24,
+              })
+              res.end(JSON.stringify({ ok: true, ...out }))
+              return
+            }
+            if (tail && req.method === 'GET') {
+              const u = new URL(req.url || '/', 'http://local')
+              const slug = decodeURIComponent(tail.split('/')[0] || tail)
+              const detail = await skillhubDetail(slug, u.searchParams.get('namespace') || '')
+              res.end(JSON.stringify({ ok: true, detail }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '不支持该 SkillHub 请求' }))
+          } catch (e: any) {
+            res.statusCode = e?.status === 404 ? 404 : 502
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+        if (url === '/api/skillhub/install' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const body = await readJson(req)
+            const slug = String(body.slug || '').trim()
+            const namespace = String(body.namespace || '').trim()
+            let version = String(body.version || '').trim()
+            let skillId = String(body.id || slug).trim()
+            if (!slug) throw new Error('缺少技能 slug')
+
+            const detail = await skillhubDetail(slug, namespace)
+            const ns = namespace || String(detail.namespace || '')
+            if (!version) version = String(detail.latestVersion || '')
+            if (!version) throw new Error('SkillHub 未返回可安装的版本')
+
+            const zip = await skillhubDownloadZip(slug, ns, version)
+            const { text } = extractSkillMdFromZip(Buffer.from(zip))
+            const manifestName = manifestNameFromSkillText(text)
+            if (manifestName) skillId = manifestName
+            skillId = safeSkillId(skillId)
+            parseSkillText(skillId, text, 'skillhub')
+
+            const existing = getSkillInstallBySource(ns, slug)
+            if (existing && existing.id !== skillId) {
+              deleteSkillInstall(existing.id)
+            }
+
+            const saved = upsertSkillInstall({
+              id: skillId,
+              provider: 'skillhub',
+              slug,
+              namespace: ns,
+              version,
+              text,
+              meta: {
+                homepage: skillhubHomepage(ns, slug),
+                name: String(detail.name || slug),
+                summary: String(detail.summary || ''),
+              },
+            })
+            deleteSkillOverride(skillId)
+            res.end(
+              JSON.stringify({
+                ok: true,
+                skill: {
+                  id: saved!.id,
+                  text: saved!.text,
+                  builtinText: saved!.text,
+                  source: 'skillhub',
+                  skillhub: {
+                    slug: saved!.slug,
+                    namespace: saved!.namespace,
+                    version: saved!.version,
+                    homepage: saved!.meta?.homepage,
+                    name: saved!.meta?.name,
+                  },
+                },
+              }),
+            )
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        if (url.startsWith('/api/skill-installs/') && req.method === 'DELETE') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const id = safeSkillId(decodeURIComponent(url.slice('/api/skill-installs/'.length).replace(/\/+$/, '')))
+            if (!getSkillInstall(id)) throw new Error(`未安装技能「${id}」`)
+            deleteSkillInstall(id)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        if (url === '/api/skills/upload' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const buf = await readBody(req, 70 * 1024 * 1024)
+            const contentType = String(req.headers['content-type'] || '')
+            let text = ''
+            if (contentType.includes('application/json')) {
+              const j = JSON.parse(buf.toString('utf8'))
+              text = String(j.text || '')
+            } else if (contentType.includes('multipart/form-data')) {
+              throw new Error('请使用 zip 上传接口 /api/skills/upload-zip')
+            } else {
+              text = buf.toString('utf8')
+            }
+            if (!text.trim()) throw new Error('技能正文不能为空')
+            const manifestName = manifestNameFromSkillText(text)
+            if (!manifestName) throw new Error('SKILL.md 缺少 name')
+            const skillId = safeSkillId(manifestName)
+            parseSkillText(skillId, text, 'upload')
+            const saved = upsertSkillInstall({
+              id: skillId,
+              provider: 'upload',
+              text,
+              meta: { name: manifestName },
+            })
+            deleteSkillOverride(skillId)
+            res.end(
+              JSON.stringify({
+                ok: true,
+                skill: { id: saved!.id, text: saved!.text, builtinText: saved!.text, source: 'upload' },
+              }),
+            )
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        if (url === '/api/skills/upload-zip' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const buf = await readBody(req, 70 * 1024 * 1024)
+            const { text } = extractSkillMdFromZip(buf)
+            const manifestName = manifestNameFromSkillText(text)
+            if (!manifestName) throw new Error('SKILL.md 缺少 name')
+            const skillId = safeSkillId(manifestName)
+            parseSkillText(skillId, text, 'upload')
+            const saved = upsertSkillInstall({
+              id: skillId,
+              provider: 'upload',
+              text,
+              meta: { name: manifestName },
+            })
+            deleteSkillOverride(skillId)
+            res.end(
+              JSON.stringify({
+                ok: true,
+                skill: { id: saved!.id, text: saved!.text, builtinText: saved!.text, source: 'upload' },
+              }),
+            )
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 技能：内置 SKILL.md + 市场安装 + 用户覆盖 ----
         if (url === '/api/skills' || url.startsWith('/api/skills/')) {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           const rootDir = resolveRoot(root)
           try {
             dbPath(rootDir)
             const tail = url.slice('/api/skills'.length).replace(/^\/+/, '')
+
             const overrides = listSkillOverrides()
-            const asRecord = (id: string, text: string) => {
-              const ov = overrides[id]
+            const installs = listSkillInstalls()
+            const disk = listSkillFiles(root)
+            const diskById = new Map(disk.skills.map((s) => [s.id, s.text]))
+            const catalog = mergeSkillCatalog(disk.skills, installs)
+
+            const asRecord = (entry: {
+              id: string
+              text: string
+              source: string
+              skillhub?: Record<string, unknown>
+            }) => {
+              const source = entry.source as 'builtin' | 'override' | 'skillhub' | 'upload'
+              if (source === 'skillhub' || source === 'upload') {
+                return {
+                  id: entry.id,
+                  text: entry.text,
+                  builtinText: entry.text,
+                  source,
+                  ...(entry.skillhub ? { skillhub: entry.skillhub } : {}),
+                }
+              }
+              const builtin = diskById.get(entry.id) || entry.text
+              const ov = overrides[entry.id]
               return {
-                id,
-                text: ov ? withBuiltinFrontmatter(text, ov.body) : text,
-                builtinText: text,
+                id: entry.id,
+                text: ov ? withBuiltinFrontmatter(builtin, ov.body) : builtin,
+                builtinText: builtin,
                 source: ov ? 'override' : 'builtin',
                 ...(ov ? { baseVersion: ov.baseVersion, updatedAt: ov.updatedAt } : {}),
               }
             }
+
             if (req.method === 'GET') {
               if (!tail) {
-                const { skills, errors } = listSkillFiles(root)
-                res.end(JSON.stringify({ ok: true, skills: skills.map((s) => asRecord(s.id, s.text)), errors }))
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    skills: catalog.map((e: { id: string; text: string; source: string; skillhub?: Record<string, unknown> }) =>
+                  asRecord(e),
+                ),
+                    errors: disk.errors,
+                  }),
+                )
                 return
               }
               const id = safeSkillId(decodeURIComponent(tail))
-              const text = readSkillFile(root, id)
-              res.end(JSON.stringify({ ok: true, skill: asRecord(id, text) }))
+              const merged = catalog.find((c: { id: string }) => c.id === id)
+              if (!merged) throw new Error(`技能「${id}」不存在`)
+              res.end(JSON.stringify({ ok: true, skill: asRecord(merged as any) }))
               return
             }
             if (!tail) {
@@ -3174,6 +3567,9 @@ function seedreamProxy(): Plugin {
               return
             }
             const id = safeSkillId(decodeURIComponent(tail))
+            if (getSkillInstall(id)) {
+              throw new Error('市场/上传来源的技能请在设置里卸载后重装，不支持正文覆盖')
+            }
             if (req.method === 'PUT') {
               const body = await readJson(req)
               const submitted = String(body.body || '')

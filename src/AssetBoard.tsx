@@ -35,7 +35,10 @@ import { getCameraLexiconCatalog } from './cameraLexicon'
 import { listLexiconWhitebox, type LexiconWhiteboxSheet } from './lexiconWhitebox'
 import StockBrowser from './stock/StockBrowser'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
+import AssetVideoBoard from './AssetVideoBoard'
 import WorkbenchBar from './WorkbenchBar'
+import { assetMediaType } from './mediaPick'
+import type { AssetKind } from './data'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
 
@@ -89,7 +92,8 @@ export default function AssetBoard({
 }: Props) {
   const [project, setProject] = useState<ProjectData | null>(null)
   const [designs, setDesigns] = useState<DesignSheet[]>([])
-  const [tab, setTab] = useState<DesignKind>('scene')
+  type MaterialTab = DesignKind | 'video'
+  const [tab, setTab] = useState<MaterialTab>('scene')
   const [lexiconOpen, setLexiconOpen] = useState(false)
   const [lexiconView, setLexiconView] = useState<'preset' | 'custom'>('preset')
   const [whiteboxSheets, setWhiteboxSheets] = useState<LexiconWhiteboxSheet[]>([])
@@ -554,7 +558,17 @@ export default function AssetBoard({
     onAddAssetCard?.({ title: item.title, kind: mediaKind, url: result.url })
   }
 
-  const shown = useMemo(() => designs.filter((d) => d.kind === tab), [designs, tab])
+  const videoCount = useMemo(
+    () =>
+      (project?.assets || []).filter(
+        (a) => assetMediaType(String(a.kind) as AssetKind, a.url) === 'video',
+      ).length,
+    [project?.assets],
+  )
+  const shown = useMemo(
+    () => (tab === 'video' ? [] : designs.filter((d) => d.kind === tab)),
+    [designs, tab],
+  )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
   const withImage = designs.filter((d) => d.image && !missing.has(d.image)).length
@@ -572,13 +586,17 @@ export default function AssetBoard({
                   ? `镜头语言 · ${getCameraLexiconCatalog().count} 段预置运镜（非场景/道具设定）`
                   : `镜头语言 · 自定义白模 ${whiteboxSheets.length} 条`
                 : '镜头语言 · 先选择项目再导入'
+              : tab === 'video'
+                ? projectName
+                  ? `视频库 ${videoCount} 条`
+                  : '视频 · 先选择项目'
               : projectName
                 ? `E${String(epNo).padStart(2, '0')} · 场景 ${sceneCount} · 道具 ${propCount}`
                 : '先选择项目'}
           </span>
         }
         settings={
-          lexiconOpen ? null : (
+          lexiconOpen || tab === 'video' ? null : (
           <>
             <StageModelSelect
               stage="asset"
@@ -609,7 +627,7 @@ export default function AssetBoard({
             >
               返回场景/道具
             </button>
-          ) : (
+          ) : tab === 'video' ? null : (
           <>
             <button
               className="btn-ghost"
@@ -679,6 +697,17 @@ export default function AssetBoard({
         <button className={tab === 'prop' && !lexiconOpen ? 'on' : ''} onClick={() => { setLexiconOpen(false); setTab('prop') }}>
           道具 <span>{propCount}</span>
         </button>
+        <button
+          type="button"
+          className={tab === 'video' && !lexiconOpen ? 'on' : ''}
+          data-asset-video-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('video')
+          }}
+        >
+          视频 <span>{videoCount}</span>
+        </button>
         <button className={lexiconOpen ? 'on' : ''} onClick={() => setLexiconOpen(true)}>
           镜头语言
         </button>
@@ -687,7 +716,9 @@ export default function AssetBoard({
             ? lexiconView === 'preset'
               ? '镜头语言：先预览再发布素材卡 · 白膜仅供运镜参照'
               : '自定义白模：用 3D 工作台写代码并渲染 MP4，再发布为素材卡'
-            : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
+            : tab === 'video'
+              ? '参考片与平台下载统一进视频库；几何分析在白模工作台选用'
+              : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
       </div>
 
@@ -734,6 +765,20 @@ export default function AssetBoard({
             />
           )}
         </>
+      ) : tab === 'video' ? (
+        <AssetVideoBoard
+          projectName={projectName}
+          disabled={!projectName || ready !== projectName}
+          assets={project?.assets || []}
+          onAssetsChange={async (next) => {
+            setProject((p) => (p ? { ...p, assets: next } : p))
+            if (!projectName) return
+            const p = await getProject(projectName)
+            setProject(p)
+          }}
+          onAddAssetCard={onAddAssetCard}
+          toast={toast}
+        />
       ) : (
       <div className="char-grid" data-asset-design-grid>
         {loading ? (
