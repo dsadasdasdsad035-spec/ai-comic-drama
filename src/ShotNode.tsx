@@ -32,7 +32,7 @@ function useImage(src?: string) {
 }
 
 function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
+  const { tool, guides, exporting, color, patch, generate, generateVideo, charImages } = useContext(CanvasCtx)
   const img = useImage(data.refImage)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
@@ -138,7 +138,7 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
    * 每张卡一个 canvas 是缩放卡顿的主因（几十张卡 = 几十个 canvas 跟着缩放）。
    */
   const stageMode = tool !== 'none' || (data.marks?.length ?? 0) > 0
-  const stillUrl = !hasVideo ? data.refImage : undefined
+  const stillUrl = exporting || !hasVideo ? data.refImage : undefined
 
   // 出片期间每秒重算已等待时长
   const [, tick] = useState(0)
@@ -303,7 +303,7 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
         )}
 
         {/* 出片后视频盖在静帧上播放，Konva 的标注层留在下面 */}
-        {hasVideo && showVideo && (
+        {hasVideo && showVideo && !exporting && (
           <video
             className="vid-preview"
             src={data.videoUrl}

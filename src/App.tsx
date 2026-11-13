@@ -71,6 +71,7 @@ import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './c
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { toProject, toSheet, type ProjectChar } from './charMap'
+import { exportCanvasPng } from './exportCanvas'
 
 const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
 const edgeTypes = { shot: ShotEdge }
@@ -163,17 +164,19 @@ function Shell() {
   const [vidBatch, setVidBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
+  const [pngBusy, setPngBusy] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
-  const { fitView, setCenter, getZoom } = useReactFlow()
+  const { fitView, setCenter, getZoom, getNodesBounds } = useReactFlow()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
   /** 角色上一次同步到 project.json 的快照 */
   const charSnapRef = useRef<string>('')
 
   const nodesRef = useRef(nodes)
+  const canvasRef = useRef<HTMLDivElement>(null)
   const voicesRef = useRef<VoiceOption[]>([])
   const charactersRef = useRef(characters)
   useEffect(() => {
@@ -1683,6 +1686,49 @@ function Shell() {
     URL.revokeObjectURL(url)
   }
 
+  const exportPng = () => {
+    if (pngBusy) return
+    if (canvasNodes.length === 0) {
+      setToast('画布为空，没有可导出的内容')
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    setPngBusy(true)
+  }
+
+  useEffect(() => {
+    if (!pngBusy) return
+    let cancelled = false
+    const frame = requestAnimationFrame(() => {
+      void (async () => {
+        try {
+          const root = canvasRef.current?.querySelector<HTMLElement>('.react-flow__viewport')
+          if (!root) throw new Error('画布尚未就绪')
+          const size = await exportCanvasPng({
+            root,
+            bounds: () => getNodesBounds(canvasNodes),
+            expectedNodes: canvasNodes.length,
+            fileName: `storyboard-E${String(epNo).padStart(2, '0')}.png`,
+          })
+          if (cancelled) return
+          setToast(`画布已导出：${size.width} × ${size.height} PNG`)
+        } catch (error) {
+          if (cancelled) return
+          setToast((error as Error).message || '画布 PNG 导出失败')
+        } finally {
+          if (!cancelled) {
+            setPngBusy(false)
+            window.setTimeout(() => setToast(''), 3000)
+          }
+        }
+      })()
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frame)
+    }
+  }, [pngBusy, canvasNodes, epNo, getNodesBounds])
+
   useEffect(() => {
     const t = window.setTimeout(() => {
       try {
@@ -1720,6 +1766,7 @@ function Shell() {
     () => ({
       tool,
       guides,
+      exporting: pngBusy,
       color,
       charImages,
       patch,
@@ -1727,7 +1774,7 @@ function Shell() {
       generate: generateOne,
       generateVideo: generateVideoOne,
     }),
-    [tool, guides, color, charImages, patch, cycleEdge, generateOne, generateVideoOne],
+    [tool, guides, pngBusy, color, charImages, patch, cycleEdge, generateOne, generateVideoOne],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
 
@@ -1825,6 +1872,16 @@ function Shell() {
             <span className="board-count">{characters.length} 个角色</span>
           )}
           <TaskCenter />
+          {view === 'board' && (
+            <button
+              className="btn"
+              onClick={exportPng}
+              disabled={pngBusy || canvasNodes.length === 0}
+              title="导出当前集完整画布，包含视口外的卡片与连线"
+            >
+              {pngBusy ? '导出中…' : '导出 PNG'}
+            </button>
+          )}
           <button className="btn primary" onClick={exportJson}>导出 JSON</button>
         </header>
 
@@ -1898,7 +1955,10 @@ function Shell() {
           />
         ) : (
         <main className="main">
-          <div className={`canvas ${zoomLite ? 'zoom-lite' : ''}`}>
+          <div
+            ref={canvasRef}
+            className={`canvas ${zoomLite ? 'zoom-lite' : ''} ${pngBusy ? 'is-exporting' : ''}`}
+          >
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
             {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
               <div className="canvas-hint">
@@ -2008,7 +2068,7 @@ function Shell() {
               defaultEdgeOptions={{ type: 'shot' }}
               connectionLineStyle={{ stroke: '#38bdf8', strokeWidth: 2 }}
               proOptions={{ hideAttribution: true }}
-              onlyRenderVisibleElements
+              onlyRenderVisibleElements={!pngBusy}
               minZoom={0.2}
               maxZoom={2.2}
               fitView

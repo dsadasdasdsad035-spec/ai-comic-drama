@@ -277,6 +277,18 @@ kbd {
   background: radial-gradient(1200px 700px at 30% 0%, var(--panel-2) 0%, var(--bg) 70%);
 }
 
+.canvas.is-exporting .shot.is-selected {
+  border-color: var(--line-2);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+.canvas.is-exporting .shot button,
+.canvas.is-exporting .shot-handle,
+.canvas.is-exporting .vid-bar,
+.canvas.is-exporting .cand-bar {
+  visibility: hidden;
+}
+
 /* ---------- shot card ---------- */
 .react-flow__node {
   background: transparent;

@@ -24,6 +24,7 @@ npm run dev      # http://127.0.0.1:5273
 | 图生视频 | Seedance 任务式生成 + 轮询，卡片内直出预览 |
 | 台词配音 | ElevenLabs（有 key）或 macOS `say`（无 key），按角色选音色与语速 |
 | 连播预览 | 按镜头时长推进，支持视频真实时长校正、字幕开关、上一镜/下一镜 |
+| 画布导出 | 当前集完整分镜画布导出为 PNG，包含视口外卡片与连线 |
 | 导出成片 | 单条 ffmpeg 命令完成拼条 + 字幕 + 混音 |
 
 ## 导出管线（核心）
@@ -65,4 +66,5 @@ verify-*.mjs         Playwright 端到端验证脚本（需先 npm run dev）
 node verify-subs.mjs     # 配音 + 字幕 + 导出全链路
 node verify-video.mjs    # 图生视频
 node verify-voice.mjs    # 配音
+node verify-canvas-export.mjs # 画布 PNG 导出
 ```
