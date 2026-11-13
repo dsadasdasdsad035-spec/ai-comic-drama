@@ -4,6 +4,7 @@ import type { ShotData, Tool } from './types'
 export type CanvasApi = {
   tool: Tool
   guides: boolean
+  exporting: boolean
   color: string
   /** 角色名 → 头像图，分镜卡上叠出场头像用 */
   charImages: Record<string, string>
@@ -16,6 +17,7 @@ export type CanvasApi = {
 export const CanvasCtx = createContext<CanvasApi>({
   tool: 'none',
   guides: true,
+  exporting: false,
   color: '#fbbf24',
   charImages: {},
   patch: () => {},
