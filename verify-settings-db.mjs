@@ -4,13 +4,16 @@
  * 跑法：node verify-settings-db.mjs
  */
 import { chromium } from 'playwright-core'
+import { openProject } from './verify-lib.mjs'
 
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 p.on('dialog', (d) => d.accept())
 const errors = []
 p.on('pageerror', (e) => errors.push(e.message))
-await p.goto('http://localhost:5273', { waitUntil: 'networkidle' })
+// 地址取自 SB_URL（与其它验收脚本一致），默认 dev 服务器
+const BASE = (process.env.SB_URL || 'http://127.0.0.1:5273').replace(/\/$/, '')
+await p.goto(BASE, { waitUntil: 'networkidle' })
 await p.waitForTimeout(1200)
 
 let bad = 0
@@ -75,15 +78,30 @@ if (firstScene) {
 check('角色数组可读', Array.isArray(pj?.characters), `${pj?.characters?.length ?? 0} 个`)
 
 // ---- 2. 设置页 UI ----
-await p.locator('header').locator('button', { hasText: /^设置/ }).first().click()
+// 新外壳把「设置」收进项目工作区左栏，不再有顶部 header 入口
+// 直接落到 probe 项目的设置视图（默认没有就退回列表第一个项目）
+await openProject(p, target?.name, 'settings')
+await p.locator('.rail-nav button[aria-label="设置"]').click()
 await p.waitForTimeout(700)
 check('设置页打开', (await p.locator('.settings-shell').count()) === 1 && (await p.locator('.st-nav').count()) === 1)
-await p.locator('.st-nav button', { hasText: '技能' }).click()
+await p.locator('.st-nav button', { hasText: '智能与扩展' }).click()
+await p.waitForTimeout(300)
+await p.locator('.st-subnav button[data-settings-pane="skills"]').click()
 await p.waitForTimeout(600)
-check('技能条目存在', (await p.locator('.st-rule').count()) >= 4, `${await p.locator('.st-rule').count()} 个`)
+// 技能页默认停在 SkillHub 市场，先切到「已安装」目录再看条目
+await p.locator('.mcp-scope-switch button', { hasText: '已安装' }).click()
+await p.waitForTimeout(600)
+const cardCount = await p.locator('.skill-catalog-card').count()
+check('技能条目存在', cardCount >= 4, `${cardCount} 个`)
+await p.locator('.skill-catalog-card').first().click()
+await p.locator('.skill-detail-body, .skill-detail-editor').first().waitFor({ state: 'visible', timeout: 8000 })
+// 正文在第二个 Tab（SKILL.md / 编辑 / 正文），概览页没有 textarea
+await p.getByRole('tab', { name: /SKILL\.md|编辑|正文/ }).first().click()
+await p.locator('.skill-detail-editor').first().waitFor({ state: 'visible', timeout: 8000 })
 const skillText = (
-  await p.locator('.st-rule textarea').evaluateAll((els) => els.map((el) => el.value).join('\n'))
+  await p.locator('.skill-detail-editor').evaluateAll((els) => els.map((el) => el.value).join('\n'))
 ).trim()
+await p.getByRole('button', { name: '关闭' }).first().click().catch(() => {})
 check('规则文本非空', skillText.length > 100 && (skillText.includes('场景要素提取') || skillText.includes('角色')), skillText.slice(0, 60))
 
 await p.screenshot({ path: '/tmp/settings.png' })
@@ -94,7 +112,9 @@ const beforeSettings = await p.evaluate(() =>
 )
 const beforeDefaults = beforeSettings.defaults
 const beforeTextModel = beforeSettings.models.find((m) => m.key === beforeDefaults.text)
-await p.locator('.st-nav button', { hasText: '默认路由' }).click()
+await p.locator('.st-nav button', { hasText: '制作管线' }).click()
+await p.waitForTimeout(300)
+await p.locator('.st-subnav button[data-settings-pane="routing"]').click()
 await p.waitForTimeout(300)
 const textRow = p.locator('[data-routing-cap="text"]')
 await textRow.locator('select').nth(0).selectOption('deepseek')

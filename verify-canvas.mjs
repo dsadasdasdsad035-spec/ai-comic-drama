@@ -7,8 +7,7 @@
  * 5) 无 pageerror
  */
 import { chromium } from 'playwright-core'
-
-const URL = 'http://localhost:5273'
+import { openBoardEpisode } from './verify-lib.mjs'
 let bad = 0
 const check = (n, c, e = '') => {
   console.log(`${c ? '✅' : '❌'} ${n}${e ? ' | ' + e : ''}`)
@@ -19,9 +18,9 @@ const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 const errors = []
 p.on('pageerror', (e) => errors.push(e.stack || e.message))
-await p.goto(URL, { waitUntil: 'networkidle' })
-await p.waitForTimeout(1500)
-// 画布是分镜的唯一视图：默认就是画布，镜头由 project.json 直接水合，不再有「镜头表 → 生成到画布」
+// 画布是分镜的唯一视图：镜头由 project.json 直接水合。
+// 入口先落大厅再选集，地址取自 SB_URL（openProject 内部处理）。
+await openBoardEpisode(p)
 await p.waitForTimeout(2200)
 
 const base = await p.evaluate(() => ({

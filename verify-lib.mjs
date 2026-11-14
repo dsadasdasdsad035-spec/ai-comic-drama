@@ -62,6 +62,30 @@ export async function openApp(page, opts = {}) {
   return openProject(page, undefined, view, { base, ...rest })
 }
 
+/**
+ * 进画布的分镜视图。
+ *
+ * 画布页现在先出「分集目录」，点一集才进分镜画布（board-episode-picker），
+ * 所以只 openProject 到 board 会停在选集页，拿不到 .wb-bar-detail 与分镜卡。
+ *
+ * @param {import('playwright-core').Page} page
+ * @param {string} [name] 项目目录名，省略则用列表第一个
+ * @param {{ base?: string, episode?: number|string, waitUntil?: string, timeout?: number }} [opts]
+ */
+export async function openBoardEpisode(page, name, opts = {}) {
+  const { episode, ...rest } = opts
+  const target = await openProject(page, name, 'board', rest)
+  const cards = page.locator('.board-ep-card')
+  if (await cards.count()) {
+    const card = episode == null ? cards.first() : page.locator(`.board-ep-card[data-board-ep="${episode}"]`)
+    if (!(await card.count())) throw new Error(`没有第 ${episode} 集：可选 ${await cards.count()} 集`)
+    await card.click()
+    await page.locator('.wb-bar-detail').waitFor({ state: 'visible', timeout: 15000 })
+    await page.waitForLoadState('networkidle').catch(() => {})
+  }
+  return target
+}
+
 /** 素材页「角色」Tab（方案 A：左栏不再有独立角色视图） */
 export async function openCharacterTab(page) {
   await page.getByRole('button', { name: '素材', exact: true }).click()

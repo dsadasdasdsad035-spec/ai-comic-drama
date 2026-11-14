@@ -25,13 +25,20 @@ export function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): Shot
   const byShot = new Map<string, ShotNodeType>()
   for (const n of prev) if (n.data?.shotId) byShot.set(String(n.data.shotId), n)
   const counters = new Map<number, { col: number; row: number }>()
+  // 已被认领的节点 id：两个镜头共用同一个「集 + 镜号」时（历史数据里 no 重复），
+  // 按 no 回找会同时命中同一个旧节点，产出两个同 id 节点 —— React 会去重成一张卡。
+  const claimed = new Set<string>()
   return shots.map((sh, i) => {
     const ep = Number(sh.episode) || 1
     const old =
       byShot.get(sh.id) ??
       [...byShot.values()].find(
-        (n) => (Number(n.data.episode) || 1) === ep && String(n.data.no ?? '').trim() === String(sh.no ?? '').trim(),
+        (n) =>
+          !claimed.has(n.id) &&
+          (Number(n.data.episode) || 1) === ep &&
+          String(n.data.no ?? '').trim() === String(sh.no ?? '').trim(),
       )
+    if (old) claimed.add(old.id)
     if (old?.data?.shotId && old.data.shotId !== sh.id) byShot.delete(String(old.data.shotId))
     const c = counters.get(ep) ?? { col: 0, row: 0 }
     const position = old?.position ?? {

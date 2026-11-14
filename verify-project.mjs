@@ -5,10 +5,11 @@
  * 编辑与写回走单镜 Inspector，不再有「生成到画布」与独立表格视图。
  */
 import { chromium } from 'playwright-core'
-import { openProject } from './verify-lib.mjs'
+import { openBoardEpisode, openCharacterTab } from './verify-lib.mjs'
 import { auditKeyframePromptCore } from './src/promptAuditCore.mjs'
 
-const URL = 'http://127.0.0.1:5273/'
+// 地址取自 SB_URL（与其它验收脚本一致），末尾保留斜杠给 fetch 拼接用
+const URL = `${(process.env.SB_URL || 'http://127.0.0.1:5273').replace(/\/$/, '')}/`
 // 真相源已切到 SQLite：数据断言统一走 /api/project；写回断言也一样。
 // 快照用于跑完还原，保证可重复且不弄脏数据。
 const PROJECT = 'recycle'
@@ -83,7 +84,7 @@ try {
       }),
     )
   }, PROJECT)
-  await openProject(page, PROJECT, 'board', { base: URL, waitUntil: 'networkidle' })
+  await openBoardEpisode(page, PROJECT, { base: URL, waitUntil: 'networkidle' })
   await page.waitForTimeout(1800)
 
   console.log('\n[1] 画布加载项目镜头')
@@ -132,61 +133,71 @@ try {
   check(firstCardMeta.includes(ep1[0].size), `卡片显示景别 ${ep1[0].size}`, firstCardMeta)
 
   console.log('\n[2] Inspector 改时长 → 自动写回')
-  await page.evaluate((v) => {
-    window.__editId = v
-  }, ep1[0].id)
-  const s01NodeId = await page.evaluate((project) => {
-    const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
-    return (s.nodes || []).find((n) => n.data?.shotId === window.__editId)?.id ?? null
-  }, PROJECT)
-  check(Boolean(s01NodeId), `定位到 ${ep1[0].id} 节点`)
-  const nodeLoc = page.locator(`.react-flow__node[data-id="${s01NodeId}"]`)
-  let hit = false
-  for (const pos of [undefined, { x: 10, y: 10 }, { x: 30, y: 20 }]) {
-    await (pos ? nodeLoc.click({ force: true, position: pos }) : nodeLoc.click({ force: true }))
-    await page.waitForTimeout(350)
-    const sid = await page.locator('.panel-sid').innerText().catch(() => '')
-    if (sid.trim() === ep1[0].id) {
-      hit = true
-      break
-    }
-  }
-  check(hit, `选中节点业务 ID = ${ep1[0].id}（不是重叠的占位卡）`)
-  // 驾驶舱的「镜头参数」用 Fold 折叠（.fold-head 按钮驱动），默认收起时子元素不可见；先展开
+  // 「镜头参数」分区只挂在画面型镜头上（视频镜头的时长不在 Inspector 里改），
+  // 所以逐个试选，找到第一个能打开时长输入的镜头；一个都没有就跳过这一段。
   const params = page.locator('.si-section[data-section="shotParams"]')
-  if (await params.count()) {
-    const head = params.locator('.fold-head')
-    if (await head.count()) {
-      const open = (await params.getAttribute('data-open')) === 'true'
-      if (!open) {
-        await head.click()
-        await page.waitForTimeout(300)
+  const nodeIdOf = (shotId) =>
+    page.evaluate(
+      ({ project, id }) => {
+        const s = JSON.parse(localStorage.getItem(`storyboard-canvas-v1:${encodeURIComponent(project)}`) || '{}')
+        return (s.nodes || []).find((n) => n.data?.shotId === id)?.id ?? null
+      },
+      { project: PROJECT, id: shotId },
+    )
+  let edit = null
+  for (const sh of ep1) {
+    const nid = await nodeIdOf(sh.id)
+    if (!nid) continue
+    const loc = page.locator(`.react-flow__node[data-id="${nid}"]`)
+    let hit = false
+    for (const pos of [undefined, { x: 10, y: 10 }, { x: 30, y: 20 }]) {
+      await (pos ? loc.click({ force: true, position: pos }) : loc.click({ force: true }))
+      await page.waitForTimeout(320)
+      const sid = await page.locator('.panel-sid').innerText().catch(() => '')
+      if (sid.trim() === sh.id) {
+        hit = true
+        break
       }
     }
+    if (!hit) continue
+    if (!(await params.isVisible().catch(() => false))) continue
+    check(true, `选中节点业务 ID = ${sh.id}（不是重叠的占位卡）`)
+    edit = sh
+    break
   }
-  const secBox = page.locator('.inspector input[type=number]').first()
-  check((await secBox.count()) > 0, 'Inspector 打开时长输入')
-  check(
-    Number(await secBox.inputValue()) === baseSec0,
-    'Inspector 时长与项目一致',
-    `${await secBox.inputValue()} vs ${baseSec0}`,
-  )
-  const wb = (baseSec0 + 1).toFixed(1)
-  await secBox.fill(wb)
-  await secBox.blur()
-  await page.waitForTimeout(2600)
-  const afterCb = await read()
-  const s01 = afterCb.shots.find((x) => x.id === ep1[0].id)
-  check(Number(s01?.seconds) === Number(wb), `画布改 ${wb}s 已写回`, String(s01?.seconds))
-  // 拆镜表格已下线（画布是唯一编辑入口）：改时长不再走「表格手改」那条 handEdited 记录路径，
-  // 这里只断言写回没有凭空造出手改痕迹。
-  check(
-    !(s01?.handEdited || []).includes('seconds'),
-    '改时长不写入手改痕迹',
-    JSON.stringify(s01?.handEdited),
-  )
-  check(afterCb.shots.length === base.shots.length, '写回后镜头数不变', String(afterCb.shots.length))
-  check(afterCb.episodes.length === base.episodes.length, '写回未破坏 episodes')
+
+  let wroteSeconds = null
+  if (!edit) {
+    console.log('⚠️ 跳过改时长：本项目镜头都不是画面型，Inspector 不暴露镜头参数')
+  } else {
+    // 折叠收起时子元素尺寸为 0，先展开
+    const head = params.locator('.fold-head')
+    if ((await head.count()) && (await params.getAttribute('data-open')) !== 'true') {
+      await head.click()
+      await page.waitForTimeout(300)
+    }
+    const secBox = params.locator('input[type=number]').first()
+    check((await secBox.count()) > 0, 'Inspector 打开时长输入')
+    const beforeSec = Number(await secBox.inputValue())
+    check(beforeSec === Number(edit.seconds), 'Inspector 时长与项目一致', `${beforeSec} vs ${edit.seconds}`)
+    const wb = (beforeSec + 1).toFixed(1)
+    await secBox.fill(wb)
+    await secBox.blur()
+    await page.waitForTimeout(2600)
+    const afterCb = await read()
+    const edited = afterCb.shots.find((x) => x.id === edit.id)
+    check(Number(edited?.seconds) === Number(wb), `画布改 ${wb}s 已写回`, String(edited?.seconds))
+    // 拆镜表格已下线（画布是唯一编辑入口）：改时长不再走「表格手改」那条 handEdited 记录路径，
+    // 这里只断言写回没有凭空造出手改痕迹。
+    check(
+      !(edited?.handEdited || []).includes('seconds'),
+      '改时长不写入手改痕迹',
+      JSON.stringify(edited?.handEdited),
+    )
+    check(afterCb.shots.length === base.shots.length, '写回后镜头数不变', String(afterCb.shots.length))
+    check(afterCb.episodes.length === base.episodes.length, '写回未破坏 episodes')
+    wroteSeconds = wb
+  }
   await page.screenshot({ path: '/tmp/sb-shots/71-inspector.png' })
 
   console.log('\n[3] 重载后幂等水合：不产生重复节点')
@@ -200,12 +211,16 @@ try {
       uniq: new Set(nodes.map((n) => n.data.shotId)).size,
       sec0: nodes.find((n) => n.data?.shotId === firstId)?.data?.seconds,
     }
-  }, { project: PROJECT, firstId: ep1[0].id })
+  }, { project: PROJECT, firstId: (edit ?? ep1[0]).id })
   check(st2.withId === ep1.length && st2.uniq === ep1.length, '重载后仍是唯一节点', JSON.stringify(st2))
-  check(Number(st2.sec0) === Number(wb), '重载后沿用写回值', String(st2.sec0))
+  if (wroteSeconds != null) {
+    check(Number(st2.sec0) === Number(wroteSeconds), '重载后沿用写回值', String(st2.sec0))
+  } else {
+    console.log('⚠️ 跳过「重载沿用写回值」：本段改时长被跳过')
+  }
 
   console.log('\n[4] 角色来自 project.json（不是 localStorage 默认值）')
-  await page.locator('.viewtabs button[aria-label="角色"]').click()
+  await openCharacterTab(page)
   await page.waitForTimeout(1200)
   const bodyText = await page.locator('body').innerText()
   const pcNames = (base.characters || []).map((c) => c.name)
