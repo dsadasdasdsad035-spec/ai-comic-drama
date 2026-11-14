@@ -228,7 +228,7 @@ export type CreativeTurnPayload = {
   /** 本轮单条 user 正文（不含历史摘要） */
   userForModel: string
   toolNames: string[]
-  /** 检查器展示：Pi transformContext 长期记忆说明 */
+  /** 检查器展示：本轮历史规模说明（历史按原文送出） */
   piMemoryPreview: string
   priorPiMessages: ReturnType<typeof uiThreadToPiMessages>
 }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>启动失败</title>
+    <link rel="stylesheet" href="shell.css" />
+  </head>
+  <body class="shell shell--error">
+    <main class="shell-card">
+      <span class="shell-badge" id="badge">启动失败</span>
+      <h1 class="shell-title" id="title">本地服务启动失败</h1>
+      <p class="shell-hint" id="hint">
+        应用需要本地服务才能工作。下面是最后一段日志，通常能看出原因。
+      </p>
+      <pre class="shell-log" id="log"></pre>
+      <div class="shell-actions">
+        <button class="shell-btn shell-btn--primary" id="retry" type="button">重启服务</button>
+        <button class="shell-btn" id="copy" type="button">复制日志</button>
+      </div>
+    </main>
+    <script src="error.js"></script>
+  </body>
+</html>

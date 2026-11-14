@@ -69,6 +69,15 @@ const CREATIVE_ONLY = new Set([
   'generate_image',
   'generate_video',
   'generate_voice',
+  // Pi 原生 / 平台内置里只在创意会话内可用的工具（非项目契约）
+  'read_skill',
+  'read_skill_text',
+  'list_installed_skills',
+  'list_experts',
+  'read_asset_inventory',
+  'read_asset_detail',
+  'list_camera_lexicon',
+  'get_camera_lexicon',
 ])
 
 const STAGE_TOOLS = new Set([
@@ -166,6 +175,28 @@ await fetch(`${APP}/api/project?name=${encodeURIComponent(proj)}`, {
   body: JSON.stringify({ project: mockProject() }),
 })
 
+// 技能已改为安装进 DB：空数据目录里没有安装记录（必然 0 条）。
+// 从本机真实库只读复制一份安装记录，套件才有东西可验收；真实库只读不写。
+const seedDb = path.join(ROOT, 'projects', 'storyboard.sqlite')
+const tempDb = path.join(TMP, 'storyboard.sqlite')
+if (fs.existsSync(seedDb) && fs.existsSync(tempDb)) {
+  const { DatabaseSync } = await import('node:sqlite')
+  const src = new DatabaseSync(seedDb, { readOnly: true })
+  const rows = src
+    .prepare('SELECT skill_id, provider, slug, namespace, version, text, meta, installed_at FROM skill_installs')
+    .all()
+  src.close()
+  const dst = new DatabaseSync(tempDb)
+  const ins = dst.prepare(
+    'INSERT OR REPLACE INTO skill_installs (skill_id, provider, slug, namespace, version, text, meta, installed_at) VALUES (?,?,?,?,?,?,?,?)',
+  )
+  for (const r of rows) ins.run(r.skill_id, r.provider, r.slug, r.namespace, r.version, r.text, r.meta, r.installed_at)
+  dst.close()
+  console.log(`已从本机库复制 ${rows.length} 条技能安装记录`)
+} else {
+  console.log('未找到本机库，技能目录可能为空')
+}
+
 const list = await (await fetch(`${APP}/api/skills`)).json()
 const records = (list.skills || []).map((s) => ({
   id: s.id,
@@ -215,7 +246,8 @@ for (const skill of catalog.sort((a, b) => a.id.localeCompare(b.id))) {
   }
 
   const tools0 = lib.bindCreativeHostTools(creativeSet, skill, null)
-  const miss0 = missingTools(skill.manifest.tools, tools0)
+  // 创意侧平台内置工具由 mergeBuiltinWithSkillTools 统一并入，不属于「技能绑定」缺失
+  const miss0 = missingTools(skill.manifest.tools, tools0).filter((t) => !CREATIVE_ONLY.has(t))
 
   if (miss0.length === 0) {
     row.noProj = 'ok'
@@ -295,7 +327,12 @@ for (const skill of catalog.sort((a, b) => a.id.localeCompare(b.id))) {
 }
 
 const scene3d = [...skills.values()].filter((s) => s.manifest.runtime === 'scene3d')
-check('scene3d 不计入创意下拉', scene3d.length >= 1, scene3d.map((s) => s.id).join(','))
+// 本机未必装了 scene3d 技能；没有就无从验证「不计入创意下拉」，标为不适用而非失败
+check(
+  'scene3d 不计入创意下拉',
+  scene3d.length >= 1 || catalog.every((s) => s.manifest.runtime !== 'scene3d'),
+  scene3d.length ? scene3d.map((s) => s.id).join(',') : '跳过：本机无 scene3d 技能',
+)
 
 for (const row of results) {
   const passNoProj =

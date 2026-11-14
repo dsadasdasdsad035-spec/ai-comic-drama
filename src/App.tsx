@@ -33,6 +33,7 @@ import { ThemeProvider, useTheme } from './theme'
 import Preview from './Preview'
 import EpPicker from './EpisodeBar'
 import ProjectMenu from './project/ProjectMenu'
+import PromptDialog from './PromptDialog'
 import AppShell from './shell/AppShell'
 import ProjectHub from './shell/ProjectHub'
 import OverviewPage from './shell/OverviewPage'
@@ -353,6 +354,7 @@ function Shell() {
   const [scriptImportOpen, setScriptImportOpen] = useState(false)
   const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
   const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
+  const [addEpisodePromptOpen, setAddEpisodePromptOpen] = useState(false)
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -601,26 +603,36 @@ function Shell() {
     [hydrateCanvasShots, projectShots],
   )
 
-  const handleAddEpisode = useCallback(async () => {
+  // 打开「新增分集」输入弹窗。
+  // 这里不能再用 window.prompt：Electron 桌面端未实现 prompt()，调用会直接抛
+  // 「prompt() is not supported」，点击后表现为完全没有反应。
+  const handleAddEpisode = useCallback(() => {
     if (!readyProject) return
-    const title = window.prompt('分集标题（可留空）', '')
-    if (title === null) return
-    setAddEpisodeBusy(true)
-    try {
-      const no = nextEpisodeNo(episodes, projectShots)
-      const next = [...episodes, blankEpisode(no, title.trim() || undefined)].sort((a, b) => a.no - b.no)
-      await patchProject(readyProject, { episodes: next })
-      setEpisodes(next)
-      setEpVersion((v) => v + 1)
-      setToast(`已添加 ${formatEpisodeLabel(no)}`)
-      window.setTimeout(() => setToast(''), 2800)
-    } catch (e) {
-      setToast((e as Error).message || '添加分集失败')
-      window.setTimeout(() => setToast(''), 3600)
-    } finally {
-      setAddEpisodeBusy(false)
-    }
-  }, [readyProject, episodes, projectShots])
+    setAddEpisodePromptOpen(true)
+  }, [readyProject])
+
+  const submitAddEpisode = useCallback(
+    async (title: string) => {
+      setAddEpisodePromptOpen(false)
+      if (!readyProject) return
+      setAddEpisodeBusy(true)
+      try {
+        const no = nextEpisodeNo(episodes, projectShots)
+        const next = [...episodes, blankEpisode(no, title.trim() || undefined)].sort((a, b) => a.no - b.no)
+        await patchProject(readyProject, { episodes: next })
+        setEpisodes(next)
+        setEpVersion((v) => v + 1)
+        setToast(`已添加 ${formatEpisodeLabel(no)}`)
+        window.setTimeout(() => setToast(''), 2800)
+      } catch (e) {
+        setToast((e as Error).message || '添加分集失败')
+        window.setTimeout(() => setToast(''), 3600)
+      } finally {
+        setAddEpisodeBusy(false)
+      }
+    },
+    [readyProject, episodes, projectShots],
+  )
 
   const handleApplyScriptEpisodes = useCallback(
     async (nextEps: ProjectEpisode[], summary: string) => {
@@ -4091,6 +4103,17 @@ function Shell() {
         )}
 
         {toast && <div className="toast">{toast}</div>}
+
+        <PromptDialog
+          open={addEpisodePromptOpen}
+          title="新增分集"
+          label="分集标题"
+          hint="可留空，留空时按集号自动命名"
+          placeholder="如 第一集 · 雨夜"
+          confirmText="创建"
+          onCancel={() => setAddEpisodePromptOpen(false)}
+          onConfirm={(value) => void submitAddEpisode(value)}
+        />
     </CanvasCtx.Provider>
   )
 }

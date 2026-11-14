@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEFAULT_BILLING_SETTINGS } from './constants.mjs'
+import { statePath } from '../paths.mjs'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -94,9 +95,9 @@ let dbFile = ''
 export function billingDbPath(appRoot) {
   const env = String(process.env.BILLING_DB_PATH || '').trim()
   if (env) return path.resolve(env)
-  const data = path.join(appRoot, 'data')
-  fs.mkdirSync(data, { recursive: true })
-  return path.join(data, 'billing.sqlite')
+  const file = statePath(appRoot, 'data', 'billing.sqlite')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  return file
 }
 
 export function openBillingDb(appRoot) {

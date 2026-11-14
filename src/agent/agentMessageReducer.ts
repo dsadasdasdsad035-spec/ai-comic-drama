@@ -165,11 +165,21 @@ export function applyAgentEvent(message: AgentMessage, event: AgentEvent): Agent
       return endStreamingText(message, event.messageId)
 
     case 'tool_start': {
-      const existing = message.parts.find(
-        (p): p is AgentToolPart =>
-          p.type === 'tool-call' &&
-          (p.toolCallId === event.toolCallId || p.toolName === event.toolName),
-      )
+      // 先按 toolCallId 精确匹配；toolName 兜底只用于接管「流式参数先到」建出的占位卡
+      // （仍 running 且没有结果）。不能按名字接管已完成/已出结果的卡片：
+      // 同一轮连续调两次同名工具时，那样会把前一次的结果挂到一个 running 残件上，
+      // 转历史时该结果会被当成「未完成」丢弃。
+      const existing =
+        message.parts.find(
+          (p): p is AgentToolPart => p.type === 'tool-call' && p.toolCallId === event.toolCallId,
+        ) ||
+        message.parts.find(
+          (p): p is AgentToolPart =>
+            p.type === 'tool-call' &&
+            p.toolName === event.toolName &&
+            p.status === 'running' &&
+            p.result === undefined,
+        )
       if (existing) {
         return {
           ...message,

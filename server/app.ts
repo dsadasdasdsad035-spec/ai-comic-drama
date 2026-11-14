@@ -304,6 +304,30 @@ const RATIO_SIZE: Record<string, string> = {
   '21:9': '3024x1296',
 }
 
+/** 上下文长度类报错：各家措辞不同，统一按关键字识别 */
+const CONTEXT_OVERFLOW_PATTERNS = [
+  'context_length_exceeded',
+  'maximum context length',
+  'context length',
+  'too many tokens',
+  'prompt is too long',
+  'input is too long',
+  'exceeds the maximum',
+  '上下文长度',
+  '超过最大',
+  '输入过长',
+]
+
+/** 上游报文是否属于「上下文超限」 */
+function isContextOverflowText(text: unknown): boolean {
+  const s = String(text ?? '').toLowerCase()
+  if (!s) return false
+  return CONTEXT_OVERFLOW_PATTERNS.some((p) => s.includes(p))
+}
+
+/** 超限时给用户的可操作出路；线程历史仍在侧栏，可新建会话接着做 */
+const CONTEXT_OVERFLOW_HINT = '本次会话上下文已满，建议新建会话（历史仍保留在侧栏）。'
+
 function readApiKey(): string | null {
   // 设置页里填的 Key 优先于 .env / 环境变量
   const fromSettings = String(getAppSettings().apiKey || '').trim()
@@ -4716,10 +4740,17 @@ export function createAppHandler({ root }: { root: string }) {
                 })
                 if (!upstream.ok) {
                   const raw = await upstream.text()
-                  send({
-                    type: 'error',
-                    message: `${provider?.label || kind} ${upstream.status}: ${raw.slice(0, 300)}`.slice(0, 600),
-                  })
+                  // 上下文超限：单独给 kind，前端据此给可操作出路，而不是裸露渠道报文
+                  const overflow =
+                    [400, 413, 422].includes(upstream.status) && isContextOverflowText(raw)
+                  send(
+                    overflow
+                      ? { type: 'error', kind: 'context-overflow', message: CONTEXT_OVERFLOW_HINT }
+                      : {
+                          type: 'error',
+                          message: `${provider?.label || kind} ${upstream.status}: ${raw.slice(0, 300)}`.slice(0, 600),
+                        },
+                  )
                   res.end()
                   return
                 }
@@ -4825,7 +4856,12 @@ export function createAppHandler({ root }: { root: string }) {
               } catch (e: any) {
                 if (apimartBillingCtx) releaseApimartHold(apimartBillingCtx)
                 if (!closed) {
-                  send({ type: 'error', message: explainTextFetchError(e, textProvider, textBase) })
+                  const overflow = isContextOverflowText(e?.message)
+                  send(
+                    overflow
+                      ? { type: 'error', kind: 'context-overflow', message: CONTEXT_OVERFLOW_HINT }
+                      : { type: 'error', message: explainTextFetchError(e, textProvider, textBase) },
+                  )
                   res.end()
                 }
               }
@@ -4901,8 +4937,15 @@ export function createAppHandler({ root }: { root: string }) {
             )
           } catch (e: any) {
             releaseApimartHold(apimartBillingCtx || undefined)
-            res.statusCode = 500
-            res.end(JSON.stringify({ ok: false, message: explainTextFetchError(e, textProvider, textBase) }))
+            const overflow = isContextOverflowText(e?.message)
+            res.statusCode = overflow ? 400 : 500
+            res.end(
+              JSON.stringify(
+                overflow
+                  ? { ok: false, kind: 'context-overflow', message: CONTEXT_OVERFLOW_HINT }
+                  : { ok: false, message: explainTextFetchError(e, textProvider, textBase) },
+              ),
+            )
           }
           return
         }

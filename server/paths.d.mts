@@ -11,3 +11,9 @@ export function mediaPath(appRoot: string | undefined, ...segments: string[]): s
 export function ensureMediaDir(appRoot: string | undefined, ...segments: string[]): string
 
 export function mediaPathFromUrl(appRoot: string | undefined, url: string): string
+
+export function resolveStateRoot(appRoot?: string): string
+
+export function statePath(appRoot: string | undefined, ...segments: string[]): string
+
+export function ensureStateDir(appRoot: string | undefined, ...segments: string[]): string

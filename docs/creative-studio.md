@@ -18,7 +18,7 @@
 1. 设置 → **默认路由** →「创意（对话助手）」绑定文本模型。
 2. （可选）SkillHub 安装 Agent 包；顶栏偏好留空或指定默认 id。
 3. （可选）设置 → **MCP**：安装 HTTP 服务并勾选「创意聊天」。
-4. 发送消息 → `runStageAgent`（Pi Agent）→ **历史走 Pi `messages` + `transformContext` 长期记忆**，本轮 user 仅正文；模型按 system 先 **`list_installed_skills`**（按需）再 **`read_skill_text`**；**平台内置** `read_*` / `submit_*` / `validate_contract` 始终可用（写回需顶栏已选项目），另可调 HTTP MCP。
+4. 发送消息 → `runStageAgent`（Pi Agent）→ **历史走 Pi `messages`，按原文完整送入**（工具结果不折叠、不截断，直到清空或新建会话），本轮 user 仅正文；模型按 system 先 **`list_installed_skills`**（按需）再 **`read_skill_text`**；**平台内置** `read_*` / `submit_*` / `validate_contract` 始终可用（写回需顶栏已选项目），另可调 HTTP MCP。
 
 ## 检查器
 

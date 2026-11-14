@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { ensureStateDir } from './paths.mjs'
 
 const JOBS_DIR = '.agent-jobs'
 const BLENDER_SKILLS_REL = ['skills', 'scene3d', 'blender-skills']
@@ -26,8 +27,7 @@ function truncate(text, max = MAX_IO_CHARS) {
 }
 
 function jobsRoot(root) {
-  const dir = path.join(root, JOBS_DIR)
-  fs.mkdirSync(dir, { recursive: true })
+  const dir = ensureStateDir(root, JOBS_DIR)
   return dir
 }
 

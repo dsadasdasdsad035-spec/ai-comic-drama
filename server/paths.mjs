@@ -10,6 +10,8 @@
  * 约定：
  * - SB_MEDIA_ROOT 存在时，媒体根 = 该路径；否则回退 <root>/public（保持现有开发行为）。
  * - 只读资产根永远是 <root>/public（presets 这类随代码分发的东西）。
+ * - SB_STATE_ROOT 存在时，运行期状态根 = 该路径；否则回退 <root>（保持现有开发行为）。
+ *   状态根存放暂存、渲染作业、场景草稿、平台登录态与计费库等「非产物」写入。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -66,4 +68,36 @@ export function ensureMediaDir(appRoot, ...segments) {
 export function mediaPathFromUrl(appRoot, url) {
   const raw = String(url || '').split('?')[0].replace(/^\//, '')
   return mediaPath(appRoot, raw)
+}
+
+/**
+ * 运行期状态根：可写目录。
+ *
+ * 与媒体根分开的理由：媒体产物要给用户看、要备份；状态目录（渲染作业、草稿、
+ * 登录态、计费库）是机器私有的，桌面端把两者放不同子目录更利于清理与迁移。
+ * 未配置时回退 appRoot，使 dev 与容器行为保持原样。
+ */
+export function resolveStateRoot(appRoot) {
+  const env = String(process.env.SB_STATE_ROOT || '').trim()
+  if (env) return path.resolve(env)
+  return path.resolve(appRoot || process.cwd())
+}
+
+/** 状态根下的绝对路径；越界（../、绝对路径）直接抛错，不创建目录 */
+export function statePath(appRoot, ...segments) {
+  const root = resolveStateRoot(appRoot)
+  const rel = path.join(...segments.filter((s) => s !== undefined && s !== null && s !== ''))
+  const full = path.join(root, rel)
+  const back = path.relative(root, full)
+  if (!back || back.startsWith('..') || path.isAbsolute(back)) {
+    throw new Error(`状态路径越界：${rel}`)
+  }
+  return full
+}
+
+/** 写盘前用这个：先越界校验再建目录 */
+export function ensureStateDir(appRoot, ...segments) {
+  const dir = statePath(appRoot, ...segments)
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
 }

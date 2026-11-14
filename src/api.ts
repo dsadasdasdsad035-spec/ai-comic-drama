@@ -52,6 +52,23 @@ function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respons
 
 type ProxyErrBody = { message?: string; kind?: string; code?: string }
 
+/** 上下文超限的可操作出路：历史不丢，新建会话即可继续 */
+export const CONTEXT_OVERFLOW_HINT = '本次会话上下文已满，建议新建会话（历史仍保留在侧栏）。'
+
+/**
+ * 上游错误转异常：context-overflow 换成可操作说明（原始报文留在 detail 供排查），
+ * 其余 kind 保持原有呈现。
+ */
+function textStreamError(message: string, kind: string): Error & { kind?: string; detail?: string } {
+  const err = new Error(kind === 'context-overflow' ? CONTEXT_OVERFLOW_HINT : message) as Error & {
+    kind?: string
+    detail?: string
+  }
+  if (kind) err.kind = kind
+  if (kind === 'context-overflow') err.detail = message
+  return err
+}
+
 /** 代理 402/401 等可读说明（平台计费 / 登录） */
 function proxyErrorMessage(j: ProxyErrBody, fallback: string): string {
   const base = j.message || fallback
@@ -1033,7 +1050,7 @@ export async function callTextStream<T = unknown>(
   if (!res.ok || !res.body || !contentType.includes('text/event-stream')) {
     // 回退：整段 JSON（mock、渠道忽略 stream、或代理报错）
     const j = await readJsonRes(res)
-    if (!j.ok) throw new Error(proxyErrorMessage(j, '文本生成失败'))
+    if (!j.ok) throw textStreamError(proxyErrorMessage(j, '文本生成失败'), String(j.kind || ''))
     return {
       ...(j.json !== undefined ? { json: j.json as T } : {}),
       text: j.text ?? '',
@@ -1084,7 +1101,7 @@ export async function callTextStream<T = unknown>(
           })
         }
       } else if (type === 'error') {
-        throw new Error(String(event.message || '流式生成失败'))
+        throw textStreamError(String(event.message || '流式生成失败'), String(event.kind || ''))
       } else if (type === 'done') {
         meta = {
           model: String(event.model || meta.model),

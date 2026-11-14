@@ -214,6 +214,28 @@ export default function CreativeStudio({
   const [listOpen, setListOpen] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [actionError, setActionError] = useState('')
+  /**
+   * 线程保存失败：按原因给可执行的下一步，绝不吞掉错误。
+   * 超限（thread-too-large）重试必然再失败，所以这里不安排任何自动重试。
+   */
+  const reportSaveError = useCallback(
+    (e: unknown, opts: { banner?: boolean } = {}) => {
+      const err = e as Error & { kind?: string }
+      const detail = err?.message || String(e)
+      const msg =
+        err?.kind === 'thread-too-large'
+          ? `本轮未保存：${detail}。下一步：新建会话继续，或先清空当前会话再发送。`
+          : `本轮未保存：${detail}。下一步：确认本地服务在运行后重新发送，或点「重试」。`
+      if (opts.banner !== false) setActionError(msg)
+      onToast?.(msg)
+    },
+    [onToast],
+  )
+
+  // 卸载清理只能挂一次；onToast 可能每次渲染都是新函数，用 ref 取最新实现，
+  // 否则清理函数会随渲染反复执行并重复保存。
+  const reportSaveErrorRef = useRef(reportSaveError)
+  reportSaveErrorRef.current = reportSaveError
   const [hostSkill, setHostSkill] = useState<Skill | null>(null)
   const [mcpToolNames, setMcpToolNames] = useState<string[]>([])
   const mcpToolsRef = useRef<ToolDef[]>([])
@@ -364,8 +386,10 @@ export default function CreativeStudio({
       const id = sessionRef.current?.id
       const msgs = messagesRef.current
       if (!id || !msgs.length) return
-      void saveCreativeThread(id, msgs, []).catch(() => {})
+      // 卸载时无法再渲染提示，交给父级 toast 兜底
+      void saveCreativeThread(id, msgs, []).catch((e) => reportSaveErrorRef.current(e, { banner: false }))
     }
+    // 仅卸载时保存一次：依赖必须为空，否则每次渲染都会触发一次保存
   }, [])
 
   const openSession = useCallback(
@@ -375,8 +399,9 @@ export default function CreativeStudio({
         const prev = sessionRef.current.id
         try {
           await saveCreativeThread(prev, messagesRef.current, [])
-        } catch {
-          /* 保存失败不阻断切换 */
+        } catch (e) {
+          // 保存失败不阻断切换，但不能静默：toast 里说明是上一个会话没存上
+          reportSaveError(e, { banner: false })
         }
       }
       abortRef.current?.abort()
@@ -451,7 +476,7 @@ export default function CreativeStudio({
     if (!session || running || !messages.length) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      void saveCreativeThread(session.id, messages, []).catch(() => {})
+      void saveCreativeThread(session.id, messages, []).catch(reportSaveError)
     }, 600)
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
@@ -563,7 +588,7 @@ export default function CreativeStudio({
     } finally {
       abortRef.current = null
       setRunning(false)
-      void saveCreativeThread(session.id, messagesRef.current, []).catch(() => {})
+      void saveCreativeThread(session.id, messagesRef.current, []).catch(reportSaveError)
       if (!session.title) {
         const title = autoTitle(draft)
         if (title) void renameSession(session.id, title)

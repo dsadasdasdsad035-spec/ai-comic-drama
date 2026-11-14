@@ -17,7 +17,14 @@ let catalogCache = null
 
 export function mcpMarketCatalog() {
   if (catalogCache) return catalogCache
-  const file = path.join(__dirname, 'mcpMarketCatalog.json')
+  // 打包时本文件被 esbuild 内联进 server-build/app.mjs，__dirname 变成 server-build，
+  // 而目录数据随源码留在 server/ 下。两处都找一遍，否则桌面端打开 MCP 会 500。
+  const candidates = [
+    path.join(__dirname, 'mcpMarketCatalog.json'),
+    path.join(__dirname, '..', 'server', 'mcpMarketCatalog.json'),
+  ]
+  const file = candidates.find((f) => fs.existsSync(f))
+  if (!file) throw new Error(`MCP 市场目录缺失，已查找：${candidates.join('、')}`)
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
   catalogCache = Array.isArray(raw.items) ? raw.items : []
   return catalogCache

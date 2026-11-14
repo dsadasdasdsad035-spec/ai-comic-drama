@@ -12,7 +12,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { parseProjectMediaUrl, resolveProjectMediaPath } from './media.mjs'
-import { mediaPath, mediaPathFromUrl, resolveMediaRoot } from './paths.mjs'
+import { mediaPath, mediaPathFromUrl, resolveMediaRoot, statePath } from './paths.mjs'
 
 const JOBS_DIR = '.blender-jobs'
 const HOST_SCRIPT = path.join('scripts', 'blender', 'host.py')
@@ -59,12 +59,30 @@ function blenderCandidates() {
   const list = []
   if (process.env.BLENDER_BIN) list.push(process.env.BLENDER_BIN)
   list.push(
+    // 随包位置：与 Node 可执行文件同级的 blender/ 目录（见 desktop/scripts/fetch-runtime.mjs）
+    bundledBlender(),
     '/Applications/Blender.app/Contents/MacOS/Blender',
     path.join(process.env.HOME || '', 'Applications/Blender.app/Contents/MacOS/Blender'),
     '/usr/local/bin/blender',
     '/opt/homebrew/bin/blender',
   )
   return list.filter(Boolean)
+}
+
+/** 随包 Blender：<node 可执行文件目录>/blender/Blender.app/Contents/MacOS/Blender */
+function bundledBlender() {
+  try {
+    return path.join(
+      path.dirname(process.execPath),
+      'blender',
+      'Blender.app',
+      'Contents',
+      'MacOS',
+      'Blender',
+    )
+  } catch {
+    return ''
+  }
 }
 
 export function resolveBlenderBin() {
@@ -555,7 +573,7 @@ export async function submitRenderJob(input, appRoot) {
   const bin = resolveBlenderBin()
   if (!bin) throw new Error(INSTALL_HINT)
   const id = `b${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`
-  const dir = path.join(appRoot, JOBS_DIR, id)
+  const dir = statePath(appRoot, JOBS_DIR, id)
   fs.mkdirSync(path.join(dir, 'frames'), { recursive: true })
   fs.mkdirSync(path.join(dir, 'out'), { recursive: true })
   const codePath = path.join(dir, 'scene_code.py')
@@ -628,7 +646,7 @@ export async function submitRenderJob(input, appRoot) {
 }
 
 export function cleanupStaleJobs(appRoot, maxAgeMs = 2 * 60 * 60 * 1000) {
-  const dir = path.join(appRoot, JOBS_DIR)
+  const dir = statePath(appRoot, JOBS_DIR)
   if (!fs.existsSync(dir)) return 0
   let removed = 0
   for (const name of fs.readdirSync(dir)) {

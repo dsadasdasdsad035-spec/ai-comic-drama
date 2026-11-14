@@ -89,3 +89,7 @@ deploy/ssl/
 # 压缩包验收夹具：7.4MB 的第三方素材，不入库。
 # verify-bundle-import.mjs 在缺夹具时会自动从 /tmp/cat-probe 现场打包。
 fixtures/*.zip
+
+# 桌面端：打包产物与随包二进制（体积大，构建时下载）
+desktop/dist/
+desktop/bin/

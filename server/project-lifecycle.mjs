@@ -11,6 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { openDatabase, safeProjectName } from './db.mjs'
+import { statePath } from './paths.mjs'
 /** 删除快照目录，位于项目根下，不随项目目录一起删 */
 export const DELETED_DIR = '.deleted'
 
@@ -256,7 +257,7 @@ export function deleteProject(root, name, opts = {}) {
       }
     }
     const appRoot = String(opts.appRoot || process.cwd())
-    const draftsDir = path.join(appRoot, '.scene-drafts', n)
+    const draftsDir = statePath(appRoot, '.scene-drafts', n)
     if (fs.existsSync(draftsDir)) {
       try {
         fs.rmSync(draftsDir, { recursive: true, force: true })

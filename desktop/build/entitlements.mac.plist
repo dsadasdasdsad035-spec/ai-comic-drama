@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime 的例外清单。
+
+  为什么需要这些例外：应用要在打包后仍能拉起子进程（Node、ffmpeg、Blender）、
+  加载随包 dylib，并让用户通过代理访问模型服务。逐项理由写在 plist 的注释里——
+  苹果审核不读注释，但下次改这个文件的人需要知道每一项为什么存在。
+-->
+<plist version="1.0">
+<dict>
+  <!-- V8 的 JIT 需要；Electron 官方模板的标配项 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- V8 会写可执行内存页（优化后的代码），Hardened Runtime 默认禁止 -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- 随包的 Blender.app / dylib / .so 由我们逐个签名，但仍有插件式加载需求 -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- spawn 随包 node、ffmpeg、Blender 需要派生进程 -->
+  <key>com.apple.security.inherit</key>
+  <true/>
+
+  <!-- 读写用户选择的位置（导入素材、导出成片） -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!-- 访问 ~/Music、~/Movies 等媒体目录做素材导入 -->
+  <key>com.apple.security.assets.movies.read-write</key>
+  <true/>
+  <key>com.apple.security.assets.music.read-write</key>
+  <true/>
+  <key>com.apple.security.assets.pictures.read-write</key>
+  <true/>
+
+  <!-- 访问用户主动加入的模型服务（http/https 出站） -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- 本地服务监听 127.0.0.1，供窗口加载 -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+</dict>
+</plist>

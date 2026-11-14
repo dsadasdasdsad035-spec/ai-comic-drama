@@ -11,7 +11,6 @@ import { createPiEventBridge } from './events'
 import { createPiStreamFn, toOpenAIFunctions } from './streamFn'
 import { toPiTools } from './toolAdapter'
 import { gateAgentEvents } from '../agentEventGate'
-import { compactPiThreadMemory } from './threadMemory'
 
 export type RunStageAgentInput = {
   userText: string
@@ -22,7 +21,7 @@ export type RunStageAgentInput = {
   tools: ToolDef[]
   /** 只放最近若干轮，避免把整段历史重复送进模型（工作台 transcript 模式） */
   history?: string
-  /** Pi 长期记忆：预置多轮 messages，经 transformContext 压枝后送入模型 */
+  /** Pi 多轮历史：预置的消息按原文送入模型，不做裁剪或折叠 */
   priorMessages?: AgentMessage[]
   /** 供渠道缓存键；创意会话可传 sessionId */
   sessionId?: string
@@ -146,9 +145,6 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
       tools: piTools as AgentTool[],
     },
     streamFn,
-    ...(usePiMemory
-      ? { transformContext: async (messages) => compactPiThreadMemory(messages) }
-      : {}),
     toolExecution: 'sequential',
     beforeToolCall: async (context) => {
       if (controller.signal.aborted) return { block: true, reason: '已取消', terminate: true }

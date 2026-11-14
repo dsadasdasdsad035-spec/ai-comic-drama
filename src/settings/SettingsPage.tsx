@@ -28,13 +28,13 @@ export default function SettingsPage(props: Props) {
   const hubPanes = HUB_PANES[wb.hub]
   const showSubnav = hubPanes.length > 1
 
-  return (
+                  return (
     <main className="settings settings-shell" data-settings-hub={wb.hub}>
       <aside className="st-nav" aria-label="设置枢纽">
         {HUB_NAV.map((h) => (
-          <button
+                    <button
             key={h.id}
-            type="button"
+                    type="button"
             data-settings-hub={h.id}
             className={wb.hub === h.id ? 'on' : ''}
             aria-current={wb.hub === h.id ? 'true' : undefined}
@@ -46,7 +46,7 @@ export default function SettingsPage(props: Props) {
                 {wb.providers.length}·{wb.models.length}
               </span>
             )}
-          </button>
+                </button>
         ))}
       </aside>
 
@@ -55,13 +55,13 @@ export default function SettingsPage(props: Props) {
           <div>
             <h2>设置 · {HUB_COPY[wb.hub].title}</h2>
             <span className="st-hint">{HUB_COPY[wb.hub].subtitle}</span>
-          </div>
-          <span className="spacer" />
+              </div>
+        <span className="spacer" />
           {wb.dirty && <span className="st-dirty">未保存</span>}
           <button className="btn primary" onClick={() => void wb.save()} disabled={wb.saving || !wb.dirty}>
             {wb.saving ? '保存中…' : '保存设置'}
-          </button>
-        </header>
+        </button>
+      </header>
 
         {showSubnav && (
           <div
@@ -70,9 +70,9 @@ export default function SettingsPage(props: Props) {
             aria-label={`${HUB_COPY[wb.hub].title} 子页`}
           >
             {hubPanes.map((p) => (
-              <button
-                key={p.id}
-                type="button"
+                <button
+                  key={p.id}
+                  type="button"
                 role="tab"
                 data-settings-pane={p.id}
                 className={wb.pane === p.id ? 'on' : ''}
@@ -80,8 +80,8 @@ export default function SettingsPage(props: Props) {
                 onClick={() => wb.openSettingsPane(p.id)}
               >
                 {p.label}
-              </button>
-            ))}
+                </button>
+              ))}
           </div>
         )}
 

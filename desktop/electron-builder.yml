@@ -1,0 +1,106 @@
+# electron-builder 打包配置（macOS only）
+#
+# 结构约定（见 design 决策 4/5）：
+#   <App>.app/Contents/Resources/app/      服务端与前端产物，保持仓库相对结构
+#   <App>.app/Contents/Resources/app/server/index.mjs  ← server/index.mjs 用 dirname/.. 算 ROOT
+#   <App>.app/Contents/Resources/bin/node|ffmpeg|ffprobe
+#   <App>.app/Contents/Resources/blender/Blender.app
+#
+# 为什么不把这些打进 asar：服务进程是 spawn 出来的纯 Node，看不到 asar 内部文件。
+
+appId: com.iidp.storyboard-canvas
+productName: StoryboardCanvas
+copyright: Copyright © 2026 IIDP
+
+directories:
+  output: desktop/dist
+  buildResources: desktop/build
+
+# asar 里只放主进程/预加载/启动页与 package.json。
+# 业务代码全部走 extraResources，避免同一份 server-build 出现两次。
+files:
+  - package.json
+  - desktop/main/**/*
+  - desktop/preload/**/*
+  - desktop/renderer/**/*
+  - '!node_modules/**'
+  - '!**/*.map'
+
+extraResources:
+  # ---- 服务端与前端产物（相对结构必须与仓库一致）----
+  - from: server
+    to: app/server
+  - from: server-build
+    to: app/server-build
+  - from: dist
+    to: app/dist
+  # 只读资产：presets 由 server/index.mjs 的 STATIC_PUBLIC_DIRS 分发
+  - from: public/presets
+    to: app/public/presets
+  # 技能与 Blender 宿主脚本：server/skills.mjs 与 server/blender.mjs 按 appRoot 相对读取
+  - from: skills
+    to: app/skills
+  - from: scripts
+    to: app/scripts
+  # 第三方组件说明：应用内「关于 → 第三方组件说明」直接打开这份文件
+  - from: desktop/THIRD-PARTY-NOTICES.md
+    to: app/THIRD-PARTY-NOTICES.md
+  - from: desktop/licenses
+    to: app/licenses
+  # server-build/app.mjs 的两个真实外部依赖（零依赖包，无需递归收集）
+  - from: node_modules/zod
+    to: app/node_modules/zod
+  - from: node_modules/fflate
+    to: app/node_modules/fflate
+
+  # ---- 随包运行时二进制 ----
+  - from: desktop/bin/node
+    to: bin/node
+  - from: desktop/bin/ffmpeg
+    to: bin/ffmpeg
+  - from: desktop/bin/ffprobe
+    to: bin/ffprobe
+  - from: desktop/bin/blender/Blender.app
+    to: blender/Blender.app
+
+mac:
+  category: public.app-category.graphics-design
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  # Hardened Runtime 是公证的前提；entitlements 见 desktop/build/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: desktop/build/entitlements.mac.plist
+  entitlementsInherit: desktop/build/entitlements.mac.plist
+  # Blender.app 内含数百个 Mach-O，builder 认不出这个目录，交给 sign-nested.mjs 补签
+  signIgnore:
+    - /Contents/Resources/blender/
+  extendInfo:
+    NSMicrophoneUsageDescription: 生成配音时需要使用麦克风。
+    NSCameraUsageDescription: 拍摄参考素材时需要使用摄像头。
+    NSHumanReadableCopyright: Copyright © 2026 IIDP
+
+dmg:
+  # Blender + presets 让安装包很大，ULFO 压缩换体积
+  format: ULFO
+  title: 分镜画布
+  window:
+    width: 560
+    height: 400
+  contents:
+    - x: 150
+      y: 190
+      type: file
+    - x: 410
+      y: 190
+      type: link
+      path: /Applications
+
+# 不生成更新元数据：本次不做自动更新
+publish: null
+
+afterSign: desktop/scripts/after-sign.cjs
+# 全部产物出来后对 .app 与 .dmg 逐个公证 + staple（凭据见 desktop/scripts/notarize.mjs）
+afterAllArtifactBuild: desktop/scripts/notarize-after.cjs

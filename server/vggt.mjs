@@ -7,7 +7,7 @@ import crypto from 'node:crypto'
 import { probeMedia, extractFrame, MAX_FRAMES_PER_REQUEST } from './video-analyze.mjs'
 import { resolveCreativeFile } from './creative.mjs'
 import { parseProjectMediaUrl, resolveProjectMediaPath } from './media.mjs'
-import { mediaPathFromUrl } from './paths.mjs'
+import { ensureStateDir, mediaPathFromUrl } from './paths.mjs'
 
 const JOBS_DIR = '.vggt-jobs'
 const TTL_DAYS = Math.max(1, Number(process.env.VGGT_JOB_TTL_DAYS) || 7)
@@ -17,9 +17,7 @@ const TTL_MS = TTL_DAYS * 86_400_000
 const jobs = new Map()
 
 function jobsRoot(appRoot) {
-  const dir = path.join(appRoot, JOBS_DIR)
-  fs.mkdirSync(dir, { recursive: true })
-  return dir
+  return ensureStateDir(appRoot, JOBS_DIR)
 }
 
 function jobDir(appRoot, id) {

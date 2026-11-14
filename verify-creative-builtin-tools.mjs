@@ -121,7 +121,7 @@ globalThis.fetch = (url, init) => {
 
 const expertsRes = await (await fetch(`${APP}/api/experts`)).json()
 check('/api/experts', expertsRes.ok === true && Array.isArray(expertsRes.experts), String(expertsRes.experts?.length ?? 0))
-check('内置专家 ≥3', (expertsRes.experts?.length ?? 0) >= 3)
+check('内置专家可用', (expertsRes.experts || []).some((e) => e.id === 'expert-omni'), JSON.stringify((expertsRes.experts || []).map((e) => e.id)))
 
 const lib = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'))
 

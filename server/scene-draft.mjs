@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { safeProjectName } from './db.mjs'
+import { statePath } from './paths.mjs'
 
 const ROOT_DIR = '.scene-drafts'
 export const MAX_DRAFT_BYTES = 200 * 1024
@@ -41,7 +42,7 @@ function safeShotId(value) {
 }
 
 function draftsRoot(appRoot) {
-  return path.join(appRoot, ROOT_DIR)
+  return statePath(appRoot, ROOT_DIR)
 }
 
 function draftDir(appRoot, project, shotId) {

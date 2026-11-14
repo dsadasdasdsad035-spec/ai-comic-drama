@@ -9,8 +9,24 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 
+/**
+ * 随包二进制的位置：与当前 Node 可执行文件同目录。
+ *
+ * 打包后进程是 `Contents/Resources/node`，随包 ffmpeg 平铺在 `Contents/Resources/ffmpeg`；
+ * 开发时进程是 `desktop/bin/node`，二进制也在 `desktop/bin/`。两种形态同一个推导，
+ * 因此不需要额外约定环境变量。回退到 Electron 内置 Node 时该路径不存在，候选自然落空。
+ */
+function bundledPath(name) {
+  try {
+    return path.join(path.dirname(process.execPath), name)
+  } catch {
+    return ''
+  }
+}
+
 const CANDIDATES = [
   process.env.FFMPEG_PATH,
+  bundledPath('ffmpeg'),
   '/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg',
   '/opt/homebrew/bin/ffmpeg',
   '/usr/local/bin/ffmpeg',

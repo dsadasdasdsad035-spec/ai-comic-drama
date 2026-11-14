@@ -117,17 +117,32 @@ await p.waitForTimeout(300)
 await p.locator('.st-subnav button[data-settings-pane="routing"]').click()
 await p.waitForTimeout(300)
 const textRow = p.locator('[data-routing-cap="text"]')
-await textRow.locator('select').nth(0).selectOption('deepseek')
-await p.waitForTimeout(200)
-await textRow.locator('select').nth(1).selectOption('deepseek-chat')
+const providerSel = textRow.locator('select').nth(0)
+const modelSel = textRow.locator('select').nth(1)
+
+// 必须切到一个与当前不同的渠道：仓库默认值可能已经是目标渠道，
+// 选中相同值时表单不会进入 dirty 态，保存按钮保持 disabled，脚本会卡在点击那一步。
+const providerValues = (await providerSel.locator('option').evaluateAll((os) => os.map((o) => o.value))).filter(Boolean)
+const beforeProvider = beforeTextModel?.provider || ''
+const TARGET_PROVIDER = providerValues.find((v) => v !== beforeProvider) || ''
+check('存在可切换的文本渠道', Boolean(TARGET_PROVIDER), `可选=${providerValues.join('/')}`)
+
+await providerSel.selectOption(TARGET_PROVIDER)
+await p.waitForTimeout(300)
+// 切渠道会自动落到该渠道下第一个可跑模型；以 UI 实际值为准做断言
+const TARGET_TEXT = await modelSel.inputValue()
+check('切渠道后选中可跑模型', Boolean(TARGET_TEXT), TARGET_TEXT)
+
 await p.locator('.st-topbar button', { hasText: '保存设置' }).click()
 await p.waitForTimeout(900)
 const saved1 = await p.evaluate(() => fetch('/api/settings').then((r) => r.json()))
-check('设置落库', saved1.settings?.defaults?.text === 'deepseek-chat', String(saved1.settings?.defaults?.text))
+check('设置落库', saved1.settings?.defaults?.text === TARGET_TEXT, String(saved1.settings?.defaults?.text))
 
-await textRow.locator('select').nth(0).selectOption(beforeTextModel?.provider || '')
-await p.waitForTimeout(200)
-await textRow.locator('select').nth(1).selectOption(beforeDefaults.text)
+await providerSel.selectOption(beforeProvider)
+await p.waitForTimeout(300)
+if (beforeDefaults.text && (await modelSel.locator(`option[value="${beforeDefaults.text}"]`).count())) {
+  await modelSel.selectOption(beforeDefaults.text)
+}
 await p.locator('.st-topbar button', { hasText: '保存设置' }).click()
 await p.waitForTimeout(900)
 const saved2 = await p.evaluate(() => fetch('/api/settings').then((r) => r.json()))
