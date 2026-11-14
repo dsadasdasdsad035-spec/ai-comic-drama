@@ -34,6 +34,103 @@ function filterByName<T extends { name?: unknown }>(items: T[], names?: string[]
   return items.filter((x) => set.has(String(x.name || '')))
 }
 
+/** 物料分类：角色 / 场景 / 道具 / 素材卡 / 项目级自定义白模 */
+export const MATERIAL_CATEGORIES = ['characters', 'scenes', 'props', 'assets', 'whitebox'] as const
+export type MaterialCategory = (typeof MATERIAL_CATEGORIES)[number]
+
+/** 白模代码返回上限：整段 build_scene 才算可用，切太短没有价值 */
+const MATERIAL_CODE_MAX = 20_000
+const MATERIAL_ROW_LIMIT = 200
+
+export type MaterialRow = {
+  category: MaterialCategory
+  key: string
+  title: string
+  kind?: string
+  url?: string
+  characterName?: string
+  designId?: string
+  hasImage?: boolean
+  hasVideo?: boolean
+  hasCode?: boolean
+}
+
+/** 按分类把项目里的物料摊平成一维列表；素材卡无 id，用 url 作 key */
+function materialRowsOf(project: ProjectData, category: MaterialCategory): MaterialRow[] {
+  if (category === 'characters') {
+    const list = Array.isArray(project.characters) ? project.characters : []
+    return list
+      .map((raw) => {
+        const o = asRecord(raw)
+        const key = String(o.id || o.name || '').trim()
+        if (!key) return null
+        return {
+          category,
+          key,
+          title: String(o.name || key),
+          hasImage: Boolean(o.image),
+        }
+      })
+      .filter(Boolean) as MaterialRow[]
+  }
+  if (category === 'scenes' || category === 'props') {
+    const want = category === 'scenes' ? 'scene' : 'prop'
+    const list = Array.isArray(project.designs) ? project.designs : []
+    return list
+      .filter((d) => String(asRecord(d).kind || '') === want)
+      .map((raw) => {
+        const o = asRecord(raw)
+        const key = String(o.id || '').trim()
+        if (!key) return null
+        return {
+          category,
+          key,
+          title: String(o.name || key),
+          kind: want,
+          hasImage: Boolean(o.image),
+        }
+      })
+      .filter(Boolean) as MaterialRow[]
+  }
+  if (category === 'assets') {
+    const list = Array.isArray(project.assets) ? project.assets : []
+    const seen = new Set<string>()
+    const rows: MaterialRow[] = []
+    for (const raw of list) {
+      const o = asRecord(raw)
+      const url = String(o.url || '').trim()
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      rows.push({
+        category,
+        key: url,
+        title: String(o.title || url),
+        kind: String(o.kind || 'image'),
+        url,
+        ...(o.characterName ? { characterName: String(o.characterName) } : {}),
+        ...(o.designId ? { designId: String(o.designId) } : {}),
+      })
+    }
+    return rows
+  }
+  const list = Array.isArray(project.lexiconWhitebox) ? project.lexiconWhitebox : []
+  return list
+    .map((raw) => {
+      const o = asRecord(raw)
+      const key = String(o.id || '').trim()
+      if (!key) return null
+      const code = asRecord(o.sceneCode).code
+      return {
+        category,
+        key,
+        title: String(o.title || key),
+        hasVideo: Boolean(o.video),
+        hasCode: typeof code === 'string' && code.length > 0,
+      }
+    })
+    .filter(Boolean) as MaterialRow[]
+}
+
 /**
  * 工具集只通过 adapter 取数/写草稿：
  * 自己的产物读活草稿，上游产物读已保存项目；提交只产生草稿，合并交给宿主。
@@ -259,6 +356,205 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
+  const readAssetInventory = defineTool({
+    name: 'read_asset_inventory',
+    description:
+      '只读：项目物料地图。默认只回各分类计数（characters/scenes/props/assets/whitebox + 内置运镜库）；' +
+      '传 category + includeRows:true 时回该分类的轻量行，每行带 key，可原样传给 read_asset_detail。' +
+      '不含白模代码正文，也不含图片/视频数据地址。',
+    schema: z.object({
+      category: z.enum(MATERIAL_CATEGORIES).optional().describe('要列明细的分类；省略则只回计数'),
+      includeRows: z.boolean().optional().describe('true 时回该分类的行；须同时给 category'),
+      kind: z
+        .string()
+        .optional()
+        .describe('assets 细分过滤：image / video / audio / scene / prop / expression-sheet'),
+      q: z.string().optional().describe('标题或类型关键词'),
+      limit: z.number().int().min(1).max(MATERIAL_ROW_LIMIT).optional().describe('默认 50'),
+    }),
+    run: async ({ category, includeRows, kind, q, limit }) => {
+      let project: ProjectData
+      try {
+        project = await snapshot()
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || '读取项目失败' }
+      }
+
+      const assetRows = materialRowsOf(project, 'assets')
+      const assetsByKind: Record<string, number> = {}
+      for (const row of assetRows) {
+        const k = row.kind || 'image'
+        assetsByKind[k] = (assetsByKind[k] || 0) + 1
+      }
+      let cameraLexicon = 0
+      try {
+        const { getCameraLexiconCatalog } = await import('../cameraLexicon')
+        cameraLexicon = getCameraLexiconCatalog().count
+      } catch {
+        cameraLexicon = 0
+      }
+      const counts = {
+        characters: materialRowsOf(project, 'characters').length,
+        scenes: materialRowsOf(project, 'scenes').length,
+        props: materialRowsOf(project, 'props').length,
+        assets: assetRows.length,
+        whitebox: materialRowsOf(project, 'whitebox').length,
+        assetsByKind,
+        cameraLexicon,
+      }
+      const projectName = String(project.name || '')
+
+      if (!category || !includeRows) {
+        return {
+          ok: true,
+          project: projectName,
+          counts,
+          ...(includeRows && !category ? { note: 'includeRows 需要同时给 category' } : {}),
+          next: category
+            ? `传 includeRows: true 查看 ${category} 明细`
+            : '传 category + includeRows:true 看某分类明细；再 read_asset_detail({category,key}) 取单条。内置运镜库用 list_camera_lexicon 检索，whitebox 只含项目自定义白模。',
+        }
+      }
+
+      let rows = materialRowsOf(project, category)
+      if (category === 'assets' && kind) {
+        const want = String(kind).trim()
+        rows = rows.filter((r) => r.kind === want)
+      }
+      const query = String(q || '').trim().toLowerCase()
+      if (query) {
+        rows = rows.filter(
+          (r) =>
+            r.title.toLowerCase().includes(query) || String(r.kind || '').toLowerCase().includes(query),
+        )
+      }
+      const total = rows.length
+      const page = rows.slice(0, limit ?? 50)
+      return {
+        ok: true,
+        project: projectName,
+        category,
+        total,
+        truncated: total > page.length,
+        rows: page,
+        ...(total > page.length
+          ? { note: '结果被 limit 截断；可用 q 收窄，或直接用 read_asset_detail 取单条' }
+          : {}),
+        next: '用 read_asset_detail({category, key}) 取单条完整记录',
+      }
+    },
+  })
+
+  const readAssetDetail = defineTool({
+    name: 'read_asset_detail',
+    description:
+      '只读：按 category + key 取单条物料完整记录。key 原样取自 read_asset_inventory（素材卡 key 即其 url）。' +
+      '白模默认不返回代码正文，需要时传 includeCode:true。',
+    schema: z.object({
+      category: z.enum(MATERIAL_CATEGORIES),
+      key: z.string().min(1).describe('read_asset_inventory 返回的 key，原样回传'),
+      includeCode: z
+        .boolean()
+        .optional()
+        .describe('仅 whitebox：true 时返回 Blender 代码（超长会截断）'),
+    }),
+    run: async ({ category, key, includeCode }) => {
+      let project: ProjectData
+      try {
+        project = await snapshot()
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || '读取项目失败' }
+      }
+      const wanted = String(key).trim()
+      const rows = materialRowsOf(project, category)
+      if (!rows.some((r) => r.key === wanted)) {
+        return {
+          ok: false,
+          error: `在 ${category} 里找不到 key「${wanted}」`,
+          availableKeys: rows.slice(0, 10).map((r) => r.key),
+          hint: `可用分类：${MATERIAL_CATEGORIES.join(' / ')}；先用 read_asset_inventory 取 key`,
+        }
+      }
+
+      if (category === 'characters') {
+        const list = Array.isArray(project.characters) ? project.characters : []
+        const hit = list.find((raw) => {
+          const o = asRecord(raw)
+          return String(o.id || o.name || '').trim() === wanted
+        })
+        if (!hit) return { ok: false, error: `角色「${wanted}」读取失败` }
+        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+      }
+
+      if (category === 'scenes' || category === 'props') {
+        const want = category === 'scenes' ? 'scene' : 'prop'
+        const list = Array.isArray(project.designs) ? project.designs : []
+        const hit = list.find(
+          (raw) =>
+            String(asRecord(raw).kind || '') === want && String(asRecord(raw).id || '') === wanted,
+        )
+        if (!hit) return { ok: false, error: `设定卡「${wanted}」读取失败` }
+        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+      }
+
+      if (category === 'assets') {
+        const list = Array.isArray(project.assets) ? project.assets : []
+        const hit = list.find((raw) => String(asRecord(raw).url || '').trim() === wanted)
+        if (!hit) return { ok: false, error: `素材卡「${wanted}」读取失败` }
+        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+      }
+
+      // whitebox：代码必须显式请求
+      const list = Array.isArray(project.lexiconWhitebox) ? project.lexiconWhitebox : []
+      const hit = list.find((raw) => String(asRecord(raw).id || '').trim() === wanted)
+      if (!hit) return { ok: false, error: `白模「${wanted}」读取失败` }
+      const o = asRecord(hit)
+      const sceneCode = asRecord(o.sceneCode)
+      const code = typeof sceneCode.code === 'string' ? sceneCode.code : ''
+      const { code: _omitCode, ...codeHead } = sceneCode
+      const base: Record<string, unknown> = {
+        id: String(o.id || ''),
+        title: String(o.title || o.id || ''),
+        seconds: o.seconds ?? null,
+        motionNote: String(o.motionNote || ''),
+        hasVideo: Boolean(o.video),
+        video: String(o.video || ''),
+        updatedAt: String(o.updatedAt || ''),
+        codeChars: code.length,
+      }
+      if (Object.keys(codeHead).length) base.sceneCode = boundJson(codeHead, 6000)
+      if (!includeCode) {
+        return {
+          ok: true,
+          category,
+          key: wanted,
+          record: base,
+          note: '代码未返回；需要代码时传 includeCode: true',
+        }
+      }
+      const truncated = code.length > MATERIAL_CODE_MAX
+      return {
+        ok: true,
+        category,
+        key: wanted,
+        record: {
+          ...base,
+          ...(Object.keys(codeHead).length || code
+            ? {
+                sceneCode: {
+                  ...codeHead,
+                  code: truncated ? code.slice(0, MATERIAL_CODE_MAX) : code,
+                },
+              }
+            : {}),
+        },
+        codeChars: code.length,
+        truncated,
+        ...(truncated ? { note: `代码超过 ${MATERIAL_CODE_MAX} 字符已截断` } : {}),
+      }
+    },
+  })
+
   const readSkill = createReadSkillTool()
 
   const readByName = new Map<string, ToolDef>([
@@ -272,6 +568,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     [listCameraLexicon.name, listCameraLexicon],
     [getCameraLexicon.name, getCameraLexicon],
     [readEpisode.name, readEpisode],
+    [readAssetInventory.name, readAssetInventory],
+    [readAssetDetail.name, readAssetDetail],
   ])
 
   const contractId = adapter.writeContract

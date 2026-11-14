@@ -21,8 +21,13 @@ export const CREATIVE_INSPECT_PROFILE: WorkbenchProfile = {
   inputLabels: {},
 }
 
+/** 物料盘点指引：自主模式与启用盘点工具的专家共用同一句（见 creative-asset-tools 规格） */
+export const CREATIVE_MATERIAL_HINT =
+  '不确定项目里有哪些角色、场景、道具、素材卡或自定义白模时，先调用 read_asset_inventory 取得各分类计数与 key，再按需用 read_asset_detail 取单条；不要凭猜测的 id 引用物料。'
+
 const CREATIVE_PLATFORM_LINES = [
   '平台内置工具（read_* / submit_* / validate_contract / list_installed_skills / read_skill_text）始终可用；写项目前须已选顶栏项目。',
+  CREATIVE_MATERIAL_HINT,
   '扩展能力：设置 → MCP 勾选的 HTTP 工具。',
 ]
 
@@ -212,7 +217,10 @@ export function buildExpertSystem(
   const workspaceOpts: CreativeWorkspaceFormatOpts = {
     includeShotEpisode: creativeWorkspaceNeedsShotEpisode(expert),
   }
-  return withWorkspaceContext(soul, { projectName: ctx.projectName, epNo: ctx.epNo }, workspaceOpts)
+  // 专家未启用盘点工具时不提示，避免让它调用白名单外的工具
+  const materialHint = expert.toolIds.includes('read_asset_inventory') ? CREATIVE_MATERIAL_HINT : ''
+  const body = [soul, materialHint].filter(Boolean).join('\n\n')
+  return withWorkspaceContext(body, { projectName: ctx.projectName, epNo: ctx.epNo }, workspaceOpts)
 }
 
 export type CreativeTurnPayload = {

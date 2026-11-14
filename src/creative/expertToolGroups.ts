@@ -15,6 +15,8 @@ const READ = new Set([
   'read_designs',
   'read_shots',
   'read_transition_recipes',
+  'read_asset_inventory',
+  'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
 ])
@@ -55,6 +57,8 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'read_designs',
   'read_shots',
   'read_transition_recipes',
+  'read_asset_inventory',
+  'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
   'read_skill',

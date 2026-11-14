@@ -154,6 +154,7 @@ const staticArgs = {
   read_characters: {},
   read_designs: {},
   read_shots: { episode: 1, limit: 5 },
+  read_asset_inventory: {},
   read_transition_recipes: { limit: 3 },
   list_camera_lexicon: { limit: 2 },
   list_installed_skills: {},
@@ -204,6 +205,25 @@ try {
   /* 下面 get 用默认 key */
 }
 staticArgs.get_camera_lexicon = { key: lexiconKey }
+
+// read_asset_detail 的 key 必须来自 inventory 返回的行，不能写死
+let assetDetailArgs = { category: 'characters', key: '__none__' }
+try {
+  const inv = byName.get('read_asset_inventory')
+  if (inv) {
+    for (const cat of ['characters', 'scenes', 'props', 'assets', 'whitebox']) {
+      const r = await inv.invoke({ category: cat, includeRows: true, limit: 5 })
+      const row = Array.isArray(r?.rows) ? r.rows[0] : null
+      if (row?.key) {
+        assetDetailArgs = { category: cat, key: row.key }
+        break
+      }
+    }
+  }
+} catch {
+  /* 保留兜底参数，仍会走 ok:false 分支 */
+}
+staticArgs.read_asset_detail = assetDetailArgs
 
 const results = []
 

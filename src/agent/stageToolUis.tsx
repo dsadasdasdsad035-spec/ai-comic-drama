@@ -11,6 +11,8 @@ const LABELS: Record<string, string> = {
   read_episode: '本集',
   read_shots: '分镜',
   read_designs: '场景/道具',
+  read_asset_inventory: '物料地图',
+  read_asset_detail: '物料详情',
   list_camera_lexicon: '运镜库',
   get_camera_lexicon: '运镜条目',
   read_skill: '技能全文',

@@ -14,6 +14,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'submit_prompt_renders',
   'read_prompt_render_bundle',
   'read_transition_recipes',
+  'read_asset_inventory',
+  'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
   'get_shot_context',
