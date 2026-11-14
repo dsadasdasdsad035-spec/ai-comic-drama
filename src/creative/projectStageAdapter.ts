@@ -71,7 +71,7 @@ export function createCreativeProjectAdapter(
       if (p) return p
       throw new Error('项目数据未加载')
     },
-    applyDraft: (payload): DraftApplyResult => {
+    applyDraft: (payload): Promise<DraftApplyResult> => {
       const draftCtx: ProjectDraftCtx = {
         projectName: ctx.projectName,
         epNo: ctx.epNo,

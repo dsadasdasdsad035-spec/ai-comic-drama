@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ProjectData, Stage } from '../api'
 import {
+  contractWriteHint,
   getContractToolSchema,
   normalizeCharactersContractPayload,
   validateContract,
@@ -578,8 +579,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   const submit = defineTool({
     name: adapter.writeTool,
     description:
-      '提交当前工作台的产物草稿。只写入草稿并交给宿主合并，不保存到项目；' +
-      '返回新增/更新数量。大产物不要重复贴给用户。',
+      '提交当前工作台的产物草稿。写入当前项目并返回新增/更新数量；大产物不要重复贴给用户。' +
+      (contractWriteHint(contractId) ? `\n${contractWriteHint(contractId)}` : ''),
     schema: submitSchema,
     run: async (payload) => {
       const normalized =
@@ -609,7 +610,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
           }
         }
       }
-      const applied = adapter.applyDraft(checked.value)
+      const applied = await adapter.applyDraft(checked.value)
       adapter.onDraftChanged?.()
       if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
       return {

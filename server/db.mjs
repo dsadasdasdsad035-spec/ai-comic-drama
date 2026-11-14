@@ -408,7 +408,44 @@ function open(root) {
   db.exec(SCHEMA)
   ensureColumns()
   if (firstTime) migrateFromJson(root)
+  // 历史空标识回填：这些卡存在但读工具拿不到 key，等于对所有 agent 隐形
+  const filled = backfillDesignIds()
+  if (filled) console.log(`[db] 已补齐 ${filled} 张设定卡的标识`)
   return db
+}
+
+/**
+ * 给历史数据里标识为空的设定卡补一个非空标识。
+ *
+ * `designs` 有 `UNIQUE(project_id, design_id)`，空串会让同一个项目只能存一张卡；
+ * 而读工具按 key 定位，空标识的卡会从物料地图里消失。
+ * 只更新空值，重复执行不产生改动，因此可以安全地放在每次启动。
+ * @returns {number} 本次补齐的行数
+ */
+export function backfillDesignIds() {
+  if (!db) return 0
+  const rows = db
+    .prepare("SELECT id, kind FROM designs WHERE design_id IS NULL OR design_id = ''")
+    .all()
+  if (!rows.length) return 0
+  const upd = db.prepare('UPDATE designs SET design_id = ? WHERE id = ?')
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    for (const row of rows) {
+      const kind = row.kind === 'prop' ? 'prop' : 'scene'
+      upd.run(`design-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, row.id)
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      /* 忽略 */
+    }
+    console.error('[db] 设定卡标识回填失败：', e?.message || e)
+    return 0
+  }
+  return rows.length
 }
 
 /**
@@ -1539,26 +1576,39 @@ export function writeProject(root, name, data = {}) {
 
   if (data.designs !== undefined) {
     if (!Array.isArray(data.designs)) throw new Error('designs 必须是数组')
-    db.prepare('DELETE FROM designs WHERE project_id = ?').run(pid)
-    for (const [i, d] of data.designs.entries()) {
-      db.prepare(
-        `INSERT INTO designs
-         (project_id,design_id,kind,name,refs,summary_cn,prompt_en,keywords,image,candidates,active_idx,sort)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      ).run(
-        pid,
-        String(d?.id || ''),
-        String(d?.kind || 'scene'),
-        String(d?.name || ''),
-        JSON.stringify(d?.refs ?? []),
-        String(d?.summaryCn || ''),
-        String(d?.promptEn || ''),
-        JSON.stringify(d?.keywords ?? []),
-        String(d?.image || ''),
-        JSON.stringify(d?.candidates ?? []),
-        typeof d?.activeIdx === 'number' ? d.activeIdx : null,
-        i,
-      )
+    // 原子写入：先 DELETE 再逐条 INSERT，任一插入失败都必须回到提交前。
+    // 否则会留下「旧卡全没、新卡没进」的中间态（标识撞唯一约束时最典型）。
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.prepare('DELETE FROM designs WHERE project_id = ?').run(pid)
+      for (const [i, d] of data.designs.entries()) {
+        db.prepare(
+          `INSERT INTO designs
+           (project_id,design_id,kind,name,refs,summary_cn,prompt_en,keywords,image,candidates,active_idx,sort)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ).run(
+          pid,
+          String(d?.id || ''),
+          String(d?.kind || 'scene'),
+          String(d?.name || ''),
+          JSON.stringify(d?.refs ?? []),
+          String(d?.summaryCn || ''),
+          String(d?.promptEn || ''),
+          JSON.stringify(d?.keywords ?? []),
+          String(d?.image || ''),
+          JSON.stringify(d?.candidates ?? []),
+          typeof d?.activeIdx === 'number' ? d.activeIdx : null,
+          i,
+        )
+      }
+      db.exec('COMMIT')
+    } catch (e) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        /* 事务已被 SQLite 结束时 ROLLBACK 也会报错，忽略 */
+      }
+      throw e
     }
   }
 

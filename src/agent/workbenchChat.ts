@@ -269,7 +269,7 @@ export type WorkbenchChatAdapter = {
   inputs: () => SkillInputs
   ownDraft: () => unknown
   projectSnapshot: () => Promise<ProjectData>
-  applyDraft: (payload: unknown) => DraftApplyResult
+  applyDraft: (payload: unknown) => DraftApplyResult | Promise<DraftApplyResult>
   /** 显式保存的工作台把保存函数交给写回执，自动保存/立即落库的工作台不提供。 */
   saveDraft?: () => Promise<void> | void
   onDraftChanged?: () => void

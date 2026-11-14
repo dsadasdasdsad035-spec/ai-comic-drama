@@ -1,7 +1,15 @@
-import { mergeProjectShots, patchProject, type ProjectData, type ProjectShot } from '../api'
+import {
+  mergeProjectShots,
+  patchProject,
+  type DesignSheet,
+  type ProjectData,
+  type ProjectPatch,
+  type ProjectShot,
+} from '../api'
 import { mergePromptDraft } from '../agent/promptDraft'
 import type { DraftApplyResult } from '../agent/workbenchChat'
 import { mergeCharacters, type ExtractedChar } from '../charExtract'
+import { mergeDesignDraft } from '../designExtract'
 import { mergeShotsDraft } from '../shotSync'
 import { blankShot } from '../shotRows'
 import { applyJoinsToShots, type JoinDraft } from '../shotJoins'
@@ -13,6 +21,25 @@ export type ProjectDraftCtx = {
   getSnapshot: () => ProjectData | null
   setSnapshot: (p: ProjectData) => void
   onProjectDataChanged?: () => void
+  /** 可选：落库实现；默认走 HTTP。测试借此注入失败，宿主也可换成别的写入通道。 */
+  writer?: {
+    patch?: (name: string, patch: ProjectPatch) => Promise<unknown>
+    mergeShots?: (name: string, shots: ProjectShot[], deleteShotIds?: string[]) => Promise<unknown>
+  }
+}
+
+function asError(e: unknown): string {
+  return (e as Error)?.message || String(e)
+}
+
+/** 等待落库；失败返回失败结果，调用方据此不回写乐观快照 */
+async function commit(run: () => Promise<unknown>): Promise<DraftApplyResult | null> {
+  try {
+    await run()
+    return null
+  } catch (e) {
+    return { ok: false, summary: '', error: asError(e) }
+  }
 }
 
 function resolveDraftEpNo(ctx: ProjectDraftCtx): number {
@@ -22,14 +49,16 @@ function resolveDraftEpNo(ctx: ProjectDraftCtx): number {
 }
 
 /** 按平台契约把 payload 合并进当前项目（创意 / 内置 Pi 工具共用） */
-export function applyProjectDraft(
+export async function applyProjectDraft(
   contractId: string,
   payload: unknown,
   ctx: ProjectDraftCtx,
-): DraftApplyResult {
+): Promise<DraftApplyResult> {
   const p = ctx.getSnapshot()
   if (!p) return { ok: false, summary: '', error: '未加载项目：请先在顶栏选择项目' }
   const epNo = resolveDraftEpNo(ctx)
+  const writePatch = ctx.writer?.patch ?? patchProject
+  const writeShots = ctx.writer?.mergeShots ?? mergeProjectShots
 
   if (contractId === 'shots-v1') {
     const shots = Array.isArray((payload as { shots?: ProjectShot[] }).shots)
@@ -43,8 +72,10 @@ export function applyProjectDraft(
       const base = blankShot(ep, no)
       return { ...base, ...s, id: base.id, episode: ep }
     })
+    const failed = await commit(() => writeShots(ctx.projectName, withIds))
+    if (failed) return failed
     ctx.setSnapshot({ ...p, shots: withIds })
-    void mergeProjectShots(ctx.projectName, withIds).then(() => ctx.onProjectDataChanged?.())
+    ctx.onProjectDataChanged?.()
     return {
       ok: true,
       summary: `分镜已写回：新增 ${added}，更新 ${updated}`,
@@ -59,8 +90,10 @@ export function applyProjectDraft(
         ? (payload as ExtractedChar[])
         : []
     const merged = mergeCharacters((p.characters || []) as CharacterSheet[], incoming)
+    const failed = await commit(() => writePatch(ctx.projectName, { characters: merged.next }))
+    if (failed) return failed
     ctx.setSnapshot({ ...p, characters: merged.next })
-    void patchProject(ctx.projectName, { characters: merged.next }).then(() => ctx.onProjectDataChanged?.())
+    ctx.onProjectDataChanged?.()
     const subjects = [...merged.added, ...merged.updated]
     return {
       ok: true,
@@ -80,8 +113,10 @@ export function applyProjectDraft(
       epNo,
       (p.characters || []) as CharacterSheet[],
     )
+    const failed = await commit(() => writeShots(ctx.projectName, shots))
+    if (failed) return failed
     ctx.setSnapshot({ ...p, shots })
-    void mergeProjectShots(ctx.projectName, shots).then(() => ctx.onProjectDataChanged?.())
+    ctx.onProjectDataChanged?.()
     return {
       ok: true,
       summary: `提示词已写回 ${patched} 镜${missing ? `，${missing} 镜未找到` : ''}${unresolved ? `，${unresolved} 处锚点未解析` : ''}`,
@@ -94,8 +129,10 @@ export function applyProjectDraft(
       ? (payload as { joins: JoinDraft[] }).joins
       : []
     const r = applyJoinsToShots(p.shots || [], joins)
+    const failed = await commit(() => writeShots(ctx.projectName, r.shots))
+    if (failed) return failed
     ctx.setSnapshot({ ...p, shots: r.shots })
-    void mergeProjectShots(ctx.projectName, r.shots).then(() => ctx.onProjectDataChanged?.())
+    ctx.onProjectDataChanged?.()
     return {
       ok: true,
       summary: `镜间接缝：应用 ${r.applied}，硬切 ${r.cuts}，特效 ${r.effects}，生成 ${r.generated}`,
@@ -104,19 +141,17 @@ export function applyProjectDraft(
   }
 
   if (contractId === 'designs-v1') {
-    const rec = payload as { scenes?: unknown[]; props?: unknown[]; designs?: ProjectData['designs'] }
-    const next = { ...p }
-    if (rec.designs) {
-      next.designs = rec.designs
-    } else if (rec.scenes || rec.props) {
-      next.designs = [
-        ...(Array.isArray(rec.scenes) ? rec.scenes : []),
-        ...(Array.isArray(rec.props) ? rec.props : []),
-      ] as ProjectData['designs']
+    // 合并而非替换：未出现在本次写回里的卡必须保留，已有图片与手工锚点不能被抹
+    const merged = mergeDesignDraft((p.designs || []) as DesignSheet[], payload)
+    const failed = await commit(() => writePatch(ctx.projectName, { designs: merged.next }))
+    if (failed) return failed
+    ctx.setSnapshot({ ...p, designs: merged.next })
+    ctx.onProjectDataChanged?.()
+    return {
+      ok: true,
+      summary: `素材设定：新增 ${merged.added.length}，更新 ${merged.updated.length}`,
+      counts: { total: merged.incoming.length, added: merged.added.length, updated: merged.updated.length },
     }
-    ctx.setSnapshot(next)
-    void patchProject(ctx.projectName, { designs: next.designs }).then(() => ctx.onProjectDataChanged?.())
-    return { ok: true, summary: '素材设定已写回项目' }
   }
 
   return { ok: false, summary: '', error: `不支持写回契约：${contractId}` }

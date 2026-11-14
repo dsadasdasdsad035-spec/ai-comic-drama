@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { getProject, type ProjectData } from '../api'
 import {
+  contractWriteHint,
   getContractToolSchema,
   normalizeCharactersContractPayload,
   validateContract,
@@ -81,10 +82,12 @@ function createSubmitTool(input: BuiltinPlatformCtx, writeTool: WriteTool, contr
   if (!schema) throw new Error(`未知契约：${contractId}`)
   const row = PLATFORM_WRITE_TOOLS.find((x) => x.tool === writeTool)
   const label = row?.label || contractId
+  const hint = contractWriteHint(contractId)
   return defineTool({
     name: writeTool,
     description:
-      `【平台内置】提交${label}草稿。payload 须符合契约 ${contractId}；写入当前顶栏项目（无项目时报错）。`,
+      `【平台内置】提交${label}草稿。payload 须符合契约 ${contractId}；写入当前顶栏项目（无项目时报错）。` +
+      (hint ? `\n${hint}` : ''),
     schema,
     run: async (payload) => {
       try {
@@ -96,7 +99,7 @@ function createSubmitTool(input: BuiltinPlatformCtx, writeTool: WriteTool, contr
         contractId === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
       const checked = validateContract(contractId, normalized)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
-      const applied: DraftApplyResult = applyProjectDraft(contractId, checked.value, draftCtx(input))
+      const applied: DraftApplyResult = await applyProjectDraft(contractId, checked.value, draftCtx(input))
       if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
       return {
         ok: true,

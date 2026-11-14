@@ -76,6 +76,93 @@ export function normalizeDesignName(name: string): string {
     .toLowerCase()
 }
 
+/**
+ * 设定卡标识：项目内唯一且改名不换。
+ *
+ * 不用名称派生——`assets.design_id` 引用着它，改名派生会让关联断链；
+ * 也不能留空——`designs` 表有 `UNIQUE(project_id, design_id)`，
+ * 空串会让同一个项目只能存一张卡。
+ */
+export function newDesignId(kind: DesignKind): string {
+  return `design-${kind === 'prop' ? 'prop' : 'scene'}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+}
+
+/**
+ * 契约条目 → 设定卡。
+ *
+ * 契约用 `summary_cn` / `prompt_en`，卡片用 `summaryCn` / `promptEn`；
+ * 模型若原样回传 `id` / `image` / `candidates` 则透传，缺失时交给写入层补标识。
+ */
+export function designContractToSheet(raw: unknown, kind?: DesignKind): DesignSheet | null {
+  const o = asRecord(raw)
+  const name = String(o.name ?? '').trim()
+  if (!name) return null
+  const rawKind = String(kind || o.kind || 'scene')
+  const safeKind: DesignKind = rawKind === 'prop' ? 'prop' : 'scene'
+  const refs = Array.isArray(o.refs) ? o.refs.map(String).filter(Boolean) : []
+  const keywords = Array.isArray(o.keywords) ? o.keywords.map(String).filter(Boolean) : []
+  const candidates = Array.isArray(o.candidates) ? o.candidates.map(String).filter(Boolean) : []
+  const image = String(o.image ?? '').trim()
+  const activeIdx =
+    typeof o.activeIdx === 'number' ? o.activeIdx : typeof o.active_idx === 'number' ? o.active_idx : undefined
+  return {
+    id: String(o.id ?? '').trim(),
+    kind: safeKind,
+    name,
+    refs: [...new Set(refs)],
+    summaryCn: String(o.summaryCn ?? o.summary_cn ?? '').trim(),
+    promptEn: String(o.promptEn ?? o.prompt_en ?? '').trim(),
+    keywords,
+    ...(image ? { image } : {}),
+    ...(candidates.length ? { candidates } : {}),
+    ...(activeIdx === undefined ? {} : { activeIdx }),
+  }
+}
+
+/**
+ * 设定写回的唯一合并入口。
+ *
+ * 三种可能的载荷形状（`designs` 整表 / 契约的 `scenes`+`props`）都归一成设定卡，
+ * 先补标识再合并：合并后的列表必须能直接落库，空标识会撞唯一约束。
+ */
+export function mergeDesignDraft(
+  cur: DesignSheet[],
+  payload: unknown,
+): { next: DesignSheet[]; added: string[]; updated: string[]; incoming: DesignSheet[] } {
+  const rec = asRecord(payload)
+  const incoming: DesignSheet[] = []
+  if (Array.isArray(rec.designs)) {
+    for (const raw of rec.designs) {
+      const sheet = designContractToSheet(raw)
+      if (sheet) incoming.push(sheet)
+    }
+  } else {
+    for (const raw of Array.isArray(rec.scenes) ? rec.scenes : []) {
+      const sheet = designContractToSheet(raw, 'scene')
+      if (sheet) incoming.push(sheet)
+    }
+    for (const raw of Array.isArray(rec.props) ? rec.props : []) {
+      const sheet = designContractToSheet(raw, 'prop')
+      if (sheet) incoming.push(sheet)
+    }
+  }
+  const identified = incoming.map((d) => (d.id ? d : { ...d, id: newDesignId(d.kind) }))
+  const merged = mergeDesigns(cur, identified)
+  // 旧卡可能来自历史数据（标识为空），一并补齐，否则它永远读不到
+  const next = merged.next.map((d) => (d.id ? d : { ...d, id: newDesignId(d.kind) }))
+  return { ...merged, next, incoming: identified }
+}
+
+/**
+ * 按类型和名称合并设定卡；同名卡只补空字段，已有图片、候选图和手工锚点保留。
+ *
+ * 标识优先：模型回传了已存在的标识时以标识为准，这样改名不会变成新增一张卡
+ * （否则同一标识会落两行，撞 `UNIQUE(project_id, design_id)`）。
+ */
 export function mergeDesigns(
   cur: DesignSheet[],
   incoming: DesignSheet[],
@@ -85,9 +172,13 @@ export function mergeDesigns(
   const updated: string[] = []
 
   for (const inc of incoming) {
-    const idx = next.findIndex(
-      (d) => d.kind === inc.kind && normalizeDesignName(d.name) === normalizeDesignName(inc.name),
-    )
+    const byId = inc.id ? next.findIndex((d) => d.id && d.id === inc.id) : -1
+    const idx =
+      byId >= 0
+        ? byId
+        : next.findIndex(
+            (d) => d.kind === inc.kind && normalizeDesignName(d.name) === normalizeDesignName(inc.name),
+          )
     if (idx < 0) {
       next.push(inc)
       added.push(inc.name)
@@ -96,6 +187,7 @@ export function mergeDesigns(
     const old = next[idx]
     next[idx] = {
       ...old,
+      name: inc.name || old.name,
       refs: [...new Set([...(old.refs ?? []), ...(inc.refs ?? [])])],
       summaryCn: old.summaryCn || inc.summaryCn,
       promptEn: old.promptEn || inc.promptEn,
@@ -104,7 +196,7 @@ export function mergeDesigns(
       candidates: old.candidates?.length ? old.candidates : inc.candidates,
       activeIdx: old.activeIdx ?? inc.activeIdx,
     }
-    updated.push(old.name)
+    updated.push(next[idx].name)
   }
   return { next, added, updated }
 }

@@ -325,6 +325,20 @@ export function getContract(id: string): SkillContract | undefined {
   return REGISTRY[id]
 }
 
+/**
+ * 写回语义提示：挂进工具描述，避免模型把「合并」当成整表替换。
+ *
+ * 只有合并语义的契约需要——整表替换的契约不写提示，免得把默认行为说反。
+ */
+export const CONTRACT_WRITE_HINTS: Record<string, string> = {
+  'designs-v1':
+    '按类型与名称合并写回：同名卡只补空字段，已有图片、候选图与手工锚点保留；本次未提交的卡不会被删除，删除请走素材页的人工卡片操作。',
+}
+
+export function contractWriteHint(id: string): string {
+  return CONTRACT_WRITE_HINTS[id] || ''
+}
+
 /** 给工具参数复用同一份输出 schema，避免提示词形状与工具校验两套。 */
 export function getContractSchema(id: string): z.ZodType | undefined {
   return REGISTRY[id]?.schema
