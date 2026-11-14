@@ -142,7 +142,8 @@ export declare function buildApimartResponsesBody(opts: {
   model: string
   messages: any[]
   tools: any[]
-  maxTokens: number
+  /** 不传就不带 max_output_tokens */
+  maxTokens?: number
   toolChoice?: unknown
 }): Record<string, unknown>
 export declare function parseApimartResponsesRaw(raw: string): any

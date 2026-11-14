@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Settings as SettingsIcon,
   Sparkles,
+  UserRound,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -14,9 +15,9 @@ import {
  * 注意：这里不包含「提示词」与「镜头表」——首帧/视频提示词只在画布的单镜
  * Inspector 与画布内 Agent 里编辑。
  */
-export type ViewId = 'overview' | 'creative' | 'assets' | 'board' | 'settings'
+export type ViewId = 'overview' | 'creative' | 'assets' | 'board' | 'settings' | 'account'
 
-export type NavGroupId = 'main' | 'create' | 'system'
+export type NavGroupId = 'main' | 'create' | 'system' | 'account'
 
 export type NavItem = {
   id: ViewId
@@ -32,6 +33,7 @@ export type NavItem = {
 export const NAV_GROUPS: Array<{ id: NavGroupId; label: string }> = [
   { id: 'main', label: '项目' },
   { id: 'create', label: '创作' },
+  { id: 'account', label: '账户' },
   { id: 'system', label: '系统' },
 ]
 
@@ -40,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'creative', label: '创意', group: 'create', icon: Sparkles, crumb: '创意' },
   { id: 'assets', label: '素材', group: 'create', icon: Images, crumb: '素材', countKey: 'assets' },
   { id: 'board', label: '画布', group: 'create', icon: Clapperboard, crumb: '画布' },
+  { id: 'account', label: '账号与充值', group: 'account', icon: UserRound, crumb: '账号与充值' },
   { id: 'settings', label: '设置', group: 'system', icon: SettingsIcon, crumb: '设置' },
 ]
 

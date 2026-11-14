@@ -83,10 +83,10 @@ read_local_env() {
   local f="$ROOT/deploy/.env"
   [[ -f "$f" ]] || return 0
   while IFS= read -r line; do
-    [[ "$line" =~ ^(XUNHUPAY_|BILLING_|MAIL_USERNAME=) ]] || continue
+    [[ "$line" =~ ^(XUNHUPAY_|BILLING_|MAIL_USERNAME=|MAIL_PASSWORD=|MAIL_FROM=) ]] || continue
     [[ "$line" =~ ^# ]] && continue
     export "$line" 2>/dev/null || true
-  done < <(grep -E '^(XUNHUPAY_|BILLING_|MAIL_USERNAME=)' "$f" || true)
+  done < <(grep -E '^(XUNHUPAY_|BILLING_|MAIL_USERNAME=|MAIL_PASSWORD=|MAIL_FROM=)' "$f" || true)
 }
 
 read_local_env
@@ -100,29 +100,24 @@ XUNHUPAY_NOTIFY_URL=https://rechargeai.cn/api/billing/xunhupay/notify
 BILLING_DB_PATH=/data/projects/billing.sqlite
 BILLING_ALLOW_SIMULATE=0
 BILLING_TEST_PACK=1
+# 验证邮件：桌面端注册必须真能收到信，否则账号无法激活
+BILLING_EMAIL_DRIVER=${BILLING_EMAIL_DRIVER:-smtp}
+BILLING_SMTP_HOST=${BILLING_SMTP_HOST:-smtp.qq.com}
+BILLING_SMTP_PORT=${BILLING_SMTP_PORT:-465}
+BILLING_SMTP_SECURE=${BILLING_SMTP_SECURE:-1}
+BILLING_SMTP_USER=${BILLING_SMTP_USER:-${MAIL_USERNAME:-}}
+BILLING_SMTP_PASS=${BILLING_SMTP_PASS:-${MAIL_PASSWORD:-}}
+BILLING_EMAIL_FROM=${BILLING_EMAIL_FROM:-${MAIL_FROM:-${MAIL_USERNAME:-}}}
 BILLING_ADMIN_EMAIL=${BILLING_ADMIN_EMAIL:-${MAIL_USERNAME:-296629801@qq.com}}
 PROXY_CONF=nginx.conf
 PUBLIC_PORT=80
 PUBLIC_TLS_PORT=443
 EOF
 )"
-printf '%s\n' "$REMOTE_ENV_BLOCK" | "${SSH[@]}" bash -s "$REMOTE_DIR" <<'EOS'
-set -euo pipefail
-RD="$1"
-ENV="$RD/.env"
-touch "$ENV"
-chmod 600 "$ENV"
-while IFS= read -r line || [[ -n "$line" ]]; do
-  [[ -z "$line" || "$line" =~ ^# ]] && continue
-  k="${line%%=*}"
-  v="${line#*=}"
-  if grep -q "^${k}=" "$ENV" 2>/dev/null; then
-    sed -i "s|^${k}=.*|${k}=${v}|" "$ENV"
-  else
-    echo "${k}=${v}" >> "$ENV"
-  fi
-done
-EOS
+# 注意：合并脚本走文件（deploy/merge-env.sh），环境变量块走 stdin。
+# 之前用 heredoc 传脚本会把 stdin 抢占掉，导致环境变量块根本没写进 .env。
+printf '%s\n' "$REMOTE_ENV_BLOCK" | ssh_remote "bash '$REMOTE_DIR/deploy/merge-env.sh' '$REMOTE_DIR/.env'"
+ssh_remote "grep -q '^BILLING_TEST_PACK=' '$REMOTE_DIR/.env'" || die "远端 .env 缺少 BILLING_TEST_PACK，合并未生效"
 ssh_remote "mkdir -p '$REMOTE_DIR/data/projects' '$REMOTE_DIR/data/media/generated' '$REMOTE_DIR/data/media/videos' '$REMOTE_DIR/data/media/voices' '$REMOTE_DIR/data/media/exports' '$REMOTE_DIR/data/media/publish-packages'"
 
 if [[ "${DEPLOY_PATCH_WILDAI:-0}" == 1 ]]; then
@@ -131,6 +126,14 @@ fi
 
 if [[ "$BUILD" == 1 ]]; then
   log "远端 docker compose 重建 app + proxy"
+  # 磁盘先看闸：镜像带 Blender/ffmpeg，一次构建 5G+，写满盘会让 build 直接 137/ENOSPC，
+  # 而失败信息只会说「failed to copy」，很难看出是磁盘。空间不够就先清悬空镜像与构建缓存。
+  AVAIL_GB="$(ssh_remote "df -BG --output=avail / | tail -1 | tr -dc '0-9'" || echo 0)"
+  if [[ "${AVAIL_GB:-0}" -lt 15 ]]; then
+    log "远端磁盘仅剩 ${AVAIL_GB}G，先清理悬空镜像与构建缓存"
+    ssh_remote "docker image prune -f >/dev/null; docker builder prune -f >/dev/null" || true
+    ssh_remote "df -BG --output=avail / | tail -1 | tr -dc '0-9'" | sed 's/^/清理后可用（G）：/'
+  fi
   ssh_remote "cd '$REMOTE_DIR' && DOCKER_BUILDKIT=1 docker compose -f docker-compose.yml -f docker-compose.auth.yml build app && docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d app proxy"
 else
   ssh_remote "cd '$REMOTE_DIR' && docker compose -f docker-compose.yml -f docker-compose.auth.yml up -d proxy && docker compose restart proxy"

@@ -38,6 +38,14 @@ body.shell {
   -webkit-app-region: no-drag;
 }
 
+/* 品牌图形：图片自带圆角与透明边，不再额外裁切 */
+.shell-logo {
+  display: block;
+  width: 88px;
+  height: 88px;
+  margin: 0 auto 6px;
+}
+
 .shell-title {
   margin: 20px 0 8px;
   font-size: 18px;

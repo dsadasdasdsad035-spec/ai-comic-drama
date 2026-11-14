@@ -18,6 +18,7 @@ import assert from 'node:assert/strict'
 import { execSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
+import path from 'node:path'
 import { _electron as electron } from 'playwright-core'
 
 const ROOT = process.cwd()
@@ -79,8 +80,13 @@ let page = null
 let origin = ''
 let port = 0
 
+/** 验收用独立 userData：与用户正在运行的打包版互不抢单实例锁 */
+const TEST_USER_DATA = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'sb-desktop-verify-'))
+cleanup.push(async () => fs.rmSync(TEST_USER_DATA, { recursive: true, force: true }))
+const LAUNCH_ENV = { ...process.env, SB_USER_DATA_DIR: TEST_USER_DATA }
+
 await check('启动画面先行，握手后切到应用界面', async () => {
-  app = await electron.launch({ args: ['.'], cwd: ROOT })
+  app = await electron.launch({ args: ['.'], cwd: ROOT, env: LAUNCH_ENV })
   cleanup.push(async () => {
     try {
       await app?.close()
@@ -115,7 +121,7 @@ await check('第二个实例立即退出且不新增服务进程', async () => {
     const child = spawn(process.execPath, ['node_modules/electron/cli.js', '.', '--no-sandbox'], {
       cwd: ROOT,
       stdio: 'ignore',
-      env: process.env,
+      env: LAUNCH_ENV,
     })
     // 拿不到单实例锁时应当很快自己退出；10 秒还不退就是没拦住
     const timer = setTimeout(() => {
@@ -177,8 +183,19 @@ await check('服务崩溃 → 断连页 → 重启后回到原路由', async () 
 
   await page.click('#retry')
   await page.waitForURL(ORIGIN_RE, { timeout: 60_000 })
-  await page.waitForTimeout(2000)
-  assert.equal(await page.evaluate(() => location.hash), route, '重启后未回到原路由')
+  // 重启后页面要重新挂载 SPA，路由是异步回填的：轮询到位即可，别用固定等待赌时序
+  let restored = ''
+  for (let i = 0; i < 40; i++) {
+    try {
+      restored = await page.evaluate(() => location.hash)
+    } catch {
+      // 页面正在导航时 evaluate 会失败，下一轮再看
+      restored = ''
+    }
+    if (restored === route) break
+    await page.waitForTimeout(250)
+  }
+  assert.equal(restored, route, '重启后未回到原路由')
 })
 
 // ---------------------------------------------------------------- 5. 强杀主进程

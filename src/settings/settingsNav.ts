@@ -53,7 +53,8 @@ export const LEGACY_SECTION_TO_NAV: Record<SettingsLegacySection, { hub: Setting
   mcp: { hub: 'extensions', pane: 'mcp' },
   experts: { hub: 'extensions', pane: 'experts' },
   pricing: { hub: 'billing', pane: 'pricing' },
-  billing: { hub: 'billing', pane: 'billing' },
+  // 账户与充值已提升为顶层「账户」视图；旧深链继续落到计价页，避免白屏
+  billing: { hub: 'billing', pane: 'pricing' },
   data: { hub: 'data', pane: 'data' },
 }
 
@@ -80,7 +81,7 @@ export const HUB_COPY: Record<SettingsHub, { title: string; subtitle: string }> 
   },
   billing: {
     title: '费用',
-    subtitle: '本地估算单价与钱包充值',
+    subtitle: '本地估算单价（不影响钱包扣费）',
   },
   data: {
     title: '数据',
@@ -107,10 +108,7 @@ export const HUB_PANES: Record<SettingsHub, { id: SettingsPane; label: string }[
     { id: 'experts', label: '创意专家' },
     { id: 'stock', label: '素材库' },
   ],
-  billing: [
-    { id: 'pricing', label: '计价' },
-    { id: 'billing', label: '账户与充值' },
-  ],
+  billing: [{ id: 'pricing', label: '计价' }],
   data: [{ id: 'data', label: '数据' }],
 }
 

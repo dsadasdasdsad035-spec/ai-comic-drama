@@ -1,6 +1,15 @@
 import { creditsFromMicro, microFromCredits } from './constants.mjs'
 import { getBillingDb, withBillingTxn } from './db.mjs'
 
+/**
+ * 悬空冻结的回收时限。
+ *
+ * 冻结依赖「请求结束」来释放：桌面端被关掉、断网、代理超时都会让请求中途消失，
+ * 于是 hold_micro 永远留在库里，用户看到「可用余额」比实际少。
+ * 单次生成最长约 10 分钟，给 60 分钟余量后再回收，正常请求不可能跨过这个窗口。
+ */
+const HOLD_TTL_MS = 60 * 60_000
+
 function walletRow(userId) {
   const d = getBillingDb()
   let row = d.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId)
@@ -9,6 +18,19 @@ function walletRow(userId) {
     row = d.prepare('SELECT * FROM wallets WHERE user_id = ?').get(userId)
   }
   return row
+}
+
+/** 超过 HOLD_TTL_MS 仍没释放的冻结视为悬空，直接清零（调用方需在事务内） */
+function reclaimStaleHold(d, userId, w) {
+  const hold = Number(w.hold_micro || 0)
+  if (hold <= 0) return w
+  const since = Number(w.hold_since_ms || 0)
+  if (since && Date.now() - since <= HOLD_TTL_MS) return w
+  d.prepare('UPDATE wallets SET hold_micro = 0, hold_since_ms = NULL, updated_at = datetime(\'now\') WHERE user_id = ?').run(
+    userId,
+  )
+  console.warn(`[billing] 回收悬空冻结 user=${userId} hold=${creditsFromMicro(hold)} credit`)
+  return { ...w, hold_micro: 0, hold_since_ms: null }
 }
 
 export function getWalletSummary(userId) {
@@ -49,21 +71,31 @@ export function creditWallet(userId, credits, type, refType, refId, meta) {
 export function holdCredits(userId, credits) {
   const micro = microFromCredits(credits)
   return withBillingTxn((d) => {
-    const w = walletRow(userId)
+    const w = reclaimStaleHold(d, userId, walletRow(userId))
     const available = Number(w.balance_micro) - Number(w.hold_micro)
     if (available < micro) throw new Error('user_insufficient_credits')
     const hold = Number(w.hold_micro) + micro
-    d.prepare('UPDATE wallets SET hold_micro = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(hold, userId)
+    const since = Number(w.hold_micro) > 0 && w.hold_since_ms ? Number(w.hold_since_ms) : Date.now()
+    d.prepare('UPDATE wallets SET hold_micro = ?, hold_since_ms = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(
+      hold,
+      since,
+      userId,
+    )
     return { hold_micro: micro, hold_credits: credits }
   })
 }
 
 export function releaseHold(userId, credits) {
   const micro = microFromCredits(credits)
-  const d = getBillingDb()
-  const w = walletRow(userId)
-  const hold = Math.max(0, Number(w.hold_micro) - micro)
-  d.prepare('UPDATE wallets SET hold_micro = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(hold, userId)
+  return withBillingTxn((d) => {
+    const w = walletRow(userId)
+    const hold = Math.max(0, Number(w.hold_micro) - micro)
+    d.prepare('UPDATE wallets SET hold_micro = ?, hold_since_ms = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(
+      hold,
+      hold > 0 ? (w.hold_since_ms ?? null) : null,
+      userId,
+    )
+  })
 }
 
 /** 从冻结中实扣：先减 hold 再减 balance */
@@ -75,9 +107,10 @@ export function settleFromHold(userId, holdCredits, actualCredits, usageMeta) {
     const newHold = Math.max(0, Number(w.hold_micro) - holdMicro)
     const newBalance = Number(w.balance_micro) - actualMicro
     if (newBalance < 0 || newHold > newBalance) throw new Error('user_insufficient_credits')
-    d.prepare('UPDATE wallets SET balance_micro = ?, hold_micro = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(
+    d.prepare('UPDATE wallets SET balance_micro = ?, hold_micro = ?, hold_since_ms = ?, updated_at = datetime(\'now\') WHERE user_id = ?').run(
       newBalance,
       newHold,
+      newHold > 0 ? (w.hold_since_ms ?? null) : null,
       userId,
     )
     const entry = d

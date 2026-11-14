@@ -795,7 +795,8 @@ export function buildApimartResponsesBody({ model, messages, tools, maxTokens, t
     input: chatMessagesToApimartResponseInput(messages),
     tools: toApimartResponseTools(tools),
     tool_choice: tc,
-    max_output_tokens: maxTokens,
+    // 调用方没指定上限就不下发，交给渠道默认值。
+    ...(Number(maxTokens) > 0 ? { max_output_tokens: Number(maxTokens) } : {}),
   }
 }
 

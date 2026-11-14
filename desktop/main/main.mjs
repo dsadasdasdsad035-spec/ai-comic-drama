@@ -19,6 +19,23 @@ const APP_ROOT = app.isPackaged
 const RENDERER_DIR = path.join(import.meta.dirname, '..', 'renderer')
 
 /**
+ * 打包版默认共用的线上账号服务。
+ *
+ * 桌面端自带的那套账本（`<state>/data/billing.sqlite`）是单机的，用户在网页上充的
+ * 积分在桌面端看不到。打包版因此默认把「账号 + 钱包」接口转给公网部署，做到同一账号
+ * 同一份积分；开发态仍然用本地账本，避免 `npm run desktop:dev` 把本地调试数据写到线上。
+ *
+ * 覆盖方式：启动前设 `SB_BILLING_BASE=https://其他域名`，或设 `local` 强制回本地账本。
+ */
+const DEFAULT_BILLING_BASE = 'https://rechargeai.cn'
+
+function resolveBillingBase() {
+  const raw = String(process.env.SB_BILLING_BASE || '').trim()
+  if (raw) return raw
+  return app.isPackaged ? DEFAULT_BILLING_BASE : ''
+}
+
+/**
  * 固定 userData 目录名。
  *
  * 默认值是 productName，一旦改产品名，用户数据就会「消失」（其实是换了目录）。
@@ -42,7 +59,12 @@ let lastRoute = ''
 
 // userData 决定单实例锁的位置与 Chromium 缓存的落点，必须在任何 app API 之前钉住。
 // 固定目录名让升级与改产品名都不丢用户数据，也让开发版与打包版共用同一份数据。
-app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_NAME))
+// SB_USER_DATA_DIR 仅供验收/多开调试：换目录 = 换一把单实例锁，桌面端开着也能跑验收。
+const USER_DATA_OVERRIDE = String(process.env.SB_USER_DATA_DIR || '').trim()
+app.setPath(
+  'userData',
+  USER_DATA_OVERRIDE ? path.resolve(USER_DATA_OVERRIDE) : path.join(app.getPath('appData'), USER_DATA_NAME),
+)
 
 // 第二个实例直接退出并聚焦已有窗口。重复启动会拉两个服务进程，
 // 两边同时对同一个 SQLite 写入是数据损坏风险，不是体验问题。
@@ -275,7 +297,12 @@ async function ensureService() {
     service = await startService({
       root: APP_ROOT,
       // 外部二进制显式注入；存在与否都不影响服务启动，缺了只是对应功能报可读错误
-      env: { ...roots.env, ...bundledRuntimeEnv(APP_ROOT) },
+      env: {
+        ...roots.env,
+        ...bundledRuntimeEnv(APP_ROOT),
+        // 账号与钱包的去向：打包版默认线上共用，开发态默认本地账本
+        SB_BILLING_BASE: resolveBillingBase(),
+      },
       onExit: ({ code, signal }) => {
         // 主动退出时不提示；其它情况一律当作崩溃，把选择权交给用户
         if (quitting || !win) return

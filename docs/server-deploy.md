@@ -115,6 +115,41 @@ settings.creative.ingest = {
 
 分镜用户入口：`https://rechargeai.cn/`（Basic Auth，`PROXY_CONF=nginx.conf`，`PUBLIC_PORT=80` / `PUBLIC_TLS_PORT=443`）。虎皮椒回调同域 `/api/billing/xunhupay/notify`（免 Basic Auth）。
 
+## 桌面端共用线上账号
+
+桌面端默认自带一套单机账本（`<userData>/state/data/billing.sqlite`），和这里部署的账号体系互不相通。
+打包版通过 `SB_BILLING_BASE` 把「账号 + 钱包」转发到线上，做到同一账号、同一份积分：
+
+| 变量 | 作用 |
+| --- | --- |
+| `SB_BILLING_BASE` | 线上地址，如 `https://rechargeai.cn`；留空或 `local` 表示用本机账本 |
+| `SB_BILLING_AUTH` | 可选 `user:pass`，转发时附带 Basic Auth（线上若已放开口令就不用填） |
+
+- 转发范围：`/api/auth/*`、`/api/billing/*`、计费模型接口（`/api/text`、`/api/seedream`、`/api/seedance`，含 `/recover` 子路径）；
+  其余接口（项目、媒体写入、导出、技能）仍在本机处理。
+- 线上产出的图/视频（`/generated`、`/videos`、`/voices`、`/exports`、`/publish-packages`）在本机不存在时
+  由本机进程回源下载并落盘，之后与本地产物完全一致（可导出、可保存到项目）。因此线上这三个目录
+  的 nginx 段改成「口令或会话 Cookie 二选一」放行（`auth_request` → `/api/auth/session-check`），
+  匿名请求仍是 401，页面依旧必须过口令。
+- `desktop/main/main.mjs`：打包版（`app.isPackaged`）默认 `SB_BILLING_BASE=https://rechargeai.cn`，
+  开发态默认留空，避免 `desktop:dev` 把调试数据写进线上账号；`SB_BILLING_BASE=local` 可强制回本地。
+- 线上 nginx 对 `/api/auth/`、`/api/billing/`、`/api/text`、`/api/seedream`、`/api/seedance` 免 Basic Auth
+  （它们自身有会话校验）。`/api/settings` 仍必须过口令，否则会明文泄露渠道 Key。校验：
+
+```bash
+curl -s -o /dev/null -w 'packs:%{http_code}\n' https://rechargeai.cn/api/billing/packs   # 期望 200
+curl -s -o /dev/null -w 'settings:%{http_code}\n' https://rechargeai.cn/api/settings     # 期望 401
+curl -s -o /dev/null -w 'media:%{http_code}\n' https://rechargeai.cn/generated/x.jpg     # 期望 401
+```
+
+- 悬空冻结：请求中途消失（关桌面端、断网）会让预扣积分留在 `wallets.hold_micro`。预留时记录了
+  `hold_since_ms`，超过 60 分钟由下一次预留自动回收；立即清理用
+  `docker compose exec -T app node scripts/reclaim-stale-holds.mjs --force`。
+- `/api/health` 会回 `billingMode`（`remote` / `local`）与 `billingBase`，用于确认桌面端连的是哪套账本。
+- 出片模型注意：线上默认视频模型是方舟 `doubao-seedance-1-0-pro`，其 `ARK_API_KEY` 已失效，
+  桌面端选它会直接 failed。可用的是 APIMart 条目，例如 `apimart-video-seedance-2-5`
+  （文生视频）；`catalog-apimart-seedance-2-0-fast` 只接受首帧/参考图，纯文本会报 400。
+
 ## 自检
 
 ```bash

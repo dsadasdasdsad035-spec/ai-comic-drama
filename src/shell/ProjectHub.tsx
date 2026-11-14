@@ -5,6 +5,7 @@ import ProjectMenu from '../project/ProjectMenu'
 import NewProjectDialog from '../project/NewProjectDialog'
 import { ProjectCard } from './ProjectCard'
 import type { ViewId } from './nav'
+import brandMark from '../assets/brand/icon-mark.png'
 
 export type ProjectHubProps = {
   projects: ProjectSummary[]
@@ -69,7 +70,7 @@ export default function ProjectHub({
     <div className="hub">
       <header className="hub-top">
         <div className="brand">
-          <span className="brand-dot" />
+          <img className="brand-logo" src={brandMark} alt="" width={22} height={22} />
           <b>分镜画布</b>
           <span className="brand-sub">项目大厅</span>
         </div>

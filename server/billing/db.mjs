@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS wallets (
   user_id INTEGER PRIMARY KEY,
   balance_micro INTEGER NOT NULL DEFAULT 0,
   hold_micro INTEGER NOT NULL DEFAULT 0,
+  -- 冻结开始时间（epoch ms）：请求被中途掐断（关桌面端、断网）时冻结会悬空，
+  -- 超过 HOLD_TTL_MS 后由下一次预留操作回收，避免余额永远显示「被冻结」
+  hold_since_ms INTEGER,
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
@@ -92,6 +95,19 @@ CREATE INDEX IF NOT EXISTS idx_sessions_hash ON user_sessions(token_hash);
 let db = null
 let dbFile = ''
 
+/**
+ * 老库补列。
+ *
+ * SQLite 没有 `ADD COLUMN IF NOT EXISTS`，而已经上线的库不会因为 CREATE TABLE IF NOT EXISTS
+ * 重新建表，所以新增列必须在这里显式补齐（只加列、不改类型，老数据保持可读）。
+ */
+function migrateSchema(d) {
+  const cols = d.prepare('PRAGMA table_info(wallets)').all().map((r) => String(r.name))
+  if (!cols.includes('hold_since_ms')) {
+    d.exec('ALTER TABLE wallets ADD COLUMN hold_since_ms INTEGER')
+  }
+}
+
 export function billingDbPath(appRoot) {
   const env = String(process.env.BILLING_DB_PATH || '').trim()
   if (env) return path.resolve(env)
@@ -111,6 +127,7 @@ export function openBillingDb(appRoot) {
   db.exec('PRAGMA busy_timeout = 5000;')
   db.exec('PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
+  migrateSchema(db)
   const row = db.prepare('SELECT json FROM billing_settings WHERE id = 1').get()
   if (!row) {
     db.prepare('INSERT INTO billing_settings (id, json) VALUES (1, ?)').run(JSON.stringify(DEFAULT_BILLING_SETTINGS))
@@ -124,6 +141,7 @@ export function openBillingDbFile(file) {
   const d = new DatabaseSync(file)
   d.exec('PRAGMA journal_mode = WAL;')
   d.exec(SCHEMA)
+  migrateSchema(d)
   const row = d.prepare('SELECT json FROM billing_settings WHERE id = 1').get()
   if (!row) {
     d.prepare('INSERT INTO billing_settings (id, json) VALUES (1, ?)').run(JSON.stringify(DEFAULT_BILLING_SETTINGS))

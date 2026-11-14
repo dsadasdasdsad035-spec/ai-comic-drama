@@ -11,7 +11,6 @@ import { CreativePane } from './extensions/CreativePane'
 import { SkillsPane } from './extensions/SkillsPane'
 import { ExpertsPane } from './extensions/ExpertsPane'
 import { McpPane } from './extensions/McpPane'
-import { BillingPane } from './billing/BillingPane'
 import { PricingPane } from './billing/PricingPane'
 import { DataPane } from './data/DataPane'
 
@@ -46,8 +45,6 @@ export function SettingsPaneSwitch({ pane, wb }: Props) {
       return <McpPane wb={wb} />
     case 'pricing':
       return <PricingPane wb={wb} />
-    case 'billing':
-      return <BillingPane wb={wb} />
     case 'data':
       return <DataPane wb={wb} />
     default:

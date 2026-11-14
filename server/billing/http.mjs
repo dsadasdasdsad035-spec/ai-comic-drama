@@ -195,6 +195,19 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
       return true
     }
 
+      // 会话探测：只回答「有没有有效登录态」，供 nginx auth_request 给静态媒体放行。
+      // 不用 /api/auth/me，因为它对未登录也返回 200，auth_request 无法据此区分。
+    if (url === '/api/auth/session-check' && req.method === 'GET') {
+      const raw = parseBearer(req.headers?.authorization) || parseSessionCookie(req.headers?.cookie)
+      const s = sessionFromToken(raw)
+      if (!s) {
+        json(res, 401, { ok: false, kind: 'auth', code: 'login_required', message: '未登录' })
+        return true
+      }
+      json(res, 200, { ok: true, user_id: s.userId })
+      return true
+    }
+
     if (url === '/api/billing/wallet' && req.method === 'GET') {
       const s = requireSession(req)
       json(res, 200, { ok: true, wallet: getWalletSummary(s.userId) })

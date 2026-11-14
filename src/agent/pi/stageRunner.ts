@@ -57,6 +57,7 @@ function defaultAsk(): SceneCodeAsk {
       signal: o.signal,
       ...(o.onProgress ? { onProgress: o.onProgress } : {}),
       ...(o.onToolCallDelta ? { onToolCallDelta: o.onToolCallDelta } : {}),
+      ...(o.onTextDelta ? { onTextDelta: o.onTextDelta } : {}),
     })
 }
 
@@ -96,11 +97,13 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
   const piTools = toPiTools(input.tools)
   const byName = new Map(piTools.map((tool) => [tool.name, tool]))
 
+  // 上限只在显式要求时下发；不传就不带 max_tokens，由渠道决定。
+  const maxTokens = input.maxTokens ?? runtime?.maxTokens
   const streamFn = createPiStreamFn({
     ask,
     ...(input.modelKey ? { modelKey: input.modelKey } : {}),
     tools: toOpenAIFunctions(piTools),
-    maxTokens: input.maxTokens ?? runtime?.maxTokens ?? 8192,
+    ...(maxTokens ? { maxTokens } : {}),
     temperature: input.temperature ?? runtime?.temperature ?? 0.3,
     // 进度只发字符数，不把模型原始片段带进事件流。
     onProgress: (chars) => {
@@ -139,7 +142,7 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
         input: [],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: 0,
-        maxTokens: input.maxTokens ?? runtime?.maxTokens ?? 8192,
+        maxTokens: maxTokens ?? 0,
         reasoning: false,
       } as never,
       tools: piTools as AgentTool[],
@@ -216,12 +219,17 @@ function timeoutMessage(ms: number): string {
   return `运行超时（${Math.round(ms / 1000)} 秒）`
 }
 
-/** 取最后一条助手消息里的流错误；正常结束时返回空串。 */
+/**
+ * 取最后一条助手消息的流错误；正常结束时返回空串。
+ *
+ * 'length' 也在这里读一遍：某些渠道/历史线程里它可能没被编码成 error。
+ */
 function lastStreamError(messages: readonly AgentMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     if (message.role !== 'assistant') continue
     const stopReason = (message as { stopReason?: unknown }).stopReason
+    if (stopReason === 'length') return '模型输出达到长度上限被截断；已保留生成部分，可继续让它往下写'
     if (stopReason !== 'error') return ''
     const detail = (message as { errorMessage?: unknown }).errorMessage
     return String(detail || '模型调用失败')

@@ -73,12 +73,12 @@ function textStreamError(message: string, kind: string): Error & { kind?: string
 function proxyErrorMessage(j: ProxyErrBody, fallback: string): string {
   const base = j.message || fallback
   if (j.kind === 'billing') {
-    if (j.code === 'user_insufficient_credits') return `${base}（平台积分不足，请到设置 → 计费充值）`
+    if (j.code === 'user_insufficient_credits') return `${base}（平台积分不足，请到左侧「账号与充值」充值）`
     if (j.code === 'upstream_apimart_balance') return `${base}（上游 APIMart 余额不足，请联系管理员）`
     return base
   }
   if (j.kind === 'auth') {
-    if (j.code === 'login_required') return `${base}（请先在设置 → 计费登录）`
+    if (j.code === 'login_required') return `${base}（请先在左侧「账号与充值」登录）`
     if (j.code === 'email_unverified') return `${base}（请先完成邮箱验证）`
     if (j.code) return base
     return `${base}（密钥无效）`
@@ -1029,10 +1029,12 @@ export async function callText<T = unknown>(o: TextOpts): Promise<TextResult<T>>
 export async function callTextStream<T = unknown>(
   o: TextOpts & {
     onProgress?: (chars: number) => void
+    /** 正文增量：与 onProgress 同时到，但带内容 */
+    onTextDelta?: (delta: string) => void
     onToolCallDelta?: (delta: ProviderToolCallDelta) => void
   },
 ): Promise<TextResult<T>> {
-  const { signal, onProgress, onToolCallDelta, ...body } = o
+  const { signal, onProgress, onTextDelta, onToolCallDelta, ...body } = o
   let res: Response
   try {
     res = await apiFetch('/api/text', {
@@ -1090,6 +1092,9 @@ export async function callTextStream<T = unknown>(
         }
       } else if (type === 'progress') {
         onProgress?.(Number(event.chars) || 0)
+      } else if (type === 'text_delta') {
+        const delta = String(event.delta || '')
+        if (delta) onTextDelta?.(delta)
       } else if (type === 'tool_call_delta') {
         const id = String(event.id || '')
         if (id) {

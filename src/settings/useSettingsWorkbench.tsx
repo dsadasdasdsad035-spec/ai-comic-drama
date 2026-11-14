@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   getSettings,
   saveSettings,
@@ -47,18 +47,6 @@ import { type CatalogEntry } from './CatalogDialog'
 import { fetchStockProviders } from '../stock/api'
 import type { StockProviderId, StockSettings } from '../stock/types'
 import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
-import {
-  fetchAuthMe,
-  fetchBillingSettingsAdmin,
-  fetchEmailStatus,
-  fetchLedger,
-  fetchRechargePacks,
-  fetchReconciliationReport,
-  type BillingUser,
-  type BillingWallet,
-  type EmailStatus,
-  type RechargePack,
-} from '../billingApi'
 import {
   LEGACY_SECTION_TO_NAV,
   hubDefaultPane,
@@ -145,42 +133,6 @@ export function useSettingsWorkbench({
     setHub(nav.hub)
     setPane(nav.pane)
   }
-  const [billUser, setBillUser] = useState<BillingUser | null>(null)
-  const [billWallet, setBillWallet] = useState<BillingWallet | null>(null)
-  const [billPacks, setBillPacks] = useState<RechargePack[]>([])
-  const [billLedger, setBillLedger] = useState<unknown[]>([])
-  const [billAuthEmail, setBillAuthEmail] = useState('')
-  const [billAuthPassword, setBillAuthPassword] = useState('')
-  const [billAdminSettings, setBillAdminSettings] = useState<Record<string, unknown> | null>(null)
-  const [billReconcile, setBillReconcile] = useState<Record<string, unknown> | null>(null)
-  const [billEmailStatus, setBillEmailStatus] = useState<EmailStatus | null>(null)
-  const [billBusy, setBillBusy] = useState(false)
-  const billRechargePollGen = useRef(0)
-
-  const refreshBilling = async () => {
-    try {
-      const me = await fetchAuthMe()
-      setBillUser(me.user)
-      setBillWallet(me.wallet || null)
-      if (me.user) {
-        const [packs, led] = await Promise.all([fetchRechargePacks(), fetchLedger(20)])
-        setBillPacks(packs)
-        setBillLedger(led.entries)
-        if (me.user.is_admin) {
-          const [adm, rec, mail] = await Promise.all([
-            fetchBillingSettingsAdmin(),
-            fetchReconciliationReport(),
-            fetchEmailStatus().catch(() => null),
-          ])
-          setBillAdminSettings(adm.settings)
-          setBillReconcile(rec.report as Record<string, unknown>)
-          setBillEmailStatus(mail)
-        }
-      }
-    } catch (e) {
-      toast((e as Error).message)
-    }
-  }
 
   useEffect(() => {
     if (initialSection) {
@@ -191,16 +143,6 @@ export function useSettingsWorkbench({
     }
   }, [initialSection])
 
-  useEffect(() => {
-    if (pane === 'billing') void refreshBilling()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane])
-
-  useEffect(() => {
-    return () => {
-      billRechargePollGen.current += 1
-    }
-  }, [pane])
   const [addMenu, setAddMenu] = useState(false)
   const [catalogProvider, setCatalogProvider] = useState<Provider | null>(null)
   const [modelSearch, setModelSearch] = useState('')
@@ -810,28 +752,6 @@ export function useSettingsWorkbench({
     setCapFilter,
     expandedModel,
     setExpandedModel,
-    billUser,
-    setBillUser,
-    billWallet,
-    setBillWallet,
-    billPacks,
-    setBillPacks,
-    billLedger,
-    setBillLedger,
-    billAuthEmail,
-    setBillAuthEmail,
-    billAuthPassword,
-    setBillAuthPassword,
-    billAdminSettings,
-    setBillAdminSettings,
-    billReconcile,
-    setBillReconcile,
-    billEmailStatus,
-    setBillEmailStatus,
-    billBusy,
-    setBillBusy,
-    billRechargePollGen,
-    refreshBilling,
     refreshVoices,
     refreshSkills,
     applySkillRecord,

@@ -37,6 +37,7 @@ function defaultAsk(): SceneCodeAsk {
       signal: o.signal,
       ...(o.onProgress ? { onProgress: o.onProgress } : {}),
       ...(o.onToolCallDelta ? { onToolCallDelta: o.onToolCallDelta } : {}),
+      ...(o.onTextDelta ? { onTextDelta: o.onTextDelta } : {}),
     })
 }
 
@@ -123,6 +124,9 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
     ask,
     modelKey,
     tools: toOpenAIFunctions(tools),
+    // 白模 3D 代码是本项目最长的单次输出（整段 Blender Python），
+    // 这条显式给足预算；其余环节不设上限，交给渠道默认值。
+    maxTokens: 12000,
     // 进度只发字符数，不把模型原始片段带进事件流。
     onProgress: (chars) => {
       if (controller.signal.aborted) return

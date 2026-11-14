@@ -139,7 +139,8 @@ import {
   videoFamilyFor,
   videoUrlFromTask,
 } from './apimart.mjs'
-import { handleBillingHttp } from './billing/http.mjs'
+import { handleBillingHttp, initBilling } from './billing/http.mjs'
+import { billingModeInfo, proxyRemoteBilling, proxyRemoteMedia, shouldProxyRemoteBilling, shouldProxyRemoteMedia } from './remote-billing.mjs'
 import {
   guardApimartText,
   finalizeApimartText,
@@ -2670,10 +2671,29 @@ export function createAppHandler({ root }: { root: string }) {
   }
   appRoot = root
 
+  // 先把本机账本建起来：账号走线上（SB_BILLING_BASE）时本地账本不会再有登录入口，
+  // 但本地模型调用仍会经过预扣/结算，缺库时会抛「billing DB 未打开」这种不可读的错误。
+  try {
+    initBilling(root)
+  } catch (e) {
+    console.warn(`[billing] 本机账本初始化失败：${(e as Error)?.message || e}`)
+  }
+
   return async (req: any, res: any, next: () => void) => {
     // 出图产物目录（原 configureServer 作用域上的闭包变量，搬移后在这里显式声明）
     const outDir = mediaPath(root, 'generated')
     const url = (req.url || '').split('?')[0]
+
+    // 桌面端「共用线上账号」：账号与钱包接口整体转给线上服务，本机不再建第二套用户库。
+    // 未配置 SB_BILLING_BASE 时恒为 false，容器与开发环境行为完全不变。
+    if (shouldProxyRemoteBilling(url)) {
+      await proxyRemoteBilling(req, res, req.url || url)
+      return
+    }
+    // 线上产出的图/视频：本机没有就先回源落盘，之后与本地产物完全一致（可导出、可保存）
+    if (shouldProxyRemoteMedia(url)) {
+      if (await proxyRemoteMedia(req, res, url, root)) return
+    }
 
         // 项目媒体：<projects>/<项目>/assets/，和项目数据同生命周期
         if (url.startsWith('/project-assets/')) {
@@ -2750,10 +2770,14 @@ export function createAppHandler({ root }: { root: string }) {
           const audioPick = pickModel('audio')
           const audioKeyReady = audioPick.provider ? Boolean(providerKey(audioPick.provider)) : false
           const sayReady = fs.existsSync(SAY)
+          const billing = billingModeInfo()
           res.setHeader('Content-Type', 'application/json')
           res.end(
             JSON.stringify({
               hasKey: Boolean(readApiKey()),
+              // 账号与钱包走本地账本还是线上服务（桌面端共用账号时是 remote）
+              billingMode: billing.mode,
+              billingBase: billing.base,
               ffmpegAss: ff.ass,
               ffmpegCaptionFont: ff.font || '',
               ffmpegPath: ff.bin,
@@ -4631,7 +4655,7 @@ export function createAppHandler({ root }: { root: string }) {
               (isMiniMaxM3 && !toolMode ? (wantJson ? 'disabled' : 'adaptive') : undefined)
             const apimartResponses = kind === 'apimart' && toolMode && apimartUsesResponsesForTools(model)
             const endpoint = apimartResponses ? `${base}/responses` : `${base}/chat/completions`
-            const maxTokens = Number(body.maxTokens) || 8192
+            const maxTokens = Number(body.maxTokens) > 0 ? Number(body.maxTokens) : undefined
             const temperature = body.temperature ?? 0.7
             const toolChoice =
               typeof body.toolChoice === 'string' || (body.toolChoice && typeof body.toolChoice === 'object')
@@ -4642,7 +4666,8 @@ export function createAppHandler({ root }: { root: string }) {
               : {
                   model,
                   messages,
-                  max_tokens: maxTokens,
+                  // 调用方没指定就不带 max_tokens，由渠道自己的默认上限决定。
+                  ...(maxTokens ? { max_tokens: maxTokens } : {}),
                   temperature,
                   ...(tools.length ? { tools, tool_choice: toolChoice } : {}),
                   ...(kind !== 'apimart' && thinkingMode ? { thinking: { type: thinkingMode } } : {}),
@@ -4796,6 +4821,13 @@ export function createAppHandler({ root }: { root: string }) {
                   const { done, value } = await reader.read()
                   if (done) break
                   const out = parser.push(decoder.decode(value, { stream: true }))
+                  // 正文增量直接转发：deltas 已经过 <think> 过滤，是可直接展示的文本。
+                  // 按网络块合并成一条，避免每个 token 一个 SSE 事件。
+                  // JSON 模式不发片段，避免客户端把半个 JSON 当正文。
+                  if (!wantJson) {
+                    const textDelta = (out.deltas || []).join('')
+                    if (textDelta) send({ type: 'text_delta', delta: textDelta })
+                  }
                   for (const delta of out.toolDeltas || []) {
                     send({
                       type: 'tool_call_delta',

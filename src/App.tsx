@@ -61,6 +61,7 @@ import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
 import NodeContextMenu from './NodeContextMenu'
 import EdgeContextMenu from './EdgeContextMenu'
 import Settings, { type SettingsInitialSection } from './Settings'
+import AccountPage from './account/AccountPage'
 import IntakeDialog from './intake/IntakeDialog'
 import WorkbenchBar from './WorkbenchBar'
 import { auditKeyframePrompt } from './promptAudit'
@@ -3555,6 +3556,13 @@ function Shell() {
             onOpenAllSkills={() => changeView('settings', { settingsSection: 'skills' })}
             onOpenMcp={() => changeView('settings', { settingsSection: 'mcp' })}
             onOpenExperts={() => changeView('settings', { settingsSection: 'experts' })}
+          />
+        ) : view === 'account' ? (
+          <AccountPage
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 2800)
+            }}
           />
         ) : view === 'settings' ? (
           <Settings

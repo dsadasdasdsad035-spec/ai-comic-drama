@@ -47,6 +47,8 @@ export type SceneCodeAsk = (opts: {
   signal?: AbortSignal
   /** 流式进度：已接收的字符数（L1） */
   onProgress?: (chars: number) => void
+  /** 正文增量：边生成边给，不必等整段完成 */
+  onTextDelta?: (delta: string) => void
   /** 原生工具参数增量（只用于进度，参数完整前不执行工具） */
   onToolCallDelta?: (delta: ProviderToolCallDelta) => void
 }) => Promise<{

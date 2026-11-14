@@ -71,6 +71,8 @@ extraResources:
 
 mac:
   category: public.app-category.graphics-design
+  # 应用图标：由品牌形象生成（见 desktop/build/icon.icns）
+  icon: desktop/build/icon.icns
   target:
     - target: dmg
       arch:
