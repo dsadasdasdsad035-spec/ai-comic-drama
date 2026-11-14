@@ -55,6 +55,28 @@ export async function resendVerifyBilling(email: string) {
   })
 }
 
+export type EmailStatus = {
+  driver: string
+  host: string
+  port: number
+  secure: boolean
+  user: string
+  from: string
+  pass_set: boolean
+}
+
+export async function fetchEmailStatus(): Promise<EmailStatus> {
+  return billJson<EmailStatus>('/api/billing/email-status')
+}
+
+export async function sendTestEmail(to: string) {
+  return billJson<{ message: string }>('/api/billing/email-test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to }),
+  })
+}
+
 export async function logoutBilling() {
   return billJson('/api/auth/logout', { method: 'POST' })
 }

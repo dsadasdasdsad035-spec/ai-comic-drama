@@ -1,5 +1,5 @@
 import type { SettingsWorkbench } from '../../useSettingsWorkbench'
-import { loginBilling, logoutBilling, registerBilling, resendVerifyBilling, startRecharge, fetchRechargeOrderStatus, patchBillingSettingsAdmin, fetchReconciliationReport } from '../../../billingApi'
+import { loginBilling, logoutBilling, registerBilling, resendVerifyBilling, startRecharge, fetchRechargeOrderStatus, patchBillingSettingsAdmin, fetchReconciliationReport, fetchEmailStatus, sendTestEmail } from '../../../billingApi'
 
 type Props = { wb: SettingsWorkbench }
 
@@ -203,6 +203,137 @@ export function BillingPane({ wb }: Props) {
                   }}
                 />
               </label>
+              <h4>验证邮件</h4>
+              <p className="st-hint">
+                注册后需向用户邮箱发验证链接。选 <code>console</code> 时链接只打印在服务端日志，
+                桌面端看不到日志，请选 <code>smtp</code> 并填完下面各项。
+              </p>
+              <label className="st-field">
+                <span>邮件驱动</span>
+                <select
+                  value={String(wb.billAdminSettings.email_driver || 'console')}
+                  onChange={async (e) => {
+                    const next = await patchBillingSettingsAdmin({ email_driver: e.target.value })
+                    wb.setBillAdminSettings(next.settings)
+                  }}
+                >
+                  <option value="console">console（仅日志，调试用）</option>
+                  <option value="smtp">smtp（真实发送）</option>
+                </select>
+              </label>
+              <label className="st-field">
+                <span>SMTP 服务器</span>
+                <input
+                  placeholder="smtp.example.com"
+                  value={String(wb.billAdminSettings.smtp_host || '')}
+                  onChange={(e) => wb.setBillAdminSettings({ ...wb.billAdminSettings!, smtp_host: e.target.value })}
+                  onBlur={async (e) => {
+                    const next = await patchBillingSettingsAdmin({ smtp_host: e.target.value })
+                    wb.setBillAdminSettings(next.settings)
+                    wb.setBillEmailStatus(await fetchEmailStatus().catch(() => null))
+                  }}
+                />
+              </label>
+              <label className="st-field">
+                <span>端口</span>
+                <input
+                  type="number"
+                  placeholder="465"
+                  value={Number(wb.billAdminSettings.smtp_port) || 465}
+                  onChange={async (e) => {
+                    const port = Number(e.target.value) || 465
+                    // 端口决定默认加密方式：465 用隐式 TLS，587 走 STARTTLS
+                    const next = await patchBillingSettingsAdmin({ smtp_port: port, smtp_secure: port === 465 })
+                    wb.setBillAdminSettings(next.settings)
+                  }}
+                />
+              </label>
+              <label className="st-field">
+                <span>使用 SSL/TLS（465 端口勾选，587 不勾）</span>
+                <input
+                  type="checkbox"
+                  checked={
+                    typeof wb.billAdminSettings.smtp_secure === 'boolean'
+                      ? wb.billAdminSettings.smtp_secure
+                      : (wb.billEmailStatus?.secure ?? (Number(wb.billAdminSettings.smtp_port) || 465) === 465)
+                  }
+                  onChange={async (e) => {
+                    const next = await patchBillingSettingsAdmin({ smtp_secure: e.target.checked })
+                    wb.setBillAdminSettings(next.settings)
+                  }}
+                />
+              </label>
+              <label className="st-field">
+                <span>SMTP 用户名</span>
+                <input
+                  placeholder="no-reply@example.com"
+                  value={String(wb.billAdminSettings.smtp_user || '')}
+                  onChange={(e) => wb.setBillAdminSettings({ ...wb.billAdminSettings!, smtp_user: e.target.value })}
+                  onBlur={async (e) => {
+                    const next = await patchBillingSettingsAdmin({ smtp_user: e.target.value })
+                    wb.setBillAdminSettings(next.settings)
+                    wb.setBillEmailStatus(await fetchEmailStatus().catch(() => null))
+                  }}
+                />
+              </label>
+              <label className="st-field">
+                <span>SMTP 密码{Boolean(wb.billAdminSettings.smtp_pass_set) ? '（已设置，留空则不修改）' : ''}</span>
+                <input
+                  type="password"
+                  placeholder={Boolean(wb.billAdminSettings.smtp_pass_set) ? '••••••••' : '授权码或密码'}
+                  defaultValue=""
+                  onBlur={async (e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    const next = await patchBillingSettingsAdmin({ smtp_pass: v })
+                    wb.setBillAdminSettings(next.settings)
+                    e.target.value = ''
+                    wb.setBillEmailStatus(await fetchEmailStatus().catch(() => null))
+                    wb.toast('SMTP 密码已保存')
+                  }}
+                  autoComplete="new-password"
+                />
+              </label>
+              <label className="st-field">
+                <span>发信人（留空则用 SMTP 用户名）</span>
+                <input
+                  placeholder="短剧创作台 <no-reply@example.com>"
+                  value={String(wb.billAdminSettings.email_from || '')}
+                  onChange={(e) => wb.setBillAdminSettings({ ...wb.billAdminSettings!, email_from: e.target.value })}
+                  onBlur={async (e) => {
+                    const next = await patchBillingSettingsAdmin({ email_from: e.target.value })
+                    wb.setBillAdminSettings(next.settings)
+                  }}
+                />
+              </label>
+              {wb.billEmailStatus && (
+                <p className="st-hint">
+                  当前生效：驱动 {wb.billEmailStatus.driver} · 服务器{' '}
+                  {wb.billEmailStatus.host || '（未配置）'}:{wb.billEmailStatus.port} · 用户{' '}
+                  {wb.billEmailStatus.user || '（未配置）'} · 密码
+                  {wb.billEmailStatus.pass_set ? '已设置' : '未设置'}
+                </p>
+              )}
+              <div className="st-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={wb.billBusy}
+                  onClick={async () => {
+                    wb.setBillBusy(true)
+                    try {
+                      const r = await sendTestEmail(wb.billUser!.email)
+                      wb.toast(r.message || '测试邮件已发送')
+                    } catch (e) {
+                      wb.toast((e as Error).message)
+                    } finally {
+                      wb.setBillBusy(false)
+                    }
+                  }}
+                >
+                  发送测试邮件到我
+                </button>
+              </div>
               <p className="st-hint">
                 价目同步时间：{String(wb.billAdminSettings.price_catalog_synced_at || '（内置样例）')}
               </p>

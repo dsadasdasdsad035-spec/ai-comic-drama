@@ -37,8 +37,10 @@ set -a && source "$CONF" && set +a
 [[ -n "${SSHPASS:-}" ]] || die "SSHPASS 未设置（ssh 口令）"
 
 export SSHPASS
-SSH=(sshpass -e ssh -o StrictHostKeyChecking=accept-new "$DEPLOY_SERVER")
-RSYNC=(sshpass -e rsync -az --delete)
+# 复用一条 SSH 连接，避免频繁密码登录被服务器限流（Permission denied 误判）
+SSH_CTL="/tmp/sb-deploy-%r@%h:%p"
+SSH=(sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o "ControlPath=$SSH_CTL" -o ControlPersist=600 "$DEPLOY_SERVER")
+RSYNC=(sshpass -e rsync -az --delete -e "ssh -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath=$SSH_CTL -o ControlPersist=600")
 
 ssh_remote() { "${SSH[@]}" "$@"; }
 
@@ -65,15 +67,16 @@ if [[ "$PATCH_WILDAI" == 1 ]]; then
 fi
 
 log "同步源码 → $DEPLOY_SERVER:$REMOTE_DIR"
+# 注意：排除项必须锚定根目录（/data），否则 src/settings/hubs/data 这类同名子目录也会被跳过
 "${RSYNC[@]}" \
-  --exclude node_modules \
-  --exclude .git \
-  --exclude data \
-  --exclude projects \
-  --exclude .env \
-  --exclude deploy/proxy/.htpasswd \
-  --exclude openspec \
-  --exclude '.cursor' \
+  --exclude /node_modules \
+  --exclude /.git \
+  --exclude /data \
+  --exclude /projects \
+  --exclude /.env \
+  --exclude /deploy/proxy/.htpasswd \
+  --exclude /openspec \
+  --exclude /.cursor \
   "$ROOT/" "${DEPLOY_SERVER}:${REMOTE_DIR}/"
 
 read_local_env() {
@@ -96,6 +99,7 @@ XUNHUPAY_GATEWAY=${XUNHUPAY_GATEWAY:-https://api.xunhupay.com}
 XUNHUPAY_NOTIFY_URL=https://rechargeai.cn/api/billing/xunhupay/notify
 BILLING_DB_PATH=/data/projects/billing.sqlite
 BILLING_ALLOW_SIMULATE=0
+BILLING_TEST_PACK=1
 BILLING_ADMIN_EMAIL=${BILLING_ADMIN_EMAIL:-${MAIL_USERNAME:-296629801@qq.com}}
 PROXY_CONF=nginx.conf
 PUBLIC_PORT=80

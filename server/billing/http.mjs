@@ -12,13 +12,14 @@ import {
   isBillingAdmin,
   grantSignupBonusOnce,
 } from './auth.mjs'
-import { getBillingSettings, patchBillingSettings } from './settings.mjs'
+import { getBillingSettings, patchBillingSettings, publicBillingSettings } from './settings.mjs'
 import { getWalletSummary, listLedger, creditWallet } from './wallet.mjs'
-import { microFromCredits } from './constants.mjs'
+import { microFromCredits, testPackEnabled } from './constants.mjs'
 import { createPayment, verifyNotify, xunhuConfigured, queryPayment } from './xunhupay.mjs'
 import { getBillingDb, withBillingTxn } from './db.mjs'
 import { seedPriceCatalogIfEmpty } from './price-catalog.mjs'
 import { buildReconciliationReport, simulatePaymentPaid } from './reconcile.mjs'
+import { sendTestEmail, resolveEmailConfig, resetEmailTransport } from './email.mjs'
 
 let billingRoot = ''
 
@@ -263,7 +264,7 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
         json(res, 403, { ok: false, message: '需要计费管理员权限' })
         return true
       }
-      json(res, 200, { ok: true, settings: getBillingSettings() })
+      json(res, 200, { ok: true, settings: publicBillingSettings() })
       return true
     }
 
@@ -275,7 +276,50 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
       }
       const body = await readJson(req)
       const next = patchBillingSettings(body || {})
-      json(res, 200, { ok: true, settings: next })
+      // 邮件配置可能变了，丢弃缓存的 transporter，否则要用旧账号才生效
+      resetEmailTransport()
+      json(res, 200, { ok: true, settings: publicBillingSettings(next) })
+      return true
+    }
+
+    if (url === '/api/billing/email-status' && req.method === 'GET') {
+      const s = requireSession(req)
+      if (!isBillingAdmin(s.email)) {
+        json(res, 403, { ok: false, message: '需要计费管理员权限' })
+        return true
+      }
+      const cfg = resolveEmailConfig()
+      json(res, 200, {
+        ok: true,
+        driver: cfg.driver,
+        host: cfg.host,
+        port: cfg.port,
+        secure: cfg.secure,
+        user: cfg.user,
+        from: cfg.from,
+        pass_set: Boolean(cfg.pass),
+      })
+      return true
+    }
+
+    if (url === '/api/billing/email-test' && req.method === 'POST') {
+      const s = requireSession(req)
+      if (!isBillingAdmin(s.email)) {
+        json(res, 403, { ok: false, message: '需要计费管理员权限' })
+        return true
+      }
+      const body = await readJson(req)
+      const to = String(body.to || s.email).trim()
+      if (!to) {
+        json(res, 400, { ok: false, message: '请填写收件邮箱' })
+        return true
+      }
+      try {
+        await sendTestEmail(to)
+        json(res, 200, { ok: true, message: `测试邮件已发送至 ${to}` })
+      } catch (e) {
+        json(res, 400, { ok: false, message: `发送失败：${e?.message || String(e)}` })
+      }
       return true
     }
 
@@ -290,6 +334,11 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
       const pack = getBillingSettings().recharge_packs.find((p) => p.id === packId && p.enabled !== false)
       if (!pack) {
         json(res, 400, { ok: false, message: '无效的充值档位' })
+        return true
+      }
+      // 低于 1 元的档位只允许在测试开关下购买，避免测试档被公开薅积分
+      if (Number(pack.price_cny) < 1 && !testPackEnabled()) {
+        json(res, 403, { ok: false, message: '该测试档位未启用（需 BILLING_TEST_PACK=1）' })
         return true
       }
       const tradeOrderId = `sb_${s.userId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`

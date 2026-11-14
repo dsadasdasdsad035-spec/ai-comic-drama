@@ -50,11 +50,13 @@ import { VOICE_SOURCE_LABELS } from '../voiceCatalog'
 import {
   fetchAuthMe,
   fetchBillingSettingsAdmin,
+  fetchEmailStatus,
   fetchLedger,
   fetchRechargePacks,
   fetchReconciliationReport,
   type BillingUser,
   type BillingWallet,
+  type EmailStatus,
   type RechargePack,
 } from '../billingApi'
 import {
@@ -151,6 +153,7 @@ export function useSettingsWorkbench({
   const [billAuthPassword, setBillAuthPassword] = useState('')
   const [billAdminSettings, setBillAdminSettings] = useState<Record<string, unknown> | null>(null)
   const [billReconcile, setBillReconcile] = useState<Record<string, unknown> | null>(null)
+  const [billEmailStatus, setBillEmailStatus] = useState<EmailStatus | null>(null)
   const [billBusy, setBillBusy] = useState(false)
   const billRechargePollGen = useRef(0)
 
@@ -164,9 +167,14 @@ export function useSettingsWorkbench({
         setBillPacks(packs)
         setBillLedger(led.entries)
         if (me.user.is_admin) {
-          const [adm, rec] = await Promise.all([fetchBillingSettingsAdmin(), fetchReconciliationReport()])
+          const [adm, rec, mail] = await Promise.all([
+            fetchBillingSettingsAdmin(),
+            fetchReconciliationReport(),
+            fetchEmailStatus().catch(() => null),
+          ])
           setBillAdminSettings(adm.settings)
           setBillReconcile(rec.report as Record<string, unknown>)
+          setBillEmailStatus(mail)
         }
       }
     } catch (e) {
@@ -818,6 +826,8 @@ export function useSettingsWorkbench({
     setBillAdminSettings,
     billReconcile,
     setBillReconcile,
+    billEmailStatus,
+    setBillEmailStatus,
     billBusy,
     setBillBusy,
     billRechargePollGen,

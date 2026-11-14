@@ -1,51 +1,98 @@
 /**
  * 验证邮件发送。
  *
- * 驱动由 BILLING_EMAIL_DRIVER 决定：
+ * 配置来源有两处，库内设置优先于环境变量：
+ * 1. 设置页「计费 → 邮箱」写入 billing_settings（桌面端唯一可行的方式，因为 Electron
+ *    子进程没有 .env 加载机制，用户也无处设置环境变量）；
+ * 2. 环境变量 BILLING_*（服务端/容器部署时更方便，无需进 UI 配置）。
+ *
+ * 驱动：
  * - console（默认）：只把验证链接打到服务端日志，便于本地/测试；
- * - smtp：真实投递，需配置 BILLING_SMTP_HOST 等变量。
+ * - smtp：真实投递。
  *
  * 约定：发送失败一律抛错，由调用方决定如何告知用户。
  * 不在这里吞异常，否则注册接口会谎报「邮件已发送」。
  */
 import nodemailer from 'nodemailer'
+import { getBillingSettings } from './settings.mjs'
 
 let cachedTransporter = null
-
-export function emailDriver() {
-  return String(process.env.BILLING_EMAIL_DRIVER || 'console').trim().toLowerCase()
-}
+let cachedConfigKey = ''
 
 function envStr(name) {
   return String(process.env[name] || '').trim()
 }
 
-function smtpConfig() {
-  const host = envStr('BILLING_SMTP_HOST')
-  if (!host) throw new Error('BILLING_EMAIL_DRIVER=smtp 但未配置 BILLING_SMTP_HOST')
-  const port = Number(envStr('BILLING_SMTP_PORT') || 465)
-  const secureRaw = envStr('BILLING_SMTP_SECURE').toLowerCase()
-  // 465 走隐式 TLS，587 走 STARTTLS；显式配置优先
-  const secure = secureRaw ? secureRaw === '1' || secureRaw === 'true' : port === 465
-  const user = envStr('BILLING_SMTP_USER')
-  const pass = String(process.env.BILLING_SMTP_PASS || '')
-  if (!user || !pass) throw new Error('BILLING_EMAIL_DRIVER=smtp 但未配置 BILLING_SMTP_USER / BILLING_SMTP_PASS')
-  return { host, port, secure, auth: { user, pass } }
+function pick(settings, key, envName) {
+  const fromSettings = String(settings?.[key] ?? '').trim()
+  if (fromSettings) return fromSettings
+  return envName ? envStr(envName) : ''
 }
 
-function getTransporter() {
-  if (cachedTransporter) return cachedTransporter
-  cachedTransporter = nodemailer.createTransport(smtpConfig())
+/**
+ * 解析生效的邮件配置。
+ * 空字符串字段表示「未配置」，由调用方决定是回落还是报错。
+ */
+export function resolveEmailConfig(settings = safeSettings()) {
+  const driver = (pick(settings, 'email_driver', 'BILLING_EMAIL_DRIVER') || 'console').toLowerCase()
+  const host = pick(settings, 'smtp_host', 'BILLING_SMTP_HOST')
+  const portRaw = pick(settings, 'smtp_port', 'BILLING_SMTP_PORT')
+  const port = Number(portRaw) || 465
+
+  // secure 是布尔，不能用空串判断「未配置」，要单独判断是否显式给了值
+  let secure
+  const settingsSecure = settings?.smtp_secure
+  const envSecure = envStr('BILLING_SMTP_SECURE').toLowerCase()
+  if (typeof settingsSecure === 'boolean') secure = settingsSecure
+  else if (envSecure) secure = envSecure === '1' || envSecure === 'true'
+  // 都不给时按端口推断：465 走隐式 TLS，其余（如 587）走 STARTTLS
+  else secure = port === 465
+
+  return {
+    driver,
+    host,
+    port,
+    secure,
+    user: pick(settings, 'smtp_user', 'BILLING_SMTP_USER'),
+    pass: pick(settings, 'smtp_pass', 'BILLING_SMTP_PASS'),
+    from: pick(settings, 'email_from', 'BILLING_EMAIL_FROM'),
+  }
+}
+
+/** 库未打开时不阻塞取默认值 */
+function safeSettings() {
+  try {
+    return getBillingSettings()
+  } catch {
+    return {}
+  }
+}
+
+export function emailDriver() {
+  return resolveEmailConfig().driver
+}
+
+function configKey(c) {
+  return [c.host, c.port, c.secure, c.user, c.pass].join('|')
+}
+
+function getTransporter(cfg) {
+  const key = configKey(cfg)
+  if (cachedTransporter && cachedConfigKey === key) return cachedTransporter
+  cachedTransporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.pass },
+  })
+  cachedConfigKey = key
   return cachedTransporter
 }
 
-/** 发信人：优先 BILLING_EMAIL_FROM，缺省回落到 SMTP 账号 */
-function fromAddress() {
-  const from = envStr('BILLING_EMAIL_FROM')
-  if (from) return from
-  const user = envStr('BILLING_SMTP_USER')
-  if (user) return user
-  throw new Error('未配置发信人：请设置 BILLING_EMAIL_FROM 或 BILLING_SMTP_USER')
+function fromAddress(cfg) {
+  if (cfg.from) return cfg.from
+  if (cfg.user) return cfg.user
+  throw new Error('未配置发信人：请在设置页填写「发信人」，或配置 BILLING_EMAIL_FROM')
 }
 
 function verificationMail(email, verifyUrl) {
@@ -68,34 +115,67 @@ function verificationMail(email, verifyUrl) {
   return { subject: '请验证你的邮箱', text, html }
 }
 
+/** 校验 smtp 配置是否齐全，返回缺失项的中文提示；齐全时返回 null */
+function smtpConfigProblem(cfg) {
+  if (!cfg.host) return '未配置 SMTP 服务器地址（设置页「SMTP 服务器」或 BILLING_SMTP_HOST）'
+  if (!cfg.user) return '未配置 SMTP 用户名（设置页「SMTP 用户名」或 BILLING_SMTP_USER）'
+  if (!cfg.pass) return '未配置 SMTP 密码（设置页「SMTP 密码」或 BILLING_SMTP_PASS）'
+  if (!Number.isFinite(cfg.port) || cfg.port <= 0) return 'SMTP 端口不合法'
+  return null
+}
+
 /**
  * 发送邮箱验证邮件。
  * @returns {Promise<{ ok: true, driver: string }>}
  */
 export async function sendVerificationEmail(email, verifyUrl) {
-  const driver = emailDriver()
+  const cfg = resolveEmailConfig()
 
-  if (driver === 'console') {
+  if (cfg.driver === 'console') {
     console.log(`[billing] 验证邮箱 ${email} → ${verifyUrl}`)
-    return { ok: true, driver }
+    return { ok: true, driver: cfg.driver }
   }
 
-  if (driver === 'smtp') {
+  if (cfg.driver === 'smtp') {
+    const problem = smtpConfigProblem(cfg)
+    if (problem) throw new Error(problem)
     const mail = verificationMail(email, verifyUrl)
-    await getTransporter().sendMail({
-      from: fromAddress(),
+    await getTransporter(cfg).sendMail({
+      from: fromAddress(cfg),
       to: email,
       subject: mail.subject,
       text: mail.text,
       html: mail.html,
     })
-    return { ok: true, driver }
+    return { ok: true, driver: cfg.driver }
   }
 
-  throw new Error(`未配置的邮件驱动：${driver}（可用：console、smtp）`)
+  throw new Error(`未配置的邮件驱动：${cfg.driver}（可用：console、smtp）`)
 }
 
-/** 测试用：丢弃缓存的 transporter，让新的 SMTP 配置生效 */
+/**
+ * 发送一封测试邮件，用于设置页自检。
+ * 与验证邮件走同一条代码路径，因此能真实反映注册时会不会发得出去。
+ */
+export async function sendTestEmail(to) {
+  const cfg = resolveEmailConfig()
+  if (cfg.driver !== 'smtp') {
+    throw new Error(`当前驱动为 ${cfg.driver}，测试邮件仅在 smtp 驱动下发送`)
+  }
+  const problem = smtpConfigProblem(cfg)
+  if (problem) throw new Error(problem)
+  await getTransporter(cfg).sendMail({
+    from: fromAddress(cfg),
+    to,
+    subject: '短剧创作台 · 邮件配置测试',
+    text: '如果你收到这封邮件，说明设置页里的 SMTP 配置可用。',
+    html: '<p>如果你收到这封邮件，说明设置页里的 SMTP 配置可用。</p>',
+  })
+  return { ok: true, driver: cfg.driver }
+}
+
+/** 配置变更后丢弃缓存的 transporter，让新配置立即生效 */
 export function resetEmailTransport() {
   cachedTransporter = null
+  cachedConfigKey = ''
 }
