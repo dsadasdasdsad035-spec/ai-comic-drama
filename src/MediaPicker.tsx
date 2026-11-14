@@ -12,7 +12,7 @@ import {
 } from './mediaPick'
 import { listCameraLexicon } from './cameraLexicon'
 import { importCameraLexiconPreset } from './api'
-import StockBrowser from './stock/StockBrowser'
+import OnlineStockList from './stock/OnlineStockList'
 import type { StockImportResult, StockItem } from './stock/types'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { CharacterImageCropModal } from './CharacterImageCropModal'
@@ -36,7 +36,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'lexicon-move', label: '运镜库' },
   { key: 'lexicon-grammar', label: '镜头语法' },
   { key: 'audio', label: '音频' },
-  { key: 'stock', label: '在线素材' },
+  { key: 'stock', label: '在线素材列表' },
   { key: 'manual', label: '手填地址' },
 ]
 
@@ -614,7 +614,7 @@ export default function MediaPicker({
 
         {tab === 'stock' ? (
           <div className="mp-stock-body">
-            <StockBrowser projectName={projectName} mode="picker" onPicked={onStockPicked} />
+            <OnlineStockList projectName={projectName} mode="picker" onPicked={onStockPicked} />
           </div>
         ) : (
         <div className="mp-body">

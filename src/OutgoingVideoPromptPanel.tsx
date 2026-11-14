@@ -1,12 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import Fold from './Fold'
-import type { AppSettings, Stage } from './api'
-import {
-  StageModelSelect,
-  stageDefaultLabel,
-  stageModelKey,
-  type StagePick,
-} from './ModelSelect'
 import type { VideoMeta } from './types'
 import {
   type EffectiveVideoPrompt,
@@ -38,17 +31,11 @@ export type OutgoingVideoPromptPanelProps = {
   onSaveOverride: (text: string) => void
   onClearOverride: () => void
   onRebuildOverride?: () => void
-  onTemplateRender?: () => void | Promise<void>
-  onClearTemplateRender?: () => void
-  onPromptRefine?: () => void
-  templateRendering?: boolean
-  /** 模板渲染 / 改稿用的文本模型（prompt 环节） */
-  settings?: AppSettings | null
-  stagePick?: StagePick
-  onPickPromptModel?: (stage: Stage, key: string) => void
   videoMeta: VideoMeta | null
   hasVideoUrl: boolean
   advancedSlot?: ReactNode
+  /** 出片 Inspector：附件与槽位默认展开 */
+  defaultRefsOpen?: boolean
 }
 
 /**
@@ -71,16 +58,10 @@ export default function OutgoingVideoPromptPanel({
   onSaveOverride,
   onClearOverride,
   onRebuildOverride,
-  onTemplateRender,
-  onClearTemplateRender,
-  onPromptRefine,
-  templateRendering = false,
-  settings = null,
-  stagePick,
-  onPickPromptModel,
   videoMeta,
   hasVideoUrl,
   advancedSlot,
+  defaultRefsOpen = false,
 }: OutgoingVideoPromptPanelProps) {
   const [open, setOpen] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -101,30 +82,33 @@ export default function OutgoingVideoPromptPanel({
     setEditing(false)
   }
 
-  const showCompose = Boolean(onPickPromptModel || onTemplateRender || onPromptRefine)
-  const promptModelReady = Boolean(stageModelKey(settings, 'prompt', stagePick))
-  const promptModelLabel = stageDefaultLabel(settings, 'prompt', stagePick)
+  const renderStale = 'renderStale' in effective && Boolean(effective.renderStale)
+  const templateStale = 'templateStale' in effective && Boolean(effective.templateStale)
 
   const badgeClass =
     effective.source === 'override'
       ? effective.stale
         ? 'warn'
         : 'manual'
-      : effective.autoKind === 'template'
-        ? 'template'
-        : 'semantic'
+      : effective.autoKind === 'script'
+        ? 'script'
+        : effective.autoKind === 'template'
+          ? 'template'
+          : 'semantic'
 
   const badgeLabel =
     effective.source === 'override'
       ? effective.stale
         ? '旧快照'
         : '已手改'
-      : effective.autoKind === 'template'
-        ? '模板渲染'
-        : '语义层'
+      : effective.autoKind === 'script'
+        ? '脚本拼装'
+        : effective.autoKind === 'template'
+          ? '模板渲染'
+          : '语义层'
 
   const needsAttention =
-    Boolean(effective.stale || effective.renderStale || effective.templateStale) || blocking.length > 0
+    Boolean(effective.stale || renderStale || templateStale) || blocking.length > 0
 
   const textChars = effective.text.length
   const peekLine = useMemo(() => {
@@ -141,63 +125,18 @@ export default function OutgoingVideoPromptPanel({
     omittedVideos.length
 
   // 附件与槽位默认收起：展开时正文优先，避免一屏被参考清单占满
-  const [refsOpen, setRefsOpen] = useState(false)
+  const [refsOpen, setRefsOpen] = useState(defaultRefsOpen)
   // 提示合并成一行入口，逐条内容按需展开
   const [warnsOpen, setWarnsOpen] = useState(false)
-
-  // AI 扩写改成锚定浮层：不占正文高度，Esc / 外部点击关闭，关闭后焦点回到入口
-  const composeRef = useRef<HTMLButtonElement>(null)
-  const popRef = useRef<HTMLDivElement>(null)
-  const [composeOpen, setComposeOpen] = useState(false)
-  const [composePos, setComposePos] = useState<{ top: number; left: number; width: number } | null>(
-    null,
-  )
-
-  const openCompose = () => {
-    const r = composeRef.current?.getBoundingClientRect()
-    if (!r) return
-    const width = Math.min(300, Math.max(232, window.innerWidth - 24))
-    const left = Math.min(Math.max(8, r.left + r.width - width), window.innerWidth - width - 8)
-    const top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - 320))
-    setComposePos({ top, left, width })
-    setComposeOpen(true)
-  }
-
-  const closeCompose = () => {
-    setComposeOpen(false)
-    composeRef.current?.focus()
-  }
-
-  useEffect(() => {
-    if (!composeOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopPropagation()
-      setComposeOpen(false)
-      composeRef.current?.focus()
-    }
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (popRef.current?.contains(t) || composeRef.current?.contains(t)) return
-      setComposeOpen(false)
-      composeRef.current?.focus()
-    }
-    document.addEventListener('keydown', onKey, true)
-    document.addEventListener('mousedown', onDown, true)
-    return () => {
-      document.removeEventListener('keydown', onKey, true)
-      document.removeEventListener('mousedown', onDown, true)
-    }
-  }, [composeOpen])
 
   const warnItems = useMemo(
     () => [
       ...warnings.map((w) => ({ code: w.code, message: w.message })),
       ...(effective.stale ? [{ code: 'stale', message: staleMessage }] : []),
-      ...(effective.renderStale ? [{ code: 'render-stale', message: renderStaleMessage }] : []),
-      ...(effective.templateStale ? [{ code: 'template-stale', message: templateStaleMessage }] : []),
+      ...(renderStale ? [{ code: 'render-stale', message: renderStaleMessage }] : []),
+      ...(templateStale ? [{ code: 'template-stale', message: templateStaleMessage }] : []),
     ],
-    [warnings, effective.stale, effective.renderStale, effective.templateStale, staleMessage, renderStaleMessage, templateStaleMessage],
+    [warnings, effective.stale, renderStale, templateStale, staleMessage, renderStaleMessage, templateStaleMessage],
   )
 
   return (
@@ -219,10 +158,10 @@ export default function OutgoingVideoPromptPanel({
               className={`vp-badge ${badgeClass}`}
               title={
                 effective.source === 'override'
-                  ? '手改全文优先于模板与语义层'
-                  : effective.autoKind === 'template'
-                    ? '当前正文来自九段模板渲染'
-                    : '当前正文来自镜表语义层（较短）'
+                  ? '手改全文优先于自动拼装'
+                  : effective.autoKind === 'script'
+                    ? '当前正文由参考与镜表字段脚本拼装'
+                    : '当前正文来自镜表语义层'
               }
             >
               {badgeLabel}
@@ -235,7 +174,7 @@ export default function OutgoingVideoPromptPanel({
               {peekLine}
             </p>
             {needsAttention ? (
-              <p className="vp-disclosure-peek-warn">附件或模板已过期，展开后请更新</p>
+              <p className="vp-disclosure-peek-warn">附件或手改快照需留意，展开查看</p>
             ) : null}
           </>
         }
@@ -333,99 +272,6 @@ export default function OutgoingVideoPromptPanel({
               <pre className="vp-text" data-video-prompt-text>
                 {effective.text}
               </pre>
-
-              {showCompose ? (
-                <>
-                  <div className="vp-compose-entry">
-                    <button
-                      type="button"
-                      ref={composeRef}
-                      className="btn-mini vp-compose-trigger"
-                      aria-haspopup="dialog"
-                      aria-expanded={composeOpen}
-                      aria-controls="vp-compose-pop"
-                      onClick={() => (composeOpen ? closeCompose() : openCompose())}
-                    >
-                      AI 扩写
-                    </button>
-                    <span className="vp-compose-hint">用文本模型生成九段正文，不调用出片 API</span>
-                  </div>
-                  {composeOpen ? (
-                    <div
-                      id="vp-compose-pop"
-                      ref={popRef}
-                      className="vp-compose-pop"
-                      role="dialog"
-                      aria-label="AI 扩写出片提示词"
-                      style={composePos ?? undefined}
-                    >
-                      <div className="vp-compose-head">
-                        <span className="vp-compose-title">AI 扩写</span>
-                        <span className="vp-compose-hint">
-                          用文本模型生成九段正文，不调用出片 API
-                        </span>
-                      </div>
-                      {onPickPromptModel ? (
-                        <div className="vp-compose-model">
-                          <StageModelSelect
-                            stage="prompt"
-                            label="文本模型"
-                            settings={settings}
-                            pick={stagePick}
-                            onChange={onPickPromptModel}
-                            compact
-                            className="wb-field vp-stage-model"
-                            disabled={templateRendering}
-                          />
-                          <p
-                            className={`vp-compose-model-hint ${promptModelReady ? '' : 'is-error'}`}
-                            title={promptModelLabel}
-                          >
-                            {promptModelReady
-                              ? `将使用：${promptModelLabel}`
-                              : '未配置文本模型，请到设置页绑定「提示词」环节'}
-                          </p>
-                        </div>
-                      ) : null}
-                      <div className="vp-compose-actions">
-                        {onTemplateRender ? (
-                          <button
-                            type="button"
-                            className="btn-mini vp-btn-primary"
-                            disabled={templateRendering || !promptModelReady}
-                            title={
-                              promptModelReady ? '按设置页技能模板一次性渲染' : '请先配置文本模型'
-                            }
-                            onClick={() => void onTemplateRender()}
-                          >
-                            {templateRendering ? '渲染中…' : '一键模板渲染'}
-                          </button>
-                        ) : null}
-                        {onPromptRefine ? (
-                          <button
-                            type="button"
-                            className="btn-mini vp-btn-accent"
-                            disabled={!promptModelReady}
-                            title={promptModelReady ? '打开聊天多轮改稿' : '请先配置文本模型'}
-                            onClick={onPromptRefine}
-                          >
-                            与模型改稿…
-                          </button>
-                        ) : null}
-                        {onClearTemplateRender ? (
-                          <button
-                            type="button"
-                            className="btn-mini vp-btn-ghost"
-                            onClick={onClearTemplateRender}
-                          >
-                            清除模板层
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
 
               <div className="vp-actions vp-actions--manual">
                 <span className="vp-actions-label">正文</span>

@@ -158,7 +158,7 @@ try {
   await selectProject('ui')
 
   // ---- 1. 角色生成：项目目录 + 立刻刷新 ----
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(400)
   const card = page.locator('.char-card').filter({ hasText: '甲' }).first()
   // 角色卡上空态 CTA 和底部主按钮同名，点主按钮避免 strict mode 冲突
@@ -177,7 +177,7 @@ try {
   check('角色图 URL 可访问', (await fetch(`${APP}${genSrc}`)).status === 200)
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(500)
   const imgAfterGen = page.locator('.char-card').filter({ hasText: '甲' }).first().locator('.char-sheet img')
   const dims = (await imgAfterGen.count())
@@ -203,7 +203,7 @@ try {
   check('上传图写入项目目录', fs.existsSync(uploadFile), uploadSrc)
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(500)
   const uploadSrc2 = await page
     .locator('.char-card')

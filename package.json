@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "verify:billing": "node verify-billing-all.mjs",
+    "verify:billing:e2e": "node verify-billing-e2e-smoke.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.30",
@@ -19,6 +21,7 @@
     "@xyflow/react": "^12.3.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "fflate": "^0.8.2",
     "konva": "^9.3.20",
     "lucide-react": "^1.61.0",
     "react": "^18.3.1",

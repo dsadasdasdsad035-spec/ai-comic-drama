@@ -1,5 +1,4 @@
 import { createContext } from 'react'
-import type { CanvasProdMode } from './canvasProdMode'
 import type { ShotData, Tool } from './types'
 
 export type CanvasApi = {
@@ -11,7 +10,6 @@ export type CanvasApi = {
   patch: (id: string, patch: Partial<ShotData>) => void
   generate: (id: string) => void
   cancelGenerate: (id: string) => void
-  canvasProdMode: CanvasProdMode
 }
 
 export const CanvasCtx = createContext<CanvasApi>({
@@ -22,5 +20,4 @@ export const CanvasCtx = createContext<CanvasApi>({
   patch: () => {},
   generate: () => {},
   cancelGenerate: () => {},
-  canvasProdMode: 'image',
 })

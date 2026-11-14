@@ -54,11 +54,8 @@ check(
   lib.WORKBENCH_BUILTIN_KEYS.shots?.join(',') === 'split_shots',
 )
 check(
-  '角色、素材各有两个范围',
-  lib.WORKBENCH_BUILTIN_KEYS.characters.length === 2 &&
-    lib.WORKBENCH_BUILTIN_KEYS.assets.length === 2 &&
-    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.characters[1]].scope === 'project' &&
-    lib.WORKBENCH_BUILTINS[lib.WORKBENCH_BUILTIN_KEYS.assets[1]].scope === 'project',
+  '角色、素材无一键拆解内置动作',
+  lib.WORKBENCH_BUILTIN_KEYS.characters.length === 0 && lib.WORKBENCH_BUILTIN_KEYS.assets.length === 0,
 )
 check(
   '镜头动作范围',
@@ -264,43 +261,28 @@ try {
     }
   })
 
-  const nodeCount = () => page.locator('.react-flow__node-shot').count()
+  const shotNodes = () => page.locator('.react-flow__node').filter({ has: page.locator('.shot') })
+  const nodeCount = () => shotNodes().count()
   const waitNodes = (n) =>
-    page.waitForFunction((want) => document.querySelectorAll('.react-flow__node-shot').length === want, n, {
-      timeout: 20000,
-    })
-  const openProject = async (name, want) => {
-    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-    await page.locator('.topbar-project select').selectOption(name)
-    await page.waitForFunction((n) => {
-      const sel = document.querySelector('.topbar-project select')
-      return sel && sel.value === n
-    }, name, { timeout: 15000 })
+    page.waitForFunction(
+      (want) => document.querySelectorAll('.react-flow__node .shot').length === want,
+      n,
+      { timeout: 30000 },
+    )
+  const openProject = async (name, want, episode = 1) => {
+    // 经概览再进画布，避免同页切项目时 boardPhase 仍停在上一项目的 canvas
+    await page.goto(`${APP}/#/p/${encodeURIComponent(name)}/overview`, { waitUntil: 'networkidle' })
+    await page.goto(`${APP}/#/p/${encodeURIComponent(name)}/board`, { waitUntil: 'networkidle' })
+    await page.locator(`[data-board-ep="${episode}"]`).click()
+    await page.locator('[data-board-phase="canvas"]').waitFor({ timeout: 20000 })
     await waitNodes(want)
   }
 
-  await page.goto(APP, { waitUntil: 'domcontentloaded' })
   await openProject(NAME, 6)
   check('画布只显示当前项目镜头', (await nodeCount()) === 6, String(await nodeCount()))
-  await page.getByRole('button', { name: '拆镜助手', exact: true }).click()
-  await page.getByLabel('shots 技能聊天输入').waitFor({ timeout: 20000 })
-  check('画布聊天没有页内内置动作按钮', (await page.locator('[data-shots-chat] [data-chat-builtins]').count()) === 0)
-  check('画布聊天没有镜头表', (await page.locator('.wb-table').count()) === 0)
+  check('画布无拆镜助手', (await page.getByRole('button', { name: '拆镜助手', exact: true }).count()) === 0)
+  check('画布无分镜聊天挂载', (await page.locator('[data-shots-chat]').count()) === 0)
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-shots.png') })
-
-  // 写回即落库：不点保存/生成到画布
-  await page.getByLabel('shots 技能聊天输入').fill('把这一镜改成 A 项目写回')
-  await page.locator('[data-shots-chat]').getByRole('button', { name: '发送', exact: true }).click()
-  await page.locator('[data-chat-tool="submit_shots"]').waitFor({ timeout: 20000 })
-  let persisted = null
-  for (let i = 0; i < 40; i++) {
-    persisted = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project
-    if ((persisted.shots || []).some((s) => s.id === 'E01-S01' && s.desc === 'A 项目写回')) break
-    await new Promise((r) => setTimeout(r, 200))
-  }
-  check('写回即落库', (persisted?.shots || []).some((s) => s.id === 'E01-S01' && s.desc === 'A 项目写回'))
-  await waitNodes(6)
-  check('落库后画布仍是 6 镜', (await nodeCount()) === 6)
 
   // 项目隔离：A/B 切换后画布只显示各自镜头
   await openProject(NAME_B, 1)
@@ -308,7 +290,7 @@ try {
   await openProject(NAME, 6)
   await page.waitForTimeout(800)
   const aAfter = (await api(`/api/project?name=${encodeURIComponent(NAME)}`)).project.shots
-  const idsAfter = await page.locator('.react-flow__node-shot').evaluateAll((els) => els.map((e) => e.getAttribute('data-id')))
+  const idsAfter = await shotNodes().evaluateAll((els) => els.map((e) => e.getAttribute('data-id')))
   check('切回 A 恢复 6 镜', (await nodeCount()) === 6, `${idsAfter.join(',')} | 项目 ${aAfter.map((s) => s.id).join(',')}`)
   await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-isolation.png') })
 

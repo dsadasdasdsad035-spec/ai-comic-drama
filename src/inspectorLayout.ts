@@ -1,13 +1,16 @@
-import type { CanvasProdMode } from './canvasProdMode'
+import type { ShotProdKind } from './shotProdKind'
 import {
   PERFORMANCE_EMOTION_LABELS,
   type PerformanceEntry,
 } from './types'
 
-export type ShotInspectorTab = 'visual' | 'video' | 'more'
-/** @deprecated 偏好里可能仍存 audio，加载时映射到 more */
-export type LegacyShotInspectorTab = ShotInspectorTab | 'audio'
+export type ShotInspectorTab = 'visual' | 'narrative' | 'outgoing' | 'audio' | 'meta'
+
+/** 偏好里可能仍存旧 id */
+export type LegacyShotInspectorTab = ShotInspectorTab | 'video' | 'more'
+
 export type InspectorTabPreference = 'auto' | LegacyShotInspectorTab
+
 export type CollapsibleSection =
   | 'shotParams'
   | 'performance'
@@ -31,11 +34,21 @@ export type ShotStatusChip = {
 }
 
 export const INSPECTOR_PREFS_KEY = 'storyboard-inspector-v1'
-export const DEFAULT_INSPECTOR_WIDTH = 360
+export const DEFAULT_INSPECTOR_WIDTH = 380
 export const MIN_INSPECTOR_WIDTH = 320
 export const MAX_INSPECTOR_WIDTH = 520
 
-const TABS: InspectorTabPreference[] = ['auto', 'visual', 'video', 'more']
+const TAB_PREFS: InspectorTabPreference[] = [
+  'auto',
+  'visual',
+  'narrative',
+  'outgoing',
+  'audio',
+  'meta',
+  'video',
+  'more',
+]
+
 const SECTIONS: CollapsibleSection[] = [
   'shotParams',
   'performance',
@@ -56,7 +69,6 @@ export function defaultInspectorPrefs(): InspectorPrefs {
       schedule: true,
       refs: false,
       advanced: true,
-      // 出片设置只留一行摘要；运动提示词与正文重复，默认收起
       videoSettings: true,
       motionPrompt: true,
     },
@@ -67,6 +79,15 @@ export function clampInspectorWidth(value: unknown): number {
   const n = Number(value)
   if (!Number.isFinite(n)) return DEFAULT_INSPECTOR_WIDTH
   return Math.min(MAX_INSPECTOR_WIDTH, Math.max(MIN_INSPECTOR_WIDTH, Math.round(n)))
+}
+
+function migrateTabPref(tab: unknown): InspectorTabPreference {
+  if (tab === 'video') return 'outgoing'
+  if (tab === 'more') return 'more'
+  if (typeof tab === 'string' && TAB_PREFS.includes(tab as InspectorTabPreference)) {
+    return tab as InspectorTabPreference
+  }
+  return 'auto'
 }
 
 function normalizePrefs(input: unknown): InspectorPrefs {
@@ -83,11 +104,7 @@ function normalizePrefs(input: unknown): InspectorPrefs {
   }
   return {
     width: clampInspectorWidth(raw.width),
-    tab: (() => {
-      const t = raw.tab as InspectorTabPreference
-      if (t === 'audio') return 'more'
-      return TABS.includes(t) ? t : 'auto'
-    })(),
+    tab: migrateTabPref(raw.tab),
     collapsed,
   }
 }
@@ -109,21 +126,32 @@ export function saveInspectorPrefs(prefs: InspectorPrefs): void {
   }
 }
 
-/** 出图模式先进画面；出片模式先进视频 */
-export function defaultTabForShot(mode: CanvasProdMode, _hasImage: boolean): ShotInspectorTab {
-  return mode === 'image' ? 'visual' : 'video'
+/** 生图镜默认画面 Tab；出片镜默认出片 Tab */
+export function defaultTabForShot(prodKind: ShotProdKind, _hasImage: boolean): ShotInspectorTab {
+  return prodKind === 'image' ? 'visual' : 'outgoing'
 }
 
 export function coerceShotTab(
-  mode: CanvasProdMode,
+  prodKind: ShotProdKind,
   pref: InspectorTabPreference,
   hasImage: boolean,
 ): ShotInspectorTab {
-  let tab: ShotInspectorTab =
-    pref === 'auto' ? defaultTabForShot(mode, hasImage) : pref === 'audio' ? 'more' : pref
-  const allowed = mode === 'image' ? ['visual', 'more'] : ['video', 'more']
-  if (!allowed.includes(tab)) tab = mode === 'image' ? 'visual' : 'video'
-  return tab
+  let tab: ShotInspectorTab | 'more' =
+    pref === 'auto'
+      ? defaultTabForShot(prodKind, hasImage)
+      : pref === 'more'
+        ? 'more'
+        : (pref as ShotInspectorTab)
+  if (pref === 'more') {
+    tab = prodKind === 'image' ? 'narrative' : 'meta'
+  }
+  const allowedImage: ShotInspectorTab[] = ['visual', 'narrative']
+  const allowedVideo: ShotInspectorTab[] = ['outgoing', 'audio', 'meta']
+  const allowed = prodKind === 'image' ? allowedImage : allowedVideo
+  if (!allowed.includes(tab as ShotInspectorTab)) {
+    tab = defaultTabForShot(prodKind, hasImage)
+  }
+  return tab as ShotInspectorTab
 }
 
 export function performanceSummary(performance?: PerformanceEntry[]): string {
@@ -137,7 +165,25 @@ export function performanceSummary(performance?: PerformanceEntry[]): string {
   return rows.length ? rows.join(' / ') : '未设置'
 }
 
+const MODE_LABEL: Record<string, string> = {
+  first: '首帧',
+  ref: '多参考图',
+  video: '参考视频',
+  native: '原生音频',
+}
+
+export function shotReadinessSummary(input: {
+  mode?: string
+  blocking?: string
+  warning?: string
+}): string {
+  if (input.blocking) return input.blocking
+  if (input.warning) return input.warning
+  return `${MODE_LABEL[input.mode || 'ref'] ?? '出片'} · 可提交`
+}
+
 export function shotStatusChips(input: {
+  prodKind: ShotProdKind
   hasImage: boolean
   candidateCount: number
   hasVideo: boolean
@@ -145,25 +191,30 @@ export function shotStatusChips(input: {
   promptSource?: 'auto' | 'override'
   promptStale?: boolean
   nativeAudio?: boolean
+  refCount?: number
 }): ShotStatusChip[] {
+  if (input.prodKind === 'image') {
+    return [
+      {
+        id: 'visual',
+        label: `画面 ${
+          input.hasImage
+            ? input.candidateCount > 1
+              ? `1/${input.candidateCount}`
+              : 'OK'
+            : '未出'
+        }`,
+        tone: input.hasImage ? 'ok' : 'muted',
+        tab: 'visual',
+      },
+    ]
+  }
   const chips: ShotStatusChip[] = [
     {
-      id: 'visual',
-      label: `画面 ${
-        input.hasImage
-          ? input.candidateCount > 1
-            ? `1/${input.candidateCount}`
-            : 'OK'
-          : '未出'
-      }`,
-      tone: input.hasImage ? 'ok' : 'muted',
-      tab: 'visual',
-    },
-    {
-      id: 'video',
-      label: `视频 ${input.hasVideo ? `${Math.max(1, Math.round(input.seconds))}s` : '未出'}`,
-      tone: input.hasVideo ? 'ok' : 'muted',
-      tab: 'video',
+      id: 'refs',
+      label: `参考 ${input.refCount ?? 0}`,
+      tone: (input.refCount ?? 0) > 0 ? 'ok' : 'muted',
+      tab: 'outgoing',
     },
     {
       id: 'prompt',
@@ -175,7 +226,13 @@ export function shotStatusChips(input: {
           : '自动'
       }`,
       tone: input.promptStale ? 'warn' : 'muted',
-      tab: 'video',
+      tab: 'outgoing',
+    },
+    {
+      id: 'video',
+      label: `成片 ${input.hasVideo ? `${Math.max(1, Math.round(input.seconds))}s` : '未出'}`,
+      tone: input.hasVideo ? 'ok' : 'muted',
+      tab: 'outgoing',
     },
   ]
   if (input.nativeAudio) {
@@ -183,7 +240,7 @@ export function shotStatusChips(input: {
       id: 'native',
       label: '原生音频',
       tone: 'ok',
-      tab: 'video',
+      tab: 'audio',
     })
   }
   return chips

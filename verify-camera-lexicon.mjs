@@ -99,5 +99,15 @@ check('list shot-grammar', grammar.length === 32, String(grammar.length))
 const push = lib.resolvePrimaryMove('推')
 check('resolve 推', push?.key === '01_dolly_in', push?.key)
 
+const sample = catalog.entries[0]
+const motionRef = lib.resolveMotionLexiconVideoRef({
+  motionLexiconAsRef: true,
+  lexiconRefKey: sample.key,
+})
+check('勾选运镜库可解析附件 URL（无需已导入副本）', motionRef?.url === sample.url, motionRef?.url)
+check('运镜库附件标签含中文名', motionRef?.label?.includes(sample.cn), motionRef?.label)
+
+fs.rmSync(TMP, { recursive: true, force: true })
+
 if (bad) process.exit(1)
 console.log('verify-camera-lexicon: ok')

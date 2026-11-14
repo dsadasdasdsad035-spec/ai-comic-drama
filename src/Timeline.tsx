@@ -9,7 +9,7 @@ type Props = {
   nodes: ShotNodeType[]
   edges: ShotEdgeType[]
   activeId: string | null
-  /** 角色名 → 头像图，角色轨用 */
+  /** 保留入参兼容；时间轴仅画面 + 字幕 */
   charImages?: Record<string, string>
   onPick: (id: string) => void
   onPatch: (id: string, p: Partial<ShotData>) => void
@@ -33,13 +33,11 @@ type Clip = {
   subOffset: number
   dialogue: string
   captions: CaptionCue[]
-  cast: string
-  hasPrompt: boolean
   size: string
   move: string
 }
 
-const TRACK_H = 24
+const TRACK_H = 20
 const MIN_ZOOM = 12
 const MAX_ZOOM = 160
 
@@ -52,13 +50,13 @@ export default function Timeline({
   nodes,
   edges,
   activeId,
-  charImages = {},
+  charImages: _charImages = {},
   onPick,
   onPatch,
   onOpenTransition,
 }: Props) {
   const [zoom, setZoom] = useState(40)
-  // 常驻 186px 会吃掉画布视野，允许收起
+  // 双轨时间线较矮，仍可收起以多留画布
   const [open, setOpen] = useState(true)
   /** 拖动中的实时位移（只用于渲染，不写数据） */
   const [live, setLive] = useState<{ id: string; kind: Kind; dx: number } | null>(null)
@@ -93,8 +91,6 @@ export default function Timeline({
               subOffset: Number(d.subOffset) || 0,
               audioMode: d.audioMode === 'native' ? 'native' : 'off',
             }),
-            cast: (d.cast ?? []).join('、'),
-            hasPrompt: Boolean(String(d.prompt || '').trim()),
             size: String(d.size || ''),
             move: String(d.move || ''),
           }
@@ -198,7 +194,7 @@ export default function Timeline({
       {open && <div className="ntl-body">
         <div className="ntl-labels">
           <div className="ntl-ruler-gap" />
-          {['画面', '字幕', '角色', '提示词'].map((t) => (
+          {['画面', '字幕'].map((t) => (
             <div key={t} className="ntl-label" style={{ height: TRACK_H }}>
               {t}
             </div>
@@ -292,40 +288,6 @@ export default function Timeline({
                   )
                 }),
               )}
-            </div>
-
-            {/* 角色轨：只读，有头像显示头像，无图退回名字 */}
-            <div className="ntl-track info" style={{ height: TRACK_H }}>
-              {clips
-                .filter((c) => c.cast)
-                .map((c) => (
-                  <span
-                    key={c.id}
-                    className="ntl-chip cast"
-                    style={{ left: px(c.start, zoom), width: Math.max(24, px(c.dur, zoom)) }}
-                    title={`${c.no} 出场：${c.cast}`}
-                  >
-                    {c.cast.split('、').map((name) =>
-                      charImages[name] ? (
-                        <img key={name} src={charImages[name]} alt={name} draggable={false} />
-                      ) : (
-                        <i key={name}>{name}</i>
-                      ),
-                    )}
-                  </span>
-                ))}
-            </div>
-
-            {/* 提示词轨：有/无标记 */}
-            <div className="ntl-track info" style={{ height: TRACK_H }}>
-              {clips.map((c) => (
-                <span
-                  key={c.id}
-                  className={`ntl-mark ${c.hasPrompt ? 'has' : ''}`}
-                  style={{ left: px(c.start, zoom) }}
-                  title={c.hasPrompt ? `${c.no} 有首帧提示词` : `${c.no} 缺首帧提示词`}
-                />
-              ))}
             </div>
           </div>
         </div>

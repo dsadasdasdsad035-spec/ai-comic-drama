@@ -1,12 +1,13 @@
 import { z } from 'zod'
-import type { ProjectData } from '../api'
+import type { ProjectData, Stage } from '../api'
 import {
   getContractToolSchema,
   normalizeCharactersContractPayload,
   validateContract,
 } from '../skills/contracts'
 import type { Skill } from '../skills/types'
-import { getSkill } from '../skills/registry'
+import { isAgentPackSkill, parseAgentPackMeta } from '../skills/agentPack'
+import { getSkill, getSkillTextRecord, loadSkills } from '../skills/registry'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
 import type { PromptRenderBundle } from '../promptRender'
 import { defineTool, type ToolDef } from './tool'
@@ -258,32 +259,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     },
   })
 
-  const readSkill = defineTool({
-    name: 'read_skill',
-    description:
-      '读取指定技能的完整 SKILL.md（含 frontmatter）。选择/切换技能后应先读取宿主技能全文，再按需读取只读技能。',
-    schema: z.object({
-      id: z.string().min(1).describe('技能 id，例如 character、asset、shotlist、transition-director'),
-    }),
-    run: async ({ id }) => {
-      try {
-        const skill = await getSkill(String(id).trim())
-        return {
-          ok: true,
-          id: skill.id,
-          version: skill.manifest.version,
-          source: skill.source,
-          tools: skill.manifest.tools,
-          inputs: skill.manifest.inputs,
-          output: skill.manifest.output,
-          contracts: skill.manifest.contracts,
-          text: skill.text,
-        }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message || String(e) }
-      }
-    },
-  })
+  const readSkill = createReadSkillTool()
 
   const readByName = new Map<string, ToolDef>([
     [readSkill.name, readSkill],
@@ -374,6 +350,179 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
  * 绑定技能声明的工具：宿主技能可读写；只读技能只能拿到读工具。
  * 技能声明了运行时没有的工具时直接跳过（装载期已校验，不静默假装可用）。
  */
+/** Pi 创意等无工作台 adapter 的场景：仅注册 read_skill，其余能力由技能自行在对话中完成或后续扩展。 */
+function createReadSkillTool(): ToolDef {
+  return defineTool({
+    name: 'read_skill',
+    description:
+      '读取已解析的工作台技能：完整 SKILL.md 与 manifest（tools/inputs/契约）。工作台宿主优先用此工具。',
+    schema: z.object({
+      id: z.string().min(1).describe('技能 id，例如 character、asset、shotlist、transition-director'),
+    }),
+    run: async ({ id }) => {
+      try {
+        const skill = await getSkill(String(id).trim())
+        return {
+          ok: true,
+          id: skill.id,
+          profile: skill.profile || 'workbench',
+          version: skill.manifest.version,
+          source: skill.source,
+          tools: skill.manifest.tools,
+          inputs: skill.manifest.inputs,
+          output: skill.manifest.output,
+          contracts: skill.manifest.contracts,
+          text: skill.text,
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+}
+
+function createListInstalledSkillsTool(): ToolDef {
+  return defineTool({
+    name: 'list_installed_skills',
+    description:
+      '列出当前已安装的技能目录（id、名称、环节、profile、来源）。不确定技能 id 时先调用本工具，再用 read_skill_text（Agent 包）或 read_skill（工作台技能）读取正文。',
+    schema: z.object({
+      stage: z.string().optional().describe('按环节过滤，例如 creative、character'),
+      profile: z.enum(['workbench', 'agent-pack']).optional().describe('按 profile 过滤'),
+      hostsOnly: z
+        .boolean()
+        .optional()
+        .describe('为 true 时仅返回可作创意宿主的 SkillHub/上传 Agent 包'),
+    }),
+    run: async ({ stage, profile, hostsOnly }) => {
+      const { skills, issues } = await loadSkills()
+      let list = [...skills.values()]
+      const stageFilter = stage ? String(stage).trim() : ''
+      if (stageFilter) {
+        list = list.filter((s) => s.manifest.stage === (stageFilter as Stage))
+      }
+      if (profile) {
+        list = list.filter((s) => (s.profile || 'workbench') === profile)
+      }
+      if (hostsOnly) {
+        list = list.filter(
+          (s) =>
+            (s.source === 'skillhub' || s.source === 'upload') && isAgentPackSkill(s),
+        )
+      }
+      list.sort((a, b) => (a.manifest.name || a.id).localeCompare(b.manifest.name || b.id, 'zh'))
+      return {
+        ok: true,
+        count: list.length,
+        skills: list.map((s) => ({
+          id: s.id,
+          name: s.manifest.name || s.id,
+          description: (s.manifest.description || '').slice(0, 240),
+          stage: s.manifest.stage,
+          profile: s.profile || 'workbench',
+          source: s.source,
+          version: s.manifest.version,
+          readWith: (s.profile || 'workbench') === 'agent-pack' ? 'read_skill_text' : 'read_skill',
+        })),
+        loadIssues: issues.map((x) => ({ id: x.id, message: x.message })),
+      }
+    },
+  })
+}
+
+function createListExpertsTool(): ToolDef {
+  return defineTool({
+    name: 'list_experts',
+    description:
+      '列出当前可用创意专家（id、名称、说明）。用户想换专家或未选专家时，先调用本工具推荐 id，并提示在创意顶栏「专家」下拉切换。',
+    schema: z.object({}),
+    run: async () => {
+      try {
+        const res = await fetch('/api/experts')
+        const j = (await res.json()) as { ok?: boolean; experts?: Array<Record<string, unknown>>; message?: string }
+        if (!res.ok || j.ok === false) {
+          return { ok: false, error: j.message || `HTTP ${res.status}` }
+        }
+        const experts = Array.isArray(j.experts) ? j.experts : []
+        return {
+          ok: true,
+          count: experts.length,
+          experts: experts.map((e) => ({
+            id: e.id,
+            name: e.name,
+            description: e.description,
+            imageDescription: e.imageDescription,
+            skillCount: Array.isArray(e.skillIds) ? e.skillIds.length : 0,
+            toolCount: Array.isArray(e.toolIds) ? e.toolIds.length : 0,
+            source: e.source,
+          })),
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+}
+
+function createReadSkillTextTool(): ToolDef {
+  return defineTool({
+    name: 'read_skill_text',
+    description:
+      '读取任意已安装技能的 SKILL.md 原文（含 SkillHub / Agent 包）。宿主为 agent-pack 时应用此工具读宿主与其它技能。',
+    schema: z.object({
+      id: z.string().min(1).describe('技能 id，例如 character-refs、creative-plan'),
+    }),
+    run: async ({ id }) => {
+      try {
+        const sid = String(id).trim()
+        const record = await getSkillTextRecord(sid)
+        const meta = parseAgentPackMeta(record.id, record.text)
+        let profile: string = 'agent-pack'
+        let manifest: Record<string, unknown> | undefined
+        try {
+          const skill = await getSkill(sid)
+          profile = skill.profile || 'workbench'
+          manifest = {
+            version: skill.manifest.version,
+            tools: skill.manifest.tools,
+            inputs: skill.manifest.inputs,
+            output: skill.manifest.output,
+            stage: skill.manifest.stage,
+          }
+        } catch {
+          /* 仅原文可读 */
+        }
+        return {
+          ok: true,
+          id: record.id,
+          profile,
+          source: record.source,
+          description: meta?.description || '',
+          allowedTools: meta?.allowedTools || [],
+          manifest,
+          text: record.text,
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+}
+
+export function createPiNativeToolSet(): StageToolSet {
+  const readSkill = createReadSkillTool()
+  const readSkillText = createReadSkillTextTool()
+  const listSkills = createListInstalledSkillsTool()
+  const listExperts = createListExpertsTool()
+  const byName = new Map<string, ToolDef>([
+    [readSkill.name, readSkill],
+    [readSkillText.name, readSkillText],
+    [listSkills.name, listSkills],
+    [listExperts.name, listExperts],
+  ])
+  return { read: byName, byName }
+}
+
 export function bindSkillTools(
   set: StageToolSet,
   loaded: LoadedSkill[],
@@ -388,5 +537,11 @@ export function bindSkillTools(
   }
   const readSkillTool = set.byName.get('read_skill')
   if (readSkillTool) byName.set('read_skill', readSkillTool)
+  const readSkillTextTool = set.byName.get('read_skill_text')
+  if (readSkillTextTool) byName.set('read_skill_text', readSkillTextTool)
+  const listSkillsTool = set.byName.get('list_installed_skills')
+  if (listSkillsTool) byName.set('list_installed_skills', listSkillsTool)
+  const listExpertsTool = set.byName.get('list_experts')
+  if (listExpertsTool) byName.set('list_experts', listExpertsTool)
   return [...byName.values()]
 }

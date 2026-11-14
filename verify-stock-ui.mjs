@@ -203,27 +203,23 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } })
   const page = await ctx.newPage()
   await installRoutes(page)
-  await page.goto(APP, { waitUntil: 'networkidle' })
+  await page.goto(`${APP}/#/p/${encodeURIComponent(PROJECT)}/assets`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1200)
-  // 选中验收项目
-  await page.locator('header button', { hasText: '项目' }).first().click().catch(() => {})
-  await page.waitForTimeout(300)
-  const projectOption = page.locator(`text=${PROJECT}`).first()
-  if (await projectOption.count()) {
-    await projectOption.click()
-    await page.waitForTimeout(500)
-  }
+  await page.locator('.board').waitFor({ timeout: 20000 })
 
   section('素材页入口')
-  await page.locator('header button', { hasText: '素材' }).first().click()
-  await page.waitForTimeout(900)
-  const openBtn = page.getByRole('button', { name: '在线素材库' })
-  check('素材页有在线素材库入口', (await openBtn.count()) === 1)
+  const openBtn = page.getByRole('button', { name: '在线素材列表' })
+  check('素材页有在线素材列表入口', (await openBtn.count()) === 1)
   await openBtn.click()
   await page.waitForTimeout(700)
   const dialog = page.locator('.stock-dialog')
-  check('在线素材库弹窗打开', (await dialog.count()) === 1)
+  check('在线素材列表弹窗打开', (await dialog.count()) === 1)
+  check('推荐卡片网格', (await page.locator('[data-online-stock-cards]').count()) === 1)
+  check('内置站点卡片', (await page.locator('[data-online-stock-card="pexels"]').count()) === 1)
   check('默认未检索时不请求来源', searchCalls.length === 0, `calls=${searchCalls.length}`)
+  await page.locator('[data-online-stock-browse="pexels"]').click()
+  await page.waitForTimeout(500)
+  check('进入站内检索', (await page.locator('[data-stock-browser]').count()) === 1)
 
   section('来源与检索')
   check('来源列表含七家', (await page.locator('[data-stock-provider]').count()) === 7)
@@ -393,10 +389,10 @@ try {
 
   await page.locator('.stock-dialog .mp-close').click()
   await page.waitForTimeout(400)
-  check('关闭在线素材库', (await page.locator('.stock-dialog').count()) === 0)
+  check('关闭在线素材列表', (await page.locator('.stock-dialog').count()) === 0)
 
   section('设置分区')
-  await page.locator('header button', { hasText: '设置' }).first().click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.waitForTimeout(800)
   await page.locator('.st-nav button', { hasText: '素材库' }).click()
   await page.waitForTimeout(400)
@@ -429,10 +425,14 @@ try {
   // 只量在线素材浏览器自身：全局顶栏在 390px 的横向滚动是既有行为，不属于本次变更
   await page.setViewportSize({ width: 390, height: 900 })
   await page.waitForTimeout(300)
-  await page.locator('header button', { hasText: '素材' }).first().click()
+  await page.goto(`${APP}/#/p/${encodeURIComponent(PROJECT)}/assets`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
-  await page.getByRole('button', { name: '在线素材库' }).click()
-  await page.waitForTimeout(700)
+  await page.getByRole('button', { name: '在线素材列表' }).click()
+  await page.waitForTimeout(500)
+  await page.locator('[data-online-stock-browse="pexels"]').scrollIntoViewIfNeeded()
+  await page.locator('[data-online-stock-browse="pexels"]').click()
+  await page.locator('[data-stock-query]').waitFor({ timeout: 15000 })
+  await page.waitForTimeout(400)
   const narrow = await page.evaluate(() => {
     const dialog = document.querySelector('.stock-dialog')
     const grid = document.querySelector('[data-stock-grid]')
@@ -442,7 +442,7 @@ try {
     return { dialog: r(dialog), grid: r(grid), searchRight: search ? Math.round(search.getBoundingClientRect().right) : 0, detail: r(detail) }
   })
   check(
-    '窄屏在线素材库不横向溢出',
+    '窄屏在线素材列表不横向溢出',
     Boolean(narrow.dialog) && narrow.dialog.sw <= narrow.dialog.cw + 1 && narrow.dialog.right <= 390,
     JSON.stringify(narrow),
   )

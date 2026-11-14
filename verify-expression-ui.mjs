@@ -77,7 +77,7 @@ try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
   await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
   await page.locator('.topbar-project select').selectOption(project.name)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-card').first().waitFor({ timeout: 15000 })
   check('角色卡出现', (await page.locator('.char-name', { hasText: '林岚' }).count()) === 1)
   check('旧表情 chip 不再渲染', (await page.locator('.char-expr-chip').count()) === 0)

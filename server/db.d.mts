@@ -45,6 +45,40 @@ export declare function getSkillOverride(
 ): { body: string; baseVersion: number; updatedAt: string } | undefined
 export declare function setSkillOverride(id: string, body: string, baseVersion?: number): void
 export declare function deleteSkillOverride(id: string): void
+export declare function listSkillInstalls(): Array<{
+  id: string
+  provider: string
+  slug: string
+  namespace: string
+  version: string
+  text: string
+  meta: Record<string, unknown>
+  installedAt: string
+}>
+export declare function getSkillInstall(id: string):
+  | {
+      id: string
+      provider: string
+      slug: string
+      namespace: string
+      version: string
+      text: string
+      meta: Record<string, unknown>
+      installedAt: string
+    }
+  | undefined
+export declare function getSkillInstallBySource(namespace: string, slug: string): ReturnType<typeof getSkillInstall>
+export declare function upsertSkillInstall(record: {
+  id: string
+  provider?: string
+  slug?: string
+  namespace?: string
+  version?: string
+  text: string
+  meta?: Record<string, unknown>
+  installedAt?: string
+}): ReturnType<typeof getSkillInstall>
+export declare function deleteSkillInstall(id: string): void
 export declare type ChatThreadKey = {
   project: string
   surface: string

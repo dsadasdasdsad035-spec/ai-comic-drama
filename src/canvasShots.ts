@@ -26,8 +26,13 @@ export function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): Shot
   for (const n of prev) if (n.data?.shotId) byShot.set(String(n.data.shotId), n)
   const counters = new Map<number, { col: number; row: number }>()
   return shots.map((sh, i) => {
-    const old = byShot.get(sh.id)
     const ep = Number(sh.episode) || 1
+    const old =
+      byShot.get(sh.id) ??
+      [...byShot.values()].find(
+        (n) => (Number(n.data.episode) || 1) === ep && String(n.data.no ?? '').trim() === String(sh.no ?? '').trim(),
+      )
+    if (old?.data?.shotId && old.data.shotId !== sh.id) byShot.delete(String(old.data.shotId))
     const c = counters.get(ep) ?? { col: 0, row: 0 }
     const position = old?.position ?? {
       x: c.col * (cardWidth(Number(sh.seconds) || 3) + 56),

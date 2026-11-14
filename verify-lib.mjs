@@ -37,7 +37,7 @@ async function firstProjectName(page) {
  * 打开指定项目的工作区。
  * @param {import('playwright-core').Page} page
  * @param {string} [name] 项目目录名，省略则用列表第一个
- * @param {'overview'|'creative'|'chars'|'assets'|'board'|'settings'} [view]
+ * @param {'overview'|'creative'|'assets'|'board'|'settings'} [view]
  * @param {{ base?: string, waitUntil?: 'load'|'domcontentloaded'|'networkidle', timeout?: number }} [opts]
  */
 export async function openProject(page, name, view = 'board', opts = {}) {
@@ -60,4 +60,10 @@ export async function openProject(page, name, view = 'board', opts = {}) {
 export async function openApp(page, opts = {}) {
   const { base = BASE, view = 'board', ...rest } = opts
   return openProject(page, undefined, view, { base, ...rest })
+}
+
+/** 素材页「角色」Tab（方案 A：左栏不再有独立角色视图） */
+export async function openCharacterTab(page) {
+  await page.getByRole('button', { name: '素材', exact: true }).click()
+  await page.locator('[data-asset-character-tab]').click()
 }

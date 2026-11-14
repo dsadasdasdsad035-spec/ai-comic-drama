@@ -32,8 +32,9 @@ await page.evaluate(() => {
 await page.waitForTimeout(500)
 await page.screenshot({ path: `${OUT}/02-selected.png` })
 
-// 3. switch to character view
-await page.getByRole('button', { name: '角色', exact: true }).click()
+// 3. 素材页「角色」Tab
+await page.getByRole('button', { name: '素材', exact: true }).click()
+await page.locator('[data-asset-character-tab]').click()
 await page.waitForTimeout(700)
 await page.screenshot({ path: `${OUT}/03-chars.png` })
 
@@ -68,7 +69,8 @@ console.log('saved:', JSON.stringify(saved))
 
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(800)
-await page.getByRole('button', { name: '角色', exact: true }).click()
+await page.getByRole('button', { name: '素材', exact: true }).click()
+await page.locator('[data-asset-character-tab]').click()
 await page.waitForTimeout(500)
 await page.screenshot({ path: `${OUT}/06-after-reload.png` })
 

@@ -281,7 +281,11 @@ export type Mark = {
   h?: number
 }
 
+export type ShotProdKind = 'image' | 'video'
+
 export type ShotData = {
+  /** 生图镜 / 出片镜；缺省时由水合规则推断 */
+  prodKind?: ShotProdKind
   no: string
   seconds: number
   size: string

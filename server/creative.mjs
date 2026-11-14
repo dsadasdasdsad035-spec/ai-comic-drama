@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import { dbPath, resolveRoot } from './db.mjs'
+import { dbPath, resolveRoot, safeProjectName } from './db.mjs'
 
 /** 单条创意线程的体积上限；与 chat_threads 保持同一量级 */
 export const MAX_CREATIVE_THREAD_BYTES = 1024 * 1024
@@ -109,14 +109,34 @@ function parseJson(raw, fallback) {
   }
 }
 
+function normalizeSessionProject(raw) {
+  const v = String(raw ?? '').trim()
+  if (!v) return ''
+  return safeProjectName(v)
+}
+
+function rowToSession(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    title: row.title || '',
+    mode: normalizeMode(row.mode),
+    project: row.project ? String(row.project) : '',
+    expertId: row.expert_id ? String(row.expert_id) : '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 export function createSession(appRoot, init = {}) {
   const id = safeSessionId(init.id || newSessionId())
   ensureSessionDir(appRoot, id)
   const d = open(appRoot)
   const at = nowIso()
+  const project = normalizeSessionProject(init.project)
   d.prepare(
-    `INSERT INTO creative_sessions (id, title, mode, created_at, updated_at) VALUES (?,?,?,?,?)`,
-  ).run(id, String(init.title || '').slice(0, 200), normalizeMode(init.mode), at, at)
+    `INSERT INTO creative_sessions (id, title, mode, project, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
+  ).run(id, String(init.title || '').slice(0, 200), normalizeMode(init.mode), project, at, at)
   d.prepare(`INSERT OR IGNORE INTO creative_threads (session_id, messages, active_skills, updated_at) VALUES (?,?,?,?)`)
     .run(id, '[]', '[]', at)
   return getSession(appRoot, id)
@@ -125,28 +145,30 @@ export function createSession(appRoot, init = {}) {
 export function getSession(appRoot, id) {
   const d = open(appRoot)
   const row = d.prepare('SELECT * FROM creative_sessions WHERE id=?').get(safeSessionId(id))
-  if (!row) return null
-  return {
-    id: row.id,
-    title: row.title || '',
-    mode: normalizeMode(row.mode),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
+  return rowToSession(row)
 }
 
-export function listSessions(appRoot, limit = 100) {
+/**
+ * @param projectFilter 传非空项目名只返回该项目会话；传 '' 只返回未绑定；undefined 返回全部（兼容旧脚本）
+ */
+export function listSessions(appRoot, limit = 100, projectFilter) {
   const d = open(appRoot)
-  const rows = d
-    .prepare('SELECT * FROM creative_sessions ORDER BY updated_at DESC LIMIT ?')
-    .all(Math.max(1, Math.min(500, Number(limit) || 100)))
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title || '',
-    mode: normalizeMode(row.mode),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }))
+  const lim = Math.max(1, Math.min(500, Number(limit) || 100))
+  let sql = 'SELECT * FROM creative_sessions'
+  const params = []
+  if (projectFilter !== undefined) {
+    const p = normalizeSessionProject(projectFilter)
+    if (p) {
+      sql += ' WHERE project=?'
+      params.push(p)
+    } else {
+      sql += " WHERE (project IS NULL OR project = '')"
+    }
+  }
+  sql += ' ORDER BY updated_at DESC LIMIT ?'
+  params.push(lim)
+  const rows = d.prepare(sql).all(...params)
+  return rows.map((row) => rowToSession(row))
 }
 
 export function touchSession(appRoot, id, patch = {}) {
@@ -161,6 +183,14 @@ export function touchSession(appRoot, id, patch = {}) {
   if (patch.mode !== undefined) {
     sets.push('mode=?')
     vals.push(normalizeMode(patch.mode))
+  }
+  if (patch.project !== undefined) {
+    sets.push('project=?')
+    vals.push(normalizeSessionProject(patch.project))
+  }
+  if (patch.expertId !== undefined) {
+    sets.push('expert_id=?')
+    vals.push(String(patch.expertId || '').trim().slice(0, 64))
   }
   sets.push('updated_at=?')
   vals.push(nowIso())

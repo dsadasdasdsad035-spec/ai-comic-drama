@@ -220,14 +220,15 @@ try {
   const expandedAgent = page.locator('button.agent-btn[aria-expanded="true"]')
   if (await expandedAgent.count()) await expandedAgent.first().click()
 
-  // ---- 镜头表：产镜在 Agent，顶栏只验证环节模型选择器 ----
-  await nav('镜头表')
-  await page.waitForSelector('[data-shots-chat]')
-  const shotSel = stageSelect('shot')
-  check('镜头表选择器存在', (await optionValues(shotSel)).length >= textModels.length + 1)
-  await shotSel.selectOption(liteKey)
-  check('镜头表无页内拆镜条', (await page.locator('.wb-gen').count()) === 0)
-  check('镜头表 Agent 可见', await page.locator('[data-shots-chat]').isVisible())
+  // ---- 画布：拆镜环节模型在设置默认路由配置，画布无 Agent ----
+  await nav('画布')
+  await page.locator('[data-canvas-shots]').waitFor({ timeout: 15000 })
+  check('画布无拆镜助手', (await page.getByRole('button', { name: '拆镜助手', exact: true }).count()) === 0)
+  await nav('设置')
+  await page.locator('.st-nav button', { hasText: '默认路由' }).click()
+  const shotDefault = page.locator('.st-stage-row', { hasText: '画布 · 拆镜' }).locator('select')
+  check('设置里拆镜环节下拉存在', (await optionValues(shotDefault)).length >= textModels.length + 1)
+  await shotDefault.selectOption(liteKey)
 
   // ---- 提示词 ----
   await nav('提示词')
@@ -269,7 +270,7 @@ try {
   // ---- Inspector 的能力模型下拉（共享组件回归） ----
   const imageKey = (original.models || []).find((m) => m.cap === 'image')?.key
   if (imageKey) {
-    await nav('镜头表')
+    await nav('剧本')
     await page.waitForTimeout(500)
     await page.getByRole('button', { name: '生成到画布' }).click()
     await page.waitForTimeout(800)

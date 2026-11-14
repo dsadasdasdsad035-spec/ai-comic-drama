@@ -1,0 +1,22 @@
+# 插入到 /opt/wildai/nginx.app-locations.conf 最前面（在 location /api/ 之前）
+# 使 https://rechargeai.cn:443 把计费回调转到分镜画布 proxy（宿主机 8080）
+# 172.17.0.1 为 docker0 网关；若不通可改为 host.docker.internal 或 storyboard-proxy 容器 IP
+
+    location = /api/billing/xunhupay/notify {
+        proxy_pass http://172.17.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 4m;
+    }
+
+    location ^~ /api/auth/verify {
+        proxy_pass http://172.17.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }

@@ -263,19 +263,11 @@ try {
     await page.locator('[data-settings-creative]').waitFor({ timeout: 10000 })
     const sec = page.locator('[data-settings-creative]')
     const text = await sec.innerText()
-    check('设置页有创意分组', text.includes('能力绑定') && !text.includes('yt-dlp 可执行文件'), text.slice(0, 120))
+    check('创意分组为 Pi 说明', text.includes('创意（对话助手）') && !text.includes('yt-dlp 可执行文件'), text.slice(0, 160))
     check('创意分组不含 yt-dlp', (await sec.locator('[data-creative-ytdlp-bin]').count()) === 0)
-    check('能力绑定七项', (await sec.locator('[data-creative-binding]').count()) === 7)
-    check('成本开关可见', (await sec.locator('[data-creative-confirm]').count()) === 1)
-
-    // 能力绑定只列该能力的模型；当前种子设置里没有 vision 模型，下拉应只有「跟随全局」
-    const visionOptions = await sec.locator('[data-creative-binding="vision"] select option').allInnerTexts()
-    // 预设里已有视觉模型时下拉应有真实选项，但第一项始终是「跟随全局」
-    check(
-      '视觉绑定首项为跟随全局',
-      visionOptions.length >= 1 && visionOptions[0].includes('跟随全局'),
-      visionOptions.slice(0, 4).join(' | '),
-    )
+    check('无旧能力绑定', (await sec.locator('[data-creative-binding]').count()) === 0)
+    check('无成本开关', (await sec.locator('[data-creative-confirm]').count()) === 0)
+    check('Pi 说明块可见', (await sec.locator('[data-creative-pi-doc]').count()) === 1)
 
     await page.locator('.st-nav').getByRole('button', { name: '素材库', exact: true }).click()
     await page.locator('[data-settings-stock]').waitFor({ timeout: 10000 })
@@ -285,16 +277,11 @@ try {
     check('yt-dlp 字段可见', (await stockSec.locator('[data-creative-ytdlp-bin]').count()) === 1)
     check('DTK 字段可见', (await stockSec.locator('[data-creative-dtk-url]').count()) === 1)
 
-  await page.locator('.st-nav').getByRole('button', { name: '创意', exact: true }).click()
-  await page.locator('[data-settings-creative]').waitFor({ timeout: 10000 })
-  const secSave = page.locator('[data-settings-creative]')
-
-    // 改一个成本开关并保存（不依赖具体模型）
-    await secSave.locator('[data-creative-confirm]').selectOption('off')
-    await page.getByRole('button', { name: /保存/ }).first().click()
-    await page.waitForTimeout(1200)
-    const afterSave = (await api('/api/settings')).settings
-    check('设置页保存了成本开关', afterSave.creative?.confirmCost === false, String(afterSave.creative?.confirmCost))
+    await page.locator('.st-nav').getByRole('button', { name: '创意', exact: true }).click()
+    await page.locator('[data-settings-creative]').waitFor({ timeout: 10000 })
+    await page.locator('[data-creative-goto-routing]').click()
+    await page.locator('[data-settings-routing]').waitFor({ timeout: 10000 })
+    check('可跳转默认路由', (await page.locator('[data-settings-routing]').innerText()).includes('创意（对话助手）'))
     check('页面无脚本错误', errors.length === 0, errors.slice(0, 160).join(' | '))
   } finally {
     await browser.close()

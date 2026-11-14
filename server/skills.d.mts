@@ -9,3 +9,15 @@ export declare function listSkillFiles(appRoot: string): {
   skills: { id: string; text: string }[]
   errors: { id: string; message: string }[]
 }
+export declare function mergeSkillCatalog(
+  diskSkills: { id: string; text: string }[],
+  installs: Array<{
+    id: string
+    text: string
+    provider?: string
+    slug?: string
+    namespace?: string
+    version?: string
+    meta?: Record<string, unknown>
+  }>,
+): Array<{ id: string; text: string; source: string; skillhub?: Record<string, unknown> }>

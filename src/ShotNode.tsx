@@ -3,6 +3,9 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Stage, Layer, Image as KImage, Line, Rect as KRect, Group } from 'react-konva'
 import type Konva from 'konva'
 import { CanvasCtx } from './ctx'
+import { effectiveProdKind } from './shotProdKind'
+import { formatEpisodeLabel } from './shotRows'
+import { useVideoFirstFrame } from './videoFirstFrame'
 import { cardWidth, uid, type Mark } from './types'
 import type { ShotNodeType } from './data'
 import GenErrorNote from './GenErrorNote'
@@ -34,10 +37,16 @@ function useImage(src?: string) {
 }
 
 function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
-  const { tool, guides, color, patch, generate, cancelGenerate, charImages, canvasProdMode } =
+  const { tool, guides, color, patch, generate, cancelGenerate, charImages } =
     useContext(CanvasCtx)
   const { colors } = useTheme()
-  const img = useImage(data.refImage)
+  const candidates = data.candidates ?? []
+  const activeIdx = data.activeIdx ?? 0
+  const hasVideo = Boolean(data.videoUrl)
+  const isVideoShot = effectiveProdKind(data) === 'video' && hasVideo
+  const videoCover = useVideoFirstFrame(isVideoShot ? data.videoUrl : undefined)
+  const coverStill = isVideoShot ? videoCover ?? data.refImage : data.refImage
+  const img = useImage(coverStill)
   const [draft, setDraft] = useState<Draft>(null)
   const [showVideo, setShowVideo] = useState(true)
   /** 视频文件缺失/解码失败：卡片上直接说清楚，而不是留一块黑 */
@@ -131,9 +140,6 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
     reader.readAsDataURL(file)
   }
 
-  const candidates = data.candidates ?? []
-  const activeIdx = data.activeIdx ?? 0
-  const hasVideo = Boolean(data.videoUrl)
   /** 配音比镜头长 → 成片会被截断 */
   const voiceOver = (data.voiceSeconds ?? 0) > data.seconds + 0.2
   const vidRunning = data.vidState === 'running'
@@ -142,7 +148,7 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
    * 每张卡一个 canvas 是缩放卡顿的主因（几十张卡 = 几十个 canvas 跟着缩放）。
    */
   const stageMode = tool !== 'none' || (data.marks?.length ?? 0) > 0
-  const stillUrl = !hasVideo ? data.refImage : undefined
+  const stillUrl = hasVideo ? (isVideoShot ? coverStill : data.refImage) : data.refImage
 
   // 出片期间每秒重算已等待时长
   const [, tick] = useState(0)
@@ -164,7 +170,7 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
         <span className="shot-no">{data.no}</span>
         {data.shotId && (
           <span className="shot-ep" title={data.shotId}>
-            {data.shotId.split('-')[0]}
+            {formatEpisodeLabel(Number(data.episode) || 1)}
           </span>
         )}
         <span className="shot-dur">{data.seconds.toFixed(1)}s</span>
@@ -174,9 +180,11 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
         <button
           className="shot-gen nodrag"
           title={
-            canvasProdMode === 'video' ? '出片模式下请在侧栏出片；切到出图模式可在卡片上生成' : '用这条提示词生成画面'
+            effectiveProdKind(data) === 'video'
+              ? '出片镜请在侧栏生成视频；需出图请新建生图镜'
+              : '用这条提示词生成画面'
           }
-          disabled={data.genState === 'running' || canvasProdMode === 'video'}
+          disabled={data.genState === 'running' || effectiveProdKind(data) === 'video'}
           onClick={(e) => {
             e.stopPropagation()
             generate(id)
@@ -313,6 +321,7 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
           <video
             className="vid-preview"
             src={data.videoUrl}
+            poster={videoCover ?? data.refImage}
             muted
             loop
             autoPlay

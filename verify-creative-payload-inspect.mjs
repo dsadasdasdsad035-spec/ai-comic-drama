@@ -58,9 +58,15 @@ const payload = lib.buildCreativeTurnPayload({
 })
 check('system 不含创意模式', !payload.system.includes('创意模式'), payload.system.slice(0, 80))
 check('system 不含会话 uuid 样式', !/会话：/.test(payload.system))
-check('user 含历史前缀', payload.userForModel.includes('【之前的对话】'))
+check('user 不含 transcript 前缀', !payload.userForModel.includes('【之前的对话】'))
 check('user 含草稿', payload.userForModel.includes('下一句'))
+check('含 Pi 长期记忆说明', payload.piMemoryPreview.includes('Pi 长期记忆'))
+check('prior 含历史 user', payload.priorPiMessages.some((m) => m.role === 'user' && String(m.content).includes('你好')))
 check('工具列表含 read_skill', payload.toolNames.includes('read_skill'))
+
+const autoPayload = lib.buildCreativeTurnPayload({ host: null, messages: [], draftText: 'hi' })
+check('无偏好宿主 system 要求技能目录', autoPayload.system.includes('list_installed_skills'))
+check('无偏好宿主 skillId 展示', lib.creativeTaskView(null, autoPayload, 'm').skillId === 'auto')
 
 try {
   await fetch(`${APP}/api/health`, { signal: AbortSignal.timeout(800) })

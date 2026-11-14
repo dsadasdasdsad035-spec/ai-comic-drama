@@ -200,7 +200,7 @@ try {
   await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.react-flow__node').first().waitFor({ timeout: 15000 })
   await page.locator('.react-flow__node').first().click()
-  await page.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+  await page.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
   await page.waitForTimeout(250)
   const perfSection = page.locator('[data-section="performance"]')
   if ((await perfSection.count()) > 0 && !(await perfSection.evaluate((el) => el.open))) {

@@ -44,6 +44,14 @@ const got = db.readProject(tmp, 'recycle')
 check('shots 数量', got.shots.length === orig.shots.length, `${got.shots.length}/${orig.shots.length}`)
 check('集数量', got.episodes.length === orig.episodes.length)
 check('角色数量', got.characters.length === orig.characters.length)
+const origDesigns = Array.isArray(orig.designs) ? orig.designs.length : 0
+const origAssets = Array.isArray(orig.assets) ? orig.assets.length : 0
+if (origDesigns) {
+  check('designs 数量', got.designs?.length === origDesigns, `${got.designs?.length}/${origDesigns}`)
+}
+if (origAssets) {
+  check('assets 数量', got.assets?.length === origAssets, `${got.assets?.length}/${origAssets}`)
+}
 
 let shotDiff = 0
 // DB 读出会把缺失字段归一化成 '' / [] —— undefined 与空值等价，不算差异

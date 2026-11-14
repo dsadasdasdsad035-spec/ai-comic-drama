@@ -23,6 +23,8 @@ type Props = {
   /** 当前项目；空串表示未选项目，可以浏览但不能导入 */
   projectName: string
   mode: 'picker' | 'library'
+  /** 从在线素材列表进入时预选来源 */
+  initialProvider?: StockProviderId
   /** picker 模式：导入成功后把本地地址交给选择器 */
   onPicked?: (result: StockImportResult, item: StockItem) => void
   /** library 模式：导入结果交给素材页决定落点 */
@@ -36,7 +38,14 @@ type Props = {
  * 检索只在显式提交时发起（在线来源额度很紧），分页追加保留已选项；
  * 导入只提交令牌，服务端决定真实下载地址。
  */
-export default function StockBrowser({ projectName, mode, onPicked, onImported, toast }: Props) {
+export default function StockBrowser({
+  projectName,
+  mode,
+  initialProvider,
+  onPicked,
+  onImported,
+  toast,
+}: Props) {
   const [providers, setProviders] = useState<StockProviderInfo[]>([])
   const [providersError, setProvidersError] = useState('')
   const [provider, setProvider] = useState<StockProviderId | ''>('')
@@ -68,10 +77,11 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
       .then((list) => {
         if (!alive) return
         setProviders(list)
-        const first = list.find((p) => p.ok) || list[0]
-        if (first) {
-          setProvider(first.id)
-          setMediaType(first.mediaTypes[0])
+        const pick =
+          (initialProvider && list.find((p) => p.id === initialProvider)) || list.find((p) => p.ok) || list[0]
+        if (pick) {
+          setProvider(pick.id)
+          setMediaType(pick.mediaTypes[0])
         }
       })
       .catch((e) => {
@@ -80,7 +90,7 @@ export default function StockBrowser({ projectName, mode, onPicked, onImported, 
     return () => {
       alive = false
     }
-  }, [])
+  }, [initialProvider])
 
   const current = providers.find((p) => p.id === provider)
   /** 外链型来源：只有站内搜索入口，不检索也不导入 */

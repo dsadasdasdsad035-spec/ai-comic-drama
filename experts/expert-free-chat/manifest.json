@@ -1,0 +1,8 @@
+{
+  "id": "expert-free-chat",
+  "name": "自由创意",
+  "description": "轻量头脑风暴：读技能与项目梗概，不写回分镜。",
+  "imageDescription": "暖色对话气泡图标，表示自由创意头脑风暴",
+  "skillIds": [],
+  "toolIds": ["read_skill_text", "read_source", "read_episodes"]
+}

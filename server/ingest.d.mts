@@ -1,6 +1,5 @@
 /** server/ingest.mjs 的类型声明（摄取适配器：上传 / 直链 / yt-dlp / DTK） */
 
-export declare const MAX_SOURCE_BYTES: number
 export declare const DOWNLOAD_TIMEOUT_MS: number
 
 export interface IngestAdapterInfo {

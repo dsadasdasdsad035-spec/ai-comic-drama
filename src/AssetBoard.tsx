@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  callText,
   generateImage,
   getProject,
   patchProject,
@@ -11,14 +10,8 @@ import {
   type ProjectData,
   type Stage,
 } from './api'
-import {
-  buildDesignContext,
-  buildDesignPrompt,
-  designRatio,
-  mergeDesigns,
-  pickExtractedDesigns,
-} from './designExtract'
-import { CapModelSelect, hasTextModels, StageModelSelect, stageModelKey, type StagePick } from './ModelSelect'
+import { buildDesignPrompt, designRatio } from './designExtract'
+import { CapModelSelect, StageModelSelect, type StagePick } from './ModelSelect'
 import { CharacterImageCropModal } from './CharacterImageCropModal'
 import type { MaterialCropPlan } from './imageMaterialCrop'
 import {
@@ -27,13 +20,11 @@ import {
   releaseMaterialCropPlan,
 } from './materialImageGate'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
-import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
-import { builtinFailure, type BuiltinResult } from './agent/workbenchChat'
 import CameraLexiconBrowser from './CameraLexiconBrowser'
 import LexiconWhiteboxStudio from './LexiconWhiteboxStudio'
 import { getCameraLexiconCatalog } from './cameraLexicon'
 import { listLexiconWhitebox, type LexiconWhiteboxSheet } from './lexiconWhitebox'
-import StockBrowser from './stock/StockBrowser'
+import OnlineStockList from './stock/OnlineStockList'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
 import AssetVideoBoard from './AssetVideoBoard'
 import WorkbenchBar from './WorkbenchBar'
@@ -41,10 +32,27 @@ import { assetMediaType } from './mediaPick'
 import type { AssetKind } from './data'
 import { imageCost, money, type Pricing } from './pricing'
 import { endTask, startTask } from './tasks'
+import { BoardListToolbar } from './BoardListToolbar'
+import { BOARD_LIST_PAGE_SIZE, designListMatch, useBoardListFilter } from './boardListFilter'
+import CharacterBoard, { type CharacterBoardProps } from './CharacterBoard'
+import { MATERIAL_TAB_CHARACTER_KEY } from './shell/route'
+
+type MaterialTab = DesignKind | 'video' | 'character'
+
+function readInitialMaterialTab(): MaterialTab {
+  try {
+    if (sessionStorage.getItem(MATERIAL_TAB_CHARACTER_KEY) === 'character') {
+      sessionStorage.removeItem(MATERIAL_TAB_CHARACTER_KEY)
+      return 'character'
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return 'character'
+}
 
 type Props = {
   projectName: string
-  epNo: number
   settings: AppSettings | null
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
@@ -64,7 +72,12 @@ type Props = {
   /** 镜头语言「自定义白模」工作台需要的项目画幅与未保存回调 */
   projectAspect: string
   onEditorDirtyChange?: (dirty: boolean) => void
-}
+  /** 侧栏「素材」徽标：设定卡条数 */
+  onDesignCountChange?: (count: number) => void
+} & Omit<
+  CharacterBoardProps,
+  'embedded' | 'settings' | 'stagePick' | 'onPickStage' | 'projectName' | 'price' | 'toast' | 'missing' | 'onImageMissing'
+>
 
 const KIND_LABEL: Record<DesignKind, string> = { scene: '场景', prop: '道具' }
 
@@ -74,7 +87,6 @@ const KIND_LABEL: Record<DesignKind, string> = { scene: '场景', prop: '道具'
  */
 export default function AssetBoard({
   projectName,
-  epNo,
   settings,
   stagePick,
   onPickStage,
@@ -89,18 +101,24 @@ export default function AssetBoard({
   onImageMissing,
   projectAspect,
   onEditorDirtyChange,
+  onDesignCountChange,
+  ...characterProps
 }: Props) {
   const [project, setProject] = useState<ProjectData | null>(null)
   const [designs, setDesigns] = useState<DesignSheet[]>([])
-  type MaterialTab = DesignKind | 'video'
-  const [tab, setTab] = useState<MaterialTab>('scene')
+  const [tab, setTab] = useState<MaterialTab>(readInitialMaterialTab)
+  const { characters } = characterProps
   const [lexiconOpen, setLexiconOpen] = useState(false)
   const [lexiconView, setLexiconView] = useState<'preset' | 'custom'>('preset')
   const [whiteboxSheets, setWhiteboxSheets] = useState<LexiconWhiteboxSheet[]>([])
   const [loading, setLoading] = useState(false)
   const [stockOpen, setStockOpen] = useState(false)
+  const [videoAddOpen, setVideoAddOpen] = useState(false)
+
+  useEffect(() => {
+    if (tab !== 'video') setVideoAddOpen(false)
+  }, [tab])
   const [ready, setReady] = useState('')
-  const [extracting, setExtracting] = useState<'' | 'episode' | 'project'>('')
   const [running, setRunning] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [cropPending, setCropPending] = useState<{
@@ -115,25 +133,13 @@ export default function AssetBoard({
   const epochRef = useRef(0)
   /** 空板起始提示：本次会话关掉就不再出现 */
   const [tipOpen, setTipOpen] = useState(true)
-  const builtinStateRef = useRef({ extracting, settings, projectName, ready, project })
-  builtinStateRef.current = { extracting, settings, projectName, ready, project }
-  const runExtractRef = useRef<
-    (scope: 'episode' | 'project', signal?: AbortSignal) => Promise<BuiltinResult>
-  >(async (scope) =>
-    builtinFailure(
-      scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script',
-      '拆场景/道具尚未就绪',
-      {
-        label: scope === 'episode' ? '从本集拆' : '从全剧拆',
-        scope,
-        saveMode: 'immediate',
-      },
-    ),
-  )
-
   useEffect(() => {
     designsRef.current = designs
   }, [designs])
+
+  useEffect(() => {
+    if (ready === projectName) onDesignCountChange?.(designs.length)
+  }, [designs.length, ready, projectName, onDesignCountChange])
 
   useEffect(() => {
     const epoch = ++epochRef.current
@@ -179,9 +185,12 @@ export default function AssetBoard({
     if (!projectName || ready !== projectName) return
     const sig = JSON.stringify(designs)
     if (sig === savedSigRef.current) return
+    const epochAtSchedule = epochRef.current
+    const projectAtSchedule = projectName
     const t = window.setTimeout(() => {
+      if (epochRef.current !== epochAtSchedule || projectName !== projectAtSchedule) return
       savedSigRef.current = sig
-      patchProject(projectName, { designs }).catch((e) => {
+      patchProject(projectAtSchedule, { designs }).catch((e) => {
         toast((e as Error).message || '保存素材设定失败')
       })
     }, 900)
@@ -230,106 +239,6 @@ export default function AssetBoard({
     },
     [],
   )
-
-  const runExtract = useCallback(
-    async (scope: 'episode' | 'project', signal?: AbortSignal): Promise<BuiltinResult> => {
-      const label = scope === 'episode' ? '从本集拆' : '从全剧拆'
-      const action = scope === 'episode' ? 'extract_designs_episode' : 'extract_designs_script'
-      const fail = (message: string, cancelled = false) =>
-        builtinFailure(action, message, {
-          label,
-          scope,
-          saveMode: 'immediate',
-          ...(cancelled ? { cancelled: true } : {}),
-        })
-      if (extracting) return fail('正在拆场景/道具，请稍候')
-      if (!projectName || ready !== projectName || !project) return fail('先选择项目，再拆场景/道具')
-      if (!hasTextModels(settings)) return fail('设置页还没有可用的文本模型')
-      const { sceneText, shotText } = buildDesignContext({
-        scope,
-        epNo,
-        source: project.source,
-        episodes: project.episodes,
-        shots: project.shots,
-      })
-      if (!sceneText.trim() && !shotText.trim()) {
-        return fail(
-          scope === 'episode'
-            ? `第 ${epNo} 集还没有可拆的场次/镜头`
-            : '当前项目没有可用素材（source / 分集元数据 / 镜头都为空）',
-        )
-      }
-      if (signal?.aborted) return fail('已取消', true)
-      setExtracting(scope)
-      const t0 = Date.now()
-      try {
-        const scopeLabel =
-          scope === 'episode' ? `第 ${epNo} 集分集梗概与分镜` : '全剧原著梗概、分集元数据与分镜'
-        const shotBlock = shotText ? `\n\n【镜头摘要】\n${shotText}` : ''
-        const skill = await buildBoardSkillPrompt('asset', { scopeLabel, sceneText, shotBlock })
-        const r = await callText<{ scenes?: unknown[]; props?: unknown[] }>({
-          system: skill.system,
-          modelKey: stageModelKey(settings, 'asset', stagePick),
-          json: true,
-          maxTokens: 6000,
-          prompt: skill.task,
-          signal,
-        })
-        assertSkillOutput('designs-v1', r.json)
-        const incoming = pickExtractedDesigns(r.json)
-        if (incoming.length === 0) {
-          throw new Error(
-            scope === 'project'
-              ? '模型没找到场景或道具：全剧素材里没有可识别的地点与道具。补全分镜描述或原著梗概，或改用「从本集拆」。'
-              : '模型没找到场景或道具：本集场次与分镜里没有可识别的地点与道具。先补分镜的画面描述，再拆一次。',
-          )
-        }
-        if (signal?.aborted) return fail('已取消', true)
-        const { next, added, updated } = mergeDesigns(designsRef.current, incoming)
-        setDesigns(next)
-        let saved = true
-        try {
-          await patchProject(projectName, { designs: next })
-          savedSigRef.current = JSON.stringify(next)
-        } catch {
-          saved = false
-        }
-        const secs = Math.round((Date.now() - t0) / 1000)
-        return {
-          ok: true,
-          action,
-          label,
-          scope,
-          summary:
-            `拆出 ${incoming.length} 个素材 · ${secs}s｜新增 ${added.length}` +
-            (updated.length ? ` · 合并 ${updated.length}` : '') +
-            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
-            (saved ? ' · 已保存到项目' : ' · 已写入本地草稿，但落库失败'),
-          counts: { total: next.length, added: added.length, updated: updated.length },
-          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
-          elapsedMs: Date.now() - t0,
-          saveMode: 'immediate',
-        }
-      } catch (e) {
-        const err = e as Error
-        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
-        return fail(cancelled ? '已取消' : err.message || '拆场景/道具失败', cancelled)
-      } finally {
-        setExtracting('')
-      }
-    },
-    [epNo, extracting, project, projectName, ready, settings, stagePick],
-  )
-  runExtractRef.current = runExtract
-
-  const extract = async (scope: 'episode' | 'project') => {
-    const r = await runExtract(scope)
-    if (!r.ok) {
-      if (!r.cancelled) toast(r.error || '拆场景/道具失败')
-      return
-    }
-    toast(r.summary)
-  }
 
   const generate = async (d: DesignSheet) => {
     if (!d.promptEn.trim()) {
@@ -566,8 +475,14 @@ export default function AssetBoard({
     [project?.assets],
   )
   const shown = useMemo(
-    () => (tab === 'video' ? [] : designs.filter((d) => d.kind === tab)),
+    () => (tab === 'video' || tab === 'character' ? [] : designs.filter((d) => d.kind === tab)),
     [designs, tab],
+  )
+  const designList = useBoardListFilter(
+    shown,
+    designListMatch,
+    BOARD_LIST_PAGE_SIZE,
+    tab === 'character' || tab === 'video' ? 'scene' : tab,
   )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -586,26 +501,46 @@ export default function AssetBoard({
                   ? `镜头语言 · ${getCameraLexiconCatalog().count} 段预置运镜（非场景/道具设定）`
                   : `镜头语言 · 自定义白模 ${whiteboxSheets.length} 条`
                 : '镜头语言 · 先选择项目再导入'
+              : tab === 'character'
+                ? (
+                    <>
+                      项目级 · {characters.length} 个角色 ·{' '}
+                      {characterProps.selectedShot
+                        ? `当前镜头 ${characterProps.selectedShot.no}`
+                        : '未选镜头（到画布选镜后可注入）'}
+                    </>
+                  )
               : tab === 'video'
                 ? projectName
                   ? `视频库 ${videoCount} 条`
                   : '视频 · 先选择项目'
               : projectName
-                ? `E${String(epNo).padStart(2, '0')} · 场景 ${sceneCount} · 道具 ${propCount}`
+                ? `场景 ${sceneCount} · 道具 ${propCount} · 项目级设定`
                 : '先选择项目'}
           </span>
         }
         settings={
-          lexiconOpen || tab === 'video' ? null : (
+          lexiconOpen || tab === 'video' ? null : tab === 'character' ? (
+            <>
+              <StageModelSelect
+                stage={'character' as Stage}
+                label="拆角色模型"
+                settings={settings}
+                pick={stagePick}
+                onChange={onPickStage}
+                compact
+              />
+              <CapModelSelect
+                cap="view"
+                label="三视图模型"
+                settings={settings}
+                value={characterProps.viewModel}
+                onChange={characterProps.onPickViewModel}
+                className="wb-field"
+              />
+            </>
+          ) : (
           <>
-            <StageModelSelect
-              stage="asset"
-              label="拆素材模型"
-              settings={settings}
-              pick={stagePick}
-              onChange={onPickStage}
-              compact
-            />
             <CapModelSelect
               cap="image"
               label="设定图模型"
@@ -625,25 +560,47 @@ export default function AssetBoard({
               className="btn-ghost"
               onClick={() => setLexiconOpen(false)}
             >
-              返回场景/道具
+              返回素材分类
             </button>
-          ) : tab === 'video' ? null : (
-          <>
+          ) : tab === 'character' ? (
+            <>
+              <button
+                className={characters.length === 0 ? 'btn primary' : 'btn'}
+                onClick={characterProps.onAdd}
+                title="新建一张角色卡"
+              >
+                + 新建角色
+              </button>
+              {characters.length > 0 ? (
+                <button
+                  className={characterProps.charsOn ? 'btn-ghost' : 'btn primary'}
+                  onClick={characterProps.onToggleChars}
+                  title="把角色卡显示到画布上（画布视图可见，可拖到分镜旁）"
+                >
+                  {characterProps.charsOn ? '角色已在画布' : '全部上画布'}
+                </button>
+              ) : null}
+            </>
+          ) : tab === 'video' ? (
             <button
-              className="btn-ghost"
-              disabled={!projectName || ready !== projectName || !!extracting}
-              onClick={() => void extract('project')}
-              title="用当前项目的原著、分集场次和全部分镜拆场景/道具"
+              type="button"
+              className="btn primary"
+              data-asset-video-add
+              disabled={!projectName || ready !== projectName}
+              onClick={() => setVideoAddOpen(true)}
+              title="链接下载或上传本地 MP4 进视频库"
             >
-              {extracting === 'project' ? '拆解中…' : '从全剧拆'}
+              + 添加视频
             </button>
+          ) : (
+          <>
             <button
               className="btn-ghost"
               disabled={!projectName || ready !== projectName}
               onClick={() => setStockOpen(true)}
               title="检索公开图库，把图片 / 视频 / 音频下载进项目"
             >
-              在线素材库
+              在线素材列表
             </button>
             <button
               className="btn-ghost"
@@ -664,14 +621,6 @@ export default function AssetBoard({
               + 道具卡
             </button>
             <button
-              className={withImage === 0 ? 'btn primary' : 'btn-ghost'}
-              disabled={!projectName || ready !== projectName || !!extracting}
-              onClick={() => void extract('episode')}
-              title="用当前集的剧本场次和全部分镜拆场景/道具"
-            >
-              {extracting === 'episode' ? '拆解中…' : '从本集拆'}
-            </button>
-            <button
               className={canPush ? 'btn primary' : 'btn'}
               disabled={!canPush}
               onClick={pushAll}
@@ -685,6 +634,17 @@ export default function AssetBoard({
       />
 
       <div className="asset-tabs">
+        <button
+          type="button"
+          className={!lexiconOpen && tab === 'character' ? 'on' : ''}
+          data-asset-character-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('character')
+          }}
+        >
+          角色 <span>{characters.length}</span>
+        </button>
         <button
           className={!lexiconOpen && tab === 'scene' ? 'on' : ''}
           onClick={() => {
@@ -716,7 +676,9 @@ export default function AssetBoard({
             ? lexiconView === 'preset'
               ? '镜头语言：先预览再发布素材卡 · 白膜仅供运镜参照'
               : '自定义白模：用 3D 工作台写代码并渲染 MP4，再发布为素材卡'
-            : tab === 'video'
+            : tab === 'character'
+              ? '角色为项目级设定；在画布选中镜头后可在角色卡上注入 lookEn'
+              : tab === 'video'
               ? '参考片与平台下载统一进视频库；几何分析在白模工作台选用'
               : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
@@ -765,11 +727,26 @@ export default function AssetBoard({
             />
           )}
         </>
+      ) : tab === 'character' ? (
+        <CharacterBoard
+          embedded
+          {...characterProps}
+          settings={settings}
+          stagePick={stagePick}
+          onPickStage={onPickStage}
+          projectName={projectName}
+          price={price}
+          toast={toast}
+          missing={missing}
+          onImageMissing={onImageMissing}
+        />
       ) : tab === 'video' ? (
         <AssetVideoBoard
           projectName={projectName}
           disabled={!projectName || ready !== projectName}
           assets={project?.assets || []}
+          ingestOpen={videoAddOpen}
+          onIngestOpenChange={setVideoAddOpen}
           onAssetsChange={async (next) => {
             setProject((p) => (p ? { ...p, assets: next } : p))
             if (!projectName) return
@@ -780,11 +757,26 @@ export default function AssetBoard({
           toast={toast}
         />
       ) : (
+      <>
+      {shown.length > 0 ? (
+        <BoardListToolbar
+          query={designList.query}
+          onQueryChange={designList.setQuery}
+          placeholder={`搜索${KIND_LABEL[tab]}名称、中文说明、promptEn、镜号…`}
+          ariaLabel={`搜索${KIND_LABEL[tab]}设定`}
+          filteredCount={designList.filteredCount}
+          totalCount={designList.totalCount}
+          page={designList.page}
+          totalPages={designList.totalPages}
+          onPageChange={designList.setPage}
+          pageSize={BOARD_LIST_PAGE_SIZE}
+        />
+      ) : null}
       <div className="char-grid" data-asset-design-grid>
         {loading ? (
           <div className="char-empty-board">正在读取素材设定…</div>
         ) : !projectName ? (
-          <div className="char-empty-board">先在顶栏选择项目，再拆场景/道具。</div>
+          <div className="char-empty-board">先在顶栏选择项目，再新建场景/道具卡。</div>
         ) : shown.length === 0 ? (
           <div className="char-empty-board">
             {tipOpen ? (
@@ -797,11 +789,13 @@ export default function AssetBoard({
                 </button>
               </>
             ) : (
-              `还没有${KIND_LABEL[tab]}设定，点右上角「从本集拆」或「从全剧拆」开始。`
+              `还没有${KIND_LABEL[tab]}设定，点右上角「+ ${tab === 'scene' ? '场景' : '道具'}卡」或打开工作台 Pi 助手。`
             )}
           </div>
+        ) : designList.filteredCount === 0 ? (
+          <div className="char-empty-board">没有匹配的{KIND_LABEL[tab]}，换个关键词试试。</div>
         ) : (
-          shown.map((d) => (
+          designList.slice.map((d) => (
             <DesignCard
               key={d.id}
               d={d}
@@ -822,21 +816,22 @@ export default function AssetBoard({
           ))
         )}
       </div>
+      </>
       )}
       {stockOpen && (
         <div className="mp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setStockOpen(false)}>
-          <div className="mp-dialog stock-dialog" role="dialog" aria-modal="true" aria-label="在线素材库">
+          <div className="mp-dialog stock-dialog" role="dialog" aria-modal="true" aria-label="在线素材列表">
             <header className="mp-head">
               <div>
-                <b>在线素材库</b>
-                <span>检索公开图库，下载到当前项目</span>
+                <b>在线素材列表</b>
+                <span>推荐站点卡片 · 可站内检索导入</span>
               </div>
               <button type="button" className="mp-close" aria-label="关闭" onClick={() => setStockOpen(false)}>
                 ×
               </button>
             </header>
             <div className="mp-stock-body">
-              <StockBrowser
+              <OnlineStockList
                 projectName={projectName}
                 mode="library"
                 onImported={onStockImported}

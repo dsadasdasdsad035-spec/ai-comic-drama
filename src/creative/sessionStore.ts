@@ -55,6 +55,10 @@ export type CreativeSession = {
   mode: CreativeMode
   createdAt: string
   updatedAt: string
+  /** 归属项目；空表示未绑定（历史会话） */
+  project?: string
+  /** 会话绑定专家；空表示跟顶栏/项目记忆 */
+  expertId?: string
 }
 
 export type CreativeSessionSummary = CreativeSession & {
@@ -91,8 +95,10 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return o
 }
 
-export async function listCreativeSessions(limit = 100): Promise<CreativeSession[]> {
-  const res = await fetch(`/api/creative/sessions?limit=${encodeURIComponent(String(limit))}`)
+export async function listCreativeSessions(limit = 100, project?: string): Promise<CreativeSession[]> {
+  const q = new URLSearchParams({ limit: String(limit) })
+  if (project !== undefined) q.set('project', project)
+  const res = await fetch(`/api/creative/sessions?${q}`)
   const j = await readJson(res)
   return Array.isArray(j.sessions) ? (j.sessions as CreativeSession[]) : []
 }
@@ -100,6 +106,7 @@ export async function listCreativeSessions(limit = 100): Promise<CreativeSession
 export async function createCreativeSession(init: {
   title?: string
   mode?: CreativeMode
+  project?: string
 } = {}): Promise<CreativeSession> {
   const res = await fetch('/api/creative/sessions', {
     method: 'POST',
@@ -120,7 +127,7 @@ export async function getCreativeSession(id: string): Promise<CreativeSessionSum
 
 export async function patchCreativeSession(
   id: string,
-  patch: { title?: string; mode?: CreativeMode },
+  patch: { title?: string; mode?: CreativeMode; project?: string; expertId?: string },
 ): Promise<CreativeSession> {
   const res = await fetch(`/api/creative/sessions/${encodeURIComponent(id)}`, {
     method: 'PUT',

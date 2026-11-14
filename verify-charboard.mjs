@@ -42,7 +42,7 @@ await p.locator('.topbar-project select').selectOption('recycle')
 await p.waitForTimeout(1400)
 
 const before = await getChars()
-await p.getByRole('button', { name: '角色', exact: true }).click()
+await p.getByRole('button', { name: '素材', exact: true }).click(); await p.locator('[data-asset-character-tab]').click()
 await p.waitForTimeout(900)
 check('角色板列出全部角色', (await p.locator('.char-card').count()) === before.length, String(before.length))
 
@@ -112,7 +112,7 @@ const linkedBefore = await p.evaluate(async ({ nid, base, key }) => {
 check('已连上 char-陈默', linkedBefore.includes('char-陈默'), JSON.stringify(linkedBefore))
 
 // 角色视图里把「陈默」改名
-await p.getByRole('button', { name: '角色', exact: true }).click()
+await p.getByRole('button', { name: '素材', exact: true }).click(); await p.locator('[data-asset-character-tab]').click()
 await p.waitForTimeout(500)
 const chenmo = p.locator('.char-card').filter({ hasText: '陈默' }).first()
 await chenmo.locator('.btn-mini', { hasText: '编辑' }).click()

@@ -1,4 +1,5 @@
 import catalogJson from '../public/presets/camera-moves-whitebox-132/manifest.json'
+import type { ShotData } from './types'
 
 export type LexiconCategory = 'camera-move' | 'shot-grammar'
 
@@ -97,6 +98,20 @@ export function resolveShotLexiconRef(
   const byMove = data.move ? resolvePrimaryMove(data.move) : undefined
   if (byMove) return byMove
   return data.size ? resolvePrimarySize(data.size) : undefined
+}
+
+/** 勾选「作为运镜 reference_video」时解析可提交的 MP4 地址（项目导入 URL 优先，否则预置库地址） */
+export function resolveMotionLexiconVideoRef(
+  data: Pick<ShotData, 'motionLexiconAsRef' | 'lexiconRefKey' | 'lexiconRefUrl' | 'size' | 'move'>,
+): { url: string; label: string; key?: string } | null {
+  if (!data.motionLexiconAsRef) return null
+  const entry = data.lexiconRefKey
+    ? getCameraLexiconEntry(data.lexiconRefKey)
+    : resolveShotLexiconRef(data)
+  const url = String(data.lexiconRefUrl || entry?.url || '').trim()
+  if (!url) return null
+  const label = entry ? `运镜参照（内置库）· ${entry.cn}` : '运镜参照（内置库）'
+  return { url, label, key: entry?.key ?? data.lexiconRefKey }
 }
 
 export function lexiconMoveLine(data: {

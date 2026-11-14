@@ -184,10 +184,6 @@ globalThis.fetch = async (url, init) => {
   }
   return nativeFetch(url, init)
 }
-const loaded = await lib.loadSkills(true)
-check('registry 载入 creative-plan', loaded.skills.has('creative-plan'))
-check('registry 载入 video-reverse', loaded.skills.has('video-reverse'))
-
 const creativeSet = mockCreativeSet(lib)
 let projectSnap = mockProject()
 const projectCtx = {

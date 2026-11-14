@@ -43,7 +43,7 @@ export function seed(projectsDir, code) {
 }
 
 /** 起一个临时 dev server；返回 { app, stop } */
-export async function startApp({ projectsDir, port }) {
+export async function startApp({ projectsDir, port, extraEnv = {} }) {
   const app = `http://127.0.0.1:${port}`
   try {
     await fetch(`${app}/api/health`, { signal: AbortSignal.timeout(800) })
@@ -56,7 +56,7 @@ export async function startApp({ projectsDir, port }) {
   const child = spawn(
     process.execPath,
     [path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', String(port), '--strictPort'],
-    { cwd: ROOT, env: { ...process.env, SB_PROJECTS_DIR: projectsDir }, stdio: 'ignore' },
+    { cwd: ROOT, env: { ...process.env, SB_PROJECTS_DIR: projectsDir, ...extraEnv }, stdio: 'ignore' },
   )
 
   let up = false

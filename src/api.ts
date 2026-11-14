@@ -45,6 +45,31 @@ function abortError(message = '已取消'): Error {
   return e
 }
 
+/** 同源代理请求携带计费会话 Cookie（sb_session） */
+function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, { ...init, credentials: 'include' })
+}
+
+type ProxyErrBody = { message?: string; kind?: string; code?: string }
+
+/** 代理 402/401 等可读说明（平台计费 / 登录） */
+function proxyErrorMessage(j: ProxyErrBody, fallback: string): string {
+  const base = j.message || fallback
+  if (j.kind === 'billing') {
+    if (j.code === 'user_insufficient_credits') return `${base}（平台积分不足，请到设置 → 计费充值）`
+    if (j.code === 'upstream_apimart_balance') return `${base}（上游 APIMart 余额不足，请联系管理员）`
+    return base
+  }
+  if (j.kind === 'auth') {
+    if (j.code === 'login_required') return `${base}（请先在设置 → 计费登录）`
+    if (j.code === 'email_unverified') return `${base}（请先完成邮箱验证）`
+    if (j.code) return base
+    return `${base}（密钥无效）`
+  }
+  if (j.kind === 'no-key') return base
+  return base
+}
+
 function timeoutError(message = '生成超时，可重试'): Error {
   const e = new Error(message)
   e.name = 'TimeoutError'
@@ -82,7 +107,7 @@ export async function generateImage(opts: {
   try {
     let res: Response
     try {
-      res = await fetch('/api/seedream', {
+      res = await apiFetch('/api/seedream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
@@ -103,17 +128,7 @@ export async function generateImage(opts: {
       throw new Error(`代理返回了非 JSON 响应（HTTP ${res.status}）`)
     }
 
-    if (!j.ok) {
-      const hint =
-        j.kind === 'billing'
-          ? '（火山方舟账户可能欠费或余额不足）'
-          : j.kind === 'no-key'
-            ? ''
-            : j.kind === 'auth'
-              ? '（密钥无效）'
-              : ''
-      throw new Error(`${j.message}${hint}`)
-    }
+    if (!j.ok) throw new Error(proxyErrorMessage(j, j.message || '图片生成失败'))
     const urls: string[] = Array.isArray(j.urls) ? j.urls : [j.url]
     return { ...(j as GenResult), urls }
   } finally {
@@ -127,7 +142,7 @@ export async function saveImageDataUrl(
   dataUrl: string,
   opts: { project?: string; prefix?: string } = {},
 ): Promise<string> {
-  const r = await fetch('/api/save-image', {
+  const r = await apiFetch('/api/save-image', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataUrl, ...opts }),
@@ -139,7 +154,7 @@ export async function saveImageDataUrl(
 
 export async function checkHealth(): Promise<{ hasKey: boolean; model: string } | null> {
   try {
-    const r = await fetch('/api/health')
+    const r = await apiFetch('/api/health')
     return await r.json()
   } catch {
     return null
@@ -194,7 +209,7 @@ export async function startVideo(
 ): Promise<{ id: string; mode?: 'ref' | 'first' | 'video'; skipped?: string[] }> {
   let res: Response
   try {
-    res = await fetch('/api/seedance', {
+    res = await apiFetch('/api/seedance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(o),
@@ -203,7 +218,7 @@ export async function startVideo(
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '提交失败')
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '提交失败'))
   return { id: j.id as string, mode: j.mode, skipped: j.skipped }
 }
 
@@ -232,7 +247,7 @@ export async function recoverVideo(body: {
 }): Promise<{ url: string }> {
   let res: Response
   try {
-    res = await fetch('/api/seedance/recover', {
+    res = await apiFetch('/api/seedance/recover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -257,7 +272,7 @@ export async function waitVideo(
     await sleepMs(3000, signal)
     let j: any
     try {
-      const r = await fetch(`/api/seedance?id=${encodeURIComponent(id)}`)
+      const r = await apiFetch(`/api/seedance?id=${encodeURIComponent(id)}`)
       j = await readJsonRes(r)
     } catch (e) {
       throw new Error((e as Error).message)
@@ -294,7 +309,7 @@ export async function fetchTransitionSuggest(body: {
   target: import('./types').ShotData
   transitionOut?: import('./types').TransitionOut | null
 }) {
-  const r = await fetch('/api/transition/suggest', {
+  const r = await apiFetch('/api/transition/suggest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -390,7 +405,7 @@ export async function assembleAnimatic(
   const tid = startTask('export', `合成 ${resolution}`)
   let res: Response
   try {
-    res = await fetch('/api/assemble', {
+    res = await apiFetch('/api/assemble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -409,15 +424,16 @@ export async function assembleAnimatic(
   }
   const j = await readJsonRes(res)
   if (!j.ok) {
-    endTask(tid, j.message || '提交合成失败')
-    throw new Error(j.message || '提交合成失败')
+    const msg = proxyErrorMessage(j, '提交合成失败')
+    endTask(tid, msg)
+    throw new Error(msg)
   }
 
   const t0 = Date.now()
   try {
     for (;;) {
     await new Promise((r) => setTimeout(r, 1200))
-    const r = await fetch(`/api/assemble?id=${encodeURIComponent(j.id)}`)
+    const r = await apiFetch(`/api/assemble?id=${encodeURIComponent(j.id)}`)
     const s = await readJsonRes(r)
     if (!s.ok) throw new Error(s.message || '查询合成状态失败')
     if (s.status === 'succeeded') {
@@ -476,7 +492,7 @@ export async function generateVoice(o: {
 }): Promise<VoiceResult> {
   let res: Response
   try {
-    res = await fetch('/api/voice', {
+    res = await apiFetch('/api/voice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(o),
@@ -485,7 +501,7 @@ export async function generateVoice(o: {
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '配音失败')
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '配音失败'))
   return j as VoiceResult
 }
 
@@ -502,7 +518,7 @@ export async function runLipSync(o: {
   audio: string
   model?: string
 }): Promise<LipSyncResult> {
-  const r = await fetch('/api/lipsync', {
+  const r = await apiFetch('/api/lipsync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(o),
@@ -533,7 +549,7 @@ export async function runLipSyncQa(o: {
   noise?: string
   minSilence?: number
 }): Promise<LipSyncQaResult> {
-  const r = await fetch('/api/lipsync/qa', {
+  const r = await apiFetch('/api/lipsync/qa', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(o),
@@ -570,7 +586,7 @@ export async function listVoices(modelKey?: string, refresh = false): Promise<Vo
     if (modelKey) params.set('modelKey', modelKey)
     if (refresh) params.set('refresh', '1')
     const q = params.toString() ? `?${params.toString()}` : ''
-    const r = await fetch(`/api/voices${q}`)
+    const r = await apiFetch(`/api/voices${q}`)
     const j = await readJsonRes(r)
     if (!j.ok) return { provider: 'none', voices: [] }
     return {
@@ -751,14 +767,14 @@ export type ProjectData = {
 }
 
 export async function listProjects(): Promise<{ root: string; projects: ProjectSummary[] }> {
-  const r = await fetch('/api/project')
+  const r = await apiFetch('/api/project')
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '读取项目列表失败')
   return { root: j.root, projects: j.projects ?? [] }
 }
 
 export async function getProject(name: string): Promise<ProjectData> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`)
+  const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}`)
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '读取项目失败')
   return j.project as ProjectData
@@ -768,7 +784,7 @@ export async function createProject(
   name: string,
   init?: { title?: string; style?: string; aspect?: string },
 ): Promise<void> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}&create=1`, {
+  const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}&create=1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(init ?? {}),
@@ -808,7 +824,7 @@ export type ProjectDeleteResult = {
 }
 
 export async function previewProjectDelete(name: string): Promise<ProjectDeletePreview> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}&preview=delete`)
+  const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}&preview=delete`)
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '读取删除预览失败')
   return j as ProjectDeletePreview
@@ -817,7 +833,7 @@ export async function previewProjectDelete(name: string): Promise<ProjectDeleteP
 /** 批量预览：一次请求算完所有选中项，避免几百个并发请求 */
 export async function previewProjectDeletes(names: string[]): Promise<ProjectDeletePreview[]> {
   if (!names.length) return []
-  const r = await fetch('/api/project?preview=delete', {
+  const r = await apiFetch('/api/project?preview=delete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ names }),
@@ -837,7 +853,7 @@ export async function deleteProjects(names: string[]): Promise<{
   deleted: string[]
   sharedFilesKept: true
 }> {
-  const r = await fetch('/api/project', {
+  const r = await apiFetch('/api/project', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ names }),
@@ -867,7 +883,7 @@ export async function patchProject(
   name: string,
   patch: ProjectPatch,
 ): Promise<{ shots: ProjectShot[]; characters: unknown[]; savedAt: string }> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
+  const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -892,7 +908,7 @@ export async function mergeProjectShots(
 
 /** 场景布局是独立顶层数据：整表替换，不跟 episodes 一起被剧本站覆盖 */
 export async function saveProject(name: string, project: ProjectData): Promise<void> {
-  const r = await fetch(`/api/project?name=${encodeURIComponent(name)}`, {
+  const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project }),
@@ -964,7 +980,7 @@ export async function callText<T = unknown>(o: TextOpts): Promise<TextResult<T>>
   let res: Response
   const { signal, ...body } = o
   try {
-    res = await fetch('/api/text', {
+    res = await apiFetch('/api/text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -976,7 +992,7 @@ export async function callText<T = unknown>(o: TextOpts): Promise<TextResult<T>>
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '文本生成失败')
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '文本生成失败'))
   return {
     ...(j.json !== undefined ? { json: j.json as T } : {}),
     text: j.text ?? '',
@@ -1002,7 +1018,7 @@ export async function callTextStream<T = unknown>(
   const { signal, onProgress, onToolCallDelta, ...body } = o
   let res: Response
   try {
-    res = await fetch('/api/text', {
+    res = await apiFetch('/api/text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...body, stream: true }),
@@ -1017,7 +1033,7 @@ export async function callTextStream<T = unknown>(
   if (!res.ok || !res.body || !contentType.includes('text/event-stream')) {
     // 回退：整段 JSON（mock、渠道忽略 stream、或代理报错）
     const j = await readJsonRes(res)
-    if (!j.ok) throw new Error(j.message || '文本生成失败')
+    if (!j.ok) throw new Error(proxyErrorMessage(j, '文本生成失败'))
     return {
       ...(j.json !== undefined ? { json: j.json as T } : {}),
       text: j.text ?? '',
@@ -1118,7 +1134,7 @@ export async function askVision(
   const { signal, ...body } = o
   let res: Response
   try {
-    res = await fetch('/api/vision', {
+    res = await apiFetch('/api/vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1128,7 +1144,7 @@ export async function askVision(
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '视觉理解失败')
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '视觉理解失败'))
   return {
     json: j.json,
     text: j.text ?? '',
@@ -1155,7 +1171,7 @@ export async function askVideoVision(
   const { signal, ...body } = o
   let res: Response
   try {
-    res = await fetch('/api/video-vision', {
+    res = await apiFetch('/api/video-vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1165,7 +1181,7 @@ export async function askVideoVision(
     throw new Error('连不上本地代理，dev server 是否还在运行？')
   }
   const j = await readJsonRes(res)
-  if (!j.ok) throw new Error(j.message || '视频理解失败')
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '视频理解失败'))
   return {
     json: j.json,
     text: j.text ?? '',
@@ -1296,14 +1312,14 @@ export type AppSettings = {
 }
 
 export async function getSettings(): Promise<{ settings: AppSettings; db?: string }> {
-  const r = await fetch('/api/settings')
+  const r = await apiFetch('/api/settings')
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '读取设置失败')
   return { settings: j.settings as AppSettings, db: j.db }
 }
 
 export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const r = await fetch('/api/settings', {
+  const r = await apiFetch('/api/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -1327,7 +1343,7 @@ export type ProviderTestResult = {
 /** 用一个最轻的请求验证渠道的 Key / baseUrl / 首个文本模型是否可用 */
 export async function testProvider(id: string, provider?: Provider): Promise<ProviderTestResult> {
   try {
-    const r = await fetch('/api/test-provider', {
+    const r = await apiFetch('/api/test-provider', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, provider }),
@@ -1343,7 +1359,7 @@ export type VideoFile = { name: string; url: string; size: number; mtime: number
 
 export async function listVideoFiles(): Promise<VideoFile[]> {
   try {
-    const r = await fetch('/api/videos')
+    const r = await apiFetch('/api/videos')
     const j = await readJsonRes(r)
     return j.ok ? ((j.videos ?? []) as VideoFile[]) : []
   } catch {
@@ -1369,7 +1385,7 @@ export async function importCameraLexiconPreset(
   projectName: string,
   key: string,
 ): Promise<CameraLexiconImportResult> {
-  const r = await fetch('/api/camera-lexicon/import', {
+  const r = await apiFetch('/api/camera-lexicon/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project: projectName, key }),
@@ -1381,7 +1397,7 @@ export async function importCameraLexiconPreset(
 
 export async function listMedia(projectName: string): Promise<MediaBundle> {
   try {
-    const r = await fetch(`/api/media?name=${encodeURIComponent(projectName)}`)
+    const r = await apiFetch(`/api/media?name=${encodeURIComponent(projectName)}`)
     const j = await readJsonRes(r)
     if (!j.ok) return { images: [], videos: [], assets: [] }
     return { images: j.images ?? [], videos: j.videos ?? [], assets: j.assets ?? [] }
@@ -1445,7 +1461,7 @@ export async function ingestShot3dReference(input: {
   name?: string
   adapter?: string
 }): Promise<Shot3dIngestResult> {
-  const r = await fetch('/api/shot-3d/ingest-reference', {
+  const r = await apiFetch('/api/shot-3d/ingest-reference', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -1456,7 +1472,7 @@ export async function ingestShot3dReference(input: {
 }
 
 export async function vggtWorkerStatus(): Promise<{ ok: boolean; available: boolean }> {
-  const r = await fetch('/api/vggt/status')
+  const r = await apiFetch('/api/vggt/status')
   return r.json()
 }
 
@@ -1467,7 +1483,7 @@ export async function submitVggtAnalyze(input: {
   effectiveSeconds?: number
   maxFrames?: number
 }): Promise<VggtJob> {
-  const r = await fetch('/api/vggt/analyze', {
+  const r = await apiFetch('/api/vggt/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -1478,7 +1494,7 @@ export async function submitVggtAnalyze(input: {
 }
 
 export async function getVggtJob(id: string): Promise<VggtJob | null> {
-  const r = await fetch(`/api/vggt/jobs/${encodeURIComponent(id)}`)
+  const r = await apiFetch(`/api/vggt/jobs/${encodeURIComponent(id)}`)
   const j = await r.json()
   if (!j.ok) return null
   return j.job as VggtJob
@@ -1490,7 +1506,7 @@ export async function extractFrames(
   signal?: AbortSignal,
   times?: number[],
 ): Promise<{ urls: string[]; duration: number; times: number[] }> {
-  const r = await fetch('/api/frames', {
+  const r = await apiFetch('/api/frames', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ video, count, ...(times?.length ? { times } : {}) }),

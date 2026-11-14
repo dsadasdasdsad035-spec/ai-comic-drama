@@ -1,0 +1,44 @@
+{
+  "source": "storyboard-builtin",
+  "items": [
+    {
+      "id": "storyboard-platform",
+      "name": "分镜平台能力",
+      "description": "内置：read_* / submit_* / validate_contract。Pi 创意聊天默认绑定；此处仅作已安装记录，无需 URL。",
+      "category": "platform",
+      "tags": ["builtin", "submit", "read"],
+      "url": "",
+      "transport": "builtin",
+      "authType": "none",
+      "official": true,
+      "builtin": true,
+      "aliases": ["platform", "storyboard"]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "GitHub 远程 MCP：仓库、Issue、PR 等。安装后在设置里填写 Personal Access Token。",
+      "category": "development",
+      "tags": ["git", "code"],
+      "iconUrl": "https://github.githubassets.com/favicons/favicon.png",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "transport": "http",
+      "authType": "bearer",
+      "official": true,
+      "aliases": ["github"]
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch",
+      "description": "抓取网页正文，适合创意阶段快速读资料（需可访问的 HTTP MCP 端点）。",
+      "category": "creative",
+      "tags": ["web", "research"],
+      "iconUrl": "https://www.google.com/s2/favicons?domain=fetchmcp.com&sz=64",
+      "url": "",
+      "transport": "http",
+      "authType": "none",
+      "official": false,
+      "aliases": ["fetch"]
+    }
+  ]
+}

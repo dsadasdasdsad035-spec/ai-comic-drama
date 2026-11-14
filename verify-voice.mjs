@@ -46,7 +46,7 @@ await page.waitForTimeout(1500)
 // S01
 await page.locator('.react-flow__node').nth(0).click()
 await page.waitForTimeout(500)
-await page.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+await page.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
 await page.waitForTimeout(300)
 
 const box = page.locator('.voice-box')
@@ -59,7 +59,7 @@ console.log(
 )
 await page.screenshot({ path: `${OUT}/50-voice-idle.png` })
 
-// 生成单镜配音（Inspector 声音 Tab 吸底）
+// 生成单镜配音（Inspector 音画 Tab 吸底）
 await page.locator('[data-shot-footer] button', { hasText: '生成配音' }).click()
 await page.waitForTimeout(4000)
 const one = await page.evaluate(() => {
@@ -87,7 +87,7 @@ await page.waitForTimeout(200)
 for (let i = 0; i < 4; i++) {
   await page.locator('.react-flow__node').nth(i).click()
   await page.waitForTimeout(350)
-  await page.locator('.si-tabs [role="tab"]', { hasText: '声音' }).click()
+  await page.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
   await page.waitForTimeout(200)
   const btn = page.locator('[data-shot-footer] button', { hasText: /生成配音|重新配音/ })
   if ((await btn.count()) > 0 && (await btn.isEnabled())) await btn.click()

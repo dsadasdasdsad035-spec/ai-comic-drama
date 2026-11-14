@@ -92,9 +92,10 @@ try {
   await page.locator('.app-main').waitFor({ timeout: 15000 })
   check('点集行打开画布', (await page.evaluate(() => window.location.hash)) === `#/p/${READY}/board`, await page.evaluate(() => window.location.hash))
   await page.waitForTimeout(800)
-  const epLabel = await page.locator('.epbar-trigger').getAttribute('aria-label')
-  check('画布集选择器切到 E02', String(epLabel).includes('E02'), String(epLabel))
-  check('画布集摘要为 1 镜', String(epLabel).includes('1 镜'), String(epLabel))
+  await page.locator('[data-board-phase="canvas"]').waitFor({ timeout: 15000 })
+  const epLabel = await page.locator('[data-board-ep-label]').innerText()
+  check('画布上下文带显示 E02', epLabel.trim() === 'E02', epLabel)
+  check('概览点集直达 Flow', (await page.locator('.react-flow').count()) > 0)
 
   // 4) 状态机：缺角色 → 缺首帧 → 缺锚点 → 空项目
   await open(NOCAST)

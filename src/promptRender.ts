@@ -260,6 +260,73 @@ export function buildShotPromptRenderBundle(input: {
   return bundle
 }
 
+function assetInheritLabel(inherit: PromptRenderAssetInherit): string {
+  if (inherit === 'motion_only') return '仅参考运动/机位/节奏'
+  if (inherit === 'audio_only') return '音色与说话风格'
+  return '外观与场景一致'
+}
+
+/** 双空提示词时确定性拼装出片正文（不调用 LLM） */
+export function assembleShotPromptScript(bundle: PromptRenderBundle): string {
+  if (bundle.kind !== 'shot') return ''
+  const sections: string[] = []
+  const { scene, creative, assets, continuity, video } = bundle
+
+  const sceneBits: string[] = []
+  if (scene.subjects?.length) sceneBits.push(`主体：${scene.subjects.join('、')}`)
+  if (scene.location) sceneBits.push(`场景：${scene.location}`)
+  if (scene.environment?.trim()) sceneBits.push(scene.environment.trim())
+  if (sceneBits.length) sections.push(`【画面】\n${sceneBits.join('。')}`)
+
+  const moveBits = [creative.size, creative.move].filter(Boolean)
+  if (moveBits.length || creative.motionNote?.trim()) {
+    const head = moveBits.join('，')
+    const note = creative.motionNote?.trim()
+    sections.push(`【运镜】\n${[head, note].filter(Boolean).join('。')}`)
+  }
+
+  if (creative.dialogue?.trim()) sections.push(`【台词】\n${creative.dialogue.trim()}`)
+
+  const perf = creative.performance
+  if (Array.isArray(perf) && perf.length > 0) {
+    const lines = perf
+      .map((p) => {
+        const row = p as { character?: string; emotion?: string; action?: string }
+        if (!row.character) return ''
+        const bits = [row.emotion, row.action].filter(Boolean)
+        return `${row.character}：${bits.join('，') || '在场'}`
+      })
+      .filter(Boolean)
+    if (lines.length) sections.push(`【表演】\n${lines.join('；')}`)
+  }
+
+  const submitted = assets.filter((a) => a.submitted)
+  if (submitted.length) {
+    const lines = submitted.map((a) => {
+      const slot =
+        a.slot === 'image' ? `图${a.index}` : a.slot === 'video' ? `视频${a.index || 1}` : `音频${a.index || 1}`
+      return `${slot}：${a.label}（${assetInheritLabel(a.inherit)}）`
+    })
+    sections.push(`【参考】\n${lines.join('；')}`)
+  }
+
+  const ruleBits = [...(continuity.identityLocks ?? []), ...(continuity.forbidden ?? [])].filter(Boolean)
+  if (ruleBits.length) sections.push(`【约束】\n${ruleBits.join('；')}`)
+
+  if (video.durationSec) {
+    sections.push(`【成片】\n${video.durationSec}秒${video.aspectRatio ? `，画幅 ${video.aspectRatio}` : ''}`)
+  }
+
+  const body = sections.join('\n\n').trim()
+  if (body) return body
+  return [creative.size, creative.move, creative.desc].filter(Boolean).join('，') || '中景，固定机位，24fps'
+}
+
+/** 从当前镜头与出片请求生成脚本正文 */
+export function shotAutoScriptPrompt(input: Parameters<typeof buildShotPromptRenderBundle>[0]): string {
+  return assembleShotPromptScript(buildShotPromptRenderBundle(input))
+}
+
 export function buildTransitionPromptRenderBundle(input: {
   source: TNode
   target: TNode

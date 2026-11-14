@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { ArrowRight, Clapperboard, Sparkles } from 'lucide-react'
 import type { ProjectShot, ProjectSummary } from '../api'
 import type { ViewId } from './nav'
+import { primeMaterialTabCharacter } from './route'
 
 export type OverviewPageProps = {
   project: ProjectSummary
@@ -187,13 +188,20 @@ export default function OverviewPage({
               <b>创意</b>
               <small>从想法拆剧本与分镜</small>
             </button>
-            <button type="button" className="ov-quick-btn" onClick={() => onNavigate('chars')}>
+            <button
+              type="button"
+              className="ov-quick-btn"
+              onClick={() => {
+                primeMaterialTabCharacter()
+                onNavigate('assets')
+              }}
+            >
               <b>角色</b>
               <small>{charactersCount} 个角色卡</small>
             </button>
             <button type="button" className="ov-quick-btn" onClick={() => onNavigate('assets')}>
               <b>素材</b>
-              <small>场景图、参考图与白模</small>
+              <small>场景、道具、视频与镜头语言</small>
             </button>
           </div>
         </section>

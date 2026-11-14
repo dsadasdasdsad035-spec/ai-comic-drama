@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Settings as SettingsIcon,
   Sparkles,
-  Users,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -15,7 +14,7 @@ import {
  * 注意：这里不包含「提示词」与「镜头表」——首帧/视频提示词只在画布的单镜
  * Inspector 与画布内 Agent 里编辑。
  */
-export type ViewId = 'overview' | 'creative' | 'chars' | 'assets' | 'board' | 'settings'
+export type ViewId = 'overview' | 'creative' | 'assets' | 'board' | 'settings'
 
 export type NavGroupId = 'main' | 'create' | 'system'
 
@@ -39,7 +38,6 @@ export const NAV_GROUPS: Array<{ id: NavGroupId; label: string }> = [
 export const NAV_ITEMS: NavItem[] = [
   { id: 'overview', label: '概览', group: 'main', icon: LayoutDashboard, crumb: '概览' },
   { id: 'creative', label: '创意', group: 'create', icon: Sparkles, crumb: '创意' },
-  { id: 'chars', label: '角色', group: 'create', icon: Users, crumb: '角色', countKey: 'characters' },
   { id: 'assets', label: '素材', group: 'create', icon: Images, crumb: '素材', countKey: 'assets' },
   { id: 'board', label: '画布', group: 'create', icon: Clapperboard, crumb: '画布' },
   { id: 'settings', label: '设置', group: 'system', icon: SettingsIcon, crumb: '设置' },
@@ -55,8 +53,8 @@ export function navItemOf(id: ViewId): NavItem {
   return NAV_ITEMS.find((i) => i.id === id) ?? NAV_ITEMS[0]
 }
 
-/** 只有这些视图有「当前集」概念；设置与概览不显示集选择器 */
-export const EPISODE_VIEWS: ViewId[] = ['creative', 'chars', 'assets', 'board']
+/** 只有这些视图有「当前集」概念；创意/设置/概览/素材不显示集选择器 */
+export const EPISODE_VIEWS: ViewId[] = ['board']
 
 /** 需要横向空间的视图：窄屏时左栏优先让位 */
 export const WIDE_VIEWS: ViewId[] = ['board']

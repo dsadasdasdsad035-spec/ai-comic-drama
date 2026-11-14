@@ -1,0 +1,14 @@
+{
+  "id": "expert-character",
+  "name": "角色设定",
+  "description": "读角色表与技能包，协助整理角色并提交 characters 草稿（项目级，不按集/镜拆分）。",
+  "imageDescription": "紫色双人剪影图标，表示角色设定与人物关系专家",
+  "skillIds": [],
+  "toolIds": [
+    "read_source",
+    "read_characters",
+    "read_skill_text",
+    "validate_contract",
+    "submit_characters"
+  ]
+}

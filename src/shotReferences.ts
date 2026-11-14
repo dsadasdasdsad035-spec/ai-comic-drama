@@ -3,6 +3,8 @@ import { assetMediaType } from './mediaPick'
 import { selectExpressionReference } from './expressionSheet'
 import { PERFORMANCE_EMOTION_LABELS, type ShotData } from './types'
 import type { ShotNodeType } from './data'
+import { resolveMotionLexiconVideoRef } from './cameraLexicon'
+import { effectiveProdKind } from './shotProdKind'
 
 export const SHOT_PREV = 'shot-prev'
 export const SHOT_NEXT = 'shot-next'
@@ -221,23 +223,25 @@ export function collectShotReferences(input: {
     }
   }
 
-  // 2. 相邻分镜：只解析显式 token；源图只取当前画面。
-  for (const candidate of neighborCandidates(input.node, input.nodes)) {
-    if (!refIds.includes(candidate.token)) continue
-    if (!candidate.url) {
-      addMissing(missing, candidate.token, candidate.label, `${candidate.label}还没有生成画面`)
-      continue
+  // 2. 相邻分镜：仅出片镜；生图镜不使用邻镜 token（残留 token 静默忽略）。
+  if (effectiveProdKind(data) !== 'image') {
+    for (const candidate of neighborCandidates(input.node, input.nodes)) {
+      if (!refIds.includes(candidate.token)) continue
+      if (!candidate.url) {
+        addMissing(missing, candidate.token, candidate.label, `${candidate.label}还没有生成画面`)
+        continue
+      }
+      if (missingMedia.has(candidate.url)) {
+        addMissing(missing, candidate.token, candidate.label, `${candidate.label}画面文件缺失`)
+        continue
+      }
+      addRef(refs, seen, {
+        token: candidate.token,
+        source: 'adjacent',
+        url: candidate.url,
+        label: `${candidate.label}画面`,
+      })
     }
-    if (missingMedia.has(candidate.url)) {
-      addMissing(missing, candidate.token, candidate.label, `${candidate.label}画面文件缺失`)
-      continue
-    }
-    addRef(refs, seen, {
-      token: candidate.token,
-      source: 'adjacent',
-      url: candidate.url,
-      label: `${candidate.label}画面`,
-    })
   }
 
   // 3. 素材：asset- 节点；视频与音频不参与图片参考。
@@ -294,15 +298,18 @@ export function collectVideoReferences(input: {
   const missing: MissingShotReference[] = []
   const seen = new Set<string>()
 
-  if (data.motionLexiconAsRef && data.lexiconRefUrl) {
-    const url = String(data.lexiconRefUrl).trim()
-    if (url && !missingMedia.has(url) && !seen.has(url)) {
+  const lexiconVideo = resolveMotionLexiconVideoRef(data)
+  if (lexiconVideo) {
+    const { url, label, key } = lexiconVideo
+    if (missingMedia.has(url)) {
+      addMissing(missing, 'lexicon-motion-ref', label, '运镜库视频文件缺失，请重新选择条目或导入项目副本')
+    } else if (!seen.has(url)) {
       seen.add(url)
       refs.push({
         token: 'lexicon-motion-ref',
         url,
-        label: '运镜参照（内置库）',
-        title: data.lexiconRefKey || '运镜库',
+        label,
+        ...(key ? { title: key } : {}),
       })
     }
   }

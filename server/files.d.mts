@@ -1,6 +1,5 @@
 /** server/files.mjs 的类型声明（方舟 Files API 客户端） */
 
-export declare const MAX_VIDEO_BYTES: number
 export declare const MIN_VIDEO_SECONDS: number
 
 export interface ArkFile {

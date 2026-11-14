@@ -10,7 +10,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-export const MAX_VIDEO_BYTES = 200 * 1024 * 1024
 export const MIN_VIDEO_SECONDS = 2
 
 export class FileError extends Error {
@@ -68,13 +67,6 @@ export async function uploadFile({ baseUrl, apiKey, filePath, mime = '', fetchIm
   } catch {
     throw new FileError(`参考视频不存在：${path.basename(filePath)}`, { kind: 'missing', stage: '上传' })
   }
-  if (stat.size > MAX_VIDEO_BYTES) {
-    throw new FileError(
-      `参考视频超过 200MB（${(stat.size / 1024 / 1024).toFixed(1)}MB），无法上传`,
-      { kind: 'too-large', stage: '上传' },
-    )
-  }
-
   const form = new FormData()
   form.append('purpose', 'user_data')
   form.append('file', new Blob([fs.readFileSync(filePath)], { type: mime || guessMime(filePath) }), path.basename(filePath))
@@ -184,7 +176,7 @@ export async function waitFileActive({
   }
 }
 
-/** 上传前校验：mp4/mov、2~15/30 秒、≤200MB；webm 由调用方先转码 */
+/** 上传前校验：mp4/mov、2~15/30 秒；webm 由调用方先转码 */
 export function validateVideoFile({ filePath, seconds, maxDuration = 15 }) {
   const ext = path.extname(filePath).toLowerCase()
   if (ext !== '.mp4' && ext !== '.mov') {
@@ -198,12 +190,6 @@ export function validateVideoFile({ filePath, seconds, maxDuration = 15 }) {
     stat = fs.statSync(filePath)
   } catch {
     throw new FileError(`参考视频不存在：${path.basename(filePath)}`, { kind: 'missing', stage: '校验' })
-  }
-  if (stat.size > MAX_VIDEO_BYTES) {
-    throw new FileError(
-      `参考视频超过 200MB（${(stat.size / 1024 / 1024).toFixed(1)}MB）`,
-      { kind: 'too-large', stage: '校验' },
-    )
   }
   const d = Number(seconds)
   if (!Number.isFinite(d) || d <= 0) {

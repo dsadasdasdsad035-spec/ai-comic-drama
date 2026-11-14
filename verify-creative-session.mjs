@@ -71,6 +71,11 @@ try {
   const badMode = await put(`/api/creative/sessions/${a.id}`, { mode: 'nope' })
   check('非法模式回落 plan', badMode.json?.session?.mode === 'plan', String(badMode.json?.session?.mode))
 
+  const expertBind = await put(`/api/creative/sessions/${a.id}`, { expertId: 'expert-storyboard' })
+  check('会话绑定 expertId', expertBind.json?.session?.expertId === 'expert-storyboard', String(expertBind.json?.session?.expertId))
+  const expertClear = await put(`/api/creative/sessions/${a.id}`, { expertId: '' })
+  check('会话清空 expertId', !expertClear.json?.session?.expertId, String(expertClear.json?.session?.expertId))
+
   // 3) 第二条会话排在前面
   await new Promise((r) => setTimeout(r, 15))
   const second = await post('/api/creative/sessions', { title: '第二条' })

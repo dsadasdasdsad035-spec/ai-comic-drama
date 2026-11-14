@@ -178,6 +178,34 @@ CREATE TABLE IF NOT EXISTS skill_overrides (
   base_version INTEGER,
   updated_at   TEXT
 );
+CREATE TABLE IF NOT EXISTS skill_installs (
+  skill_id     TEXT PRIMARY KEY,
+  provider     TEXT NOT NULL DEFAULT 'skillhub',
+  slug         TEXT DEFAULT '',
+  namespace    TEXT DEFAULT '',
+  version      TEXT DEFAULT '',
+  text         TEXT NOT NULL,
+  meta         TEXT DEFAULT '{}',
+  installed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  server_id    TEXT PRIMARY KEY,
+  market_id    TEXT DEFAULT '',
+  name         TEXT NOT NULL,
+  description  TEXT DEFAULT '',
+  transport    TEXT NOT NULL DEFAULT 'http',
+  url          TEXT DEFAULT '',
+  command      TEXT DEFAULT '',
+  args         TEXT DEFAULT '[]',
+  headers      TEXT DEFAULT '{}',
+  environment  TEXT DEFAULT '{}',
+  auth_type    TEXT DEFAULT '',
+  auth_secret  TEXT DEFAULT '',
+  timeout_sec  INTEGER DEFAULT 60,
+  creative_chat INTEGER DEFAULT 0,
+  icon_url     TEXT DEFAULT '',
+  installed_at TEXT
+);
 CREATE TABLE IF NOT EXISTS chat_threads (
   project       TEXT NOT NULL,
   surface       TEXT NOT NULL,
@@ -188,11 +216,13 @@ CREATE TABLE IF NOT EXISTS chat_threads (
   updated_at    TEXT NOT NULL,
   PRIMARY KEY (project, surface, episode, shot_id)
 );
--- 创意会话：不属于任何项目，独立存储与清理
+-- 创意会话：按 project 归属；空 project 表示历史未绑定会话
 CREATE TABLE IF NOT EXISTS creative_sessions (
   id         TEXT PRIMARY KEY,
   title      TEXT DEFAULT '',
   mode       TEXT DEFAULT 'plan',
+  project    TEXT DEFAULT '',
+  expert_id  TEXT DEFAULT '',
   created_at TEXT,
   updated_at TEXT
 );
@@ -529,6 +559,130 @@ function importProject(d, name, data) {
   for (const [i, s] of (data.shots || []).entries()) {
     insertShot(d, pid, s, i, String(data.updated_at || now))
   }
+  importDesignsAssetsExtras(d, pid, data, now)
+}
+
+/** 从 project.json 体导入设定卡 / 素材库 / 白模 / 场景布局（首次迁移与补数据共用） */
+function importDesignsAssetsExtras(d, pid, data, now) {
+  for (const [i, a] of (data.assets || []).entries()) {
+    d.prepare(
+      'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,sort) VALUES (?,?,?,?,?,?,?,?)',
+    ).run(
+      pid,
+      String(a?.kind || 'image'),
+      String(a?.title || ''),
+      String(a?.url || ''),
+      String(a?.note || ''),
+      JSON.stringify(a?.tags ?? []),
+      String(a?.designId || a?.design_id || ''),
+      i,
+    )
+  }
+  for (const [i, sheet] of (data.designs || []).entries()) {
+    d.prepare(
+      `INSERT INTO designs
+       (project_id,design_id,kind,name,refs,summary_cn,prompt_en,keywords,image,candidates,active_idx,sort)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      pid,
+      String(sheet?.id || `design-migrate-${i}`),
+      String(sheet?.kind || 'scene'),
+      String(sheet?.name || ''),
+      JSON.stringify(sheet?.refs ?? []),
+      String(sheet?.summaryCn || sheet?.summary_cn || ''),
+      String(sheet?.promptEn || sheet?.prompt_en || ''),
+      JSON.stringify(sheet?.keywords ?? []),
+      String(sheet?.image || ''),
+      JSON.stringify(sheet?.candidates ?? []),
+      typeof sheet?.activeIdx === 'number' ? sheet.activeIdx : typeof sheet?.active_idx === 'number' ? sheet.active_idx : null,
+      i,
+    )
+  }
+  for (const [i, row] of (data.lexiconWhitebox || []).entries()) {
+    const id = String(row?.id || `wb-${i}`).trim()
+    if (!id) continue
+    const title = String(row?.title || id).trim()
+    const payload = { ...row, id, title }
+    d.prepare(
+      `INSERT INTO lexicon_whitebox (project_id,sheet_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
+    ).run(pid, id, JSON.stringify(payload), i, now)
+  }
+  for (const [i, raw] of (data.sceneLayouts || []).entries()) {
+    const one = sanitizeStoredSceneLayout(raw)
+    if (!one) continue
+    d.prepare(
+      `INSERT INTO scene_layouts (project_id,layout_id,episode,scene_no,layout,sort,updated_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    ).run(pid, one.id, one.episode, one.sceneNo, JSON.stringify(one), i, now)
+  }
+}
+
+/** 旧版只把场景图落在 assets（kind=scene/prop），补成设定卡供素材页展示 */
+function designSheetsFromLegacyAssets(assets) {
+  const out = []
+  for (const [i, a] of (assets || []).entries()) {
+    const kind = String(a?.kind || '')
+    if (kind !== 'scene' && kind !== 'prop') continue
+    const title = String(a?.title || '').trim()
+    const url = String(a?.url || '').trim()
+    if (!title && !url) continue
+    const designId = String(a?.designId || a?.design_id || '').trim()
+    out.push({
+      id: designId || `design-legacy-${kind}-${i}-${Date.now()}`,
+      kind,
+      name: title || (kind === 'scene' ? `场景素材 ${i + 1}` : `道具素材 ${i + 1}`),
+      refs: [],
+      summaryCn: String(a?.note || '').slice(0, 2000),
+      promptEn: '',
+      keywords: Array.isArray(a?.tags) ? a.tags : [],
+      ...(url ? { image: url } : {}),
+    })
+  }
+  return out
+}
+
+function tableCount(pid, table) {
+  const row = db.prepare(`SELECT COUNT(*) as c FROM ${table} WHERE project_id = ?`).get(pid)
+  return Number(row?.c) || 0
+}
+
+/**
+ * 已迁过库但 designs/assets 当初漏导：DB 表空且 project.json 仍有数据时补写。
+ * 不覆盖 DB 里已有行（以 DB 为真源）。
+ */
+function backfillProjectFromJson(root, name) {
+  const n = safeProjectName(name)
+  const p = readProjectRow(db, n)
+  if (!p) return
+  const pid = p.id
+  const file = path.join(root, n, 'project.json')
+  if (!fs.existsSync(file)) return
+  let json
+  try {
+    json = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return
+  }
+  const patch = {}
+  if (tableCount(pid, 'designs') === 0) {
+    const fromJson = Array.isArray(json.designs) ? json.designs : []
+    const fromAssets = fromJson.length ? [] : designSheetsFromLegacyAssets(json.assets)
+    const merged = fromJson.length ? fromJson : fromAssets
+    if (merged.length) patch.designs = merged
+  }
+  if (tableCount(pid, 'assets') === 0 && Array.isArray(json.assets) && json.assets.length) {
+    patch.assets = json.assets
+  }
+  if (tableCount(pid, 'lexicon_whitebox') === 0 && Array.isArray(json.lexiconWhitebox) && json.lexiconWhitebox.length) {
+    patch.lexiconWhitebox = json.lexiconWhitebox
+  }
+  if (tableCount(pid, 'scene_layouts') === 0 && Array.isArray(json.sceneLayouts) && json.sceneLayouts.length) {
+    patch.sceneLayouts = json.sceneLayouts
+  }
+  if (Object.keys(patch).length) {
+    writeProject(root, n, patch)
+    console.log(`[db] 已从 project.json 补全「${n}」: ${Object.keys(patch).join('、')}`)
+  }
 }
 
 function insertShot(d, pid, s, sort, updatedAt) {
@@ -612,6 +766,190 @@ export function setSkillOverride(id, body, baseVersion = 1) {
 export function deleteSkillOverride(id) {
   if (!db) throw new Error('DB 未打开')
   db.prepare('DELETE FROM skill_overrides WHERE skill_id = ?').run(String(id))
+}
+
+// ---------------------------------------------------------------- 技能市场安装
+
+export function listSkillInstalls() {
+  if (!db) return []
+  const rows = db.prepare(
+    'SELECT skill_id, provider, slug, namespace, version, text, meta, installed_at FROM skill_installs ORDER BY skill_id',
+  ).all()
+  return rows.map((r) => ({
+    id: r.skill_id,
+    provider: r.provider || 'skillhub',
+    slug: r.slug || '',
+    namespace: r.namespace || '',
+    version: r.version || '',
+    text: r.text,
+    meta: safeJsonParse(r.meta, {}),
+    installedAt: r.installed_at || '',
+  }))
+}
+
+export function getSkillInstall(id) {
+  if (!db) return undefined
+  const r = db.prepare(
+    'SELECT skill_id, provider, slug, namespace, version, text, meta, installed_at FROM skill_installs WHERE skill_id = ?',
+  ).get(String(id))
+  if (!r) return undefined
+  return {
+    id: r.skill_id,
+    provider: r.provider || 'skillhub',
+    slug: r.slug || '',
+    namespace: r.namespace || '',
+    version: r.version || '',
+    text: r.text,
+    meta: safeJsonParse(r.meta, {}),
+    installedAt: r.installed_at || '',
+  }
+}
+
+export function getSkillInstallBySource(namespace, slug) {
+  if (!db) return undefined
+  const r = db
+    .prepare('SELECT skill_id FROM skill_installs WHERE slug = ? AND namespace = ?')
+    .get(String(slug), String(namespace || ''))
+  return r ? getSkillInstall(r.skill_id) : undefined
+}
+
+function safeJsonParse(raw, fallback) {
+  try {
+    return raw ? JSON.parse(raw) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function upsertSkillInstall(record) {
+  if (!db) throw new Error('DB 未打开')
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO skill_installs (skill_id, provider, slug, namespace, version, text, meta, installed_at)
+     VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(skill_id) DO UPDATE SET
+       provider=excluded.provider,
+       slug=excluded.slug,
+       namespace=excluded.namespace,
+       version=excluded.version,
+       text=excluded.text,
+       meta=excluded.meta,
+       installed_at=excluded.installed_at`,
+  ).run(
+    String(record.id),
+    String(record.provider || 'skillhub'),
+    String(record.slug || ''),
+    String(record.namespace || ''),
+    String(record.version || ''),
+    String(record.text),
+    JSON.stringify(record.meta || {}),
+    record.installedAt || now,
+  )
+  return getSkillInstall(record.id)
+}
+
+export function deleteSkillInstall(id) {
+  if (!db) throw new Error('DB 未打开')
+  db.prepare('DELETE FROM skill_overrides WHERE skill_id = ?').run(String(id))
+  db.prepare('DELETE FROM skill_installs WHERE skill_id = ?').run(String(id))
+}
+
+// ---------------------------------------------------------------- MCP 配置
+
+function rowToMcpServer(r) {
+  if (!r) return undefined
+  return {
+    id: r.server_id,
+    marketId: r.market_id || '',
+    name: r.name || r.server_id,
+    description: r.description || '',
+    transport: r.transport === 'stdio' ? 'stdio' : 'http',
+    url: r.url || '',
+    command: r.command || '',
+    args: safeJsonParse(r.args, []),
+    headers: safeJsonParse(r.headers, {}),
+    environment: safeJsonParse(r.environment, {}),
+    authType: r.auth_type || '',
+    authSecret: r.auth_secret || '',
+    timeoutSec: Number(r.timeout_sec) || 60,
+    creativeChat: Boolean(r.creative_chat),
+    iconUrl: r.icon_url || '',
+    installedAt: r.installed_at || '',
+  }
+}
+
+export function listMcpServers() {
+  if (!db) return []
+  const rows = db
+    .prepare(
+      `SELECT server_id, market_id, name, description, transport, url, command, args, headers, environment,
+              auth_type, auth_secret, timeout_sec, creative_chat, icon_url, installed_at
+       FROM mcp_servers ORDER BY name`,
+    )
+    .all()
+  return rows.map(rowToMcpServer)
+}
+
+export function getMcpServer(id) {
+  if (!db) return undefined
+  const r = db
+    .prepare(
+      `SELECT server_id, market_id, name, description, transport, url, command, args, headers, environment,
+              auth_type, auth_secret, timeout_sec, creative_chat, icon_url, installed_at
+       FROM mcp_servers WHERE server_id = ?`,
+    )
+    .get(String(id))
+  return rowToMcpServer(r)
+}
+
+export function upsertMcpServer(row) {
+  if (!db) throw new Error('DB 未打开')
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO mcp_servers (
+       server_id, market_id, name, description, transport, url, command, args, headers, environment,
+       auth_type, auth_secret, timeout_sec, creative_chat, icon_url, installed_at
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(server_id) DO UPDATE SET
+       market_id=excluded.market_id,
+       name=excluded.name,
+       description=excluded.description,
+       transport=excluded.transport,
+       url=excluded.url,
+       command=excluded.command,
+       args=excluded.args,
+       headers=excluded.headers,
+       environment=excluded.environment,
+       auth_type=excluded.auth_type,
+       auth_secret=excluded.auth_secret,
+       timeout_sec=excluded.timeout_sec,
+       creative_chat=excluded.creative_chat,
+       icon_url=excluded.icon_url,
+       installed_at=excluded.installed_at`,
+  ).run(
+    String(row.id),
+    String(row.marketId || ''),
+    String(row.name || row.id),
+    String(row.description || ''),
+    row.transport === 'stdio' ? 'stdio' : 'http',
+    String(row.url || ''),
+    String(row.command || ''),
+    JSON.stringify(Array.isArray(row.args) ? row.args : []),
+    JSON.stringify(row.headers && typeof row.headers === 'object' ? row.headers : {}),
+    JSON.stringify(row.environment && typeof row.environment === 'object' ? row.environment : {}),
+    String(row.authType || ''),
+    String(row.authSecret || ''),
+    Math.min(600, Math.max(5, Number(row.timeoutSec) || 60)),
+    row.creativeChat ? 1 : 0,
+    String(row.iconUrl || ''),
+    row.installedAt || now,
+  )
+  return getMcpServer(row.id)
+}
+
+export function deleteMcpServer(id) {
+  if (!db) throw new Error('DB 未打开')
+  db.prepare('DELETE FROM mcp_servers WHERE server_id = ?').run(String(id))
 }
 
 // ---------------------------------------------------------------- 在线素材来源
@@ -960,7 +1298,9 @@ export function readProject(root, name) {
   const n = safeProjectName(name)
   const p = readProjectRow(db, n)
   if (!p) throw new Error(`项目不存在：${n}`)
-  return assemble(p)
+  backfillProjectFromJson(root, n)
+  const row = readProjectRow(db, n) || p
+  return assemble(row)
 }
 
 /** 服务端只做结构性 sanitize：畸形布局拒绝入库，几何细节由客户端几何层负责 */

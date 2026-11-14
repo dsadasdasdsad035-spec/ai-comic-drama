@@ -5,53 +5,30 @@ import {
   type AppendMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
-import {
-  generateImage,
-  generateVoice,
-  getProject,
-  saveSettings,
-  startVideo,
-  waitVideo,
-  type AppSettings,
-  type ProjectData,
-  type Stage,
-} from '../api'
+import { type AppSettings, type Stage } from '../api'
 import { stageModelKey, type StagePick } from '../ModelSelect'
 import { ChatThreadBody, ChatThreadShell } from '../agent/ChatThreadShell'
 import { WorkbenchInspector } from '../chat-ui/WorkbenchInspector'
 import {
   buildCreativeTurnPayload,
   creativeTaskView,
+  creativeWorkspaceNeedsShotEpisode,
   CREATIVE_INSPECT_PROFILE,
 } from './creativeTurnPayload'
-import { loadSkills } from '../skills/registry'
+import { reloadSkills } from '../skills/registry'
 import type { Skill } from '../skills/types'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
 import { ChatText } from '@/chat-ui/ChatText'
 import { ChatStep } from '@/chat-ui/ChatStep'
 import { CreativeToolUis } from './CreativeToolUis'
 import { useAgentMessages } from '../agent/useAgentMessages'
+import { createBuiltinPlatformTools, mergeBuiltinWithSkillTools } from '../agent/builtinPlatformTools'
+import { bindSkillTools, createPiNativeToolSet } from '../agent/stageTools'
 import { runStageAgent } from '../agent/pi/stageRunner'
-import { threadTranscript } from '../agent/threads'
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import { CreativeSessionList } from './CreativeSessionList'
 import { CreativeHeader } from './CreativeHeader'
-import { CapabilityTray } from './CapabilityTray'
-import { CreativeComposerBar } from './CreativeComposerBar'
 import { CreativeEmpty } from './CreativeEmpty'
-import type { CostPrompt } from './CreativeMessageParts'
-import { CreativeArtifacts } from './CreativeArtifacts'
-import { CostConfirmDialog } from './CostConfirmDialog'
-import { PromoteDialog } from './PromoteDialog'
-import {
-  bindCreativeHostTools,
-  createCreativeToolSet,
-  creativeModelFor,
-  type CostRequest,
-  type CreativeSnapshot,
-} from './tools'
-import { canUseProjectStage, createCreativeProjectAdapter } from './projectStageAdapter'
-import { createStageToolSet } from '../agent/stageTools'
 import {
   autoTitle,
   createCreativeSession,
@@ -61,22 +38,31 @@ import {
   loadCreativeThread,
   patchCreativeSession,
   saveCreativeThread,
-  type CreativeArtifact,
-  type CreativeMode,
   type CreativeSession,
   type CreativeSessionSummary,
 } from './sessionStore'
-import { downloadCreativeExport, ingestCreative, loadCreativeSession, splitCreativeSource, extractFrames } from './mediaApi'
-import { normalizeCreativeSettings } from './settings'
-import { CreativeChatContext } from './CreativeChatContext'
+import {
+  listCreativeHostSkills,
+  readStoredCreativeHostId,
+  resolveCreativeHostId,
+  storeCreativeHostId,
+} from './creativeSkillHost'
+import { creativeMcpToolNames, loadCreativeMcpTools } from '../agent/mcpCreativeTools'
+import { fetchCreativeMcpToolDescriptors } from '../mcp/mcpApi'
+import type { ToolDef } from '../agent/tool'
+import { fetchExperts } from './expertApi'
+import type { CreativeExpert } from './expertTypes'
+import { EXPERT_NONE } from './expertTypes'
+import { readStoredExpertId, storeExpertId } from './expertStorage'
+import { buildCreativeExpertTools } from './expertTools'
+import {
+  wrapToolsForCreativeParamGate,
+  type CreativeToolParamConfirmRequest,
+} from './creativeToolParamGate'
+import { ToolParamConfirmDialog, type ToolParamPrompt } from './ToolParamConfirmDialog'
 
 const STEP_LINE = /^第 (\d+) 轮 · ([\s\S]*)$/
-
-function makeId(prefix: string): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
+const PI_NATIVE_TOOLS = createPiNativeToolSet()
 
 function textOfMessage(message: AgentMessage): string {
   return message.parts
@@ -156,7 +142,9 @@ function AssistantText({ text }: { text: string }) {
     const note = detail.slice('模型说明：'.length)
     return (
       <>
-        <ChatStep turn={turn} phase="end">完成</ChatStep>
+        <ChatStep turn={turn} phase="end">
+          完成
+        </ChatStep>
         {note ? <ChatText text={note} /> : null}
       </>
     )
@@ -164,7 +152,9 @@ function AssistantText({ text }: { text: string }) {
   if (detail.includes('失败')) return <ChatStep turn={turn} phase="error">{detail}</ChatStep>
   if (detail.includes('调用完成')) return <ChatStep turn={turn} phase="end">完成</ChatStep>
   if (detail === '模型调用中…' || detail.startsWith('已生成')) {
-    return <ChatStep turn={turn} phase="start">{detail}</ChatStep>
+    return <ChatStep turn={turn} phase="start">
+      {detail}
+    </ChatStep>
   }
   return <ChatStep turn={turn} phase="end">{detail}</ChatStep>
 }
@@ -185,131 +175,175 @@ function AssistantMessage() {
   )
 }
 
-const MODE_SKILL: Record<CreativeMode, string> = {
-  plan: 'creative-plan',
-  reverse: 'video-reverse',
-  remake: 'video-reverse',
-}
-
-const MODE_HINT: Record<CreativeMode, string> = {
-  plan: '把想法拆成方向与镜头草案；不会写项目',
-  reverse: '粘链接或上传视频，逐镜反推成两段提示词',
-  remake: '用已有提示词包生成复刻片段',
-}
-
 export type CreativeStudioProps = {
   settings: AppSettings | null
   stagePick?: StagePick
   onPickStage?: (stage: Stage, key: string) => void
   onToast?: (message: string) => void
-  onProjectDataChanged?: () => void
-  /** 打开设置 → 技能（全量目录） */
-  onOpenAllSkills?: () => void
-  /** 顶栏当前已加载项目；有值时可挂载项目技能读/写工具 */
+  /** 顶栏当前项目（内置平台读/写工具需要） */
   projectName?: string
   epNo?: number
+  /** 打开设置 → SkillHub 市场 */
+  onOpenAllSkills?: () => void
+  /** 打开设置 → MCP */
+  onOpenMcp?: () => void
+  /** 打开设置 → 创意专家 */
+  onOpenExperts?: () => void
 }
 
 /**
- * 创意工作室：聊天是主界面。
- *
- * 与 SkillChat 的关键差别：没有宿主草稿、没有 submit_* 合并语义，
- * 工具集自带媒体摄取与付费闸门；会话可以没有项目。
+ * 创意工作室：纯 Pi 聊天。
+ * 可选顶栏偏好技能；默认 Pi 用 list_installed_skills 发现包 + 平台/MCP 工具。
  */
 export default function CreativeStudio({
   settings,
   stagePick,
   onPickStage,
   onToast,
-  onProjectDataChanged,
-  onOpenAllSkills,
   projectName = '',
   epNo = 1,
+  onOpenAllSkills,
+  onOpenMcp,
+  onOpenExperts,
 }: CreativeStudioProps) {
   const { messages, setMessages, running, setRunning, abortRef, begin, updateEvent, patchAssistant } = useAgentMessages()
 
   const [sessions, setSessions] = useState<CreativeSession[]>([])
   const [session, setSession] = useState<CreativeSessionSummary | null>(null)
-  const [mode, setMode] = useState<CreativeMode>('plan')
   const [loading, setLoading] = useState(true)
   const [listOpen, setListOpen] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [actionError, setActionError] = useState('')
-  const [busyAction, setBusyAction] = useState('')
-  const [costPrompt, setCostPrompt] = useState<CostPrompt | null>(null)
-  const [promoteArtifact, setPromoteArtifact] = useState<CreativeArtifact | null>(null)
   const [hostSkill, setHostSkill] = useState<Skill | null>(null)
-  const [hostSkillId, setHostSkillId] = useState(MODE_SKILL.plan)
+  const [mcpToolNames, setMcpToolNames] = useState<string[]>([])
+  const mcpToolsRef = useRef<ToolDef[]>([])
+  const [hostSkillId, setHostSkillId] = useState(() => readStoredCreativeHostId())
   const [skillCatalog, setSkillCatalog] = useState<Skill[]>([])
   const [totalSkillsCount, setTotalSkillsCount] = useState(0)
-  const [skillFollowsMode, setSkillFollowsMode] = useState(true)
   const [inspectOpen, setInspectOpen] = useState(false)
   const [composerDraft, setComposerDraft] = useState('')
   const [skillError, setSkillError] = useState('')
-  const [creativeOverride, setCreativeOverride] = useState(() => normalizeCreativeSettings(settings?.creative))
-  const creative = useMemo(() => normalizeCreativeSettings({ ...creativeOverride }), [creativeOverride])
-
-  useEffect(() => {
-    setCreativeOverride(normalizeCreativeSettings(settings?.creative))
-  }, [settings?.creative])
+  const [experts, setExperts] = useState<CreativeExpert[]>([])
+  const [expertId, setExpertId] = useState(EXPERT_NONE)
 
   const sessionRef = useRef<CreativeSessionSummary | null>(null)
   sessionRef.current = session
-  const modeRef = useRef(mode)
-  modeRef.current = mode
   const messagesRef = useRef(messages)
   messagesRef.current = messages
   const saveTimer = useRef<number | null>(null)
-  const paidCallsRef = useRef({ count: 0, max: creative.limits?.maxPaidCallsPerTurn ?? 8 })
-  /** 本轮已分析的证据帧，避免重复付视觉费用 */
-  const frameCache = useRef(new Map<string, Record<string, unknown>>())
-  /** 本会话内用户勾过「不再询问」的能力；真实视频生成不受影响 */
-  const skipConfirmRef = useRef(new Set<string>())
+  const epNoRef = useRef(epNo)
+  const [toolParamPrompt, setToolParamPrompt] = useState<ToolParamPrompt | null>(null)
+
+  useEffect(() => {
+    epNoRef.current = epNo
+  }, [epNo])
+
+  const requestToolParamConfirm = useCallback(
+    (req: CreativeToolParamConfirmRequest) =>
+      new Promise<number | null>((resolve) => {
+        setToolParamPrompt({
+          ...req,
+          resolve: (ok, episode) => {
+            setToolParamPrompt(null)
+            if (!ok) resolve(null)
+            else resolve(episode ?? req.episode)
+          },
+        })
+      }),
+    [],
+  )
 
   const modelKey = stageModelKey(settings, 'creative', stagePick)
   const modelLabel = settings?.models?.find((m) => m.key === modelKey)?.label || modelKey || ''
+  const projectKey = projectName.trim()
 
-  // 首次进入：恢复最近一条会话，没有就新建
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const list = await listCreativeSessions(50)
-        if (!alive) return
-        setSessions(list)
-        const first = list[0] || (await createCreativeSession({ mode: 'plan' }))
-        if (!alive) return
-        if (!list.length) setSessions([first])
-        await openSession(first.id)
-      } catch (e) {
-        if (!alive) return
-        setLoadError((e as Error).message || String(e))
-      } finally {
-        if (alive) setLoading(false)
-      }
-    })()
-    return () => {
-      alive = false
+  const activeExpert = useMemo(
+    () => (expertId ? experts.find((e) => e.id === expertId) ?? null : null),
+    [expertId, experts],
+  )
+
+  const expertNameById = useMemo(
+    () => Object.fromEntries(experts.map((e) => [e.id, e.name] as const)),
+    [experts],
+  )
+
+  const refreshCreativeMcp = useCallback(async () => {
+    try {
+      const descriptors = await fetchCreativeMcpToolDescriptors()
+      setMcpToolNames(creativeMcpToolNames(descriptors))
+      mcpToolsRef.current = await loadCreativeMcpTools()
+    } catch {
+      setMcpToolNames([])
+      mcpToolsRef.current = []
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 技能目录：与设置页一致，全部 tools 运行时技能（不含 scene3d 一次性）。
+  useEffect(() => {
+    void refreshCreativeMcp()
+  }, [refreshCreativeMcp])
+
+  useEffect(() => {
+    const onMcp = () => void refreshCreativeMcp()
+    window.addEventListener('creative-mcp-changed', onMcp)
+    return () => window.removeEventListener('creative-mcp-changed', onMcp)
+  }, [refreshCreativeMcp])
+
+  const refreshExperts = useCallback(() => {
+    void fetchExperts()
+      .then((list) => setExperts(list))
+      .catch(() => setExperts([]))
+  }, [])
+
+  useEffect(() => {
+    refreshExperts()
+  }, [refreshExperts])
+
+  useEffect(() => {
+    const onExperts = () => refreshExperts()
+    window.addEventListener('creative-experts-changed', onExperts)
+    return () => window.removeEventListener('creative-experts-changed', onExperts)
+  }, [refreshExperts])
+
+  useEffect(() => {
+    if (!expertId || !experts.length) return
+    if (!experts.some((e) => e.id === expertId)) {
+      setExpertId(EXPERT_NONE)
+      storeExpertId(projectKey, EXPERT_NONE)
+      const sid = sessionRef.current?.id
+      if (sid) void patchCreativeSession(sid, { expertId: EXPERT_NONE }).catch(() => {})
+    }
+  }, [experts, expertId, projectKey])
+
   useEffect(() => {
     let alive = true
     ;(async () => {
+      if (activeExpert) {
+        setHostSkill(null)
+        setSkillError('')
+        return
+      }
       try {
-        const { skills, issues } = await loadSkills()
+        const { skills, issues } = await reloadSkills()
         if (!alive) return
-        const all = [...skills.values()]
-        setTotalSkillsCount(all.length)
-        const catalog = all
-          .filter((s) => s.manifest.runtime === 'tools' || (s.manifest.runtime as string) === 'json-tools')
-          .sort((a, b) => (a.manifest.name || a.id).localeCompare(b.manifest.name || b.id, 'zh'))
-        setSkillCatalog(catalog)
-        const skill = skills.get(hostSkillId)
+        const hosts = listCreativeHostSkills(skills.values())
+        setSkillCatalog(hosts)
+        setTotalSkillsCount(hosts.length)
+
+        const resolvedId = resolveCreativeHostId(hosts, hostSkillId)
+        if (resolvedId !== hostSkillId) {
+          setHostSkillId(resolvedId)
+          return
+        }
+
+        if (!resolvedId) {
+          setHostSkill(null)
+          setSkillError('')
+          return
+        }
+
+        const skill = skills.get(resolvedId)
         if (!skill) {
-          setSkillError(issues.find((x) => x.id === hostSkillId)?.message || `技能「${hostSkillId}」不可用`)
+          setSkillError(issues.find((x) => x.id === resolvedId)?.message || `偏好技能「${resolvedId}」不可用`)
           setHostSkill(null)
           return
         }
@@ -323,9 +357,8 @@ export default function CreativeStudio({
     return () => {
       alive = false
     }
-  }, [hostSkillId])
+  }, [hostSkillId, activeExpert])
 
-  // 卸载时立刻落盘：切项目/切视图会让组件卸载，防抖计时器没机会跑
   useEffect(() => {
     return () => {
       const id = sessionRef.current?.id
@@ -338,7 +371,6 @@ export default function CreativeStudio({
   const openSession = useCallback(
     async (id: string) => {
       if (sessionRef.current?.id === id) return
-      // 切换前先落盘当前线程
       if (sessionRef.current) {
         const prev = sessionRef.current.id
         try {
@@ -356,9 +388,8 @@ export default function CreativeStudio({
       try {
         const [summary, thread] = await Promise.all([getCreativeSession(id), loadCreativeThread(id)])
         setSession(summary)
-        setMode(summary.mode)
-        setSkillFollowsMode(true)
-        setHostSkillId(MODE_SKILL[summary.mode] || MODE_SKILL.plan)
+        const boundExpert = String(summary.expertId || '').trim()
+        setExpertId(boundExpert || readStoredExpertId(projectKey))
         setMessages(
           (thread.messages || []).map((m) => ({
             ...m,
@@ -372,10 +403,50 @@ export default function CreativeStudio({
         setLoading(false)
       }
     },
-    [abortRef, setMessages, setRunning],
+    [abortRef, projectKey, setMessages, setRunning],
   )
 
-  // 线程自动保存（防抖）
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      if (!projectKey) {
+        setSessions([])
+        setSession(null)
+        setMessages([])
+        setLoadError('请先在顶栏选择项目')
+        setLoading(false)
+        return
+      }
+      setLoadError('')
+      setLoading(true)
+      abortRef.current?.abort()
+      abortRef.current = null
+      setRunning(false)
+      try {
+        const list = await listCreativeSessions(50, projectKey)
+        if (!alive) return
+        setSessions(list)
+        const currentId = sessionRef.current?.id
+        if (currentId && list.some((s) => s.id === currentId)) {
+          setLoading(false)
+          return
+        }
+        const pick = list[0] ?? (await createCreativeSession({ mode: 'plan', project: projectKey }))
+        if (!alive) return
+        if (!list.length) setSessions([pick])
+        await openSession(pick.id)
+      } catch (e) {
+        if (!alive) return
+        setLoadError((e as Error).message || String(e))
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [projectKey, openSession, setMessages, setRunning, abortRef])
+
   useEffect(() => {
     if (!session || running || !messages.length) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
@@ -388,30 +459,9 @@ export default function CreativeStudio({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, running, session?.id])
 
-  const refreshSession = useCallback(async () => {
-    const id = sessionRef.current?.id
-    if (!id) return
-    try {
-      const summary = await getCreativeSession(id)
-      setSession(summary)
-    } catch {
-      /* 刷新失败保留旧视图 */
-    }
-  }, [])
-
-  const saveCapabilityModels = async (models: NonNullable<typeof creative.models>) => {
-    const next = normalizeCreativeSettings({ ...creativeOverride, models })
-    setCreativeOverride(next)
-    try {
-      await saveSettings({ creative: next })
-      onToast?.('能力绑定已保存（只影响创意会话）')
-    } catch (e) {
-      onToast?.((e as Error).message || String(e))
-    }
-  }
-
   const newSession = async () => {
-    const created = await createCreativeSession({ mode })
+    if (!projectKey) return
+    const created = await createCreativeSession({ mode: 'plan', project: projectKey })
     setSessions((prev) => [created, ...prev])
     setSession(null)
     await openSession(created.id)
@@ -431,161 +481,66 @@ export default function CreativeStudio({
       setSession(null)
       if (next[0]) await openSession(next[0].id)
       else {
-        const created = await createCreativeSession({ mode: 'plan' })
+        const created = await createCreativeSession({ mode: 'plan', project: projectKey })
         setSessions([created])
         await openSession(created.id)
       }
     }
   }
 
-  const changeMode = async (next: CreativeMode) => {
-    setMode(next)
-    if (skillFollowsMode) setHostSkillId(MODE_SKILL[next])
-    const id = sessionRef.current?.id
-    if (!id) return
-    try {
-      const updated = await patchCreativeSession(id, { mode: next })
-      setSession((cur) => (cur ? { ...cur, mode: updated.mode } : cur))
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, mode: updated.mode } : s)))
-    } catch (e) {
-      onToast?.((e as Error).message || String(e))
-    }
-  }
-
-  /**
-   * 工具读的必须是服务端最新状态：抽帧/切分是异步写库，
-   * 用 React state 会拿到上一轮快照，模型就会说「还没有证据帧」。
-   */
-  const snapshot = useCallback(async (): Promise<CreativeSnapshot> => {
-    const cur = sessionRef.current
-    if (!cur) throw new Error('还没有创意会话')
-    const fresh = await getCreativeSession(cur.id)
-    return {
-      session: fresh,
-      sources: fresh.sources,
-      shots: fresh.shots || {},
-      artifacts: fresh.artifacts,
-    }
-  }, [])
-
-  /** 成本确认：把请求挂起，等用户点确认或取消 */
-  const confirmCost = useCallback((req: CostRequest) => {
-    // Seedance 2.0+ 之类的真实视频生成必须每次确认
-    if (!req.alwaysConfirm && skipConfirmRef.current.has(req.capability)) {
-      return Promise.resolve(true)
-    }
-    return new Promise<boolean>((resolve) => {
-      setCostPrompt({
-        capability: req.capability,
-        modelLabel: req.modelLabel,
-        calls: req.calls,
-        ...(req.note ? { note: req.note } : {}),
-        ...(req.alwaysConfirm ? { alwaysConfirm: true } : {}),
-        resolve: (ok: boolean, remember?: boolean) => {
-          if (ok && remember && !req.alwaysConfirm) skipConfirmRef.current.add(req.capability)
-          setCostPrompt(null)
-          resolve(ok)
-        },
-      })
-    })
-  }, [])
-
   const run = async (text: string) => {
-    if (running || !session) return
-    if (!hostSkill) {
-      setActionError(skillError || '技能尚未加载')
-      return
-    }
+    const draft = String(text || '').trim()
+    if (running || !session || !draft) return
     if (!modelKey) {
       setActionError('没有可用的文本模型，请到设置页绑定「创意」环节')
       return
     }
     setActionError('')
-    paidCallsRef.current = { count: 0, max: creative.limits?.maxPaidCallsPerTurn ?? 8 }
-    frameCache.current = new Map()
 
     const turn = buildCreativeTurnPayload({
-      host: hostSkill,
-      messages,
-      draftText: text,
-    })
-
-    const set = createCreativeToolSet({
-      sessionId: session.id,
-      getSnapshot: snapshot,
-      confirmCost,
-      settings,
-      creative,
-      modelLabel: settings?.models?.find((m) => m.key === modelKey)?.label || modelKey,
-      frameCache: frameCache.current,
-      generateImage: async ({ prompt, modelKey }) => {
-        const r = await generateImage({ prompt, ratio: '9:16', n: 1, modelKey })
-        const url = r.urls?.[0] || (r as { url?: string }).url || ''
-        return { kind: 'image', url }
-      },
-      generateVideo: async ({ prompt, image, modelKey }) => {
-        const started = await startVideo({
-          prompt,
-          seconds: 5,
-          ratio: '9:16',
-          modelKey,
-          ...(image ? { image } : {}),
-        })
-        const done = await waitVideo(started.id)
-        return { kind: 'video', url: done.url }
-      },
-      generateVoice: async ({ text, modelKey }) => {
-        const r = await generateVoice({ text, modelKey })
-        return { kind: 'audio', url: (r as { url?: string }).url || '' }
-      },
-      signal: abortRef.current?.signal,
-      paidCalls: paidCallsRef.current,
-      onSourceChanged: () => void refreshSession(),
-      onArtifactChanged: () => void refreshSession(),
-    })
-    let projectSnap: ProjectData | null = null
-    if (projectName && canUseProjectStage(hostSkill)) {
-      try {
-        projectSnap = await getProject(projectName)
-      } catch {
-        projectSnap = null
-      }
-    }
-    const projectStageCtx = {
-      projectName,
+      host: activeExpert ? null : hostSkill,
+      expert: activeExpert,
+      projectName: projectKey,
       epNo,
-      getSnapshot: () => projectSnap,
-      setSnapshot: (p: ProjectData) => {
-        projectSnap = p
-      },
-      onProjectDataChanged: onProjectDataChanged,
+      messages,
+      draftText: draft,
+      extraToolNames: mcpToolNames,
+    })
+    const getEpNo = () => epNoRef.current
+    const setEpNoForTools = (n: number) => {
+      epNoRef.current = n
     }
-    const projectAdapter =
-      projectSnap && canUseProjectStage(hostSkill)
-        ? createCreativeProjectAdapter(hostSkill, projectStageCtx)
-        : null
-    let stageSet: ReturnType<typeof createStageToolSet> | null = null
-    if (projectAdapter) {
-      try {
-        stageSet = createStageToolSet(projectAdapter)
-      } catch {
-        stageSet = null
-      }
+    const toolParamGate = {
+      projectName: projectKey,
+      getEpNo,
+      setEpNo: setEpNoForTools,
+      confirm: requestToolParamConfirm,
     }
-    const tools = bindCreativeHostTools(set, hostSkill, stageSet)
-    const { system } = turn
-    const history = threadTranscript(messages)
+    const platformTools = createBuiltinPlatformTools({ projectName: projectKey, epNo: getEpNo })
+    const listExpertsTool = PI_NATIVE_TOOLS.byName.get('list_experts')
+    let tools: ToolDef[]
+    if (activeExpert && listExpertsTool) {
+      tools = buildCreativeExpertTools(activeExpert, platformTools, mcpToolsRef.current, listExpertsTool)
+    } else {
+      const skillTools = hostSkill
+        ? bindSkillTools(PI_NATIVE_TOOLS, [{ skill: hostSkill, mode: 'host' }])
+        : bindSkillTools(PI_NATIVE_TOOLS, [])
+      tools = [...mergeBuiltinWithSkillTools(platformTools, skillTools), ...mcpToolsRef.current]
+    }
+    tools = wrapToolsForCreativeParamGate(tools, toolParamGate)
+    const { system, priorPiMessages } = turn
 
-    begin(text)
+    begin(draft)
     const controller = new AbortController()
     abortRef.current = controller
     setRunning(true)
     try {
       const result = await runStageAgent({
-        userText: text,
+        userText: draft,
         system,
         tools,
-        history,
+        priorMessages: priorPiMessages,
+        sessionId: session.id,
         modelKey,
         stage: 'creative',
         signal: controller.signal,
@@ -608,123 +563,13 @@ export default function CreativeStudio({
     } finally {
       abortRef.current = null
       setRunning(false)
-      void refreshSession()
-      // 一轮结束后立刻落盘：不依赖防抖，切视图也不会丢
       void saveCreativeThread(session.id, messagesRef.current, []).catch(() => {})
-      // 首条消息后自动起标题
       if (!session.title) {
-        const title = autoTitle(text)
+        const title = autoTitle(draft)
         if (title) void renameSession(session.id, title)
       }
     }
   }
-
-  /** 本地上传：摄取源视频 */
-  const ingest = async (input: { data: string; name: string }) => {
-    if (!session) return
-    setBusyAction('ingest')
-    setActionError('')
-    try {
-      const r = await ingestCreative({ sessionId: session.id, ...input })
-      await refreshSession()
-      onToast?.(
-        `已摄取 ${r.source.platform || '视频'}${r.probeError ? `（技术信息读取失败：${r.probeError.slice(0, 60)}）` : ''}`,
-      )
-      if (r.probeError) setActionError(`源视频已保存，但无法读取媒体信息：${r.probeError}`)
-      return r.source
-    } catch (e) {
-      const msg = (e as Error).message || String(e)
-      setActionError(msg)
-      onToast?.(msg)
-      return null
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  const runSplit = async (sourceId: string) => {
-    setBusyAction('split')
-    setActionError('')
-    try {
-      const r = await splitCreativeSource(sourceId)
-      await refreshSession()
-      onToast?.(`切出 ${r.shots.length} 个镜头`)
-    } catch (e) {
-      const msg = (e as Error).message || String(e)
-      setActionError(msg)
-      onToast?.(msg)
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  const runFrames = async (sourceId: string) => {
-    setBusyAction('frames')
-    setActionError('')
-    try {
-      const r = await extractFrames(sourceId, { framesPerShot: creative.analysis?.framesPerShot ?? 1 })
-      await refreshSession()
-      onToast?.(`抽帧完成：${r.shots.filter((s) => s.frames.length).length}/${r.shots.length} 镜`)
-    } catch (e) {
-      const msg = (e as Error).message || String(e)
-      setActionError(msg)
-      onToast?.(msg)
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  const copyPack = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-      onToast?.('已复制提示词')
-    } catch {
-      onToast?.('复制失败，请手动选择文本')
-    }
-  }
-
-  const exportPack = async (artifact: CreativeArtifact) => {
-    try {
-      const r = await downloadCreativeExport(artifact.id)
-      const blob = new Blob([JSON.stringify(r.payload, null, 2)], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(r.title || 'reverse-pack').replace(/[\\/:*?"<>|]+/g, '-')}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      onToast?.('已导出 JSON')
-    } catch (e) {
-      onToast?.((e as Error).message || String(e))
-    }
-  }
-
-  /**
-   * 生成结果卡片：从本次会话的工具结果里提取。
-   * 只认带 url 的成功结果；失败的留在工具卡里，不上产物区。
-   */
-  const generatedCards = useMemo(() => {
-    const out: Array<{ id: string; kind: 'image' | 'video' | 'audio'; url: string; modelLabel?: string }> = []
-    for (const m of messages) {
-      for (const part of m.parts) {
-        if (part.type !== 'tool-call') continue
-        if (!part.toolName.startsWith('generate_')) continue
-        const r = (part.result && typeof part.result === 'object' ? part.result : {}) as Record<string, unknown>
-        if (r.ok === false) continue
-        const inner = (r.result && typeof r.result === 'object' ? r.result : {}) as Record<string, unknown>
-        const url = String(inner.url || '')
-        if (!url) continue
-        const kind = part.toolName === 'generate_image' ? 'image' : part.toolName === 'generate_video' ? 'video' : 'audio'
-        out.push({
-          id: part.toolCallId,
-          kind,
-          url,
-          ...(r.modelLabel ? { modelLabel: String(r.modelLabel) } : {}),
-        })
-      }
-    }
-    return out
-  }, [messages])
 
   const runtime = useExternalStoreRuntime({
     messages,
@@ -741,206 +586,197 @@ export default function CreativeStudio({
     },
   })
 
-  const canSend = Boolean(session && hostSkill && modelKey) && !running && !loading
+  const canSend = Boolean(session && modelKey) && !running && !loading
 
   const taskView = useMemo(() => {
-    if (!hostSkill) return null
     const payload = buildCreativeTurnPayload({
-      host: hostSkill,
+      host: activeExpert ? null : hostSkill,
+      expert: activeExpert,
+      projectName: projectKey,
+      epNo,
       messages,
       draftText: composerDraft,
+      extraToolNames: mcpToolNames,
     })
-    return creativeTaskView(hostSkill, payload, modelLabel)
-  }, [hostSkill, messages, composerDraft, modelLabel])
+    return creativeTaskView(activeExpert ? null : hostSkill, payload, modelLabel, activeExpert)
+  }, [activeExpert, hostSkill, messages, composerDraft, modelLabel, mcpToolNames, projectKey, epNo])
 
   const onComposerDraftChange = useCallback((text: string) => {
     setComposerDraft(text)
   }, [])
 
   const pickHostSkill = useCallback((id: string) => {
-    setSkillFollowsMode(false)
-    setHostSkillId(id)
+    const next = String(id || '').trim()
+    storeCreativeHostId(next)
+    setHostSkillId(next)
   }, [])
 
+  const pickExpert = useCallback(
+    (id: string) => {
+      const next = String(id || '').trim()
+      storeExpertId(projectKey, next)
+      setExpertId(next)
+      const sid = sessionRef.current?.id
+      if (sid) {
+        setSessions((prev) => prev.map((s) => (s.id === sid ? { ...s, expertId: next } : s)))
+        void patchCreativeSession(sid, { expertId: next }).catch(() => {})
+      }
+    },
+    [projectKey],
+  )
+
+  const showEpisodeInHeader = creativeWorkspaceNeedsShotEpisode(activeExpert)
+
+  const expertStale = Boolean(expertId && experts.length > 0 && !activeExpert)
+  const headerSkillError =
+    expertStale ? `专家「${expertId}」不可用，请重选或切回「无（技能目录）」` : skillError
+
   return (
-    <CreativeChatContext.Provider value={{ creative, confirmCost, refreshSession }}>
-      <div className="creative-studio" data-creative-studio data-mode={mode}>
-        <CreativeSessionList
-          sessions={sessions}
-          activeId={session?.id || ''}
-          open={listOpen}
-          onToggle={() => setListOpen((v) => !v)}
-          onSelect={(id) => void openSession(id)}
-          onNew={() => void newSession()}
-          onRename={(id, title) => void renameSession(id, title)}
-          onDelete={(id) => void removeSession(id)}
+    <div className="creative-studio" data-creative-studio>
+      {toolParamPrompt ? (
+        <ToolParamConfirmDialog
+          prompt={toolParamPrompt}
+          onResolve={(ok, episode) => toolParamPrompt.resolve(ok, episode)}
         />
-        <div className="creative-main">
-          <CreativeHeader
-            mode={mode}
-            onModeChange={(m) => void changeMode(m)}
-            sessionTitle={session?.title || ''}
-            settings={settings}
-            stagePick={stagePick}
-            onPickStage={onPickStage}
-            modelKey={modelKey}
-            hostSkillId={hostSkillId}
-            skillChoices={skillCatalog.map((s) => ({
-              id: s.id,
-              label: `${s.manifest.name || s.id} · ${s.manifest.stage}`,
-            }))}
-            onHostSkillChange={pickHostSkill}
-            skillFollowsMode={skillFollowsMode}
-            onSkillFollowsModeChange={(on) => {
-              setSkillFollowsMode(on)
-              if (on) setHostSkillId(MODE_SKILL[mode])
-            }}
-            inspectOpen={inspectOpen}
-            canInspect={Boolean(hostSkill) && !loadError}
-            onToggleInspect={() => setInspectOpen((v) => !v)}
-            skillError={skillError}
-            running={running}
-            sources={session?.sources.length || 0}
-            artifacts={session?.artifacts.length || 0}
-            onOpenList={() => setListOpen(true)}
-            onRefresh={() => void refreshSession()}
-            onOpenAllSkills={onOpenAllSkills}
-            hostSkillOptions={skillCatalog.length}
-            totalSkillsCount={totalSkillsCount}
-            capabilityTray={
-              <CapabilityTray
-                settings={settings}
-                creative={creative}
-                onChange={(models) => void saveCapabilityModels(models)}
-              />
-            }
-          />
+      ) : null}
+      <CreativeSessionList
+        sessions={sessions}
+        activeId={session?.id || ''}
+        open={listOpen}
+        onToggle={() => setListOpen((v) => !v)}
+        onSelect={(id) => void openSession(id)}
+        onNew={() => void newSession()}
+        onRename={(id, title) => void renameSession(id, title)}
+        onDelete={(id) => void removeSession(id)}
+        expertNameById={expertNameById}
+        projectCaption={projectKey ? `项目 · ${projectKey}` : undefined}
+      />
+      <div className="creative-main creative-chat-stage">
+        <CreativeHeader
+          sessionTitle={session?.title || ''}
+          settings={settings}
+          stagePick={stagePick}
+          onPickStage={onPickStage}
+          modelKey={modelKey}
+          hostSkillId={hostSkillId}
+          skillChoices={skillCatalog.map((s) => ({
+            id: s.id,
+            label: `${s.manifest.name || s.id} · ${s.manifest.stage}`,
+          }))}
+          onHostSkillChange={pickHostSkill}
+          hideHostSkill={Boolean(activeExpert)}
+          expertId={expertId}
+          expertChoices={experts.map((e) => ({ id: e.id, label: e.name }))}
+          onExpertChange={pickExpert}
+          onOpenExperts={onOpenExperts}
+          inspectOpen={inspectOpen}
+          canInspect={Boolean(session && modelKey) && !loadError}
+          catalogEmpty={skillCatalog.length === 0}
+          onToggleInspect={() => setInspectOpen((v) => !v)}
+          skillError={headerSkillError}
+          running={running}
+          onOpenList={() => setListOpen(true)}
+          onOpenAllSkills={onOpenAllSkills}
+          onOpenMcp={onOpenMcp}
+          mcpToolCount={mcpToolNames.length}
+          hostSkillOptions={skillCatalog.length}
+          totalSkillsCount={totalSkillsCount}
+          projectName={projectKey}
+          epNo={epNo}
+          showEpisode={showEpisodeInHeader}
+        />
 
-          {loadError ? (
-            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
-              <p className="text-[12px] text-destructive">{loadError}</p>
-              <button
-                type="button"
-                className="rounded border border-border px-2 py-1 text-[11px]"
-                onClick={() => {
-                  setLoadError('')
-                  setLoading(true)
-                  void listCreativeSessions(50)
-                    .then((list) => {
-                      setSessions(list)
-                      if (list[0]) return openSession(list[0].id)
-                      return createCreativeSession({ mode }).then((s) => openSession(s.id))
-                    })
-                    .finally(() => setLoading(false))
-                }}
-              >
-                重试
-              </button>
-            </div>
-          ) : (
-            <>
-              {actionError ? (
-                <div
-                  data-creative-error
-                  className="shrink-0 border-b border-destructive/30 bg-destructive/5 px-3 py-1.5 text-[11px] text-destructive"
-                >
-                  {actionError}
-                </div>
-              ) : null}
-              <ChatThreadShell runtime={runtime} running={running} toolUis={<CreativeToolUis />}>
-                {inspectOpen && taskView ? (
-                  <WorkbenchInspector
-                    view={taskView}
-                    profile={CREATIVE_INSPECT_PROFILE}
-                    onClose={() => setInspectOpen(false)}
-                    onToast={onToast}
-                  />
-                ) : (
-                <div className="creative-body">
-                  <div className="creative-conversation">
-                    <ChatThreadBody
-                      onComposerDraftChange={onComposerDraftChange}
-                      UserMessage={UserMessage}
-                      AssistantMessage={AssistantMessage}
-                      empty={
-                        <CreativeEmpty
-                          mode={mode}
-                          loading={loading}
-                          hasSource={Boolean(session?.sources.length)}
-                          onUpload={(data, name) => void ingest({ data, name })}
-                        />
-                      }
-                      emptyAlign="bottom"
-                      placeholder={
-                        mode === 'plan'
-                          ? '说说你想拍什么，例如：15 秒咖啡广告，前三秒要抓人…'
-                          : '先上传视频，再说「反推提示词」或「逐镜分析」…'
-                      }
-                      inputLabel="创意聊天输入"
-                      suggestions={
-                        mode === 'plan'
-                          ? ['给我三个 15 秒短剧方向', '把这个想法拆成 8 个镜头', '前三秒怎么更抓人']
-                          : ['反推提示词', '逐镜分析', '只重写第 2、5 镜']
-                      }
-                      disabled={!canSend}
-                      hint={
-                        canSend
-                          ? 'Enter 发送 · Shift+Enter 换行 · 付费调用会先确认'
-                          : skillError || '正在准备会话…'
-                      }
-                      cancelLabel="停止"
-                      composerTop={
-                        mode !== 'plan' ? (
-                          <CreativeComposerBar
-                            session={session}
-                            busy={busyAction}
-                            disabled={running || !session}
-                            onUpload={(data, name) => void ingest({ data, name })}
-                            onSplit={() => session?.sources[0] && void runSplit(session.sources[0].id)}
-                            onFrames={() => session?.sources[0] && void runFrames(session.sources[0].id)}
-                          />
-                        ) : null
-                      }
-                    />
-                  </div>
-                  <CreativeArtifacts
-                    session={session}
-                    generated={generatedCards}
-                    busy={Boolean(busyAction) || running}
-                    busyAction={busyAction}
-                    onSplit={(id) => void runSplit(id)}
-                    onFrames={(id) => void runFrames(id)}
-                    onCopy={(t) => void copyPack(t)}
-                    onExport={(a) => exportPack(a)}
-                    onPromote={(a) => setPromoteArtifact(a)}
+        {loadError ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+            <p className="text-[12px] text-destructive">{loadError}</p>
+            <button
+              type="button"
+              className="rounded border border-border px-2 py-1 text-[11px]"
+              onClick={() => {
+                setLoadError('')
+                setLoading(true)
+                void listCreativeSessions(50, projectKey)
+                  .then((list) => {
+                    setSessions(list)
+                    if (list[0]) return openSession(list[0].id)
+                    if (!projectKey) return
+                    return createCreativeSession({ mode: 'plan', project: projectKey }).then((s) => openSession(s.id))
+                  })
+                  .finally(() => setLoading(false))
+              }}
+            >
+              重试
+            </button>
+          </div>
+        ) : (
+          <>
+            {actionError ? (
+              <div data-creative-error className="creative-banner creative-banner-error" role="alert">
+                {actionError}
+              </div>
+            ) : null}
+            <ChatThreadShell runtime={runtime} running={running} toolUis={<CreativeToolUis mcpToolNames={mcpToolNames} />}>
+              {inspectOpen && taskView ? (
+                <WorkbenchInspector
+                  view={taskView}
+                  profile={CREATIVE_INSPECT_PROFILE}
+                  onClose={() => setInspectOpen(false)}
+                  onToast={onToast}
+                />
+              ) : (
+                <div className="creative-conversation">
+                  <ChatThreadBody
+                    onComposerDraftChange={onComposerDraftChange}
+                    UserMessage={UserMessage}
+                    AssistantMessage={AssistantMessage}
+                    empty={
+                      <CreativeEmpty
+                        loading={loading}
+                        expertMode={Boolean(activeExpert)}
+                        expertName={activeExpert?.name}
+                        onOpenAllSkills={onOpenAllSkills}
+                        onOpenMcp={onOpenMcp}
+                        onOpenExperts={onOpenExperts}
+                      />
+                    }
+                    emptyAlign="bottom"
+                    placeholder={
+                      activeExpert
+                        ? `以「${activeExpert.name}」方式聊；可 list_experts 换专家…`
+                        : '说说你的想法；Pi 会先 list_installed_skills 再读 SKILL…'
+                    }
+                    inputLabel="创意聊天输入"
+                    suggestions={
+                      activeExpert
+                        ? [
+                            '先 read_characters 再看要补哪些角色',
+                            '帮我校验一版 characters 草稿',
+                            'list_experts 还有哪些专家',
+                          ]
+                        : [
+                            '先 list_installed_skills 帮我选技能',
+                            '给我三个 15 秒短剧方向',
+                            '把这个想法拆成 8 个镜头',
+                          ]
+                    }
+                    disabled={!canSend}
+                    hint={
+                      canSend
+                        ? activeExpert
+                          ? `Enter 发送 · 专家模式：${activeExpert.name}`
+                          : 'Enter 发送 · 默认自动发现技能（顶栏可设偏好）'
+                        : headerSkillError || loadError || '正在准备会话…'
+                    }
+                    cancelLabel="停止"
                   />
                 </div>
-                )}
-              </ChatThreadShell>
-
-            </>
-          )}
-        </div>
-
-        {costPrompt ? (
-          <CostConfirmDialog prompt={costPrompt} onResolve={(ok, remember) => costPrompt.resolve(ok, remember)} />
-        ) : null}
-        {promoteArtifact ? (
-          <PromoteDialog
-            artifact={promoteArtifact}
-            settings={settings}
-            onClose={() => setPromoteArtifact(null)}
-            onDone={(msg) => {
-              setPromoteArtifact(null)
-              onToast?.(msg)
-              onProjectDataChanged?.()
-            }}
-          />
-        ) : null}
+              )}
+            </ChatThreadShell>
+          </>
+        )}
       </div>
-    </CreativeChatContext.Provider>
+    </div>
   )
 }
 
-export { MODE_HINT, MODE_SKILL }
-export type { CreativeArtifact, CreativeSessionSummary }
+export type { CreativeSessionSummary }

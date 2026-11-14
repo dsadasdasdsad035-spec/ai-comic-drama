@@ -1,20 +1,13 @@
+import { useMemo } from 'react'
 import { makeAssistantToolUI } from '@assistant-ui/react'
 import { ToolCard, type ToolCardStatus } from '@/chat-ui/tools/ToolCard'
 import { Badge } from '@/chat-ui/ui/badge'
 
 const LABELS: Record<string, { title: string; kind: 'read' | 'media' | 'write' | 'paid' }> = {
   read_skill: { title: '技能全文', kind: 'read' },
-  read_creative_session: { title: '会话概览', kind: 'read' },
-  read_creative_source: { title: '源视频信息', kind: 'read' },
-  read_video_shots: { title: '镜头切分', kind: 'read' },
-  read_frame_detail: { title: '证据帧分析', kind: 'paid' },
-  probe_source: { title: '探测媒体信息', kind: 'media' },
-  split_scenes: { title: '切分镜头', kind: 'media' },
-  extract_frames: { title: '抽取证据帧', kind: 'media' },
-  submit_reverse_pack: { title: '提示词包', kind: 'write' },
-  generate_image: { title: '生成图片', kind: 'paid' },
-  generate_video: { title: '生成视频', kind: 'paid' },
-  generate_voice: { title: '生成配音', kind: 'paid' },
+  read_skill_text: { title: '技能原文', kind: 'read' },
+  list_installed_skills: { title: '技能目录', kind: 'read' },
+  list_experts: { title: '专家目录', kind: 'read' },
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -32,87 +25,80 @@ function CreativeToolCard({
   toolName,
   running,
   result,
-  args,
 }: {
   toolName: string
   running: boolean
   result: unknown
-  args?: Record<string, unknown>
 }) {
-  const meta = LABELS[toolName] || { title: toolName, kind: 'read' as const }
+  const isMcp = toolName.startsWith('mcp.')
+  const meta =
+    LABELS[toolName] ||
+    (isMcp
+      ? { title: `MCP ${toolName.replace(/^mcp\./, '')}`, kind: 'read' as const }
+      : { title: toolName, kind: 'read' as const })
   const r = asRecord(result)
   const error = typeof r.error === 'string' ? r.error : ''
-  const summary = typeof r.summary === 'string' ? r.summary : ''
   const status: ToolCardStatus = running ? 'running' : r.ok === false || error ? 'error' : 'ok'
 
   const title = running
     ? `${meta.title}…`
     : error
       ? `${meta.title}失败：${error}`
-      : `${meta.title}${summary ? `：${summary}` : '：完成'}`
-
-  // 读取类给范围，媒体类给结果数量，付费类给模型
-  const details: string[] = []
-  if (toolName === 'read_video_shots') {
-    details.push(`共 ${String(r.total ?? 0)} 镜`)
-  }
-  if (toolName === 'extract_frames') {
-    const shots = Array.isArray(r.shots) ? r.shots.length : 0
-    details.push(`${shots} 镜已处理`)
-  }
-  if (toolName === 'submit_reverse_pack') {
-    details.push(`${String(r.shots ?? 0)} 镜`)
-  }
-  if (toolName === 'read_frame_detail') {
-    const frames = Array.isArray(r.frames) ? r.frames.length : 0
-    details.push(`${frames} 帧`)
-    if (r.modelLabel) details.push(`模型 ${String(r.modelLabel)}`)
-    const warnings = Array.isArray(r.warnings) ? r.warnings.length : 0
-    if (warnings) details.push(`${warnings} 帧失败`)
-  }
-  if (meta.kind === 'paid' && r.modelLabel && toolName !== 'read_frame_detail') {
-    details.push(`模型 ${String(r.modelLabel)}`)
-  }
-  if (Array.isArray(args?.shotIndexes) && args.shotIndexes.length) {
-    details.push(`镜头 ${args.shotIndexes.join(',')}`)
-  }
-  if (typeof args?.url === 'string' && args.url) {
-    details.push(String(args.url).slice(0, 60))
-  }
+      : toolName === 'read_skill' && r.id
+        ? `${meta.title}：${String(r.id)}`
+        : toolName === 'list_installed_skills' && typeof r.count === 'number'
+          ? `${meta.title}：${r.count} 个`
+          : toolName === 'list_experts' && typeof r.count === 'number'
+            ? `${meta.title}：${r.count} 个`
+            : toolName === 'read_skill_text' && r.id
+            ? `${meta.title}：${String(r.id)}`
+            : `${meta.title}：完成`
 
   return (
     <ToolCard
       tool={toolName}
       status={status}
       title={title}
-      aside={<Badge variant={meta.kind === 'paid' ? 'warning' : 'secondary'}>{KIND_LABEL[meta.kind]}</Badge>}
-    >
-      {details.length ? <span className="text-muted-foreground">{details.join(' · ')}</span> : null}
-    </ToolCard>
+      aside={<Badge variant="secondary">{KIND_LABEL[meta.kind]}</Badge>}
+    />
   )
 }
 
-const TOOL_NAMES = Object.keys(LABELS)
-const UIS = TOOL_NAMES.map((toolName) =>
+const NATIVE_UIS = Object.keys(LABELS).map((toolName) =>
   makeAssistantToolUI({
     toolName,
-    render: ({ status, result, args }) => (
-      <CreativeToolCard
-        toolName={toolName}
-        running={status.type === 'running'}
-        result={result}
-        args={args as Record<string, unknown> | undefined}
-      />
+    render: ({ status, result }) => (
+      <CreativeToolCard toolName={toolName} running={status.type === 'running'} result={result} />
     ),
   }),
 )
 
-/** 创意会话的工具卡：读取 / 媒体 / 产物 / 付费四类，付费卡标出实际模型 */
-export function CreativeToolUis() {
+type Props = {
+  /** 当前创意聊天已接入的 MCP 工具名（mcp.serverId.toolName） */
+  mcpToolNames?: string[]
+}
+
+export function CreativeToolUis({ mcpToolNames = [] }: Props) {
+  const mcpUis = useMemo(
+    () =>
+      mcpToolNames.map((toolName) =>
+        makeAssistantToolUI({
+          toolName,
+          render: ({ status, result }) => (
+            <CreativeToolCard toolName={toolName} running={status.type === 'running'} result={result} />
+          ),
+        }),
+      ),
+    [mcpToolNames],
+  )
+
   return (
     <>
-      {UIS.map((Ui, i) => (
-        <Ui key={`${TOOL_NAMES[i]}-${i}`} />
+      {NATIVE_UIS.map((Ui, i) => (
+        <Ui key={`creative-tool-ui-${i}`} />
+      ))}
+      {mcpUis.map((Ui, i) => (
+        <Ui key={`creative-mcp-ui-${mcpToolNames[i]}-${i}`} />
       ))}
     </>
   )

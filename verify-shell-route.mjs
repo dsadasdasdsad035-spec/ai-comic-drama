@@ -83,7 +83,12 @@ try {
   // 4) 直达链接 + 非法视图回落概览
   await page.goto(`${app}/#/p/${ONE}/chars`, { waitUntil: 'networkidle' })
   await page.locator('.rail').waitFor({ timeout: 15000 })
-  check('直达角色视图', (await page.getByRole('button', { name: '角色', exact: true }).getAttribute('aria-current')) === 'page')
+  check(
+    '旧 #/chars 落到素材并高亮角色 Tab',
+  (await page.getByRole('button', { name: '素材', exact: true }).getAttribute('aria-current')) === 'page' &&
+    (await page.locator('[data-asset-character-tab].on').count()) === 1,
+  await hash(),
+  )
   await page.goto(`${app}/#/p/${ONE}/prompts`, { waitUntil: 'networkidle' })
   await page.locator('.ov').waitFor({ timeout: 15000 })
   check('未知视图回落概览', (await page.locator('.ov').count()) === 1)
@@ -111,15 +116,15 @@ try {
   check('重复点击同一视图不重复 push', afterSecond === afterFirst, `${afterFirst} → ${afterSecond}`)
 
   // 7) 记住上次视图（按项目）
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(600)
   await page.reload({ waitUntil: 'networkidle' })
   await page.locator('.rail').waitFor({ timeout: 15000 })
-  check('刷新后回到上次视图', (await hash()) === `#/p/${ONE}/chars`, await hash())
+  check('刷新后回到上次视图', (await hash()) === `#/p/${ONE}/assets`, await hash())
   await page.locator('.crumb-hub').click()
   await page.locator('.hub').waitFor({ timeout: 15000 })
   await openCard(ONE)
-  check('从大厅重开恢复上次视图', (await hash()) === `#/p/${ONE}/chars`, await hash())
+  check('从大厅重开恢复上次视图', (await hash()) === `#/p/${ONE}/assets`, await hash())
   // 没有历史：清掉该项目的记录，再打开必须落概览
   await page.evaluate(() => localStorage.removeItem('sb.lastView.route-one'))
   await page.locator('.crumb-hub').click()

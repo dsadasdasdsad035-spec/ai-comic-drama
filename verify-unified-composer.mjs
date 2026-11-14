@@ -179,7 +179,7 @@ try {
       }
     }, scope)
 
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(1200)
   if ((await page.locator('[data-characters-chat]').count()) === 0) {
     await page.locator('.agent-btn').first().click()

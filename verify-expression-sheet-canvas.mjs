@@ -96,7 +96,7 @@ try {
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(800)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-card').first().waitFor({ timeout: 10000 })
   await page.locator('.char-primary button').click()
   await page.waitForTimeout(1700)
@@ -127,13 +127,13 @@ try {
   await page.waitForTimeout(1700)
   check('连线写入镜头 refIds', project.shots[0].refIds?.includes(ids.assetNode), JSON.stringify(project.shots[0].refIds))
 
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-primary button').click()
   await page.waitForTimeout(700)
   await page.getByRole('button', { name: '画布', exact: true }).click()
   check('重复发布不增卡', (await page.locator('.asset-node').count()) === 1, String(await page.locator('.asset-node').count()))
 
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.getByRole('button', { name: '编辑' }).click()
   await page.locator('.char-drawer input').first().fill('林岚改名')
   await page.getByRole('button', { name: '保存' }).click()
@@ -142,7 +142,7 @@ try {
   check('改名同步卡标题', (await page.locator('.asset-title').innerText()).includes('林岚改名'), await page.locator('.asset-title').innerText())
   await page.screenshot({ path: path.join(EVIDENCE, 'expression-sheet-canvas.png') })
 
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   page.once('dialog', (d) => d.accept())
   await page.getByRole('button', { name: '删除' }).click()
   await page.waitForTimeout(800)

@@ -69,6 +69,7 @@ import {
 } from './server/mcpStore.mjs'
 import { callMcpTool, listCreativeMcpToolDescriptors, parseMcpToolExternalName } from './server/mcpHttp.mjs'
 import { extractSkillMdFromZip, manifestNameFromSkillText } from './server/skillZip.mjs'
+import { classifySkillProfile } from './src/skills/agentPack'
 import { parseSkillText } from './src/skills/parse'
 /** 压缩包上传上限：7.4MB 的真实资料包留足余量，同时挡住误传大文件 */
 const MAX_BUNDLE_BYTES = 200 * 1024 * 1024
@@ -127,6 +128,17 @@ import {
   videoFamilyFor,
   videoUrlFromTask,
 } from './server/apimart.mjs'
+import { handleBillingHttp } from './server/billing/http.mjs'
+import {
+  guardApimartText,
+  finalizeApimartText,
+  releaseApimartHold,
+  guardApimartImage,
+  finalizeApimartImage,
+  guardApimartVideo,
+  finalizeApimartVideo,
+  upstreamApimartBillingMessage,
+} from './server/billing/guard.mjs'
 import { FileError, ensureUploadedVideo } from './server/files.mjs'
 import { runSyncLabs } from './server/lipsync.mjs'
 import { analyzeLipSync } from './server/lipsyncQa.mjs'
@@ -217,6 +229,16 @@ import {
   ingestSource as ingestCreativeSource,
   listAdapters as listIngestAdapters,
 } from './server/ingest.mjs'
+// @ts-ignore 宿主 .mjs
+import {
+  getExpert,
+  listAllExperts,
+  mergeCustomExperts,
+  saveCustomExperts,
+  serveBuiltinExpertIcon,
+} from './server/experts.mjs'
+// @ts-ignore 宿主 .mjs
+import { expertToZipBuffer, expertsFromZipBuffer } from './server/expertZip.mjs'
 import {
   applyCreativeEnvDefaults,
   normalizeCreativeSettings,
@@ -1289,14 +1311,17 @@ function readBody(req: any, maxBytes = 40 * 1024 * 1024): Promise<Buffer> {
   })
 }
 
-function readJson(req: any): Promise<any> {
+/** 默认 JSON 请求体上限；0 表示不限制（仅用于视频摄取等路由） */
+const JSON_BODY_DEFAULT_MAX = 40 * 1024 * 1024
+
+function readJson(req: any, maxBytes = JSON_BODY_DEFAULT_MAX): Promise<any> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (c: Buffer) => {
       size += c.length
-      if (size > 40 * 1024 * 1024) {
-        reject(new Error('请求体超过 40MB'))
+      if (maxBytes > 0 && size > maxBytes) {
+        reject(new Error(`请求体超过 ${Math.round(maxBytes / 1024 / 1024)}MB`))
         req.destroy()
         return
       }
@@ -2663,6 +2688,10 @@ function seedreamProxy(): Plugin {
           }
         }
 
+        if (url.startsWith('/api/auth/') || url.startsWith('/api/billing/')) {
+          if (await handleBillingHttp(req, res, url, readJson, root)) return
+        }
+
         if (url === '/api/health') {
           const ff = await ensureFf()
           // 视频可用性按当前绑定的视频渠道判断：早先只认 kind==='ark'，
@@ -2747,7 +2776,7 @@ function seedreamProxy(): Plugin {
           return
         }
 
-        // ---- 创意会话：与项目无关的独立存储；线程、源视频与产物都按会话隔离 ----
+        // ---- 创意会话：按 project 过滤列表；线程、源视频与产物都按会话隔离 ----
         if (url === '/api/creative/sessions' || url.startsWith('/api/creative/sessions/')) {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           const rootDir = resolveRoot(root)
@@ -2757,10 +2786,20 @@ function seedreamProxy(): Plugin {
             if (req.method === 'GET') {
               if (!tail) {
                 const q = new URL(req.url || '', 'http://x')
+                const projectQ = q.searchParams.get('project')
+                const projectArg = q.searchParams.has('project') ? projectQ ?? '' : undefined
                 res.end(
                   JSON.stringify({
                     ok: true,
-                    sessions: listCreativeSessions(root, Number(q.searchParams.get('limit')) || 100),
+                    sessions: (listCreativeSessions as (
+                      r: string,
+                      limit?: number,
+                      projectFilter?: string,
+                    ) => ReturnType<typeof listCreativeSessions>)(
+                      root,
+                      Number(q.searchParams.get('limit')) || 100,
+                      projectArg,
+                    ),
                   }),
                 )
                 return
@@ -2791,9 +2830,13 @@ function seedreamProxy(): Plugin {
             }
             if (req.method === 'POST' && !tail) {
               const body = await readJson(req)
-              const session = createCreativeSession(root, {
+              const session = (createCreativeSession as (
+                r: string,
+                init?: { title?: string; mode?: unknown; project?: string },
+              ) => ReturnType<typeof createCreativeSession>)(root, {
                 title: body?.title,
                 mode: body?.mode,
+                project: body?.project,
               })
               res.end(JSON.stringify({ ok: true, session }))
               return
@@ -2814,6 +2857,8 @@ function seedreamProxy(): Plugin {
               const session = touchCreativeSession(root, id, {
                 ...(body?.title !== undefined ? { title: body.title } : {}),
                 ...(body?.mode !== undefined ? { mode: body.mode } : {}),
+                ...(body?.project !== undefined ? { project: body.project } : {}),
+                ...(body?.expertId !== undefined ? { expertId: body.expertId } : {}),
               })
               if (!session) {
                 res.statusCode = 404
@@ -2871,7 +2916,7 @@ function seedreamProxy(): Plugin {
               return
             }
 
-            const body = await readJson(req)
+            const body = await readJson(req, url === '/api/creative/ingest' ? 0 : JSON_BODY_DEFAULT_MAX)
 
             if (url === '/api/creative/ingest') {
               const sessionId = String(body.sessionId || '')
@@ -3370,7 +3415,7 @@ function seedreamProxy(): Plugin {
             const manifestName = manifestNameFromSkillText(text)
             if (manifestName) skillId = manifestName
             skillId = safeSkillId(skillId)
-            parseSkillText(skillId, text, 'skillhub')
+            const profile = classifySkillProfile(skillId, text, 'skillhub')
 
             const existing = getSkillInstallBySource(ns, slug)
             if (existing && existing.id !== skillId) {
@@ -3388,17 +3433,20 @@ function seedreamProxy(): Plugin {
                 homepage: skillhubHomepage(ns, slug),
                 name: String(detail.name || slug),
                 summary: String(detail.summary || ''),
+                profile,
               },
             })
             deleteSkillOverride(skillId)
             res.end(
               JSON.stringify({
                 ok: true,
+                profile,
                 skill: {
                   id: saved!.id,
                   text: saved!.text,
                   builtinText: saved!.text,
                   source: 'skillhub',
+                  profile,
                   skillhub: {
                     slug: saved!.slug,
                     namespace: saved!.namespace,
@@ -3450,18 +3498,25 @@ function seedreamProxy(): Plugin {
             const manifestName = manifestNameFromSkillText(text)
             if (!manifestName) throw new Error('SKILL.md 缺少 name')
             const skillId = safeSkillId(manifestName)
-            parseSkillText(skillId, text, 'upload')
+            const profile = classifySkillProfile(skillId, text, 'upload')
             const saved = upsertSkillInstall({
               id: skillId,
               provider: 'upload',
               text,
-              meta: { name: manifestName },
+              meta: { name: manifestName, profile },
             })
             deleteSkillOverride(skillId)
             res.end(
               JSON.stringify({
                 ok: true,
-                skill: { id: saved!.id, text: saved!.text, builtinText: saved!.text, source: 'upload' },
+                profile,
+                skill: {
+                  id: saved!.id,
+                  text: saved!.text,
+                  builtinText: saved!.text,
+                  source: 'upload',
+                  profile,
+                },
               }),
             )
           } catch (e: any) {
@@ -3480,18 +3535,25 @@ function seedreamProxy(): Plugin {
             const manifestName = manifestNameFromSkillText(text)
             if (!manifestName) throw new Error('SKILL.md 缺少 name')
             const skillId = safeSkillId(manifestName)
-            parseSkillText(skillId, text, 'upload')
+            const profile = classifySkillProfile(skillId, text, 'upload')
             const saved = upsertSkillInstall({
               id: skillId,
               provider: 'upload',
               text,
-              meta: { name: manifestName },
+              meta: { name: manifestName, profile },
             })
             deleteSkillOverride(skillId)
             res.end(
               JSON.stringify({
                 ok: true,
-                skill: { id: saved!.id, text: saved!.text, builtinText: saved!.text, source: 'upload' },
+                profile,
+                skill: {
+                  id: saved!.id,
+                  text: saved!.text,
+                  builtinText: saved!.text,
+                  source: 'upload',
+                  profile,
+                },
               }),
             )
           } catch (e: any) {
@@ -3601,6 +3663,80 @@ function seedreamProxy(): Plugin {
             }
             res.statusCode = 405
             res.end(JSON.stringify({ ok: false, message: '只支持 GET / PUT / DELETE' }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 创意专家：内置 experts/ + settings creativeExperts ----
+        if (url === '/api/experts/import-zip' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const buf = await readBody(req, 8 * 1024 * 1024)
+            const rows = expertsFromZipBuffer(buf)
+            mergeCustomExperts(rows)
+            res.end(JSON.stringify({ ok: true, experts: listAllExperts(), imported: rows.length }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        if (url === '/api/experts' || url.startsWith('/api/experts/')) {
+          try {
+            dbPath(resolveRoot(root))
+            const tail =
+              url === '/api/experts' ? '' : decodeURIComponent(url.slice('/api/experts/'.length).replace(/\/+$/, ''))
+            if (tail.endsWith('/icon') && req.method === 'GET') {
+              const id = tail.slice(0, -'/icon'.length)
+              try {
+                serveBuiltinExpertIcon(id, res)
+              } catch {
+                res.statusCode = 404
+                res.end()
+              }
+              return
+            }
+            if (tail.endsWith('/export-zip') && req.method === 'GET') {
+              const id = tail.slice(0, -'/export-zip'.length)
+              const expert = getExpert(id)
+              const zip = expertToZipBuffer(expert)
+              res.setHeader('Content-Type', 'application/zip')
+              res.setHeader('Content-Disposition', `attachment; filename="${id}.zip"`)
+              res.end(zip)
+              return
+            }
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+            return
+          }
+
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            dbPath(resolveRoot(root))
+            const tail =
+              url === '/api/experts' ? '' : decodeURIComponent(url.slice('/api/experts/'.length).replace(/\/+$/, ''))
+            if (!tail && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, experts: listAllExperts() }))
+              return
+            }
+            if (!tail && req.method === 'PUT') {
+              const body = await readJson(req)
+              saveCustomExperts(body?.experts || [])
+              res.end(JSON.stringify({ ok: true, experts: listAllExperts() }))
+              return
+            }
+            if (tail && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, expert: getExpert(tail) }))
+              return
+            }
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '支持 GET/PUT /api/experts 与 GET /api/experts/<id>' }))
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
@@ -4362,6 +4498,7 @@ function seedreamProxy(): Plugin {
           }
           let textProvider: { id?: string; label?: string; kind?: string; baseUrl?: string } | undefined
           let textBase = ''
+          let apimartBillingCtx: ReturnType<typeof guardApimartText> | null = null
           try {
             const body = await readJson(req)
             const system = String(body.system || '')
@@ -4413,6 +4550,14 @@ function seedreamProxy(): Plugin {
             }
             if (kind === 'elevenlabs') {
               throw new Error('ElevenLabs 渠道不支持文本生成，请换文本模型')
+            }
+            if (kind === 'apimart') {
+              apimartBillingCtx = guardApimartText({ provider, req, model, body })
+              if (apimartBillingCtx?.error) {
+                res.statusCode = apimartBillingCtx.error.status || 402
+                res.end(JSON.stringify({ ok: false, ...apimartBillingCtx.error }))
+                return
+              }
             }
             if (toolMode && kind === 'apimart') {
               assertChatToolsObjectParameters(tools, { providerId: provider?.id, providerKind: kind })
@@ -4651,8 +4796,14 @@ function seedreamProxy(): Plugin {
                   ...(parser.finishReason ? { finishReason: parser.finishReason } : {}),
                   ...(parser.usage ? { usage: parser.usage } : {}),
                 })
+                try {
+                  if (apimartBillingCtx) finalizeApimartText(apimartBillingCtx, parser.usage)
+                } catch (billErr: any) {
+                  if (!closed) send({ type: 'error', message: billErr?.message || String(billErr) })
+                }
                 res.end()
               } catch (e: any) {
+                if (apimartBillingCtx) releaseApimartHold(apimartBillingCtx)
                 if (!closed) {
                   send({ type: 'error', message: explainTextFetchError(e, textProvider, textBase) })
                   res.end()
@@ -4667,7 +4818,16 @@ function seedreamProxy(): Plugin {
               body: JSON.stringify(providerBody),
             })
             const raw = await r.text()
-            if (!r.ok) throw new Error(`${provider?.label || kind} ${r.status}: ${raw.slice(0, 300)}`)
+            if (!r.ok) {
+              if (kind === 'apimart' && r.status === 402) {
+                if (apimartBillingCtx) releaseApimartHold(apimartBillingCtx)
+                const up = upstreamApimartBillingMessage(new Error(raw.slice(0, 200)))
+                res.statusCode = 402
+                res.end(JSON.stringify({ ok: false, ...up }))
+                return
+              }
+              throw new Error(`${provider?.label || kind} ${r.status}: ${raw.slice(0, 300)}`)
+            }
 
             const j = apimartResponses
               ? parseApimartResponsesRaw(raw)
@@ -4701,6 +4861,13 @@ function seedreamProxy(): Plugin {
                 parsedJson = undefined
               }
             }
+            try {
+              if (apimartBillingCtx) finalizeApimartText(apimartBillingCtx, j?.usage)
+            } catch (billErr: any) {
+              res.statusCode = 402
+              res.end(JSON.stringify({ ok: false, kind: 'billing', message: billErr?.message || String(billErr) }))
+              return
+            }
             res.end(
               JSON.stringify({
                 ok: true,
@@ -4713,6 +4880,7 @@ function seedreamProxy(): Plugin {
               }),
             )
           } catch (e: any) {
+            releaseApimartHold(apimartBillingCtx || undefined)
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: explainTextFetchError(e, textProvider, textBase) }))
           }
@@ -4869,7 +5037,7 @@ function seedreamProxy(): Plugin {
         if (url === '/api/shot-3d/ingest-reference' && req.method === 'POST') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
           try {
-            const body = await readJson(req)
+            const body = await readJson(req, 0)
             const settings = getAppSettings()
             const creative = applyCreativeEnvDefaults(normalizeCreativeSettings(settings.creative), process.env).settings
             const result = await ingestShot3dReference(root, body, creative)
@@ -6126,7 +6294,21 @@ function seedreamProxy(): Plugin {
                       : textMode
                         ? 'text'
                         : 'first'
+              const apimartVidBill = guardApimartVideo({
+                provider,
+                req,
+                model,
+                seconds,
+                res: String(resolution || '480p').includes('720') ? '720p' : '480p',
+              })
+              if (apimartVidBill?.error) {
+                res.statusCode = apimartVidBill.error.status || 402
+                res.end(JSON.stringify({ ok: false, ...apimartVidBill.error }))
+                return
+              }
+
               if (body.dryRun) {
+                releaseApimartHold(apimartVidBill || undefined)
                 res.end(
                   JSON.stringify({
                     ok: true,
@@ -6168,7 +6350,11 @@ function seedreamProxy(): Plugin {
                     elapsed: Date.now() - startedAt,
                     taskId,
                   })
+                  if (apimartVidBill && !apimartVidBill.skipBilling) {
+                    finalizeApimartVideo(apimartVidBill)
+                  }
                 } catch (e) {
+                  releaseApimartHold(apimartVidBill || undefined)
                   const err = e as ApimartError & { taskId?: string }
                   let message = String(err?.message || e)
                   const upstreamId = String(taskId || err?.taskId || '').trim()
@@ -6488,6 +6674,13 @@ function seedreamProxy(): Plugin {
               return
             }
 
+            const apimartImgBill = guardApimartImage({ provider: imgProvider, req, model, n })
+            if (apimartImgBill?.error) {
+              res.statusCode = apimartImgBill.error.status || 402
+              res.end(JSON.stringify({ ok: false, ...apimartImgBill.error }))
+              return
+            }
+
             const callApimart = async () => {
               const payload = buildApimartImagePayload({ model, prompt, ratio, refUrls, n: 1 })
               const submitted = await submitApimartImage({
@@ -6527,6 +6720,7 @@ function seedreamProxy(): Plugin {
             ).length
             const failed = settled.length - fulfilled.length - timedOut
             if (fulfilled.length === 0) {
+              releaseApimartHold(apimartImgBill || undefined)
               const first = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined
               const e = first?.reason as (Error & { kind?: string; status?: number }) | undefined
               res.statusCode = timedOut > 0 ? 504 : e?.status || 500
@@ -6538,6 +6732,18 @@ function seedreamProxy(): Plugin {
                   timedOut,
                 }),
               )
+              return
+            }
+
+            try {
+              const produced = fulfilled.reduce((acc, s) => acc + (s.value?.length || 0), 0)
+              if (apimartImgBill && !apimartImgBill.skipBilling) {
+                const per = (apimartImgBill.estimateCredits ?? 0) / Math.max(1, n)
+                finalizeApimartImage(apimartImgBill, per * Math.max(1, produced))
+              }
+            } catch (billErr: any) {
+              res.statusCode = 402
+              res.end(JSON.stringify({ ok: false, kind: 'billing', message: billErr?.message || String(billErr) }))
               return
             }
 

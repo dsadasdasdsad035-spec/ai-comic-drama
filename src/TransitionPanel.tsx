@@ -78,9 +78,6 @@ type Props = {
   onPick: (cap: Cap, key: string) => void
   onVidResChange: (v: '480p' | '720p') => void
   projectStyle: string
-  onRenderTransitionTemplate?: (edgeId: string) => Promise<void>
-  templateRenderBusy?: boolean
-  onOpenPromptRefine?: (edgeId: string) => void
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
 }
@@ -108,9 +105,6 @@ export default function TransitionPanel({
   onPick,
   onVidResChange,
   projectStyle: _projectStyle,
-  onRenderTransitionTemplate,
-  templateRenderBusy,
-  onOpenPromptRefine,
   stagePick,
   onPickStage,
 }: Props) {
@@ -682,21 +676,6 @@ export default function TransitionPanel({
                   },
                 })
               }
-              onTemplateRender={
-                onRenderTransitionTemplate
-                  ? () => onRenderTransitionTemplate(edge.id)
-                  : undefined
-              }
-              onClearTemplateRender={() =>
-                setGenerated({ renderedPrompt: undefined, renderMeta: undefined })
-              }
-              onPromptRefine={
-                onOpenPromptRefine ? () => onOpenPromptRefine(edge.id) : undefined
-              }
-              templateRendering={templateRenderBusy}
-              settings={settings}
-              stagePick={stagePick}
-              onPickPromptModel={onPickStage}
               videoMeta={videoMeta}
               hasVideoUrl={Boolean(g.video?.url)}
               advancedSlot={

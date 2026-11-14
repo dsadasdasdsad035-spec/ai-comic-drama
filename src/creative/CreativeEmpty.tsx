@@ -1,77 +1,71 @@
-import { useRef } from 'react'
-import type { CreativeMode } from './sessionStore'
-
-const MODE_COPY: Record<CreativeMode, { title: string; body: string }> = {
-  plan: {
-    title: '先说想法，不用先建项目',
-    body: '创意会话独立于项目：聊到能拍了再晋升。这里只写对话与产物，不会改动任何项目数据。',
-  },
-  reverse: {
-    title: '粘链接或上传视频，逆推出提示词',
-    body: '会依次做：摄取 → 探测 → 切分镜头 → 抽证据帧 → 逐镜反推。分析会产生视觉模型费用，开始前会确认。',
-  },
-  remake: {
-    title: '用提示词包生成复刻片段',
-    body: '先有提示词包再复刻。真实视频生成每次都要确认费用，不会自动扣费。',
-  },
+type Props = {
+  loading: boolean
+  expertMode?: boolean
+  expertName?: string
+  onOpenAllSkills?: () => void
+  onOpenMcp?: () => void
+  onOpenExperts?: () => void
 }
 
-/** 空态：说明边界 + 起点，上传与链接入口也在这里。
- *  示例只在输入框上方出现（可点击、只填入不发送），这里不再重复一组静态列表。 */
+/** 空态：聚焦对话起点，弱化配置说明书感 */
 export function CreativeEmpty({
-  mode,
   loading,
-  hasSource,
-  onUpload,
-}: {
-  mode: CreativeMode
-  loading: boolean
-  hasSource: boolean
-  onUpload: (data: string, name: string) => void
-}) {
-  const fileRef = useRef<HTMLInputElement | null>(null)
-  const copy = MODE_COPY[mode]
-
+  expertMode,
+  expertName,
+  onOpenAllSkills,
+  onOpenMcp,
+  onOpenExperts,
+}: Props) {
   return (
     <div data-creative-empty className="creative-empty">
-      <h3>{loading ? '正在准备会话…' : copy.title}</h3>
-      <p>{loading ? '稍等，正在读取会话与技能。' : copy.body}</p>
-      {!loading && mode !== 'plan' ? (
-        <div className="creative-empty-actions">
-          <button
-            type="button"
-            data-creative-action="empty-upload"
-            className="rounded border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] hover:bg-primary/20"
-            onClick={() => fileRef.current?.click()}
-          >
-            上传视频
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="video/*"
-            className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ''
-              if (!file) return
-              const data = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader()
-                reader.onload = () => resolve(String(reader.result || ''))
-                reader.onerror = () => reject(new Error('读取文件失败'))
-                reader.readAsDataURL(file)
-              }).catch(() => '')
-              if (data) onUpload(data, file.name)
-            }}
-          />
-          <span className="text-[10px] text-muted-foreground">
-            {hasSource ? '已有源视频，可直接说「反推提示词」' : '也可以直接粘贴链接'}
-          </span>
-        </div>
-      ) : null}
-      {!loading ? (
-        <p className="creative-empty-hint">点下面的示例只填入输入框，不会直接发送。</p>
-      ) : null}
+      <div className="creative-empty-hero">
+        <div className="creative-empty-glow" aria-hidden />
+        <p className="creative-empty-eyebrow">创意工作室</p>
+        <h3>{loading ? '正在准备会话…' : expertMode && expertName ? `以「${expertName}」开始` : '从这里开聊'}</h3>
+        <p className="creative-empty-lead">
+          {loading
+            ? '正在加载会话与技能目录。'
+            : expertMode
+              ? '本轮使用专家 soul 与白名单工具；需要换工作方式时，可让 Pi 调用 list_experts。'
+              : '直接说想法即可。Pi 会先 list_installed_skills，再按需 read_skill_text 读 SKILL。'}
+        </p>
+
+        {!loading ? (
+          <>
+            <div className="creative-empty-modes">
+              <article className={`creative-empty-mode${expertMode ? '' : ' is-primary'}`}>
+                <h4>技能目录</h4>
+                <p>不选专家时，Pi 用 list_installed_skills 帮你发现包；顶栏「偏好技能」可指定默认 id。</p>
+              </article>
+              <article className={`creative-empty-mode${expertMode ? ' is-primary' : ''}`}>
+                <h4>专家模式</h4>
+                <p>顶栏选专家后，system 仅 expert soul，工具与技能走白名单。</p>
+              </article>
+            </div>
+
+            {(onOpenAllSkills || onOpenMcp || onOpenExperts) && (
+              <div className="creative-empty-actions">
+                {onOpenExperts ? (
+                  <button type="button" className="btn-mini" onClick={onOpenExperts}>
+                    管理专家
+                  </button>
+                ) : null}
+                {onOpenAllSkills ? (
+                  <button type="button" className="btn-mini primary" onClick={onOpenAllSkills}>
+                    技能市场
+                  </button>
+                ) : null}
+                {onOpenMcp ? (
+                  <button type="button" className="btn-mini ghost" onClick={onOpenMcp}>
+                    MCP
+                  </button>
+                ) : null}
+              </div>
+            )}
+            <p className="creative-empty-hint">下方短语可一键填入；Enter 发送，Shift+Enter 换行。</p>
+          </>
+        ) : null}
+      </div>
     </div>
   )
 }

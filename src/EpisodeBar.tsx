@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getProject, type ProjectShot } from './api'
+import { episodePickerMatch } from './boardListFilter'
 
 type Ep = { no: number; title?: string; hook?: string }
 
@@ -24,6 +25,7 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ left: 0, top: 0, width: 0 })
   const [active, setActive] = useState(0)
+  const [epQuery, setEpQuery] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -61,18 +63,32 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
 
   const current = eps.find((e) => e.no === epNo) ?? null
 
+  const visibleEps = useMemo(() => {
+    const q = epQuery.trim().toLowerCase()
+    if (!q) return eps
+    return eps.filter((e) => episodePickerMatch(e, counts[e.no] ?? 0, q))
+  }, [eps, epQuery, counts])
+
   const close = useCallback((focusBack = false) => {
     setOpen(false)
+    setEpQuery('')
     if (focusBack) triggerRef.current?.focus()
   }, [])
 
   const openList = useCallback(() => {
     const r = triggerRef.current?.getBoundingClientRect()
     if (r) setPos({ left: r.left, top: r.bottom + 6, width: r.width })
+    setEpQuery('')
     const idx = eps.findIndex((e) => e.no === epNo)
     setActive(idx >= 0 ? idx : 0)
     setOpen(true)
   }, [eps, epNo])
+
+  useEffect(() => {
+    if (!open) return
+    const idx = visibleEps.findIndex((e) => e.no === epNo)
+    setActive(idx >= 0 ? idx : 0)
+  }, [epQuery, open, visibleEps, epNo])
 
   // 弹层在 portal 里用 fixed 定位，窗口变化就关掉，避免贴在错位置
   useEffect(() => {
@@ -116,13 +132,13 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
       close(true)
     } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
-      if (eps.length === 0) return
+      if (visibleEps.length === 0) return
       const step = e.key === 'ArrowDown' ? 1 : -1
-      setActive((i) => (i + step + eps.length) % eps.length)
+      setActive((i) => (i + step + visibleEps.length) % visibleEps.length)
     } else if (e.key === 'Home' || e.key === 'End') {
       e.preventDefault()
-      if (eps.length === 0) return
-      setActive(e.key === 'Home' ? 0 : eps.length - 1)
+      if (visibleEps.length === 0) return
+      setActive(e.key === 'Home' ? 0 : visibleEps.length - 1)
     } else if (e.key === 'Tab') {
       setOpen(false)
     }
@@ -174,7 +190,21 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
                 {projectName ? '这个项目还没有集。在画布里建镜头，或在项目设置里维护分集。' : '先在全局带选择项目。'}
               </div>
             ) : (
-              eps.map((e, i) => (
+              <>
+                {eps.length > 5 ? (
+                  <input
+                    className="epbar-search stock-search"
+                    value={epQuery}
+                    onChange={(e) => setEpQuery(e.target.value)}
+                    placeholder="搜索集号或标题…"
+                    aria-label="搜索分集"
+                    onKeyDown={(e) => e.stopPropagation()}
+                  />
+                ) : null}
+                {visibleEps.length === 0 ? (
+                  <div className="epbar-empty">没有匹配的集</div>
+                ) : null}
+                {visibleEps.map((e, i) => (
                 <button
                   key={e.no}
                   ref={(el) => {
@@ -192,7 +222,8 @@ export default function EpPicker({ projectName, epNo, setEpNo, version }: Props)
                   {e.title && <span className="epbar-title">{e.title}</span>}
                   <span className="epbar-count">{counts[e.no] ?? 0} 镜</span>
                 </button>
-              ))
+              ))}
+              </>
             )}
           </div>,
           document.body,

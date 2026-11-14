@@ -135,7 +135,7 @@ check('超过 15 秒被拒绝', eLong instanceof FileError && eLong.kind === 'ba
 const ok30 = captureSync(() => validateVideoFile({ filePath: mp4, seconds: 16, maxDuration: 30 }))
 check('2.5 的 30 秒上限放行', ok30 === null, String(ok30))
 const eBig = captureSync(() => validateVideoFile({ filePath: big, seconds: 3 }))
-check('超过 200MB 被拒绝', eBig instanceof FileError && eBig.kind === 'too-large', eBig?.message)
+check('大文件不因本地上限拒绝', eBig === null, String(eBig))
 const eMissing = captureSync(() => validateVideoFile({ filePath: path.join(tmp, 'nope.mp4'), seconds: 3 }))
 check('文件不存在被拒绝', eMissing instanceof FileError && eMissing.kind === 'missing', eMissing?.message)
 

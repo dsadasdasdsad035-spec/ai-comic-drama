@@ -27,7 +27,6 @@ import AssetNode from './AssetNode'
 import ShotEdge from './ShotEdge'
 import Inspector from './Inspector'
 import Timeline from './Timeline'
-import CharacterBoard from './CharacterBoard'
 import AssetBoard from './AssetBoard'
 import ThemeToggle from './ThemeToggle'
 import { ThemeProvider, useTheme } from './theme'
@@ -54,11 +53,8 @@ import { useRailCollapsed } from './shell/useRail'
 import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
-import {
-  loadCanvasProdMode,
-  saveCanvasProdMode,
-  type CanvasProdMode,
-} from './canvasProdMode'
+import { effectiveProdKind } from './shotProdKind'
+import type { ShotProdKind } from './types'
 import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
 import NodeContextMenu from './NodeContextMenu'
@@ -66,11 +62,6 @@ import EdgeContextMenu from './EdgeContextMenu'
 import Settings, { type SettingsInitialSection } from './Settings'
 import IntakeDialog from './intake/IntakeDialog'
 import WorkbenchBar from './WorkbenchBar'
-import { WorkbenchChatAside } from './agent/WorkbenchChatAside'
-import SkillChat from './agent/SkillChat'
-import { createCreativeProjectAdapter } from './creative/projectStageAdapter'
-import { loadSkills } from './skills/registry'
-import type { Skill } from './skills/types'
 import { auditKeyframePrompt } from './promptAudit'
 import {
   planAddShot,
@@ -82,6 +73,10 @@ import {
   planShotImport,
   validateShotNos,
 } from './canvasShotOps'
+import { formatEpisodeLabel, reconcileProjectShots } from './shotRows'
+import BoardEpisodeGrid from './board/BoardEpisodeGrid'
+import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
+import { blankEpisode, nextEpisodeNo } from './board/episodeOps'
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import CreativeStudio from './creative/CreativeStudio'
 import { cancelTask, endTask, startTask } from './tasks'
@@ -93,7 +88,6 @@ import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type
 import { assetMediaType } from './mediaPick'
 import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ShotData, type Tool, type TransitionOut } from './types'
 import {
-  callText,
   checkHealth,
   generateImage,
   generateVoice,
@@ -129,17 +123,7 @@ import {
 } from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
 import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, SHOT_NEXT, SHOT_PREV } from './shotReferences'
-import {
-  buildShotPromptRenderBundle,
-  buildTransitionPromptRenderBundle,
-  renderSeedancePrompt,
-  refreshPromptRenderTemplateVersion,
-} from './promptRender'
-import PromptRefineModal from './PromptRefineModal'
-import {
-  createShotPromptRefineAdapter,
-  createTransitionPromptRefineAdapter,
-} from './agent/promptRefineAdapter'
+import { refreshPromptRenderTemplateVersion } from './promptRender'
 import {
   buildShotVideoRequest,
   effectiveVideoPrompt,
@@ -147,7 +131,6 @@ import {
   type VideoModelInput,
 } from './videoPrompt'
 import { resolveVideoUpstreamRecover } from './videoRecover'
-import { digestEpisodes, digestShots, mergeCharacters, pickExtracted } from './charExtract'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import {
@@ -160,8 +143,6 @@ import {
 import { toProject, toSheet, type ProjectChar } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 import { ensureSkillsMigrated } from './skills/migrate'
-import { assertSkillOutput, buildBoardSkillPrompt } from './skills/board'
-import { builtinFailure, type BuiltinResult } from './agent/workbenchChat'
 import { buildEditList, transitionFor } from './editList'
 import {
   defaultTransition,
@@ -234,8 +215,9 @@ function readSavedKey(key: string): Saved | null {
     if (!raw) return null
     const p = JSON.parse(raw)
     if (!Array.isArray(p?.nodes)) return null
-    if (p.nodes.length === 0 && p.cleared !== true) return null
-    // epNo 单独恢复（见下方 useEffect）
+    const savedEp = Number(p.epNo)
+    const hasSavedEp = Number.isFinite(savedEp) && savedEp > 0
+    if (p.nodes.length === 0 && p.cleared !== true && !hasSavedEp) return null
     return {
       nodes: p.nodes.map((n: ShotNodeType) => {
         const data = { ...n.data, marks: migrateMarks(n.data?.marks ?? []) }
@@ -364,12 +346,13 @@ function Shell() {
   const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
   /** 画布导入对话框 */
   const [intakeOpen, setIntakeOpen] = useState(false)
-  /** 画布分身助手（分镜 Agent）停靠栏 */
-  const [shotsChatOpen, setShotsChatOpen] = useState(false)
-  /** 宿主技能：从技能注册表里取 shotlist，与导入共用同一份技能定义 */
-  const [shotSkill, setShotSkill] = useState<Skill | null>(null)
   /** 工作台保存后自增，用来刷新集栏的镜数 */
   const [epVersion, setEpVersion] = useState(0)
+  /** 画布两阶段：集目录 → 单集 Flow；不持久化，刷新与左栏进画布回落目录 */
+  const [boardPhase, setBoardPhase] = useState<'episodes' | 'canvas'>('episodes')
+  const [scriptImportOpen, setScriptImportOpen] = useState(false)
+  const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
+  const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -384,11 +367,6 @@ function Shell() {
   const [refMode, setRefMode] = useState(false)
   const [marksAsGuide, setMarksAsGuide] = useState(true)
   const [candCount, setCandCount] = useState(1)
-  const [canvasProdMode, setCanvasProdMode] = useState<CanvasProdMode>(() => loadCanvasProdMode())
-  const setCanvasProdModePersist = useCallback((mode: CanvasProdMode) => {
-    setCanvasProdMode(mode)
-    saveCanvasProdMode(mode)
-  }, [])
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
   const [preview, setPreview] = useState(false)
@@ -397,12 +375,11 @@ function Shell() {
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voiceProvider, setVoiceProvider] = useState('')
   const [assets, setAssets] = useState<ProjectAsset[]>([])
+  /** 素材页设定卡数量（侧栏徽标；非画布 asset 节点数） */
+  const [designSheetCount, setDesignSheetCount] = useState(0)
   /** 项目画幅：白模渲染与出片共用 */
   const [projectAspect, setProjectAspect] = useState('16:9')
   const [projectStyle, setProjectStyle] = useState('')
-  const [templateRenderBusy, setTemplateRenderBusy] = useState(false)
-  const [refineShotNodeId, setRefineShotNodeId] = useState<string | null>(null)
-  const [refineTransitionEdgeId, setRefineTransitionEdgeId] = useState<string | null>(null)
   const assetsSnapRef = useRef('')
   /** 服务端报告的缺失媒体引用（角色三视图 / 设定图） */
   const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
@@ -527,6 +504,7 @@ function Shell() {
         setEpisodes([])
         setCharacters([])
         setAssets([])
+        setDesignSheetCount(0)
         setSelId(null)
         setSelEdgeId(null)
         setMissingMedia(new Set())
@@ -552,8 +530,14 @@ function Shell() {
   )
 
   const changeView = useCallback(
-    (next: ViewId, opts?: { settingsSection?: SettingsInitialSection }) => {
-      if (next === view && !opts?.settingsSection) return
+    (
+      next: ViewId,
+      opts?: { settingsSection?: SettingsInitialSection; boardPhase?: 'episodes' | 'canvas' },
+    ) => {
+      if (next === view && !opts?.settingsSection) {
+        if (next === 'board') setBoardPhase('episodes')
+        return
+      }
       if (
         view === 'assets' &&
         assetsEditorDirty &&
@@ -566,6 +550,9 @@ function Shell() {
         setSettingsInitialSection(opts?.settingsSection)
       } else {
         setSettingsInitialSection(undefined)
+      }
+      if (next === 'board') {
+        setBoardPhase(opts?.boardPhase ?? 'episodes')
       }
       if (route.kind !== 'project') return
       navigate(projectHash(route.project, next))
@@ -604,6 +591,54 @@ function Shell() {
     [epNo, fitView, setEdges, setNodes],
   )
 
+  /** 进入单集画布：目录点卡或概览点集 */
+  const enterBoardEpisode = useCallback(
+    (no: number) => {
+      setEpNo(no)
+      setBoardPhase('canvas')
+      hydrateCanvasShots(projectShots, { episode: no, fit: true })
+    },
+    [hydrateCanvasShots, projectShots],
+  )
+
+  const handleAddEpisode = useCallback(async () => {
+    if (!readyProject) return
+    const title = window.prompt('分集标题（可留空）', '')
+    if (title === null) return
+    setAddEpisodeBusy(true)
+    try {
+      const no = nextEpisodeNo(episodes, projectShots)
+      const next = [...episodes, blankEpisode(no, title.trim() || undefined)].sort((a, b) => a.no - b.no)
+      await patchProject(readyProject, { episodes: next })
+      setEpisodes(next)
+      setEpVersion((v) => v + 1)
+      setToast(`已添加 ${formatEpisodeLabel(no)}`)
+      window.setTimeout(() => setToast(''), 2800)
+    } catch (e) {
+      setToast((e as Error).message || '添加分集失败')
+      window.setTimeout(() => setToast(''), 3600)
+    } finally {
+      setAddEpisodeBusy(false)
+    }
+  }, [readyProject, episodes, projectShots])
+
+  const handleApplyScriptEpisodes = useCallback(
+    async (nextEps: ProjectEpisode[], summary: string) => {
+      if (!readyProject) throw new Error('项目未就绪')
+      await patchProject(readyProject, { episodes: nextEps })
+      setEpisodes(nextEps)
+      setEpVersion((v) => v + 1)
+      setToast(summary)
+      window.setTimeout(() => setToast(''), 3200)
+    },
+    [readyProject],
+  )
+
+  const openScriptImport = useCallback(() => {
+    setScriptHintEpNo(nextEpisodeNo(episodes, projectShots))
+    setScriptImportOpen(true)
+  }, [episodes, projectShots])
+
   /** 重读项目：Agent 写回后用它把新增/改动的镜头水合到画布 */
   const refreshProjectSnapshot = useCallback(
     async (opts: { fit?: boolean } = {}) => {
@@ -634,7 +669,13 @@ function Shell() {
       if (result.shots) {
         const plan = planShotImport(projectShots, result.shots)
         if (plan.error) throw new Error(plan.error)
-        const r = await mergeProjectShots(readyProject, plan.shots, plan.deletes)
+        const repaired = reconcileProjectShots(plan.shots)
+        if (repaired.changed > 0) {
+          setToast(`已修正 ${repaired.changed} 条镜头 id 与集号不一致`)
+          window.setTimeout(() => setToast(''), 3200)
+        }
+        const mergeDeletes = [...new Set([...plan.deletes, ...repaired.idMap.keys()])]
+        const r = await mergeProjectShots(readyProject, repaired.shots, mergeDeletes)
         saved = r.shots
         setProjectShots(saved)
       }
@@ -658,9 +699,15 @@ function Shell() {
       opts: { fit?: boolean } = {},
     ): Promise<ProjectShot[]> => {
       if (!readyProject) throw new Error('项目尚未加载完成')
-      const invalid = validateShotNos(next)
+      const repaired = reconcileProjectShots(next)
+      if (repaired.changed > 0) {
+        setToast(`已修正 ${repaired.changed} 条镜头 id 与集号不一致`)
+        window.setTimeout(() => setToast(''), 3200)
+      }
+      const invalid = validateShotNos(repaired.shots)
       if (invalid) throw new Error(invalid)
-      const r = await mergeProjectShots(readyProject, next, deletes)
+      const mergeDeletes = [...new Set([...deletes, ...repaired.idMap.keys()])]
+      const r = await mergeProjectShots(readyProject, repaired.shots, mergeDeletes)
       setProjectShots(r.shots)
       hydrateCanvasShots(r.shots, { episode: epNo, fit: opts.fit })
       setEpVersion((v) => v + 1)
@@ -717,26 +764,12 @@ function Shell() {
   )
   renameShotNoRef.current = (node, no) => void renameShotNo(node, no)
 
-  /** 宿主技能只需加载一次：拆镜与提示词写回共用 shotlist 的定义 */
-  useEffect(() => {
-    let alive = true
-    loadSkills()
-      .then((r) => {
-        if (alive) setShotSkill(r.skills.get('shotlist') ?? null)
-      })
-      .catch(() => {
-        /* 技能加载失败时聊天面板显示占位，不影响画布 */
-      })
-    return () => {
-      alive = false
-    }
-  }, [])
-
   /** 项目切换事务：加载项目数据 + 项目级画布；旧响应按 epoch 丢弃 */
   useEffect(() => {
     const epoch = ++projectEpochRef.current
     let alive = true
     setReadyProject('')
+    setBoardPhase('episodes')
     setSelId(null)
     setSelEdgeId(null)
     setProjectAspect('16:9')
@@ -746,7 +779,7 @@ function Shell() {
       setEdges(initialEdges)
       setCharacters(defaultCharacters)
       setAssets([])
-        setProjectAspect('16:9')
+      setDesignSheetCount(0)
       setProjectShots([])
       setEpisodes([])
       setMissingMedia(new Set())
@@ -763,7 +796,18 @@ function Shell() {
         const p = await getProject(projectName)
         if (!alive || epoch !== projectEpochRef.current) return
         projectSnapRef.current = p
-        const shots = (p.shots ?? []) as ProjectShot[]
+        let shots = (p.shots ?? []) as ProjectShot[]
+        const repairedOnLoad = reconcileProjectShots(shots)
+        if (repairedOnLoad.changed > 0) {
+          try {
+            const r = await mergeProjectShots(projectName, repairedOnLoad.shots, [...repairedOnLoad.idMap.keys()])
+            shots = r.shots
+            setToast(`已修正 ${repairedOnLoad.changed} 条镜头 id 与集号不一致`)
+            window.setTimeout(() => setToast(''), 3600)
+          } catch {
+            shots = repairedOnLoad.shots
+          }
+        }
         const stored = loadProjectSaved(projectName, shots)
         const storedNodes = stored?.nodes ?? []
         const storedAssets = storedNodes.filter(
@@ -794,6 +838,7 @@ function Shell() {
         setEdges(composeShotCanvasEdges(stored?.edges?.length ? stored.edges : [], shotNodes))
         setCharacters(sheets)
         setAssets(projectAssets)
+        setDesignSheetCount((p.designs ?? []).length)
         setProjectAspect(p.aspect || '16:9')
         setProjectStyle(String(p.style || ''))
         setProjectShots(shots)
@@ -826,6 +871,7 @@ function Shell() {
         setEdges([])
         setCharacters([])
         setAssets([])
+        setDesignSheetCount(0)
         setProjectAspect('16:9')
         setProjectStyle('')
         setProjectShots([])
@@ -846,12 +892,6 @@ function Shell() {
     // 只在项目切换时加载；setNodes/setEdges 是稳定 setter，放进依赖会重复拉项目覆盖拆角色结果
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName])
-
-  // 恢复上次停留的集：只做一次，避免与后续切换打架
-  useEffect(() => {
-    const saved = loadSavedEpNo()
-    if (saved > 1) setEpNo(saved)
-  }, [])
 
   useEffect(() => {
     checkHealth().then((h) => {
@@ -1262,135 +1302,6 @@ function Shell() {
     }
   }, [defaultAudioModelKey])
 
-  /**
-   * 让大模型从「本集剧本 + 本集分镜」或「全剧素材」里拆角色。
-   * 已写过外观锚点的同名角色不覆盖（保护手改），只做新增与补空。
-   */
-  const [extracting, setExtracting] = useState<'' | 'episode' | 'project'>('')
-  const extractCharacters = useCallback(
-    async (scope: 'episode' | 'project', signal?: AbortSignal): Promise<BuiltinResult> => {
-      const label = scope === 'episode' ? '从本集拆角色' : '从全剧拆角色'
-      const action = scope === 'episode' ? 'extract_characters_episode' : 'extract_characters_script'
-      const fail = (message: string, cancelled = false) =>
-        builtinFailure(action, message, {
-          label,
-          scope,
-          saveMode: 'auto',
-          ...(cancelled ? { cancelled: true } : {}),
-        })
-      if (extracting) return fail('正在拆角色，请稍候')
-      if (!projectName) return fail('先绑定一个项目')
-      if (readyProject !== projectName) return fail('项目还在加载，稍后再试')
-      if (signal?.aborted) return fail('已取消', true)
-      setExtracting(scope)
-      const t0 = Date.now()
-      try {
-        const [p, st] = await Promise.all([getProject(projectName), getSettings()])
-        const eps = (p.episodes ?? []) as ProjectEpisode[]
-        const curEp = eps.find((e) => Number(e.no) === epNo)
-        const sceneText =
-          scope === 'episode'
-            ? digestEpisodes(curEp ? [curEp] : [])
-            : [
-                p.source ? `【原著 / 梗概】\n${p.source}` : '',
-                digestEpisodes(eps),
-              ]
-                .filter(Boolean)
-                .join('\n\n')
-        const projectShotText = digestShots(
-          ((p.shots ?? []) as ProjectShot[])
-            .filter((s) => (Number(s.episode) || 1) === epNo)
-            .map((s) => ({
-              no: s.no,
-              cast: s.cast,
-              dialogue: dialogueToText(s.dialogue),
-              prompt: s.keyframe_prompt || s.desc,
-            })),
-        )
-        const canvasShotText = digestShots(
-          nodesRef.current
-            .filter((n) => n.data.shotId && Number(n.data.episode ?? 1) === epNo)
-            .map((n) => ({
-              no: n.data.no,
-              cast: n.data.cast,
-              dialogue: n.data.dialogue,
-              prompt: n.data.prompt,
-            })),
-        )
-        const shotText = scope === 'episode' ? projectShotText || canvasShotText : ''
-        if (!sceneText.trim() && !shotText.trim()) {
-          throw new Error(
-            scope === 'episode'
-              ? `第 ${epNo} 集还没有镜头。在画布导入分镜表，或让分镜助手拆这一集。`
-              : '当前项目没有可用素材（原著梗概与分集元数据都为空）。请在项目设置写 source，或在画布建分镜。',
-          )
-        }
-        const scopeLabel =
-          scope === 'episode' ? `第 ${epNo} 集分集梗概与分镜` : '全剧原著梗概与分集元数据'
-        const shotBlock = shotText ? `\n\n【本集分镜出场与台词】\n${shotText}` : ''
-        const skill = await buildBoardSkillPrompt('character', {
-          scopeLabel,
-          sceneText,
-          shotBlock,
-          // 内置拆角色不带聊天附件；空串表示没有参考图，缺这个键会被技能当成输入缺失
-          referenceDigest: '',
-        })
-        const modelKey = stageModelKey(st.settings as AppSettings, 'character', stagePick)
-        if (!modelKey) throw new Error('设置页还没有可用的文本模型')
-        const r = await callText<{ characters?: unknown[] }>({
-          system: skill.system,
-          modelKey,
-          json: true,
-          maxTokens: 6000,
-          prompt: skill.task,
-          signal,
-        })
-        assertSkillOutput('characters-v1', r.json)
-        const list = pickExtracted(r.json)
-        if (list.length === 0) {
-          throw new Error(
-            scope === 'project'
-              ? '模型没找到具名角色：全剧素材里没有可识别的角色。补全分镜 cast/台词或原著梗概，或改用「从本集拆」。'
-              : '模型没找到具名角色：本集分镜里没有可识别的角色名。先补 cast 或台词，再拆一次。',
-          )
-        }
-        if (signal?.aborted) return fail('已取消', true)
-        const { next, added, filled, skipped, updated } = mergeCharacters(charactersRef.current, list)
-        setCharacters(next)
-        const secs = Math.round((Date.now() - t0) / 1000)
-        return {
-          ok: true,
-          action,
-          label,
-          scope,
-          summary:
-            `拆出 ${list.length} 个角色 · ${secs}s｜新增 ${added.length}` +
-            (r.modelLabel ? ` · 模型：${r.modelLabel}` : '') +
-            (filled.length ? ` · 补全 ${filled.length}` : '') +
-            (updated.length ? ` · 覆盖 ${updated.join('、')}` : '') +
-            (skipped.length ? ` · 跳过已有 ${skipped.length}` : '') +
-            '，约 1 秒后自动落库',
-          counts: {
-            total: next.length,
-            added: added.length,
-            filled: filled.length,
-            skipped: skipped.length,
-          },
-          ...(r.modelLabel ? { modelLabel: r.modelLabel } : {}),
-          elapsedMs: Date.now() - t0,
-          saveMode: 'auto',
-        }
-      } catch (e) {
-        const err = e as Error
-        const cancelled = Boolean(signal?.aborted) || err.name === 'AbortError'
-        return fail(cancelled ? '已取消' : err.message || '拆角色失败', cancelled)
-      } finally {
-        setExtracting('')
-      }
-    },
-    [extracting, projectName, readyProject, epNo, stagePick],
-  )
-
   // 角色改动回写（防抖 + 快照比对，避免首屏把整份角色重写一遍）
   useEffect(() => {
     if (!projectName || readyProject !== projectName) return
@@ -1583,18 +1494,18 @@ function Shell() {
     [edges, setEdges, applyEdgeRemoval, needsEdgeDeleteConfirm],
   )
   /** 新增镜头：生成正式 `E{集}-{镜号}` 镜头并落库，再水合到画布 */
-  const addShot = async () => {
+  const addShot = async (prodKind: ShotProdKind) => {
     if (!readyProject) {
       setToast('先选择项目再新增镜头')
       window.setTimeout(() => setToast(''), 2200)
       return
     }
-    const { shot, next } = planAddShot(projectShots, epNo)
+    const { shot, next } = planAddShot(projectShots, epNo, prodKind)
     try {
       await persistProjectShots(next, [], { fit: true })
       const fresh = nodesRef.current.find((n) => n.data.shotId === shot.id)
       if (fresh) setSelId(fresh.id)
-      setToast(`已新增 E${String(epNo).padStart(2, '0')}·${shot.no}`)
+      setToast(`已新增${prodKind === 'video' ? '出片' : '生图'}镜 E${String(epNo).padStart(2, '0')}·${shot.no}`)
       window.setTimeout(() => setToast(''), 2200)
     } catch (e) {
       setToast((e as Error).message || '新增镜头失败')
@@ -1878,7 +1789,7 @@ function Shell() {
     [edges, setEdgeRelation, openTransition],
   )
   const focusShotFromTransition = useCallback((nodeId: string) => {
-    saveInspectorPrefs({ ...loadInspectorPrefs(), tab: 'video' })
+    saveInspectorPrefs({ ...loadInspectorPrefs(), tab: 'outgoing' })
     setSelEdgeId(null)
     setSelRef(null)
     setSelId(nodeId)
@@ -2036,6 +1947,14 @@ function Shell() {
     }
     if (type === 'shot') {
       const mine = d.refIds ?? []
+      const shotNode = node as ShotNodeType
+      const isVideoShot = effectiveProdKind(shotNode.data) === 'video'
+      const neighborItems = isVideoShot
+        ? neighborReferenceItems(shotNode, shownNodes as ShotNodeType[]).map((c) => ({
+            ...c,
+            on: mine.includes(c.id),
+          }))
+        : []
       return {
         mode: 'shot' as const,
         targetId: node.id,
@@ -2044,14 +1963,10 @@ function Shell() {
         headSub: '点选画布中的卡片作为参考图',
         sectionTitle: '参考画布里的卡片',
         emptyText: '画布上还没有可用作参考的图：先加素材卡，或给角色生成图',
-        hint: '上一镜/下一镜取邻镜静帧；多选可叠加，再点一次取消。出片仅认连线，不自动用本镜预览图。',
-        items: [
-          ...neighborReferenceItems(node as ShotNodeType, shownNodes as ShotNodeType[]).map((c) => ({
-            ...c,
-            on: mine.includes(c.id),
-          })),
-          ...refCards.map((c) => ({ ...c, on: mine.includes(c.id) })),
-        ],
+        hint: isVideoShot
+          ? '上一镜/下一镜取邻镜静帧；多选可叠加，再点一次取消。出片仅认连线，不自动用本镜预览图。'
+          : '生图镜仅用角色与素材参考，不含上一镜/下一镜。',
+        items: [...neighborItems, ...refCards.map((c) => ({ ...c, on: mine.includes(c.id) }))],
       }
     }
     const isChar = type === 'char'
@@ -2139,7 +2054,9 @@ function Shell() {
   /** 对选中的卡片批量执行 */
   const runOnSelected = async () => {
     if (selBusy) return
-    const list = nodesRef.current.filter((n) => n.selected)
+    const list = nodesRef.current.filter(
+      (n) => n.selected && isShotCanvasNode(n) && effectiveProdKind(n.data) === 'image',
+    )
     if (list.length === 0) return
     const ac = new AbortController()
     batchAbortRef.current = ac
@@ -2278,57 +2195,6 @@ function Shell() {
     }
   }
 
-  /** 画布分镜 Agent：写回后与导入共用同一套落库 + 水合 */
-  const shotsChatAdapter = useMemo(() => {
-    if (!shotSkill || !readyProject) return null
-    const base = createCreativeProjectAdapter(shotSkill, {
-      projectName: readyProject,
-      epNo,
-      getSnapshot: () => projectSnapRef.current,
-      setSnapshot: (p) => {
-        projectSnapRef.current = p
-        setProjectShots(((p.shots ?? []) as ProjectShot[]) ?? [])
-      },
-      onProjectDataChanged: () => {
-        void refreshProjectSnapshot()
-      },
-    })
-    if (!base) return null
-    const ep = episodes.find((x) => Number(x.no) === Number(epNo))
-    const brief = ep
-      ? [
-          ep.title ? `第 ${ep.no} 集《${ep.title}》` : `第 ${ep.no} 集`,
-          ep.hook ? `结尾钩子：${ep.hook}` : '',
-          ...(ep.scenes ?? []).map(
-            (sc) =>
-              `场景 ${sc.no}｜${sc.slug || ''}｜${sc.place || ''}｜${sc.time || ''}` +
-              `${sc.beats ? `｜${sc.beats}` : ''}${sc.characters?.length ? `｜在场：${sc.characters.join('、')}` : ''}`,
-          ),
-        ]
-          .filter(Boolean)
-          .join('\n')
-      : ''
-    return {
-      ...base,
-      // 分镜技能要画风、画幅、本集摘要与目标时长作为输入
-      inputs: () => ({
-        style: projectStyle,
-        aspect: projectAspect,
-        brief,
-        target: `${epTargetSeconds} 秒`,
-      }),
-    }
-  }, [
-    shotSkill,
-    readyProject,
-    epNo,
-    episodes,
-    projectStyle,
-    projectAspect,
-    epTargetSeconds,
-    refreshProjectSnapshot,
-  ])
-
   /** 当前集真正的分镜（素材卡/角色卡不进播放序列） */
   const episodeShots = useMemo(
     () => shownNodes.filter(isShotCanvasNode),
@@ -2349,15 +2215,21 @@ function Shell() {
       .map((e) => {
         // 分镜边不可选：单击只弹关系菜单，不产生选中态；高亮只跟随「正在编辑的转场边」
         const relation: Relation = e.data?.relation ?? 'cut'
+        const src = shotsById.get(e.source)
+        const tgt = shotsById.get(e.target)
+        const sequenceSolid = Boolean(
+          src &&
+            tgt &&
+            effectiveProdKind(src.data) === 'video' &&
+            effectiveProdKind(tgt.data) === 'video',
+        )
         const base = {
           ...e,
           selectable: false,
           className: `edge-rel-${relation}`,
-          data: { ...e.data, active: e.id === selEdgeId },
+          data: { ...e.data, active: e.id === selEdgeId, sequenceSolid },
         }
         if (relation !== 'transition') return base as Edge
-        const src = shotsById.get(e.source)
-        const tgt = shotsById.get(e.target)
         if (!src || !tgt) return base as Edge
         const t = transitionFor(src, tgt)
         const fp = transitionFingerprint(src.data, tgt.data, t.generated)
@@ -2663,6 +2535,10 @@ function Shell() {
     async (id: string, opts: { signal?: AbortSignal } = {}) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
+      if (effectiveProdKind(node.data) === 'video') {
+        patch(id, { genState: 'error', genError: '出片镜请用侧栏生成视频，或新建生图镜' })
+        return
+      }
       if (activeImgRef.current.has(id)) return
       // prompt 可能缺失（旧项目镜头没有 keyframe_prompt 且 desc 为空时 shotToData 会给出 undefined）
       const prompt = String(node.data.prompt ?? '').trim()
@@ -2776,6 +2652,10 @@ function Shell() {
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
+      if (effectiveProdKind(node.data) === 'image') {
+        patch(id, { vidState: 'error', vidError: '生图镜不能主出片，请新建出片镜或改镜头类型' })
+        return
+      }
       const request = buildShotVideoRequest({
         data: node.data,
         nodeId: node.id,
@@ -2944,67 +2824,6 @@ function Shell() {
     [patch, selectedVideoModel],
   )
 
-  const renderVideoTemplate = useCallback(
-    async (id: string) => {
-      const node = nodesRef.current.find((n) => n.id === id)
-      if (!node) return
-      setTemplateRenderBusy(true)
-      try {
-        const request = buildShotVideoRequest({
-          data: node.data,
-          nodeId: node.id,
-          nodes: nodesRef.current,
-          characters: charactersRef.current,
-          missingMedia,
-          model: selectedVideoModel,
-          resolution: vidRes,
-        })
-        const bundle = buildShotPromptRenderBundle({
-          data: node.data,
-          nodeId: node.id,
-          nodes: nodesRef.current,
-          characters: charactersRef.current,
-          missingMedia,
-          model: selectedVideoModel,
-          resolution: vidRes,
-          style: projectStyle,
-          aspect: projectAspect,
-          request,
-        })
-        const modelKey = stageModelKey(appSettings, 'prompt', stagePick)
-        const rendered = await renderSeedancePrompt(bundle, modelKey)
-        patch(id, {
-          videoPromptRendered: rendered.rendered_prompt,
-          videoPromptRenderMeta: {
-            fingerprint: request.fingerprint,
-            templateVersion: rendered.templateVersion,
-            renderedAt: new Date().toISOString(),
-            modelKey: rendered.modelKey,
-          },
-          videoPromptOverride: undefined,
-          handEdited: (node.data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
-        })
-        setToast('模板出片提示词已更新')
-        window.setTimeout(() => setToast(''), 2800)
-      } catch (e) {
-        setToast(`模板渲染失败：${(e as Error).message}`)
-        window.setTimeout(() => setToast(''), 4200)
-      } finally {
-        setTemplateRenderBusy(false)
-      }
-    },
-    [
-      projectAspect,
-      projectStyle,
-      missingMedia,
-      selectedVideoModel,
-      vidRes,
-      stagePick,
-      appSettings,
-      patch,
-    ],
-  )
-
   const cancelTransitionVideo = useCallback(
     (edgeId: string) => {
       const pair = transitionPair(edgeId)
@@ -3036,68 +2855,6 @@ function Shell() {
       window.setTimeout(() => setToast(''), 2200)
     },
     [writeTransition, transitionPair],
-  )
-
-  const renderTransitionTemplate = useCallback(
-    async (edgeId: string) => {
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, target, to } = pair
-      const base = normalizeTransitionOut(source.data.transitionOut, to)
-      const g = normalizeGenerated(base.generated)
-      const videoKey = modelPick.video || appSettings?.defaults?.video || ''
-      const entry = appSettings?.models.find((m) => m.key === videoKey)
-      const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
-      const transitionModel = entry
-        ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
-        : null
-      setTemplateRenderBusy(true)
-      try {
-        const preview = buildTransitionVideoPreview({
-          source,
-          target,
-          generated: g,
-          model: transitionModel,
-          nodes: nodesRef.current,
-          characters: charactersRef.current,
-          missingMedia,
-        })
-        const bundle = buildTransitionPromptRenderBundle({
-          source,
-          target,
-          generated: g,
-          inputMode: preview.inputMode,
-          style: projectStyle,
-          aspect: projectAspect,
-          seconds: preview.seconds,
-          requestFingerprint: preview.promptFingerprint,
-        })
-        const rendered = await renderSeedancePrompt(bundle, stageModelKey(appSettings, 'prompt', stagePick))
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          mode: 'generated',
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            renderedPrompt: rendered.rendered_prompt,
-            renderMeta: {
-              fingerprint: preview.promptFingerprint,
-              templateVersion: rendered.templateVersion,
-              renderedAt: new Date().toISOString(),
-              modelKey: rendered.modelKey,
-            },
-            videoPromptOverride: undefined,
-          },
-        }))
-        setToast('转场模板出片提示词已更新')
-        window.setTimeout(() => setToast(''), 2800)
-      } catch (e) {
-        setToast(`转场模板渲染失败：${(e as Error).message}`)
-        window.setTimeout(() => setToast(''), 4200)
-      } finally {
-        setTemplateRenderBusy(false)
-      }
-    },
-    [transitionPair, writeTransition, stagePick, appSettings, projectStyle, projectAspect, missingMedia],
   )
 
   const generateTransitionVideo = useCallback(
@@ -3505,7 +3262,9 @@ function Shell() {
 
   const generateAll = async () => {
     if (batch) return
-    const list = nodesRef.current
+    const list = nodesRef.current.filter(
+      (n) => isShotCanvasNode(n) && n.data.shotId && effectiveProdKind(n.data) === 'image',
+    )
     if (list.length === 0) return
     setBatch({ total: list.length, done: 0 })
     for (const n of list) {
@@ -3629,7 +3388,6 @@ function Shell() {
       patch,
       generate: generateOne,
       cancelGenerate,
-      canvasProdMode,
     }),
     [
       tool,
@@ -3639,7 +3397,6 @@ function Shell() {
       patch,
       generateOne,
       cancelGenerate,
-      canvasProdMode,
     ],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
@@ -3693,158 +3450,6 @@ function Shell() {
     }
   }, [edgeCtx, edges, nodes, inactiveEdgeIds])
 
-  const shotRefineAdapter = useMemo(() => {
-    if (!refineShotNodeId || !projectName) return null
-    const node = nodes.find((n) => n.id === refineShotNodeId)
-    if (!node) return null
-    const request = buildShotVideoRequest({
-      data: node.data,
-      nodeId: node.id,
-      nodes,
-      characters,
-      missingMedia,
-      model: selectedVideoModel,
-      resolution: vidRes,
-    })
-  return createShotPromptRefineAdapter({
-      projectName,
-      episode: node.data.episode ?? epNo,
-      shotNo: node.data.no,
-      shotNodeId: node.id,
-      style: projectStyle,
-      aspect: projectAspect,
-      bundle: () =>
-        buildShotPromptRenderBundle({
-          data: node.data,
-          nodeId: node.id,
-          nodes,
-          characters,
-          missingMedia,
-          model: selectedVideoModel,
-          resolution: vidRes,
-          style: projectStyle,
-          aspect: projectAspect,
-          request,
-        }),
-      getSnapshot: () => ({
-        name: projectName,
-        title: projectName,
-        style: projectStyle,
-        aspect: projectAspect,
-        shots: nodes
-          .filter((n) => (n as { type?: string }).type !== 'asset')
-          .map((n) => nodeToShot(n.data, n.id)),
-        characters,
-      }),
-      setSnapshot: () => {},
-      onShotPatched: (nodeId, p) => {
-        patch(nodeId, {
-          videoPromptRendered: p.videoPromptRendered,
-          videoPromptRenderMeta: p.videoPromptRenderMeta,
-          videoPromptOverride: undefined,
-          handEdited: (node.data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
-        })
-      },
-    })
-  }, [
-    refineShotNodeId,
-    projectName,
-    projectStyle,
-    projectAspect,
-    nodes,
-    characters,
-    missingMedia,
-    selectedVideoModel,
-    vidRes,
-    epNo,
-    patch,
-  ])
-
-  const transitionRefineAdapter = useMemo(() => {
-    if (!refineTransitionEdgeId || !projectName) return null
-    const edge = edges.find((e) => e.id === refineTransitionEdgeId)
-    if (!edge) return null
-    const source = nodes.find((n) => n.id === edge.source)
-    const target = nodes.find((n) => n.id === edge.target)
-    if (!source || !target) return null
-    const to = target.data.shotId || target.id
-    const base = normalizeTransitionOut(source.data.transitionOut, to)
-    const g = normalizeGenerated(base.generated)
-    const videoKey = modelPick.video || appSettings?.defaults?.video || ''
-    const entry = appSettings?.models.find((m) => m.key === videoKey)
-    const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
-    const transitionModel = entry
-      ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
-      : null
-    const preview = buildTransitionVideoPreview({
-      source,
-      target,
-      generated: g,
-      model: transitionModel,
-      nodes,
-      characters,
-      missingMedia,
-    })
-    return createTransitionPromptRefineAdapter({
-      projectName,
-      episode: source.data.episode ?? epNo,
-      sourceId: source.id,
-      sourceNo: source.data.no,
-      targetNo: target.data.no,
-      to,
-      style: projectStyle,
-      aspect: projectAspect,
-      fingerprint: preview.promptFingerprint,
-      bundle: () =>
-        buildTransitionPromptRenderBundle({
-          source,
-          target,
-          generated: g,
-          inputMode: preview.inputMode,
-          style: projectStyle,
-          aspect: projectAspect,
-          seconds: preview.seconds,
-          requestFingerprint: preview.promptFingerprint,
-        }),
-      getSnapshot: () => ({
-        name: projectName,
-        title: projectName,
-        style: projectStyle,
-        aspect: projectAspect,
-        shots: nodes
-          .filter((n) => (n as { type?: string }).type !== 'asset')
-          .map((n) => nodeToShot(n.data, n.id)),
-        characters,
-      }),
-      onTransitionPatched: (sourceId, targetKey, p) => {
-        writeTransition(sourceId, targetKey, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            renderedPrompt: p.renderedPrompt,
-            renderMeta: p.renderMeta,
-            videoPromptOverride: undefined,
-          },
-        }))
-      },
-    })
-  }, [
-    refineTransitionEdgeId,
-    projectName,
-    edges,
-    nodes,
-    characters,
-    missingMedia,
-    modelPick.video,
-    appSettings,
-    projectStyle,
-    projectAspect,
-    epNo,
-    writeTransition,
-  ])
-
-  const promptRefineAdapter = shotRefineAdapter ?? transitionRefineAdapter
-
   /** 概览页要项目摘要：列表还没回来时用占位，避免整页空白 */
   const currentSummary: ProjectSummary = useMemo(
     () =>
@@ -3889,7 +3494,7 @@ function Shell() {
           />
         }
         episodeSlot={
-          EPISODE_VIEWS.includes(view) ? (
+          EPISODE_VIEWS.includes(view) && view !== 'board' ? (
             <EpPicker projectName={projectName} epNo={epNo} setEpNo={setEpNo} version={epVersion} />
           ) : null
         }
@@ -3907,7 +3512,7 @@ function Shell() {
           </>
         }
         railFooter={<ThemeToggle />}
-        counts={{ characters: characters.length, assets: assets.length }}
+        counts={{ assets: designSheetCount + characters.length }}
         collapsed={railCollapsed}
         onToggleCollapsed={toggleRail}
       >
@@ -3920,8 +3525,8 @@ function Shell() {
             onNavigate={changeView}
             onIntake={() => setIntakeOpen(true)}
             onOpenEpisode={(no) => {
-              setEpNo(no)
-              changeView('board')
+              changeView('board', { boardPhase: 'canvas' })
+              enterBoardEpisode(no)
             }}
           />
         ) : view === 'creative' ? (
@@ -3929,17 +3534,15 @@ function Shell() {
             settings={appSettings}
             stagePick={stagePick}
             onPickStage={pickStageModel}
+            projectName={projectName}
+            epNo={epNo}
             onToast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)
             }}
-            onProjectDataChanged={() => {
-              void reloadProjects()
-              setEpVersion((v) => v + 1)
-            }}
             onOpenAllSkills={() => changeView('settings', { settingsSection: 'skills' })}
-            projectName={readyProject === projectName ? projectName : ''}
-            epNo={epNo}
+            onOpenMcp={() => changeView('settings', { settingsSection: 'mcp' })}
+            onOpenExperts={() => changeView('settings', { settingsSection: 'experts' })}
           />
         ) : view === 'settings' ? (
           <Settings
@@ -3955,8 +3558,8 @@ function Shell() {
         ) : view === 'assets' ? (
           <AssetBoard
             projectName={projectName}
-            epNo={epNo}
             settings={appSettings}
+            onDesignCountChange={setDesignSheetCount}
             stagePick={stagePick}
             onPickStage={pickStageModel}
             imageModelKey={modelPick.image}
@@ -3969,13 +3572,6 @@ function Shell() {
             onImageMissing={markMissing}
             projectAspect={projectAspect}
             onEditorDirtyChange={setAssetsEditorDirty}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3000)
-            }}
-          />
-        ) : view === 'chars' ? (
-          <CharacterBoard
             characters={characters}
             patch={patchCharacter}
             selectedShot={selected ? { id: selected.id, no: selected.data.no } : null}
@@ -3993,35 +3589,44 @@ function Shell() {
             onAdd={addCharacter}
             onDelete={deleteCharacter}
             onRename={renameCharacter}
-            onExtract={extractCharacters}
-            extracting={extracting}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
             viewModel={modelPick.view}
             onPickViewModel={(key) => pickModelKey('view', key)}
-            price={price}
-            projectName={projectName}
             onPersist={saveCharactersNow}
             onPublishSheet={publishExpressionSheet}
-            epNo={epNo}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 2800)
-            }}
-            missing={missingMedia}
-            onImageMissing={markMissing}
             charsOn={charsOn}
             onToggleChars={toggleChars}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
+            }}
+          />
+        ) : view === 'board' && boardPhase === 'episodes' ? (
+          <BoardEpisodeGrid
+            projectReady={readyProject === projectName && Boolean(projectName)}
+            episodes={episodes}
+            shots={projectShots}
+            onPick={enterBoardEpisode}
+            onAddEpisode={() => void handleAddEpisode()}
+            onImportScript={openScriptImport}
+            addBusy={addEpisodeBusy}
           />
         ) : (
-        <div className="board-with-chat" data-canvas-shots>
-          <div className="canvas-workspace">
+        <div className="canvas-workspace" data-canvas-shots data-board-phase="canvas">
             <WorkbenchBar
               scope={
                 <>
+                  <button
+                    type="button"
+                    className="btn-ghost board-ep-back"
+                    onClick={() => setBoardPhase('episodes')}
+                    title="返回分集目录"
+                  >
+                    ← 集列表
+                  </button>
                   <span className="wb-bar-title">画布 · 拆镜</span>
-                  <span className="ep-chip">E{String(epNo).padStart(2, '0')}</span>
+                  <span className="ep-chip" data-board-ep-label>
+                    {formatEpisodeLabel(epNo)}
+                  </span>
                 </>
               }
               scopeDetail={
@@ -4088,9 +3693,6 @@ function Shell() {
                   >
                     插入
                   </button>
-                  <button className="btn" onClick={() => setShotsChatOpen((v) => !v)}>
-                    {shotsChatOpen ? '收起助手' : '拆镜助手'}
-                  </button>
                 </>
               }
             />
@@ -4114,7 +3716,8 @@ function Shell() {
                 batch={batch}
                 charsOn={charsOn}
                 diagOn={diagOn}
-                onAddShot={addShot}
+                onAddImageShot={() => void addShot('image')}
+                onAddVideoShot={() => void addShot('video')}
                 onGenAll={generateAll}
                 onUnifyTransitions={unifyTransitions}
                 onFit={() => fitView({ padding: 0.2, duration: 400 })}
@@ -4136,22 +3739,6 @@ function Shell() {
               >
                 ▶ 连播
               </button>
-              <div className="prod-mode-toggle" role="group" aria-label="画布生产模式">
-                <button
-                  type="button"
-                  className={`btn-mini ${canvasProdMode === 'image' ? 'on' : ''}`}
-                  onClick={() => setCanvasProdModePersist('image')}
-                >
-                  出图
-                </button>
-                <button
-                  type="button"
-                  className={`btn-mini ${canvasProdMode === 'video' ? 'on' : ''}`}
-                  onClick={() => setCanvasProdModePersist('video')}
-                >
-                  出片
-                </button>
-              </div>
             </div>
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
             {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
@@ -4298,7 +3885,12 @@ function Shell() {
               selectionKeyCode="Shift"
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color={themeColors.canvasDot} />
-              <Controls showInteractive={false} />
+              <Controls
+                showInteractive={false}
+                position="top-left"
+                fitViewOptions={{ padding: 0.12, minZoom: 0.66 }}
+                style={{ top: '50%', left: 12, bottom: 'auto', transform: 'translateY(-50%)' }}
+              />
               <MiniMap
                 pannable
                 zoomable
@@ -4404,12 +3996,6 @@ function Shell() {
               onPick={pickModelKey}
               onVidResChange={setVidRes}
               projectStyle={projectStyle}
-              onRenderTransitionTemplate={renderTransitionTemplate}
-              templateRenderBusy={templateRenderBusy}
-              onOpenPromptRefine={(edgeId) => {
-                setRefineShotNodeId(null)
-                setRefineTransitionEdgeId(edgeId)
-              }}
               stagePick={stagePick}
               onPickStage={pickStageModel}
             />
@@ -4439,50 +4025,36 @@ function Shell() {
             characters={characters}
             videoRequest={selectedVideoRequest}
             projectStyle={projectStyle}
-            onRenderVideoTemplate={renderVideoTemplate}
-            templateRenderBusy={templateRenderBusy}
-            onOpenPromptRefine={(shotId) => {
-              setRefineTransitionEdgeId(null)
-              setRefineShotNodeId(shotId)
-            }}
             stagePick={stagePick}
             onPickStage={pickStageModel}
             settings={appSettings}
             pick={modelPick}
             onPick={pickModelKey}
-            canvasProdMode={canvasProdMode}
             onAddAssetCard={addAssetCardFromStock}
           />
           )}
         </main>
-          </div>
-          <WorkbenchChatAside
-            surface="shots"
-            open={shotsChatOpen}
-            onClose={() => setShotsChatOpen(false)}
-          >
-            {shotsChatAdapter ? (
-              <SkillChat
-                adapter={shotsChatAdapter}
-                settings={appSettings}
-                stagePick={stagePick}
-                onPickStage={pickStageModel}
-                onToast={(m) => {
-                  setToast(m)
-                  window.setTimeout(() => setToast(''), 3200)
-                }}
-                onClose={() => setShotsChatOpen(false)}
-              />
-            ) : (
-              <div className="sb-chat-placeholder">
-                {readyProject ? '正在准备分镜技能…' : '先在顶栏选择项目，再让助手拆镜。'}
-              </div>
-            )}
-          </WorkbenchChatAside>
         </div>
         )}
       </AppShell>
       )}
+
+        {scriptImportOpen ? (
+          <EpisodeScriptImportDialog
+            projectName={readyProject}
+            episodes={episodes}
+            hintEpNo={scriptHintEpNo}
+            settings={appSettings}
+            stagePick={stagePick}
+            projectStyle={projectStyle}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
+            }}
+            onClose={() => setScriptImportOpen(false)}
+            onApply={handleApplyScriptEpisodes}
+          />
+        ) : null}
 
         {intakeOpen ? (
           <IntakeDialog
@@ -4518,24 +4090,6 @@ function Shell() {
           />
         )}
 
-        {promptRefineAdapter ? (
-          <PromptRefineModal
-            open={Boolean(refineShotNodeId || refineTransitionEdgeId)}
-            onClose={() => {
-              setRefineShotNodeId(null)
-              setRefineTransitionEdgeId(null)
-            }}
-            adapter={promptRefineAdapter}
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            onToast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3200)
-            }}
-          />
-        ) : null}
-
         {toast && <div className="toast">{toast}</div>}
     </CanvasCtx.Provider>
   )
@@ -4551,14 +4105,3 @@ export default function App() {
   )
 }
 
-/** 只读当前集，供首帧恢复用（loadSaved 已解析过整份存档） */
-function loadSavedEpNo(): number {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return 1
-    const n = Number(JSON.parse(raw)?.epNo)
-    return Number.isFinite(n) && n > 0 ? n : 1
-  } catch {
-    return 1
-  }
-}

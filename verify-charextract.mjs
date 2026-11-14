@@ -83,7 +83,7 @@ await p.getByRole('button', { name: '镜头表', exact: true }).click()
 await p.waitForTimeout(1000)
 await p.getByRole('button', { name: '生成到画布' }).click()
 await p.waitForTimeout(1000)
-await p.getByRole('button', { name: '角色', exact: true }).click()
+await p.getByRole('button', { name: '素材', exact: true }).click(); await p.locator('[data-asset-character-tab]').click()
 await p.waitForTimeout(500)
 
 // ---- 1. 从本集拆 ----

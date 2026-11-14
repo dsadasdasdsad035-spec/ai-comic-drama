@@ -37,10 +37,11 @@ export const TOKEN_TTL_MS = 30 * 60 * 1000
 export const TOKEN_MAX = 1000
 export const DOWNLOAD_TIMEOUT_MS = 120_000
 
+/** 0 = 不限制体积 */
 export const MEDIA_LIMITS = {
   image: 30 * 1024 * 1024,
   audio: 30 * 1024 * 1024,
-  video: 200 * 1024 * 1024,
+  video: 0,
 }
 
 const CONTENT_TYPES = {
@@ -1150,9 +1151,9 @@ export async function importStockItem(input = {}) {
     throw lastError || new StockError('下载失败', { kind: 'network', provider: providerId })
   }
 
-  const limit = MEDIA_LIMITS[item.mediaType] || MEDIA_LIMITS.image
+  const limit = MEDIA_LIMITS[item.mediaType] ?? MEDIA_LIMITS.image
   const declared = Number(r.headers?.get?.('content-length') || 0)
-  if (declared && declared > limit) {
+  if (limit > 0 && declared && declared > limit) {
     throw new StockError(`文件超过 ${Math.round(limit / 1024 / 1024)}MB 上限`, { kind: 'too-large' })
   }
   const { ext } = mimeFor(item.mediaType, r.headers?.get?.('content-type'), variant.url)
@@ -1161,7 +1162,12 @@ export async function importStockItem(input = {}) {
   let saved
   if (r.body && typeof r.body.getReader === 'function') {
     try {
-      saved = await saveProjectMediaStream(root, project, r.body, { ext, prefix: 'stock', file, maxBytes: limit })
+      saved = await saveProjectMediaStream(root, project, r.body, {
+        ext,
+        prefix: 'stock',
+        file,
+        maxBytes: limit > 0 ? limit : 0,
+      })
     } catch (e) {
       if (/大小上限/.test(e?.message || '')) {
         throw new StockError(`文件超过 ${Math.round(limit / 1024 / 1024)}MB 上限`, { kind: 'too-large' })
@@ -1170,7 +1176,7 @@ export async function importStockItem(input = {}) {
     }
   } else {
     const bytes = Buffer.from(await r.arrayBuffer())
-    if (bytes.length > limit) throw new StockError('文件超过大小上限', { kind: 'too-large' })
+    if (limit > 0 && bytes.length > limit) throw new StockError('文件超过大小上限', { kind: 'too-large' })
     if (!bytes.length) throw new StockError('下载内容为空', { kind: 'provider' })
     saved = { ...saveProjectMedia(root, project, bytes, { ext, prefix: 'stock', file }), bytes: bytes.length }
   }

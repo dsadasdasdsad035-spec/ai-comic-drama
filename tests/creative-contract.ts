@@ -1,11 +1,5 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
 import { contractIds, validateContract } from '../src/skills/contracts'
-import { parseSkillText } from '../src/skills/parse'
-
-const root = process.cwd()
-const readSkill = (id: string) => fs.readFileSync(path.join(root, 'skills', id, 'SKILL.md'), 'utf8')
 
 let bad = 0
 function check(name: string, fn: () => void) {
@@ -76,19 +70,6 @@ check('起始时间重复被拒绝', () => {
 check('空镜头列表被拒绝', () => {
   const r = validateContract('reverse-v1', pack({ shots: [] }))
   assert.equal(r.ok, false)
-})
-
-check('video-reverse 技能可解析且声明 reverse-v1', () => {
-  const s = parseSkillText('video-reverse', readSkill('video-reverse'), 'builtin')
-  assert.deepEqual(s.manifest.contracts, ['reverse-v1'])
-  assert.equal(s.manifest.stage, 'creative')
-  assert.deepEqual(s.manifest.inputs, ['mode', 'sourceLabel', 'shotCount', 'aspect'])
-})
-
-check('creative-plan 技能可解析且可回退渲染', () => {
-  const s = parseSkillText('creative-plan', readSkill('creative-plan'), 'builtin')
-  assert.equal(s.manifest.stage, 'creative')
-  assert.deepEqual(s.manifest.contracts, ['creative-plan-v1'])
 })
 
 check('creative-plan-v1 接受纯回复', () => {

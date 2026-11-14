@@ -132,10 +132,11 @@ try {
   const cardTexts = async (attr) =>
     page.locator(`[data-${attr}-chat] [data-chat-tool="builtin_action"]`).allInnerTexts()
 
-  await openView('镜头表', 'shots')
-  check('真实模型：无页内拆镜按钮', (await page.getByRole('button', { name: '拆镜', exact: true }).count()) === 0)
-  check('真实模型：镜头表 Agent 默认展开', await page.locator('[data-shots-chat]').isVisible())
-  await page.screenshot({ path: path.join(EVIDENCE, 'builtin-actions-real-shots.png') })
+  await page.goto(APP, { waitUntil: 'domcontentloaded' })
+  await page.locator('.topbar-project select').selectOption(NAME)
+  await page.getByRole('button', { name: '画布', exact: true }).click()
+  await page.locator('[data-canvas-shots]').waitFor({ timeout: 15000 })
+  check('画布无拆镜助手', (await page.getByRole('button', { name: '拆镜助手', exact: true }).count()) === 0)
 
   await openView('提示词', 'prompts')
   await page.locator('[data-prompts-chat] [data-chat-builtins] button', { hasText: '生成提示词' }).first().click()

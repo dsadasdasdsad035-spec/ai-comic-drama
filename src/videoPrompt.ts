@@ -17,12 +17,7 @@ import {
   type ResolvedShotReference,
   type ResolvedVideoReference,
 } from './shotReferences'
-import {
-  isFreshVideoPromptRender,
-  getPromptRenderTemplateVersion,
-  templateVersionStale,
-  videoPromptRenderStale,
-} from './promptRender'
+import { shotAutoScriptPrompt } from './promptRender'
 import type { ShotData, VideoPromptOverride } from './types'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
 
@@ -58,7 +53,7 @@ export type ShotVideoRequest = {
   omitted: { label: string; reason: string }[]
   /** 首期只使用第一条视频素材，其余在这里说明 */
   omittedVideos: { label: string; reason: string }[]
-  textSource: 'video_prompt' | 'prompt_fallback' | 'fallback' | 'template_render'
+  textSource: 'video_prompt' | 'prompt_fallback' | 'fallback' | 'script_assembled' | 'template_render'
   seconds: number
   resolution: string
   warnings: VideoRequestIssue[]
@@ -256,17 +251,17 @@ export function buildShotVideoRequest(input: {
         : `超过参考图上限（${videoRefLimitLabel(cap)}）`,
   }))
 
-  const motion = (d.videoPrompt || d.prompt).trim()
-  const textSource: ShotVideoRequest['textSource'] = d.videoPrompt?.trim()
+  const vpTrim = (d.videoPrompt || '').trim()
+  const pTrim = (d.prompt || '').trim()
+  const motionForFingerprint = vpTrim || pTrim
+  const textSource: ShotVideoRequest['textSource'] = vpTrim
     ? 'video_prompt'
-    : d.prompt?.trim()
+    : pTrim
       ? 'prompt_fallback'
-      : 'fallback'
+      : 'script_assembled'
   const fallback = `${d.size}，${lexiconMoveLine(d)}，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
   /** 运镜文案只来自条目自身的 motion_note，不再从几何数据推导 */
   const liveMotionNote = d.motionNote || ''
-  /** 无模板渲染时仅用表内语义层正文，不再运行时拼接后缀 */
-  const semantic = motion || fallback
 
   const mode: VideoRequestMode = nativeMode
     ? 'native'
@@ -312,7 +307,7 @@ export function buildShotVideoRequest(input: {
     candidates,
     refs: limited,
     mode,
-    motion: motion || fallback,
+    motion: motionForFingerprint || fallback,
     textSource,
     motionNote: liveMotionNote,
     seconds,
@@ -320,15 +315,6 @@ export function buildShotVideoRequest(input: {
     audio,
     videos,
   })
-
-  const rendered = d.videoPromptRendered?.trim()
-  const freshRender =
-    rendered &&
-    isFreshVideoPromptRender(d.videoPromptRenderMeta, fingerprint, getPromptRenderTemplateVersion())
-  const prompt = freshRender ? rendered : semantic
-  const resolvedTextSource: ShotVideoRequest['textSource'] = freshRender
-    ? 'template_render'
-    : textSource
 
   const warnings: VideoRequestIssue[] = []
   const orphanAssets = (d.refIds ?? []).filter(
@@ -393,7 +379,7 @@ export function buildShotVideoRequest(input: {
     blocking.push({
       code: 'no-image',
       level: 'error',
-      message: '在画布上为分镜连线角色或图片素材，或连线视频素材后再出片',
+      message: '在画布上为分镜连线角色或图片素材，或勾选运镜库视频参考 / 连线视频素材后再出片',
     })
   }
   if (nativeMode && refs.length === 0) {
@@ -402,6 +388,42 @@ export function buildShotVideoRequest(input: {
       level: 'error',
       message: '原生音频需要至少一张连线参考图（角色、素材或相邻镜）',
     })
+  }
+
+  let prompt: string
+  if (vpTrim) {
+    prompt = vpTrim
+  } else if (pTrim) {
+    prompt = pTrim
+  } else {
+    prompt = shotAutoScriptPrompt({
+      data: d,
+      nodeId: input.nodeId,
+      nodes: input.nodes,
+      characters: input.characters,
+      missingMedia: input.missingMedia,
+      model: input.model,
+      resolution: input.resolution,
+      style: '',
+      aspect: '16:9',
+      request: {
+        prompt: '',
+        mode,
+        refs,
+        firstFrame,
+        video,
+        audio,
+        omitted,
+        omittedVideos,
+        textSource: 'script_assembled',
+        seconds,
+        resolution,
+        warnings,
+        blocking,
+        fingerprint,
+      },
+    }).trim()
+    if (!prompt) prompt = fallback
   }
 
   return {
@@ -413,7 +435,7 @@ export function buildShotVideoRequest(input: {
     audio,
     omitted,
     omittedVideos,
-    textSource: resolvedTextSource,
+    textSource,
     seconds,
     resolution,
     warnings,
@@ -425,17 +447,14 @@ export function buildShotVideoRequest(input: {
 export type EffectiveVideoPrompt = {
   text: string
   source: 'auto' | 'override'
-  autoKind?: 'template' | 'semantic'
+  autoKind?: 'semantic' | 'script' | 'template'
   stale: boolean
-  renderStale?: boolean
-  templateStale?: boolean
 }
 
 /** 手改快照优先；过期只提示，不阻止出片。 */
 export function effectiveVideoPrompt(
   request: Pick<ShotVideoRequest, 'prompt' | 'fingerprint' | 'textSource'>,
   override?: VideoPromptOverride | null,
-  render?: { text?: string; meta?: import('./types').VideoPromptRenderMeta },
 ): EffectiveVideoPrompt {
   if (override?.text) {
     return {
@@ -444,15 +463,11 @@ export function effectiveVideoPrompt(
       stale: Boolean(override.fingerprint && override.fingerprint !== request.fingerprint),
     }
   }
-  const renderStale = videoPromptRenderStale(render?.text, render?.meta, request.fingerprint, getPromptRenderTemplateVersion())
-  const templateStale = templateVersionStale(render?.meta, getPromptRenderTemplateVersion())
   return {
     text: request.prompt,
     source: 'auto',
-    autoKind: request.textSource === 'template_render' ? 'template' : 'semantic',
+    autoKind: request.textSource === 'script_assembled' ? 'script' : 'semantic',
     stale: false,
-    renderStale,
-    templateStale,
   }
 }
 

@@ -182,7 +182,7 @@ try {
   await page.waitForTimeout(1500)
   await page.locator('.topbar-project select').selectOption(PROJECT)
   await page.waitForTimeout(1200)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(1500)
   check('角色卡出现', (await page.locator('.char-card').count()) === 2, String(await page.locator('.char-card').count()))
 
@@ -272,7 +272,7 @@ try {
   await page.waitForTimeout(1200)
   await page.locator('.topbar-project select').selectOption(PROJECT)
   await page.waitForTimeout(800)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(1200)
   if ((await page.locator('[data-characters-chat]').count()) === 0) {
     await page.locator('.agent-btn').first().click()
@@ -397,7 +397,7 @@ try {
     await page.waitForTimeout(1600)
     await page.locator('.topbar-project select').selectOption(PROJECT)
     await page.waitForTimeout(1200)
-    await page.getByRole('button', { name: '角色', exact: true }).click()
+    await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
     await page.waitForTimeout(1400)
     if ((await page.locator('[data-characters-chat]').count()) === 0) {
       await page.locator('.agent-btn').first().click()

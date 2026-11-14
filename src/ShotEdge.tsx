@@ -4,13 +4,8 @@ import type { Relation } from './types'
 import type { ShotEdgeType } from './data'
 import { useTheme, type ThemeColors } from './theme'
 
-/** 关系只靠虚实区分：连线上不再有任何标签或胶囊 */
-const DASH: Record<Relation, string | undefined> = {
-  cut: undefined,
-  transition: '7 5',
-  flashback: '2 5',
-  branch: '6 4',
-}
+/** 非成片链（任一端生图镜）时统一工位虚线；双出片镜为实线 */
+const PROD_KIND_DASH = '6 4'
 
 function relationColor(relation: Relation, colors: ThemeColors): string {
   if (relation === 'transition') return colors.edgeTransition
@@ -26,6 +21,7 @@ function relationColor(relation: Relation, colors: ThemeColors): string {
 function ShotEdge(props: EdgeProps<ShotEdgeType>) {
   const { id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data } = props
   const relation: Relation = data?.relation ?? 'cut'
+  const sequenceSolid = Boolean(data?.sequenceSolid)
   const { colors } = useTheme()
   // 分镜边不可选（selectable=false），高亮改由「正在编辑的转场边」派生
   const active = Boolean(data?.active)
@@ -54,7 +50,7 @@ function ShotEdge(props: EdgeProps<ShotEdgeType>) {
       style={{
         stroke: color,
         strokeWidth: active ? 2.6 : 1.6,
-        strokeDasharray: DASH[relation],
+        strokeDasharray: sequenceSolid ? undefined : PROD_KIND_DASH,
         opacity: inactive ? 0.45 : 1,
         filter: active ? `drop-shadow(0 0 6px ${baseColor})` : undefined,
       }}

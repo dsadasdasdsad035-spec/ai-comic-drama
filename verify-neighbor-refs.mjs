@@ -61,6 +61,7 @@ const asset = {
 }
 const extra = '/img/extra.jpg'
 const target = shot('n2', 'S02', '/img/s02.jpg', {
+  prodKind: 'video',
   refIds: ['char-chenmo', 'shot-prev', 'asset-a', 'shot-next'],
   refExtras: [extra],
   cast: ['陈默'],
@@ -69,13 +70,31 @@ const col = lib.collectShotReferences({ node: target, nodes: [...nodes, asset], 
 check('角色 → 相邻 → 素材 → 手工顺序', col.refs.map((x) => x.source).join(',') === 'character,adjacent,adjacent,asset,extra', col.refs.map((x) => x.source).join(','))
 check('相邻标签明确', col.refs.some((x) => x.label === '上一镜 S01画面'))
 check('去重 URL', new Set(col.refs.map((x) => x.url)).size === col.refs.length)
+check('生图镜忽略邻镜 token', !lib.collectShotReferences({
+  node: shot('n2', 'S02', '/img/s02.jpg', {
+    prodKind: 'image',
+    refIds: ['shot-prev', 'shot-next', 'char-chenmo'],
+    cast: ['陈默'],
+  }),
+  nodes: [...nodes, asset],
+  characters,
+}).refs.some((x) => x.source === 'adjacent'))
+check('生图镜仍解析角色', lib.collectShotReferences({
+  node: shot('n2', 'S02', '/img/s02.jpg', {
+    prodKind: 'image',
+    refIds: ['shot-prev', 'char-chenmo'],
+    cast: ['陈默'],
+  }),
+  nodes: [...nodes, asset],
+  characters,
+}).refs.some((x) => x.source === 'character'))
 check('缺失相邻有原因', lib.collectShotReferences({
-  node: shot('n2', 'S02', '/img/s02.jpg', { refIds: ['shot-next'] }),
+  node: shot('n2', 'S02', '/img/s02.jpg', { prodKind: 'video', refIds: ['shot-next'] }),
   nodes: [S01, S02, shot('n3', 'S03', '')],
   characters: [],
 }).missing.some((x) => x.token === 'shot-next'))
 check('缺失文件有原因', lib.collectShotReferences({
-  node: shot('n2', 'S02', '/img/s02.jpg', { refIds: ['shot-prev'] }),
+  node: shot('n2', 'S02', '/img/s02.jpg', { prodKind: 'video', refIds: ['shot-prev'] }),
   nodes,
   characters: [],
   missingMedia: new Set(['/img/s01.jpg']),

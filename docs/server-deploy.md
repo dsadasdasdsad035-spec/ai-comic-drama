@@ -104,6 +104,17 @@ settings.creative.ingest = {
 `/api/health` 的 `ttsReady` / `ttsProvider` 现在按**当前绑定的音频模型**判定，
 不再只看 `say` 是否存在，所以 Linux 上不会误报配音不可用。
 
+## 远端一键（deploy/.deploy.conf）
+
+```bash
+./scripts/deploy-remote.sh
+```
+
+会 rsync 到 `DEPLOY_SERVER`（默认 `/opt/storyboard`），合并虎皮椒与计费环境变量，在 WildAI 主站 nginx 插入
+`https://rechargeai.cn/api/billing/xunhupay/notify` → 分镜 `8080` 的路由（443 公网回调），并重建 `app` + `proxy`。
+
+分镜用户入口：`https://rechargeai.cn/`（Basic Auth，`PROXY_CONF=nginx.conf`，`PUBLIC_PORT=80` / `PUBLIC_TLS_PORT=443`）。虎皮椒回调同域 `/api/billing/xunhupay/notify`（免 Basic Auth）。
+
 ## 自检
 
 ```bash

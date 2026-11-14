@@ -1,4 +1,5 @@
 import type { ProjectShot } from './api'
+import { resolveProdKind } from './shotProdKind'
 import { dialogueToText, parseDialogue } from './prompts'
 import type { ShotData } from './types'
 
@@ -202,6 +203,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     visual_brief_meta: d.visualBriefMeta,
     motion_note: d.motionNote ?? '',
     use_expression_ref: Boolean(d.useExpressionRef),
+    prod_kind: d.prodKind,
     ...(d.handEdited?.length ? { handEdited: d.handEdited } : {}),
   }
 }
@@ -249,5 +251,13 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     episode: s.episode,
     handEdited: s.handEdited ?? fallback.handEdited,
     orphan: false,
+    prodKind: resolveProdKind(s, {
+      refImage: fallback.refImage,
+      videoUrl: fallback.videoUrl,
+      vidState: fallback.vidState,
+      videoMeta: fallback.videoMeta,
+      candidates: fallback.candidates,
+      genState: fallback.genState,
+    }),
   }
 }

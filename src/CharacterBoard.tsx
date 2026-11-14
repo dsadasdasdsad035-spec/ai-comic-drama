@@ -1,13 +1,14 @@
 import { useState } from 'react'
+import { BoardListToolbar } from './BoardListToolbar'
+import { BOARD_LIST_PAGE_SIZE, characterListMatch, useBoardListFilter } from './boardListFilter'
 import { type AppSettings, type Stage } from './api'
 import type { Pricing } from './pricing'
 import { type CharacterSheet } from './characters'
 import CharacterCard from './CharacterCard'
 import { CapModelSelect, hasTextModels, StageModelSelect, type StagePick } from './ModelSelect'
-import { type BuiltinResult } from './agent/workbenchChat'
 import WorkbenchBar from './WorkbenchBar'
 
-type Props = {
+export type CharacterBoardProps = {
   characters: CharacterSheet[]
   patch: (id: string, p: Partial<CharacterSheet>) => CharacterSheet[]
   selectedShot: { id: string; no: string } | null
@@ -16,8 +17,6 @@ type Props = {
   onAdd: () => void
   onDelete: (charId: string) => void
   onRename: (oldId: string, name: string) => void
-  onExtract: (scope: 'episode' | 'project', signal?: AbortSignal) => Promise<BuiltinResult>
-  extracting: '' | 'episode' | 'project'
   viewModel?: string
   onPickViewModel: (key: string) => void
   settings: AppSettings | null
@@ -27,12 +26,13 @@ type Props = {
   projectName: string
   onPersist: (next: CharacterSheet[]) => void
   onPublishSheet: (charId: string) => void
-  epNo: number
   toast: (message: string) => void
   missing: Set<string>
   onImageMissing: (ref: string) => void
   charsOn: boolean
   onToggleChars: () => void
+  /** 嵌入素材页：不重复顶栏，由 AssetBoard 的 WorkbenchBar 承载动作 */
+  embedded?: boolean
 }
 
 export default function CharacterBoard({
@@ -44,8 +44,6 @@ export default function CharacterBoard({
   onAdd,
   onDelete,
   onRename,
-  onExtract,
-  extracting,
   viewModel,
   onPickViewModel,
   settings,
@@ -54,90 +52,45 @@ export default function CharacterBoard({
   projectName,
   onPersist,
   onPublishSheet,
-  epNo,
   toast,
   missing,
   onImageMissing,
   charsOn,
   onToggleChars,
-}: Props) {
+  embedded,
+}: CharacterBoardProps) {
   const [tipOpen, setTipOpen] = useState(true)
+  const list = useBoardListFilter(characters, characterListMatch)
 
-  const runExtract = async (scope: 'episode' | 'project') => {
-    const r = await onExtract(scope)
-    if (!r.ok) {
-      if (!r.cancelled) toast(r.error || '拆角色失败')
-      return
-    }
-    toast(r.summary)
-  }
+  const scopeDetail = (
+    <span className="board-hint">
+      项目级 · {characters.length} 个角色 ·{' '}
+      {selectedShot ? `当前镜头 ${selectedShot.no}` : '未选镜头（到画布选镜后可注入）'}
+    </span>
+  )
 
-  return (
-    <div className="board">
-      <WorkbenchBar
-        scope={<span className="wb-bar-title">角色</span>}
-        scopeDetail={
-          <span className="board-hint">
-            E{String(epNo).padStart(2, '0')} · {characters.length} 个角色 ·{' '}
-            {selectedShot ? `当前镜头 ${selectedShot.no}` : '未选镜头'}
-          </span>
-        }
-        settings={
-          <>
-            <StageModelSelect
-              stage="character"
-              label="拆角色模型"
-              settings={settings}
-              pick={stagePick}
-              onChange={onPickStage}
-              compact
-            />
-            <CapModelSelect
-              cap="view"
-              label="三视图模型"
-              settings={settings}
-              value={viewModel}
-              onChange={onPickViewModel}
-              className="wb-field"
-            />
-          </>
-        }
-        actions={
-          <>
-            <button
-              className="btn-ghost"
-              disabled={!!extracting || !projectName}
-              onClick={() => void runExtract('project')}
-              title="用大模型从全剧原文梗概与分集场次里拆出角色"
-            >
-              {extracting === 'project' ? '拆解中…' : '从全剧拆'}
-            </button>
-            <button
-              className={characters.length === 0 ? 'btn primary' : 'btn-ghost'}
-              disabled={!!extracting || !projectName}
-              onClick={() => void runExtract('episode')}
-              title="用大模型从本集场次 + 本集分镜里拆出角色，自动写外观锚点"
-            >
-              {extracting === 'episode' ? '拆解中…' : '从本集拆角色'}
-            </button>
-            <button className="btn" onClick={onAdd} title="新建一张角色卡">
-              + 新建角色
-            </button>
-            {characters.length > 0 && (
-              <button
-                className={charsOn ? 'btn-ghost' : 'btn primary'}
-                onClick={onToggleChars}
-                title="把角色卡显示到画布上（画布视图可见，可拖到分镜旁）"
-              >
-                {charsOn ? '角色已在画布' : '全部上画布'}
-              </button>
-            )}
-          </>
-        }
-      />
+  const body = (
+    <>
+      {characters.length > 0 ? (
+        <BoardListToolbar
+          query={list.query}
+          onQueryChange={list.setQuery}
+          placeholder="搜索名称、角色、lookEn、关键词…"
+          ariaLabel="搜索角色"
+          filteredCount={list.filteredCount}
+          totalCount={list.totalCount}
+          page={list.page}
+          totalPages={list.totalPages}
+          onPageChange={list.setPage}
+          pageSize={BOARD_LIST_PAGE_SIZE}
+        />
+      ) : null}
 
       <div className="char-grid">
-        {characters.map((c) => (
+        {characters.length > 0 && list.filteredCount === 0 ? (
+          <div className="char-empty-board">没有匹配的角色，换个关键词试试。</div>
+        ) : null}
+        {list.slice.map((c) => (
           <CharacterCard
             key={c.id}
             c={c}
@@ -161,7 +114,9 @@ export default function CharacterBoard({
           <div className="char-empty-board">
             {tipOpen ? (
               <>
-                <span>还没有角色。三视图锁定外观，lookEn 会原样注入到每个镜头的提示词，保证多镜头长相一致。</span>
+                <span>
+                  还没有角色。三视图锁定外观，lookEn 会原样注入到每个镜头的提示词，保证多镜头长相一致。
+                </span>
                 <button className="btn-mini ghost" onClick={() => setTipOpen(false)}>
                   知道了
                 </button>
@@ -172,6 +127,61 @@ export default function CharacterBoard({
           </div>
         )}
       </div>
+    </>
+  )
+
+  if (embedded) {
+    return <div className="board-character-embedded">{body}</div>
+  }
+
+  return (
+    <div className="board">
+      <WorkbenchBar
+        scope={<span className="wb-bar-title">角色</span>}
+        scopeDetail={scopeDetail}
+        settings={
+          <>
+            <StageModelSelect
+              stage="character"
+              label="拆角色模型"
+              settings={settings}
+              pick={stagePick}
+              onChange={onPickStage}
+              compact
+            />
+            <CapModelSelect
+              cap="view"
+              label="三视图模型"
+              settings={settings}
+              value={viewModel}
+              onChange={onPickViewModel}
+              className="wb-field"
+            />
+          </>
+        }
+        actions={
+          <>
+            <button
+              className={characters.length === 0 ? 'btn primary' : 'btn'}
+              onClick={onAdd}
+              title="新建一张角色卡"
+            >
+              + 新建角色
+            </button>
+            {characters.length > 0 && (
+              <button
+                className={charsOn ? 'btn-ghost' : 'btn primary'}
+                onClick={onToggleChars}
+                title="把角色卡显示到画布上（画布视图可见，可拖到分镜旁）"
+              >
+                {charsOn ? '角色已在画布' : '全部上画布'}
+              </button>
+            )}
+          </>
+        }
+      />
+
+      {body}
     </div>
   )
 }

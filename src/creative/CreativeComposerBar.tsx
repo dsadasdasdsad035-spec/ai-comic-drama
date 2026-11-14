@@ -1,8 +1,6 @@
 import { useRef } from 'react'
 import type { CreativeSessionSummary } from './sessionStore'
 
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -34,10 +32,6 @@ export function CreativeComposerBar({
 
   const pick = async (file: File | undefined | null) => {
     if (!file) return
-    if (file.size > MAX_UPLOAD_BYTES) {
-      window.alert(`视频超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB 上限`)
-      return
-    }
     if (!/^video\//.test(file.type) && !/\.(mp4|mov|webm|m4v|mkv)$/i.test(file.name)) {
       window.alert('只支持视频文件')
       return
@@ -59,7 +53,7 @@ export function CreativeComposerBar({
           {busy === 'ingest' ? '上传中…' : '上传视频'}
         </button>
         <span className="text-[10px] text-muted-foreground">
-          单文件 ≤200MB；平台链接请在素材页「链接下载」
+          平台链接请在素材页「链接下载」
         </span>
         <input
           ref={fileRef}

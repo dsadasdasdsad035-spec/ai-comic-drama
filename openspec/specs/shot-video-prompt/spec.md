@@ -60,21 +60,25 @@
 
 ### Requirement: 手改提示词保存到本镜并逐字使用
 
-系统 SHALL 允许把最终提示词正文改为手写版本并按镜头保存；保存后生成 MUST 逐字发送该版本，刷新页面和重新打开项目后 MUST 仍保留。用户 MUST 能清除手改并恢复自动拼装。
+系统 SHALL 允许把最终提示词正文改为手写版本并按镜头保存；保存后生成 MUST 逐字发送该版本，刷新页面和重新打开项目后 MUST 仍保留。用户 MUST 能清除手改并恢复自动拼装（语义层或脚本拼装，见「自动正文优先级」）。
 
 #### Scenario: 手改后生成
+
 - **WHEN** 用户编辑正文并保存，然后点生成
 - **THEN** 请求的 `prompt` 等于用户保存的全文，不再追加自动拼装的任何段落
 
 #### Scenario: 重新打开项目
+
 - **WHEN** 用户保存手改版本后刷新页面或重新打开项目
 - **THEN** 该镜头仍显示手改版本和「已手改」状态
 
 #### Scenario: 恢复自动拼装
+
 - **WHEN** 用户点「恢复自动拼装」
 - **THEN** 手改版本被清除，正文回到当前输入的自动拼装结果
 
 #### Scenario: 旧镜头
+
 - **WHEN** 镜头没有手改记录
 - **THEN** 出片使用自动拼装结果，行为与没有该能力时一致
 
@@ -198,3 +202,83 @@
 #### Scenario: 原生音频无隐式静帧
 - **WHEN** 镜头开启原生音频且无任何合格图片连线
 - **THEN** 面板阻止出片，理由说明需要至少一张连线参考图，而非提示「先出画面」
+
+### Requirement: 出片工位仅对出片卡开放
+
+画布分镜的出片提示词面板、附件清单与「生成视频」主操作 MUST 仅对 `prodKind === 'video'` 的镜头提供。`prodKind === 'image'` 的镜头 MUST NOT 展示可提交的出片主工位。
+
+#### Scenario: 出片卡打开面板
+
+- **WHEN** 用户选中 `prodKind === 'video'` 的镜头
+- **THEN** 出片提示词面板与生成视频主操作可用（在出片条件满足时）
+
+#### Scenario: 生图卡无出片主工位
+
+- **WHEN** 用户选中 `prodKind === 'image'` 的镜头
+- **THEN** 不出现可提交的生成视频主操作
+
+### Requirement: 镜头语言库在出片卡 Inspector 配置
+
+对 `prodKind === 'video'` 的镜头，系统 SHALL 在 Inspector **出片** Tab 的「运镜与语义」区块提供镜头语言库选用：`lexiconRefKey`、运镜参照预览，以及显式「作为运镜 reference_video」类动作（与 `camera-lexicon-presets` 一致）。用户勾选或选用库条目后，**出片** Tab 内附件与槽位清单 MUST 同步反映运镜视频参考（当作为 `reference_video` 时）。用户 MUST NOT 为配置运镜参考而依赖画布全局出图模式或生图镜 **画面** Tab 作为唯一入口。
+
+#### Scenario: 出片卡上选运镜库
+
+- **WHEN** 用户在出片镜 **出片** Tab 打开运镜与语义并选用 catalog 条目
+- **THEN** `lexiconRefKey` 写回该镜，出片提示词拼装可读 catalog 术语
+
+#### Scenario: 生图卡不配置运镜连线
+
+- **WHEN** 用户选中生图卡
+- **THEN** 不出现要求配置 `motionLexiconAsRef` 的主 UI，或仅只读说明引导使用出片卡
+
+#### Scenario: 默认不自动连线
+
+- **WHEN** 用户新选用运镜 catalog 条目
+- **THEN** 系统仍默认不自动把预置视频连到画布素材卡，直至用户显式开启作为视频参考（或等效确认）
+
+#### Scenario: 运镜库与附件联动
+
+- **WHEN** 用户在出片 Tab 选用镜头语言库并开启作为视频参考
+- **THEN** 出片 Tab 附件列表出现对应视频槽位项
+
+### Requirement: 邻镜参考仅出片镜可配置
+
+系统 MUST 仅在 `prodKind === 'video'` 的镜头上，于画布参考入口提供上一镜/下一镜（`shot-prev` / `shot-next`）选项。生图镜 MUST NOT 在该入口列出邻镜项。出片解析邻镜参考的行为 MUST 不变。
+
+#### Scenario: 出片镜可选邻镜
+
+- **WHEN** 用户右击出片镜打开参考菜单
+- **THEN** 可见上一镜/下一镜项（在邻镜有画面时可选）
+
+#### Scenario: 生图镜无邻镜项
+
+- **WHEN** 用户右击生图镜打开参考菜单
+- **THEN** 不出现上一镜/下一镜项，仅角色/素材等生图可用来源
+
+### Requirement: 自动正文优先级
+
+在无手改层时，出片自动正文 MUST 按下列顺序择一：`video_prompt` 非空 → 使用该字段；否则 `prompt` 非空 → 使用该字段；否则使用脚本拼装结果。`video_prompt_rendered` 及 `video_prompt_render_meta` MUST NOT 参与该优先级链。
+
+#### Scenario: 忽略陈旧九段层
+
+- **WHEN** 镜头存有 `video_prompt_rendered` 且 `video_prompt` 非空
+- **THEN** 出片正文为 `video_prompt`，面板不显示「模板渲染过期」类警告
+
+#### Scenario: 双空走脚本
+
+- **WHEN** 镜头无手改、`video_prompt` 与 `prompt` 皆空
+- **THEN** 出片正文为脚本拼装，来源标识为脚本拼装
+
+#### Scenario: 手改优先
+
+- **WHEN** 镜头存在有效 `video_prompt_override`
+- **THEN** 出片正文为手改全文，脚本拼装与语义层均不覆盖
+
+### Requirement: 恢复自动拼装含脚本路径
+
+用户点「恢复自动拼装」或等价操作时，系统 MUST 清除手改层并按自动正文优先级重新计算正文；若双空提示词则 MUST 回落到脚本拼装而非空字符串。
+
+#### Scenario: 清除手改后双空
+
+- **WHEN** 用户清除手改且 `video_prompt` 与 `prompt` 皆空
+- **THEN** 面板显示脚本拼装正文

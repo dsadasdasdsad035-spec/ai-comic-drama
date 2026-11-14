@@ -7,6 +7,7 @@
 import type { ProjectShot } from './api'
 import type { CharacterSheet } from './characters'
 import { auditKeyframePrompt } from './promptAudit'
+import { inferProdKindFromProjectShot } from './shotProdKind'
 import { blankShot, findDuplicateNos, insertAfter, nextShotNo } from './shotRows'
 
 export const episodeOf = (s: Pick<ProjectShot, 'id' | 'no' | 'episode'>) => Number(s.episode) || 1
@@ -66,8 +67,12 @@ export function deletedShotIds(prev: ProjectShot[], next: ProjectShot[], eps?: n
 }
 
 /** 新增镜头：集内最大号 + 1 */
-export function planAddShot(shots: ProjectShot[], ep: number): { shot: ProjectShot; next: ProjectShot[] } {
-  const shot = blankShot(ep, nextShotNo(shots, ep))
+export function planAddShot(
+  shots: ProjectShot[],
+  ep: number,
+  prodKind: 'image' | 'video' = 'video',
+): { shot: ProjectShot; next: ProjectShot[] } {
+  const shot = blankShot(ep, nextShotNo(shots, ep), prodKind)
   return { shot, next: [...shots, shot] }
 }
 
@@ -79,7 +84,11 @@ export function planInsertAfter(
   const target = shots.find((s) => s.id === afterShotId)
   if (!target) return null
   const ep = episodeOf(target)
-  const shot = blankShot(ep, nextNoAfter(shots, ep, target.no ?? ''))
+  const inherited =
+    target.prod_kind === 'image' || target.prod_kind === 'video'
+      ? target.prod_kind
+      : inferProdKindFromProjectShot(target)
+  const shot = blankShot(ep, nextNoAfter(shots, ep, target.no ?? ''), inherited)
   return { shot, next: insertAfter(shots, afterShotId, shot) }
 }
 

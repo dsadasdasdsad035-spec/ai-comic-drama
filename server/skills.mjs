@@ -52,6 +52,32 @@ export function readSkillFile(appRoot, id) {
   return fs.readFileSync(realFile, 'utf8')
 }
 
+/**
+ * 内置目录 + 市场安装；同 id 时安装记录覆盖磁盘条目（仅 API 层有效，不写回 skills/）。
+ * @param {Array<{ id: string, text: string, provider?: string, slug?: string, namespace?: string, version?: string, meta?: object }>} installs
+ */
+export function mergeSkillCatalog(diskSkills, installs) {
+  const byId = new Map()
+  for (const s of diskSkills) {
+    byId.set(s.id, { id: s.id, text: s.text, source: 'builtin' })
+  }
+  for (const inst of installs || []) {
+    byId.set(inst.id, {
+      id: inst.id,
+      text: inst.text,
+      source: inst.provider === 'upload' ? 'upload' : 'skillhub',
+      skillhub: {
+        slug: inst.slug || '',
+        namespace: inst.namespace || '',
+        version: inst.version || '',
+        homepage: inst.meta?.homepage || '',
+        name: inst.meta?.name || '',
+      },
+    })
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+
 export function listSkillFiles(appRoot) {
   const dir = skillsDir(appRoot)
   let entries = []

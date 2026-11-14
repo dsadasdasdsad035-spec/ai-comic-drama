@@ -89,7 +89,7 @@ try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
   await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
   await page.locator('.topbar-project select').selectOption(project.name)
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-card').first().waitFor({ timeout: 15000 })
   check('角色卡出现', (await page.locator('.char-card').count()) === 1)
   check('旧逐情绪按钮消失', (await page.locator('.char-expr-chip').count()) === 0)

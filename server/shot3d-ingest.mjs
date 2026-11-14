@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { ingestSourceToDir, MAX_SOURCE_BYTES } from './ingest.mjs'
+import { ingestSourceToDir } from './ingest.mjs'
 import { probeMedia } from './video-analyze.mjs'
 import { projectMediaDir, projectMediaUrl } from './media.mjs'
 import { readProject, resolveRoot, safeProjectName, writeProject } from './db.mjs'
@@ -53,15 +53,6 @@ export async function ingestShot3dReference(appRoot, body, creativeConfig = {}) 
   )
 
   const bytes = Number(got.bytes) || fs.statSync(got.file).size
-  if (bytes > MAX_SOURCE_BYTES) {
-    try {
-      fs.unlinkSync(got.file)
-    } catch {
-      /* ignore */
-    }
-    throw new Error('视频超过大小上限')
-  }
-
   const base = path.basename(got.file)
   const videoUrl = projectMediaUrl(projectName, base)
   let probe = null

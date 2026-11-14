@@ -115,6 +115,7 @@ export function saveProjectMedia(appRoot, name, bytes, { ext = 'bin', prefix = '
  * 返回最终文件名与字节数。
  */
 export async function saveProjectMediaStream(appRoot, name, stream, { ext = 'bin', prefix = 'stock', file = '', maxBytes = 30 * 1024 * 1024 } = {}) {
+  const cap = Number(maxBytes) || 0
   const safeName = safeProjectName(name)
   const cleanExt = String(ext || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
   const cleanPrefix = String(prefix || 'stock').replace(/[^a-z0-9-]/gi, '') || 'stock'
@@ -132,7 +133,7 @@ export async function saveProjectMediaStream(appRoot, name, stream, { ext = 'bin
       const { done, value } = await reader.read()
       if (done) break
       written += value.length
-      if (written > maxBytes) throw new Error('文件超过大小上限')
+      if (cap > 0 && written > cap) throw new Error('文件超过大小上限')
       fs.writeSync(fd, Buffer.from(value))
     }
     fs.closeSync(fd)

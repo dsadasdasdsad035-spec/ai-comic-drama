@@ -21,11 +21,17 @@ const mkShot = (id, no, keyframe) => ({
   size: '中景',
   move: '固定',
   keyframe,
+  clip: '/videos/edge-menu-placeholder.mp4',
+  prod_kind: 'video',
   keyframe_prompt: '',
   dialogue: '',
   cast: [],
   handEdited: [],
 })
+const edgePathDash = async () =>
+  (await page.locator(`${edgeSel} .react-flow__edge-path`).count()) > 0
+    ? await page.locator(`${edgeSel} .react-flow__edge-path`).first().evaluate((el) => getComputedStyle(el).strokeDasharray)
+    : ''
 const state = {
   project: {
     name: 'edge-menu-e2e',
@@ -170,6 +176,11 @@ await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click
 await page.waitForTimeout(700)
 check('落到转场 → 默认叠化 0.5s', (await headText()).includes('叠化 0.5s'), await headText())
 check('边类名已切到转场', (await relationOf()) === 'transition', await edgeClass())
+check(
+  '双出片转场为实线',
+  ['none', ''].includes(String(await edgePathDash())),
+  await edgePathDash(),
+)
 await page.locator('.ctx-menu .ctx-actions button', { hasText: '转场设置' }).click()
 await page.waitForTimeout(500)
 check('菜单关闭', (await ctxMenuCount()) === 0)

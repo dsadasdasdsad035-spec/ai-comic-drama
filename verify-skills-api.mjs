@@ -11,11 +11,34 @@ const ROOT = process.cwd()
 const PORT = 5321
 const APP = `http://127.0.0.1:${PORT}`
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-api-'))
+const FIXTURE_ID = 'verify-api-fixture'
+const fixtureDir = path.join(ROOT, 'skills', FIXTURE_ID)
 let bad = 0
 const check = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ` | ${extra}` : ''}`)
   if (!cond) bad++
 }
+
+const fixtureText = `---
+name: ${FIXTURE_ID}
+description: API 验收夹具
+stage: shot
+runtime: json-tools
+tools: [read_episode]
+inputs: [brief]
+output: shots-v1
+contracts: [shots-v1]
+version: 1
+---
+## 角色与约束
+你是分镜师兼 AI 影像提示词工程师。
+
+## 任务
+按用户 brief 产出镜头表。
+`
+
+fs.mkdirSync(fixtureDir, { recursive: true })
+fs.writeFileSync(path.join(fixtureDir, 'SKILL.md'), fixtureText)
 
 const child = spawn(
   process.execPath,
@@ -50,26 +73,24 @@ for (let i = 0; i < 80; i++) {
 if (!up) {
   console.error('临时 dev server 启动失败')
   child.kill()
+  fs.rmSync(fixtureDir, { recursive: true, force: true })
   process.exit(1)
 }
-
-const builtin = fs.readFileSync(path.join(ROOT, 'skills', 'script', 'SKILL.md'), 'utf8')
 
 try {
   const list = await api('/api/skills')
   check('技能列表成功', list.json?.ok === true && Array.isArray(list.json.skills))
   const ids = (list.json?.skills || []).map((s) => s.id).sort()
+  check('默认目录无历史内置 id', !ids.includes('shotlist') && !ids.includes('character'), ids.join(','))
+  check('含验收夹具', ids.includes(FIXTURE_ID), ids.join(','))
+  const fixture = (list.json?.skills || []).find((s) => s.id === FIXTURE_ID)
   check(
-    '包含十个内置技能',
-    ids.join(',') ===
-      'asset,character,creative-plan,prompt,scene-code,scene-code-chat,scene3d,script,shotlist,video-reverse',
-    ids.join(','),
+    '夹具返回来源与正文',
+    fixture?.source === 'builtin' && fixture?.text === fixtureText && fixture?.builtinText === fixtureText,
   )
-  const script = (list.json?.skills || []).find((s) => s.id === 'script')
-  check('script 返回来源与内置文本', script?.source === 'builtin' && script?.text === builtin && script?.builtinText === builtin)
 
-  const one = await api('/api/skills/script')
-  check('单个技能读取成功', one.json?.ok === true && one.json.skill?.id === 'script')
+  const one = await api(`/api/skills/${FIXTURE_ID}`)
+  check('单个技能读取成功', one.json?.ok === true && one.json.skill?.id === FIXTURE_ID)
 
   const missing = await api('/api/skills/nope')
   check('不存在的技能返回 400', missing.status === 400 && String(missing.json?.message || '').includes('不存在'))
@@ -80,38 +101,41 @@ try {
   const badId = await api('/api/skills/UPPER')
   check('非法 id 被拒绝', badId.status === 400)
 
-  const edited = builtin.replace('你是短剧/漫剧的编剧与分集策划。', '你是短剧/漫剧的编剧与分集策划。（用户改）')
-  const saved = await api('/api/skills/script', {
+  const marker = '你是分镜师兼 AI 影像提示词工程师。'
+  const fixtureBody = fixtureText.replace(/^---[\s\S]*?---\r?\n/, '')
+  const editedBody = fixtureBody.replace(marker, `${marker}（用户改）`)
+  const saved = await api(`/api/skills/${FIXTURE_ID}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: edited, baseVersion: 1 }),
+    body: JSON.stringify({ body: editedBody, baseVersion: 3 }),
   })
   check('保存覆盖成功', saved.json?.ok === true && saved.json.skill?.source === 'override')
   const afterSave = await api('/api/skills')
-  const scriptSaved = (afterSave.json?.skills || []).find((s) => s.id === 'script')
-  check('覆盖生效且保留内置文本', scriptSaved?.text === edited && scriptSaved?.builtinText === builtin)
+  const fixtureSaved = (afterSave.json?.skills || []).find((s) => s.id === FIXTURE_ID)
+  check('覆盖生效且保留内置文本', fixtureSaved?.text?.includes('（用户改）') && fixtureSaved?.builtinText === fixtureText)
 
-  const reset = await api('/api/skills/script', { method: 'DELETE' })
-  check('恢复默认成功', reset.json?.ok === true && reset.json.skill?.text === builtin && reset.json.skill?.source === 'builtin')
-  const afterReset = await api('/api/skills/script')
-  check('恢复后读取为内置', afterReset.json?.skill?.source === 'builtin' && afterReset.json.skill.text === builtin)
+  const reset = await api(`/api/skills/${FIXTURE_ID}`, { method: 'DELETE' })
+  check('恢复默认成功', reset.json?.ok === true && reset.json.skill?.text === fixtureText && reset.json.skill?.source === 'builtin')
+  const afterReset = await api(`/api/skills/${FIXTURE_ID}`)
+  check('恢复后读取为内置', afterReset.json?.skill?.source === 'builtin' && afterReset.json.skill.text === fixtureText)
 
-  const tooBig = await api('/api/skills/script', {
+  const tooBig = await api(`/api/skills/${FIXTURE_ID}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: 'x'.repeat(65 * 1024), baseVersion: 1 }),
+    body: JSON.stringify({ body: 'x'.repeat(65 * 1024), baseVersion: 3 }),
   })
   check('超大正文被拒绝', tooBig.status === 400 && String(tooBig.json?.message || '').includes('超过'))
 
-  const empty = await api('/api/skills/script', {
+  const empty = await api(`/api/skills/${FIXTURE_ID}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ body: '   ', baseVersion: 1 }),
+    body: JSON.stringify({ body: '   ', baseVersion: 3 }),
   })
   check('空正文被拒绝', empty.status === 400)
 } finally {
   child.kill()
   fs.rmSync(TMP, { recursive: true, force: true })
+  fs.rmSync(fixtureDir, { recursive: true, force: true })
 }
 
 console.log(bad ? `\n${bad} failed` : '\nall passed')

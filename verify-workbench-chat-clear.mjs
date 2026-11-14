@@ -376,19 +376,9 @@ try {
   check('生成中清空后 GET 仍空', threadEmpty(await getThread('script')))
   check('生成中清空后界面无半截旧文', !(await chat('script').innerText()).includes('慢请求用来清空'))
 
-  await openView('镜头表', 'shots')
-  const descBefore = await page.locator('.wb-table textarea').first().inputValue().catch(() => '')
-  delayMs = 6000
-  const shotsRunningSend = send('shots', '慢请求用来清空镜头表')
-  await page.locator('[data-shots-chat]').getByText('正在改').first().waitFor({ timeout: 8000 })
-  page.once('dialog', (d) => d.accept())
-  await clearBtn('shots').click()
-  await chat('shots').locator('[data-chat-empty]').waitFor({ timeout: 10000 })
-  await shotsRunningSend.catch(() => {})
-  await page.waitForTimeout(delayMs + 800)
-  delayMs = 0
-  check('分镜生成中清空后线程空', threadEmpty(await getThread('shots', 1)))
-  check('分镜生成中清空不改镜头草稿', (await page.locator('.wb-table textarea').first().inputValue().catch(() => '')) === descBefore)
+  await page.getByRole('button', { name: '画布', exact: true }).click()
+  await page.locator('[data-canvas-shots]').waitFor({ timeout: 10000 })
+  check('画布无分镜聊天清空入口', (await page.locator('[data-shots-chat] [data-chat-clear]').count()) === 0)
 
   await page.getByRole('button', { name: '发布' }).first().click()
   await page.waitForTimeout(1200)

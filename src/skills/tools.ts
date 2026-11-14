@@ -28,6 +28,11 @@ export const KNOWN_TOOL_IDS = new Set([
   'read_file',
   'write_file',
   'list_dir',
+  'read_skill',
+  'read_skill_text',
+  'list_installed_skills',
+  'list_experts',
+  'validate_contract',
   // 创意会话：会话读、媒体摄取/分析、产物与生成
   'read_creative_session',
   'read_creative_source',
@@ -47,6 +52,8 @@ export const READ_TOOL_IDS = new Set(
   [...KNOWN_TOOL_IDS].filter(
     (id) =>
       id.startsWith('read_') ||
+      id === 'list_installed_skills' ||
+      id === 'list_experts' ||
       id === 'get_shot_context' ||
       id === 'list_camera_lexicon' ||
       id === 'get_camera_lexicon',

@@ -11,6 +11,7 @@ import { createPiEventBridge } from './events'
 import { createPiStreamFn, toOpenAIFunctions } from './streamFn'
 import { toPiTools } from './toolAdapter'
 import { gateAgentEvents } from '../agentEventGate'
+import { compactPiThreadMemory } from './threadMemory'
 
 export type RunStageAgentInput = {
   userText: string
@@ -19,8 +20,12 @@ export type RunStageAgentInput = {
   /** 已拼好的 system：技能角色层 + 锁定契约 + 只读技能 */
   system: string
   tools: ToolDef[]
-  /** 只放最近若干轮，避免把整段历史重复送进模型 */
+  /** 只放最近若干轮，避免把整段历史重复送进模型（工作台 transcript 模式） */
   history?: string
+  /** Pi 长期记忆：预置多轮 messages，经 transformContext 压枝后送入模型 */
+  priorMessages?: AgentMessage[]
+  /** 供渠道缓存键；创意会话可传 sessionId */
+  sessionId?: string
   modelKey?: string
   stage?: Stage
   ask?: SceneCodeAsk
@@ -109,16 +114,23 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
     },
   })
 
+  const usePiMemory = Array.isArray(input.priorMessages) && input.priorMessages.length > 0
   const history = String(input.history || '').trim().slice(-6000)
-  const userText = history ? `【之前的对话】\n${history}\n\n${input.userText}` : input.userText
+  const userText = usePiMemory
+    ? input.userText
+    : history
+      ? `【之前的对话】\n${history}\n\n${input.userText}`
+      : input.userText
 
   let steps = 0
   let hitLimit = false
   let agent: Agent | undefined
 
   agent = new Agent({
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     initialState: {
       systemPrompt: input.system,
+      ...(usePiMemory ? { messages: [...input.priorMessages!] } : {}),
       model: {
         id: input.modelKey || 'unknown',
         name: input.modelKey || 'unknown',
@@ -134,6 +146,9 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
       tools: piTools as AgentTool[],
     },
     streamFn,
+    ...(usePiMemory
+      ? { transformContext: async (messages) => compactPiThreadMemory(messages) }
+      : {}),
     toolExecution: 'sequential',
     beforeToolCall: async (context) => {
       if (controller.signal.aborted) return { block: true, reason: '已取消', terminate: true }

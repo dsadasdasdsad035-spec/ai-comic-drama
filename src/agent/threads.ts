@@ -22,7 +22,7 @@ export type ActiveSkill = {
   id: string
   mode: 'host' | 'readonly'
   version: number
-  source: 'builtin' | 'override'
+  source: 'builtin' | 'override' | 'skillhub' | 'upload'
 }
 
 export type ChatThreadRecord = {

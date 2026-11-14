@@ -170,7 +170,7 @@ const s1 = (await api('/api/settings')).settings
 check('设置页保存的默认值落库', s1.defaults.video === 'ark-video-2-0', String(s1.defaults.video))
 
 // ---- 4b. 角色板配音模型 ----
-await p.getByRole('button', { name: '角色', exact: true }).click()
+await p.getByRole('button', { name: '素材', exact: true }).click(); await p.locator('[data-asset-character-tab]').click()
 await p.waitForTimeout(800)
 check(
   '角色卡有配音模型选择',

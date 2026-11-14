@@ -8,6 +8,8 @@ export type ShotEdgeDataType = {
   state?: 'ready' | 'pending' | 'stale' | 'inactive'
   /** 只用于画布显示：这条边是不是正在编辑的转场边（替代被关掉的 EdgeProps.selected） */
   active?: boolean
+  /** 两端皆为出片镜时顺序边画实线（覆盖 relation 默认虚线） */
+  sequenceSolid?: boolean
 }
 export type ShotEdgeType = Edge<ShotEdgeDataType, 'shot'>
 

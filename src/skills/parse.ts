@@ -42,6 +42,16 @@ function unquote(v: string): string {
   return v.replace(/^["']|["']$/g, '').trim()
 }
 
+const FRONTMATTER_SKIP_KEYS = new Set(['allowed-tools', 'metadata'])
+const FRONTMATTER_ARRAY_KEYS = new Set(['tools', 'inputs', 'contracts'])
+
+function topLevelKeyLine(line: string): { key: string; rest: string } | null {
+  if (/^\s/.test(line)) return null
+  const m = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/)
+  if (!m) return null
+  return { key: m[1], rest: m[2] }
+}
+
 function parseFrontmatter(text: string): { fields: Record<string, unknown>; body: string; issues: SkillParseIssue[] } {
   const issues: SkillParseIssue[] = []
   const clean = text.replace(/^\uFEFF/, '')
@@ -60,17 +70,88 @@ function parseFrontmatter(text: string): { fields: Record<string, unknown>; body
     return { fields: {}, body: clean, issues: [{ field: 'frontmatter', message: '缺少结尾的 ---' }] }
   }
   const fields: Record<string, unknown> = {}
-  for (const line of lines.slice(1, end)) {
+  const fmLines = lines.slice(1, end)
+  let skipBlock = false
+  let arrayKey: string | null = null
+  let literalKey: string | null = null
+  let literalLines: string[] = []
+
+  const flushLiteral = () => {
+    if (!literalKey) return
+    fields[literalKey] = literalLines.join('\n').trim()
+    literalKey = null
+    literalLines = []
+  }
+
+  for (const line of fmLines) {
+    if (literalKey) {
+      const top = topLevelKeyLine(line)
+      if (top) {
+        flushLiteral()
+      } else {
+        literalLines.push(line.replace(/^\s{0,2}/, ''))
+        continue
+      }
+    }
+
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith('#')) continue
-    const m = trimmed.match(/^([A-Za-z0-9_-]+):\s*(.*)$/)
-    if (!m) {
-      issues.push({ field: 'frontmatter', message: `无法解析行：${trimmed.slice(0, 40)}` })
+
+    if (skipBlock) {
+      if (topLevelKeyLine(line)) skipBlock = false
+      else continue
+    }
+
+    const listItem = trimmed.match(/^-\s+(.+)$/)
+    if (listItem && arrayKey) {
+      const arr = fields[arrayKey]
+      const list = Array.isArray(arr) ? arr : []
+      list.push(parseScalar(listItem[1]))
+      fields[arrayKey] = list
       continue
     }
-    fields[m[1]] = parseScalar(m[2])
+
+    const top = topLevelKeyLine(line)
+    if (!top) {
+      const hint = trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed
+      issues.push({
+        field: 'frontmatter',
+        message: `无法解析行：${hint}（frontmatter 仅支持单行 key: value、key: [a,b]，或 description: | 多行；其它扩展字段请删掉或改成单行）`,
+      })
+      continue
+    }
+
+    arrayKey = null
+    const { key, rest } = top
+
+    if (FRONTMATTER_SKIP_KEYS.has(key)) {
+      skipBlock = true
+      continue
+    }
+
+    const scalar = rest.trim()
+    if (scalar === '|' || scalar === '>') {
+      literalKey = key
+      literalLines = []
+      continue
+    }
+
+    if (!scalar && FRONTMATTER_ARRAY_KEYS.has(key)) {
+      fields[key] = []
+      arrayKey = key
+      continue
+    }
+
+    fields[key] = parseScalar(rest)
+    if (Array.isArray(fields[key]) && FRONTMATTER_ARRAY_KEYS.has(key)) arrayKey = key
   }
+  flushLiteral()
   return { fields, body: lines.slice(end + 1).join('\n'), issues }
+}
+
+/** 仅读取 frontmatter 字段（供 Agent 包元数据；不做 manifest 完整性校验） */
+export function peekFrontmatterFields(text: string): Record<string, unknown> {
+  return parseFrontmatter(text).fields
 }
 
 function section(body: string, heading: string): string | null {

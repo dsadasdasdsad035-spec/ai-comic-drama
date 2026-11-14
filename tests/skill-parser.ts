@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
+import { classifySkillProfile, tryAgentPackSkill } from '../src/skills/agentPack'
 import { composeSkillBody, parseSkillText } from '../src/skills/parse'
 import { parseSkillRecords } from '../src/skills/validate'
 import type { SkillTextRecord } from '../src/skills/types'
@@ -20,12 +19,12 @@ const skillText = (over: Record<string, string> = {}, task = '任务：{{input:a
   const f: Record<string, string> = {
     name: 'demo',
     description: '一个用于测试的技能，描述足够长',
-    stage: 'script',
+    stage: 'shot',
     runtime: 'tools',
     tools: '[read_source]',
     inputs: '[a]',
-    output: 'script-v1',
-    contracts: '[script-v1]',
+    output: 'shots-v1',
+    contracts: '[shots-v1]',
     version: '1',
     ...over,
   }
@@ -47,16 +46,55 @@ check('合法技能可解析', () => {
   assert.equal(s.manifest.name, 'demo')
   assert.equal(s.role, '你是测试角色。')
   assert.equal(s.task, '任务：{{input:a}}')
-  assert.deepEqual(s.manifest.contracts, ['script-v1'])
+  assert.deepEqual(s.manifest.contracts, ['shots-v1'])
 })
 
 check('contracts 缺省时等于 output', () => {
-  const s = parseSkillText('demo', skillText({ contracts: '[script-v1]' }))
-  assert.deepEqual(s.manifest.contracts, ['script-v1'])
+  const s = parseSkillText('demo', skillText({ contracts: '[shots-v1]' }))
+  assert.deepEqual(s.manifest.contracts, ['shots-v1'])
 })
 
 check('缺 frontmatter 报错', () => {
   assert.throws(() => parseSkillText('demo', '## 角色与约束\nx\n## 任务\ny'), /frontmatter/)
+})
+
+check('SkillHub 风格：description 多行与 metadata 块不报 frontmatter 行错误', () => {
+  const text = [
+    '---',
+    'name: demo',
+    'description: |',
+    '  第一行说明',
+    '  第二行说明',
+    'allowed-tools:',
+    '  - Read',
+    'metadata:',
+    '  version: 9.9',
+    'stage: shot',
+    'runtime: tools',
+    'tools: [read_source]',
+    'inputs: [a]',
+    'output: shots-v1',
+    'version: 1',
+    '---',
+    '## 角色与约束',
+    '你是测试角色。',
+    '',
+    '## 任务',
+    '任务：{{input:a}}',
+    '',
+  ].join('\n')
+  const s = parseSkillText('demo', text)
+  assert.ok(s.manifest.description.includes('第一行说明'))
+  assert.ok(s.manifest.description.includes('第二行说明'))
+})
+
+check('tools 多行列表写法', () => {
+  const text = skillText().replace(
+    'tools: [read_source]',
+    'tools:\n  - read_source\n  - read_episode',
+  )
+  const s = parseSkillText('demo', text)
+  assert.deepEqual(s.manifest.tools, ['read_source', 'read_episode'])
 })
 
 check('缺 name 报错', () => {
@@ -110,7 +148,7 @@ check('声明了但未使用的输入报错', () => {
 
 check('重复契约报错', () => {
   assert.throws(
-    () => parseSkillText('demo', skillText({ contracts: '[script-v1, script-v1]' })),
+    () => parseSkillText('demo', skillText({ contracts: '[shots-v1, shots-v1]' })),
     /重复/,
   )
 })
@@ -136,46 +174,79 @@ const record = (id: string, text: string, source: 'builtin' | 'override' = 'buil
   source,
 })
 
+const AGENT_PACK_TEXT = [
+  '---',
+  'name: agent-demo',
+  'description: |',
+  '  SkillHub 风格说明',
+  'allowed-tools:',
+  '  - Read',
+  '  - Bash',
+  '---',
+  '## agent-demo',
+  '按文档操作。',
+  '',
+].join('\n')
+
+check('Agent 包分类', () => {
+  assert.equal(classifySkillProfile('agent-demo', AGENT_PACK_TEXT, 'upload'), 'agent-pack')
+})
+
+check('工作台 zip 安装被拒绝', () => {
+  assert.throws(() => classifySkillProfile('demo', skillText(), 'upload'), /工作台形态/)
+})
+
+check('Agent 包装载进技能表', () => {
+  const r = parseSkillRecords([record('agent-demo', AGENT_PACK_TEXT, 'upload', AGENT_PACK_TEXT)])
+  assert.ok(r.skills.has('agent-demo'))
+  assert.equal(r.skills.get('agent-demo')?.profile, 'agent-pack')
+  assert.ok(tryAgentPackSkill(record('agent-demo', AGENT_PACK_TEXT, 'upload')))
+})
+
 check('重复 id 只保留第一个并报错', () => {
-  const r = parseSkillRecords([record('demo', skillText()), record('demo', skillText())])
+  const r = parseSkillRecords([
+    record('agent-demo', AGENT_PACK_TEXT, 'upload'),
+    record('agent-demo', AGENT_PACK_TEXT, 'upload'),
+  ])
   assert.equal(r.skills.size, 1)
   assert.ok(r.issues.some((x) => x.message.includes('重复')))
 })
 
-check('未知契约被拒绝', () => {
+check('工作台形态不进入技能表', () => {
   const r = parseSkillRecords([record('demo', skillText({ contracts: '[nope-v1]' }))])
   assert.equal(r.skills.size, 0)
-  assert.ok(r.issues.some((x) => x.message.includes('未知契约')))
+  assert.ok(r.issues.some((x) => x.message.includes('工作台形态')))
 })
 
-check('未知工具被拒绝', () => {
-  const r = parseSkillRecords([record('demo', skillText({ tools: '[nope]' }))])
-  assert.equal(r.skills.size, 0)
-  assert.ok(r.issues.some((x) => x.message.includes('未知工具')))
-})
-
-check('内置 scene3d 技能可加载', () => {
-  const text = fs.readFileSync(path.join(process.cwd(), 'skills', 'scene3d', 'SKILL.md'), 'utf8')
+check('legacy scene3d 内置可加载', () => {
+  const text = [
+    '---',
+    'name: scene3d',
+    'description: 预演导演（测试夹具）',
+    'stage: sceneCode',
+    'runtime: scene3d',
+    'tools: [read_skill]',
+    'inputs: []',
+    'output: scene3d-code-v1',
+    'contracts: [scene3d-code-v1]',
+    'version: 1',
+    '---',
+    '## 角色与约束',
+    '导演。',
+    '',
+    '## 任务',
+    '按用户描述完成场景。',
+    '',
+  ].join('\n')
   const r = parseSkillRecords([record('scene3d', text, 'builtin', text)])
   assert.ok(r.skills.has('scene3d'), r.issues.map((x) => x.message).join('；'))
 })
 
-check('坏的用户覆盖退回内置并报错', () => {
-  const builtin = skillText()
-  const broken = builtin.replace('## 任务', '## 错的任务')
-  const r = parseSkillRecords([record('demo', broken, 'override', builtin)])
-  assert.equal(r.skills.size, 1)
-  assert.equal(r.skills.get('demo')?.source, 'builtin')
-  assert.ok(r.issues.some((x) => x.message.includes('已退回内置')))
-})
-
-check('只读写技能不需要注册写工具', () => {
-  const text = skillText({ tools: '[read_source]' })
-  const r = parseSkillRecords([record('demo', text)])
-  const skill = r.skills.get('demo')
-  assert.ok(skill)
-  assert.deepEqual(skill?.manifest.tools, ['read_source'])
-  assert.ok(!skill?.manifest.tools.some((t) => t.startsWith('submit_')))
+check('工作台 override 不装载', () => {
+  const text = skillText()
+  const r = parseSkillRecords([record('demo', text, 'override', text)])
+  assert.equal(r.skills.size, 0)
+  assert.ok(r.issues.some((x) => x.message.includes('工作台形态')))
 })
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

@@ -57,6 +57,7 @@ try {
   await page.locator('.board').waitFor({ timeout: 30000 })
   await page.locator('[data-asset-video-tab]').click()
   await page.locator('[data-asset-video-board]').waitFor({ timeout: 30000 })
+  await page.locator('[data-asset-video-add]').click()
   await page.locator('[data-asset-link-ingest]').waitFor({ timeout: 10000 })
   const listText = await page.locator('[data-asset-ingest-video-list]').innerText()
   check('视频分类列出新视频', listText.includes('panel-sample') || listText.includes('发布素材卡'), listText)

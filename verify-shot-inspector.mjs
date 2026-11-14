@@ -1,6 +1,6 @@
 /**
  * 分镜 Inspector 驾驶舱验收：
- * 1) 四 tab、默认页、状态 chip、切镜头记忆
+ * 1) 工位分页 tab、默认页、状态 chip、就绪条、切镜头记忆
  * 2) 吸底操作、拖宽持久化、折叠持久化、草稿保留
  * 3) 删除确认、素材卡仍走原面板、隐藏 tab 媒体暂停
  * 跑法：node verify-shot-inspector.mjs
@@ -37,6 +37,7 @@ const project = {
       video_prompt: '镜头缓慢前推 20 厘米，雨丝斜切画面',
       keyframe: '/generated/blender-bmvl0f76b100fab-0.jpg',
       clip: videoFile,
+      prod_kind: 'video',
       cast: ['陈默'],
       dialogue: [{ speaker: '陈默', text: '你来了。' }],
       refIds: ['char-陈默'],
@@ -55,6 +56,7 @@ const project = {
       dialogue: [{ speaker: '陈默', text: '走吧。' }],
       refIds: ['char-陈默'],
       refExtras: [],
+      prod_kind: 'image',
     },
     {
       id: 'E01-S03',
@@ -66,6 +68,22 @@ const project = {
       keyframe_prompt: '',
       video_prompt: '',
       desc: '',
+      cast: [],
+      dialogue: [],
+      refIds: [],
+      refExtras: [],
+      prod_kind: 'image',
+    },
+    {
+      id: 'E01-S04',
+      episode: 1,
+      no: 'S04',
+      seconds: 3,
+      size: '中景',
+      move: '固定',
+      prod_kind: 'video',
+      keyframe_prompt: '',
+      video_prompt: '测试阻断',
       cast: [],
       dialogue: [],
       refIds: [],
@@ -191,13 +209,22 @@ const layout = await p.evaluate(async () => {
     imageModeNoImg: m.defaultTabForShot('image', false),
     videoModeHasImg: m.defaultTabForShot('video', true),
     migrated,
-    chips: m.shotStatusChips({
+    chipsVideo: m.shotStatusChips({
+      prodKind: 'video',
       hasImage: true,
       candidateCount: 2,
       hasVideo: false,
       seconds: 5,
       promptSource: 'auto',
       nativeAudio: true,
+      refCount: 2,
+    }),
+    chipsImage: m.shotStatusChips({
+      prodKind: 'image',
+      hasImage: true,
+      candidateCount: 2,
+      hasVideo: false,
+      seconds: 5,
     }),
   }
 })
@@ -218,13 +245,18 @@ check(
 check('宽度夹取 320–520', layout.min === 320 && layout.max === 520 && layout.mid === 400, JSON.stringify(layout))
 check(
   '默认 tab 随生产模式',
-  layout.imageModeNoImg === 'visual' && layout.videoModeHasImg === 'video',
+  layout.imageModeNoImg === 'visual' && layout.videoModeHasImg === 'outgoing',
   JSON.stringify(layout),
 )
 check(
-  '状态 chip 推导（无镜头配音）',
-  layout.chips.map((c) => c.label).join('|') === '画面 1/2|视频 未出|提示词 自动|原生音频',
-  JSON.stringify(layout.chips),
+  '出片镜 chip 不含画面项',
+  !layout.chipsVideo.some((c) => c.label.startsWith('画面')),
+  JSON.stringify(layout.chipsVideo),
+)
+check(
+  '生图镜 chip 仅画面',
+  layout.chipsImage.length === 1 && layout.chipsImage[0].label.startsWith('画面'),
+  JSON.stringify(layout.chipsImage),
 )
 
 // 默认页 + 出片提示词
@@ -244,9 +276,12 @@ await p.waitForTimeout(200)
 check('操作菜单无批量出片', (await p.getByRole('button', { name: '批量出片' }).count()) === 0)
 check('操作菜单无批量配音', (await p.getByRole('button', { name: '批量配音' }).count()) === 0)
 await p.keyboard.press('Escape')
-await selectShot('S01')
-check('出图模式仅画面与更多 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 2)
-check('出图模式默认画面页', (await activeTab()) === '画面', await activeTab())
+check('顶栏无全局出图/出片切换', (await p.locator('.prod-mode-toggle').count()) === 0)
+
+await selectShot('S02')
+check('生图镜仅画面与叙事 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 2)
+check('生图镜默认画面页', (await activeTab()) === '画面', await activeTab())
+check('工位徽章', (await p.locator('.si-badge-prod--image').count()) === 1)
 
 // 空首帧只拦生成：结构镜头仍在画布上，点出图给出提示而不是静默
 await selectShot('S03')
@@ -259,37 +294,40 @@ check(
   (await emptyBadge.getAttribute('title').catch(() => '')) ?? 'no badge',
 )
 await selectShot('S01')
-await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
-await p.waitForTimeout(300)
-check('出片模式仅视频与更多 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 2)
-await selectShot('S01')
-check('出片模式默认视频页', (await activeTab()) === '视频', await activeTab())
-check('视频页直接看到出片提示词', (await p.locator('[data-video-prompt-panel]').count()) === 1)
+check('出片镜为出片/音画/元数据 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 3)
+check('出片镜默认出片页', (await activeTab()) === '出片', await activeTab())
+check('出片页直接看到出片提示词', (await p.locator('[data-video-prompt-panel]').count()) === 1)
+check('就绪条可见', (await p.locator('[data-readiness-bar]').count()) === 1)
+check('工位徽章出片', (await p.locator('.si-badge-prod--video').count()) === 1)
+await p.locator('.si-menu summary').click()
+check('菜单含镜头类型切换', (await p.locator('.si-menu-pop button').filter({ hasText: '镜头类型' }).count()) === 1)
+await p.keyboard.press('Escape')
+await p.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
+await p.waitForTimeout(200)
+check('音画 Tab 含原生音频', (await p.locator('.native-audio-field').count()) === 1)
 await selectShot('S02')
-check('出片模式无画面仍默认视频页', (await activeTab()) === '视频', await activeTab())
-check('无画面镜仍可看到提示词面板', await p.locator('[data-video-prompt-panel]').isVisible())
+check('切到生图镜显示画面 tab', (await activeTab()) === '画面', await activeTab())
+check('生图镜无视频主吸底', (await p.locator('[data-shot-footer] button', { hasText: '生成视频' }).count()) === 0)
+await selectShot('S01')
+check('出片镜卡片头生成禁用', await shotNode('S01').locator('.shot-gen').isDisabled())
 await p.locator('.si-chip', { hasText: '提示词' }).click()
 await p.waitForTimeout(300)
-check('提示词 chip 切到视频页', (await activeTab()) === '视频', await activeTab())
-check('切到视频页后提示词面板可见', await p.locator('[data-video-prompt-panel]').isVisible())
+check('提示词 chip 切到出片页', (await activeTab()) === '出片', await activeTab())
+check('切到出片页后提示词面板可见', await p.locator('[data-video-prompt-panel]').isVisible())
 await selectShot('S01')
-check('手动选页后切镜头保持', (await activeTab()) === '视频', await activeTab())
+check('手动选页后切镜头保持', (await activeTab()) === '出片', await activeTab())
 
-// chip 路由：出图模式只有画面/更多，切到出片模式再看视频 chip
-await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
-await p.waitForTimeout(250)
+// chip 路由：按镜类型切换镜头
+await selectShot('S02')
 await p.locator('.si-chip', { hasText: '画面' }).click()
 await p.waitForTimeout(250)
 check('画面 chip 切到画面页', (await activeTab()) === '画面', await activeTab())
-await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
+await selectShot('S01')
+await p.locator('.si-chip', { hasText: '成片' }).click()
 await p.waitForTimeout(250)
-await p.locator('.si-chip', { hasText: '视频' }).click()
-await p.waitForTimeout(250)
-check('视频 chip 切到视频页', (await activeTab()) === '视频', await activeTab())
+check('成片 chip 切到出片页', (await activeTab()) === '出片', await activeTab())
 
-// 键盘折叠（回到出图模式，画面 tab 才存在）
-await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
-await p.waitForTimeout(250)
+await selectShot('S02')
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.waitForTimeout(200)
 const paramsSection = p.locator('[data-section="shotParams"]')
@@ -308,7 +346,7 @@ await p.waitForTimeout(200)
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).focus()
 await p.keyboard.press('ArrowRight')
 await p.waitForTimeout(250)
-check('方向键切到下一个 tab（出图模式为更多）', (await activeTab()) === '更多', await activeTab())
+check('方向键切到下一个 tab（生图镜为叙事）', (await activeTab()) === '叙事', await activeTab())
 await p.keyboard.press('Home')
 await p.waitForTimeout(250)
 check('Home 回到第一个 tab', (await activeTab()) === '画面', await activeTab())
@@ -328,7 +366,7 @@ check(
 check('视频主操作在吸底栏', (await footer.innerText()).includes('视频') || (await footer.locator('button').innerText()).length > 0)
 
 // 折叠 + 持久化
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '叙事' }).click()
 await p.waitForTimeout(250)
 const perf = p.locator('[data-section="performance"]')
 check('表演默认折叠', (await perf.evaluate((el) => el.dataset.open)) === 'false')
@@ -336,16 +374,15 @@ await perf.locator('.fold-head').click()
 await p.waitForTimeout(250)
 check('表演可展开', (await perf.evaluate((el) => el.dataset.open)) === 'true')
 
-// 草稿保留（视频 tab 只在出片模式）
-await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
-await p.waitForTimeout(250)
-await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+// 草稿保留（出片镜视频 tab）
+await selectShot('S01')
+await p.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await p.waitForTimeout(250)
 await p.locator('[data-video-prompt-panel] button', { hasText: '编辑' }).click()
 await p.locator('.vp-textarea').fill('这是一份没有保存的草稿')
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '元数据' }).click()
 await p.waitForTimeout(200)
-await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await p.waitForTimeout(250)
 check('切 tab 后草稿仍在', (await p.locator('.vp-textarea').inputValue()) === '这是一份没有保存的草稿')
 await p.locator('[data-video-prompt-panel] button', { hasText: '取消' }).click()
@@ -360,8 +397,18 @@ check(
   (await p.locator('[data-video-prompt-panel]').evaluate((el) => el.dataset.open)) === 'true',
 )
 check(
-  '附件与槽位默认折叠',
-  (await p.locator('.vp-refs-disclosure').evaluate((el) => el.dataset.open)) === 'false',
+  '附件与槽位默认展开',
+  (await p.locator('.vp-refs-disclosure').evaluate((el) => el.dataset.open)) === 'true',
+)
+check(
+  '无模板渲染过期警告',
+  (await p.locator('.gen-warn', { hasText: '模板渲染与当前输入' }).count()) === 0,
+)
+const vpBadge = (await p.locator('.vp-badge').innerText()).trim()
+check(
+  '提示词来源徽章为语义层或脚本拼装',
+  ['语义层', '脚本拼装', '已手改'].some((t) => vpBadge.includes(t)),
+  vpBadge,
 )
 
 const meta480 = await vidMeta()
@@ -400,10 +447,8 @@ await p.waitForTimeout(250)
 check('运动提示词可展开', (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'true')
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
-await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
-await p.waitForTimeout(250)
 await selectShot('S01')
-await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await p.waitForTimeout(300)
 check(
   '重新挂载后出片设置仍折叠',
@@ -414,51 +459,9 @@ check(
   (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'true',
 )
 
-// AI 扩写：单行入口 + 锚定浮层
-const composeTrigger = p.locator('.vp-compose-trigger')
-check('AI 扩写入口是单行按钮', (await composeTrigger.count()) === 1)
-check('浮层默认关闭', (await p.locator('.vp-compose-pop').count()) === 0)
-await composeTrigger.click()
-await p.waitForTimeout(250)
-const pop = p.locator('.vp-compose-pop')
-check('浮层已打开', (await pop.count()) === 1)
-const popParts = await p.evaluate(() => {
-  const el = document.querySelector('.vp-compose-pop')
-  if (!el) return null
-  const vis = (s) => {
-    const n = el.querySelector(s)
-    return Boolean(n && n.getBoundingClientRect().height > 0)
-  }
-  const r = el.getBoundingClientRect()
-  return {
-    model: vis('[data-stage-model-select="prompt"]'),
-    template: vis('button.vp-btn-primary'),
-    refine: vis('button.vp-btn-accent'),
-    clear: vis('button.vp-btn-ghost'),
-    fixed: getComputedStyle(el).position,
-    rect: { top: Math.round(r.top), left: Math.round(r.left), w: Math.round(r.width) },
-  }
-})
-check(
-  '浮层四个元素可见（模型 + 三个动作）',
-  Boolean(
-    popParts && popParts.model && popParts.template && popParts.refine && popParts.clear,
-  ),
-  JSON.stringify(popParts),
-)
-check('浮层用 fixed 定位', popParts?.fixed === 'fixed', JSON.stringify(popParts))
-await p.keyboard.press('Escape')
-await p.waitForTimeout(200)
-check('Esc 关闭浮层', (await p.locator('.vp-compose-pop').count()) === 0)
-const focused = await p.evaluate(() => document.activeElement?.className ?? '')
-check('关闭后焦点回到入口', focused.includes('vp-compose-trigger'), focused)
-await composeTrigger.click()
-await p.waitForTimeout(200)
-await p.locator('[data-video-prompt-text]').click()
-await p.waitForTimeout(200)
-check('外部点击关闭浮层', (await p.locator('.vp-compose-pop').count()) === 0)
+check('画布视频提示词无 AI 扩写入口', (await p.locator('.vp-compose-trigger').count()) === 0)
 
-// 360×800 高度回归：默认态一屏内看到提示词正文与底栏按钮，且浮层开关不改变正文高度
+// 360×800 高度回归：默认态一屏内看到提示词正文与底栏按钮
 await vidFold('motionPrompt').locator('.fold-head').click()
 await p.waitForTimeout(250)
 await p.setViewportSize({ width: 360, height: 800 })
@@ -484,15 +487,6 @@ check(
     viewport: fit.viewport,
   }),
 )
-const panelH = () =>
-  p.locator('[data-video-prompt-panel]').evaluate((el) => Math.round(el.getBoundingClientRect().height))
-const hClosed = await panelH()
-await p.locator('.vp-compose-trigger').click()
-await p.waitForTimeout(250)
-check('浮层打开时正文区高度不变', (await panelH()) === hClosed, `${hClosed} → ${await panelH()}`)
-await p.keyboard.press('Escape')
-await p.waitForTimeout(250)
-check('浮层关闭后正文区高度不变', (await panelH()) === hClosed, `${hClosed} → ${await panelH()}`)
 await p.setViewportSize({ width: 1500, height: 1050 })
 await p.waitForTimeout(300)
 
@@ -511,18 +505,17 @@ const playStarted = await p
   .catch(() => false)
 await p.waitForTimeout(300)
 const vidPaused = await p.locator('.si-video-preview video').evaluate((el) => el.paused).catch(() => null)
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
 await p.waitForTimeout(250)
 const vidPausedAfter = await p.locator('.si-video-preview video').evaluate((el) => el.paused).catch(() => null)
 check(
-  '离开视频页后媒体暂停',
+  '离开出片页后媒体暂停',
   vidPausedAfter === true && (!playStarted || vidPaused === false),
   JSON.stringify({ playStarted, before: vidPaused, after: vidPausedAfter }),
 )
 
-// 拖宽 + 持久化
-await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
-await p.waitForTimeout(200)
+// 拖宽 + 持久化（生图镜画面 tab）
+await selectShot('S02')
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.waitForTimeout(200)
 const beforeWidth = await width()
@@ -544,7 +537,7 @@ await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
 await selectShot('S01')
 check('刷新后宽度保留', Math.abs((await width()) - afterWidth) < 3, JSON.stringify({ afterWidth, now: await width() }))
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '叙事' }).click()
 await p.waitForTimeout(250)
 check('刷新后表演折叠状态保留', (await p.locator('[data-section="performance"]').evaluate((el) => el.dataset.open)) === 'true')
 
@@ -577,9 +570,7 @@ check('素材卡没有分镜驾驶舱', (await p.locator('.shot-inspector').coun
 check('素材卡显示原面板', (await p.locator('.inspector .panel-head').innerText()).includes('素材卡'))
 
 // 截图
-await selectShot('S01')
-await p.locator('.prod-mode-toggle button', { hasText: '出图' }).click()
-await p.waitForTimeout(200)
+await selectShot('S02')
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(300)
@@ -595,11 +586,11 @@ if (box3) {
 }
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.screenshot({ path: '/tmp/si-day-480.png' })
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '叙事' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(250)
 await p.screenshot({ path: '/tmp/si-more-dialogue-480.png' })
-await p.locator('.si-tabs [role="tab"]', { hasText: '更多' }).click()
+await p.locator('.si-tabs [role="tab"]', { hasText: '叙事' }).click()
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })
 await p.waitForTimeout(250)
 await p.screenshot({ path: '/tmp/si-more-480.png' })
@@ -633,12 +624,10 @@ await p.evaluate(async (state) => {
 ])
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
-await p.locator('.prod-mode-toggle button', { hasText: '出片' }).click()
-await p.waitForTimeout(250)
 
-// 无参考镜：blocking 常驻，折叠提示词后仍可见，主按钮禁用
-await selectShot('S03')
-await p.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+// 无参考出片镜：blocking 常驻，折叠提示词后仍可见，主按钮禁用
+await selectShot('S04')
+await p.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await p.waitForTimeout(300)
 const blockBox = p.locator('[data-vp-blocking]')
 check('无参考镜产生阻断', (await blockBox.count()) === 1)

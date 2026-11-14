@@ -76,30 +76,6 @@ export function builtinFailure(
 
 /** 五个工作台内置动作的单一清单；board 只补充 disabled/run 与动态 label。 */
 export const WORKBENCH_BUILTINS = {
-  extract_characters_episode: {
-    key: 'extract_characters_episode',
-    label: '从本集拆角色',
-    hint: '用当前集分集梗概与分镜；约 1 秒后自动落库',
-    scope: 'episode',
-  },
-  extract_characters_script: {
-    key: 'extract_characters_script',
-    label: '从全剧拆角色',
-    hint: '从全剧原著梗概与分集元数据拆；约 1 秒后自动落库',
-    scope: 'project',
-  },
-  extract_designs_episode: {
-    key: 'extract_designs_episode',
-    label: '从本集拆',
-    hint: '用当前集分集梗概与分镜；写入后立即保存',
-    scope: 'episode',
-  },
-  extract_designs_script: {
-    key: 'extract_designs_script',
-    label: '从全剧拆',
-    hint: '从全剧原著梗概、分集元数据与分镜拆；写入后立即保存',
-    scope: 'project',
-  },
   split_shots: {
     key: 'split_shots',
     label: '拆镜',
@@ -136,8 +112,8 @@ export const WORKBENCH_BUILTIN_KEYS: Record<
   WorkbenchSurface,
   (keyof typeof WORKBENCH_BUILTINS)[]
 > = {
-  characters: ['extract_characters_episode', 'extract_characters_script'],
-  assets: ['extract_designs_episode', 'extract_designs_script'],
+  characters: [],
+  assets: [],
   shots: ['split_shots'],
   'prompt-refine': [],
 }
@@ -157,7 +133,7 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
   characters: {
     title: '角色助手',
     emptyTitle: '补齐这一集的角色',
-    emptyBody: '从本集场次和分镜补角色、合并重复、补外观锚点；也可以直接点下面的「从本集拆角色」或「从全剧拆角色」。只改角色草稿。',
+    emptyBody: '从本集场次和分镜补角色、合并重复、补外观锚点；用 submit_characters 写回。也可手动「+ 新建角色」。',
     suggestions: ['补全所有 lookEn', '合并同名角色', '只保留有台词的角色'],
     placeholder: '例如：补全所有角色的 lookEn，别改已经手写的外观…',
     saveMode: 'auto',
@@ -166,7 +142,7 @@ export const WORKBENCH_PROFILES: Record<WorkbenchSurface, WorkbenchProfile> = {
   assets: {
     title: '素材助手',
     emptyTitle: '拆这一集的场景和道具',
-    emptyBody: '拆场景和剧情道具，补可复用的生图锚点；也可以直接点下面的「从本集拆」或「从全剧拆」。写入后立即保存。',
+    emptyBody: '拆场景和剧情道具，补可复用的生图锚点；用 submit_designs 写回。也可「+ 场景卡 / + 道具卡」手工新建。',
     suggestions: ['只拆出现两次以上的场景', '补道具的多角度描述', '场景图里不要出现人物'],
     placeholder: '例如：只拆出现两次以上的场景，道具补多角度…',
     saveMode: 'immediate',
@@ -335,7 +311,7 @@ export function buildPiAgentSystem(host: Skill, extras: string[], readonlySkills
       : '（无）'
   return [
     '你是 Agent（Pi）。',
-    '执行前必须用 read_skill 读取宿主技能（及已挂只读技能）的完整 SKILL.md；不要用对话里未出现的预置摘要。',
+    '执行前必须用 read_skill（工作台技能）或 read_skill_text（任意已安装技能含 Agent 包）读取宿主 SKILL.md；不确定 id 时先 list_installed_skills。不要用对话里未出现的预置摘要。',
     '业务数据用技能声明的工具读取。',
     '',
     `宿主技能：${host.id} · v${host.manifest.version} · ${host.source}`,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { VggtJob, VggtReportV1 } from './api'
 import { getVggtJob, ingestShot3dReference, submitVggtAnalyze, vggtWorkerStatus } from './api'
+import { extractIngestUrl } from './ingestUrl'
 
 type SourceOption = { kind: 'reference' | 'schedule'; label: string; url: string }
 
@@ -101,9 +102,9 @@ export default function VggtGeometryPanel({
   }, [selected, projectAspect, effectiveSeconds, onToast])
 
   const ingestLink = useCallback(async () => {
-    const url = linkUrl.trim()
-    if (!url) {
-      onToast('请粘贴抖音/B 站等分享链接，或公网视频直链')
+    const url = extractIngestUrl(linkUrl)
+    if (!url || !/^https?:\/\//i.test(url)) {
+      onToast('请粘贴抖音/B 站分享链接、整段口令，或公网视频直链')
       return
     }
     setIngesting(true)
@@ -123,10 +124,6 @@ export default function VggtGeometryPanel({
 
   const ingestFile = useCallback(
     async (file: File) => {
-      if (file.size > 200 * 1024 * 1024) {
-        onToast('文件超过 200MB 上限')
-        return
-      }
       setIngesting(true)
       try {
         const data = await new Promise<string>((resolve, reject) => {

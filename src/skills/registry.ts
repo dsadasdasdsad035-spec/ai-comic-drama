@@ -1,37 +1,14 @@
-import assetSkillText from '../../skills/asset/SKILL.md?raw'
-import characterSkillText from '../../skills/character/SKILL.md?raw'
-import promptSkillText from '../../skills/prompt/SKILL.md?raw'
-import promptIntakeSkillText from '../../skills/prompt-intake/SKILL.md?raw'
-import scene3dSkillText from '../../skills/scene3d/SKILL.md?raw'
-import shotlistSkillText from '../../skills/shotlist/SKILL.md?raw'
-import shotlistIntakeSkillText from '../../skills/shotlist-intake/SKILL.md?raw'
-import transitionPlannerSkillText from '../../skills/transition-planner/SKILL.md?raw'
-import transitionDirectorSkillText from '../../skills/transition-director/SKILL.md?raw'
-import cinematicTransitionSkillText from '../../skills/cinematic-transition/SKILL.md?raw'
-import seedancePromptRenderSkillText from '../../skills/seedance-prompt-render/SKILL.md?raw'
-import seedancePromptRefineSkillText from '../../skills/seedance-prompt-refine/SKILL.md?raw'
 import { listSkillTexts } from './api'
 import { buildSkillPrompt } from './render'
 import type { Skill, SkillInputs, SkillPrompt, SkillRenderMode, SkillTextRecord } from './types'
 import { parseSkillRecords, type SkillLoadIssue, type SkillLoadResult } from './validate'
 
-const BUILTIN_TEXTS: Record<string, string> = {
-  asset: assetSkillText,
-  character: characterSkillText,
-  prompt: promptSkillText,
-  'prompt-intake': promptIntakeSkillText,
-  scene3d: scene3dSkillText,
-  shotlist: shotlistSkillText,
-  'shotlist-intake': shotlistIntakeSkillText,
-  'transition-planner': transitionPlannerSkillText,
-  'transition-director': transitionDirectorSkillText,
-  'cinematic-transition': cinematicTransitionSkillText,
-  'seedance-prompt-render': seedancePromptRenderSkillText,
-  'seedance-prompt-refine': seedancePromptRefineSkillText,
-}
+/** 仓库不再内置技能正文；一律从 /api/skills（磁盘安装 + SkillHub + 覆盖）加载。 */
+const BUILTIN_TEXTS: Record<string, string> = {}
 
 let cache: SkillLoadResult | null = null
 let loading: Promise<SkillLoadResult> | null = null
+let textById: Map<string, SkillTextRecord> = new Map()
 
 function builtinRecords(): SkillTextRecord[] {
   return Object.entries(BUILTIN_TEXTS).map(([id, text]) => ({
@@ -49,7 +26,7 @@ export async function loadSkills(force = false): Promise<SkillLoadResult> {
   const p = (async () => {
     try {
       const records = await listSkillTexts()
-      if (!records.length) throw new Error('服务端没有返回技能')
+      textById = new Map(records.map((r) => [r.id, r]))
       const result = parseSkillRecords(records)
       cache = result
       return result
@@ -81,6 +58,14 @@ export async function getSkill(id: string): Promise<Skill> {
     throw new Error(issue?.message || `技能「${id}」不存在或不可用`)
   }
   return skill
+}
+
+/** 任意已安装技能原文（含 Agent 包）；不要求 workbench 解析成功 */
+export async function getSkillTextRecord(id: string): Promise<SkillTextRecord> {
+  await loadSkills()
+  const record = textById.get(id)
+  if (!record) throw new Error(`技能「${id}」不存在`)
+  return record
 }
 
 export async function buildPromptForSkill(

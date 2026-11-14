@@ -45,6 +45,15 @@ services:
       BLENDER_ENGINE: ${BLENDER_ENGINE:-cycles}
       # 出图/出片超时（秒级任务用不到，但慢渠道可调）
       SEEDREAM_TIMEOUT_MS: ${SEEDREAM_TIMEOUT_MS:-180000}
+      # 平台计费（虎皮椒 / 用户钱包）
+      BILLING_DB_PATH: ${BILLING_DB_PATH:-/data/projects/billing.sqlite}
+      BILLING_ADMIN_EMAIL: ${BILLING_ADMIN_EMAIL:-}
+      BILLING_EMAIL_DRIVER: ${BILLING_EMAIL_DRIVER:-console}
+      BILLING_ALLOW_SIMULATE: ${BILLING_ALLOW_SIMULATE:-0}
+      XUNHUPAY_APPID: ${XUNHUPAY_APPID:-}
+      XUNHUPAY_SECRET: ${XUNHUPAY_SECRET:-}
+      XUNHUPAY_GATEWAY: ${XUNHUPAY_GATEWAY:-https://api.xunhupay.com}
+      XUNHUPAY_NOTIFY_URL: ${XUNHUPAY_NOTIFY_URL:-}
     volumes:
       # 业务数据：SQLite + 项目媒体 + 创意源视频与证据帧
       - ./data/projects:/data/projects

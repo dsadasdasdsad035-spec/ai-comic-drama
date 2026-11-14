@@ -8,7 +8,7 @@ import {
 import type { AppSettings, Stage } from '../api'
 import { StageModelSelect, stageDefaultLabel, stageModelKey, type StagePick } from '../ModelSelect'
 import { modelHasCap } from '../modelCaps'
-import { buildWorkbenchAgentSystem } from './workbenchChat'
+import { buildCreativePiSystem } from '../creative/creativeTurnPayload'
 import { imageAttachments, type ChatAttachment } from './chatAttachments'
 import { classifyChatImage, imageContextLines, MAX_CHAT_IMAGE_BYTES } from '../../server/chat-image-payload.mjs'
 import { loadSkills } from '../skills/registry'
@@ -23,6 +23,11 @@ import { ChatErrorNote, ChatStoppedNote } from '@/chat-ui/WorkbenchNotes'
 import { ChatThreadBody, ChatThreadShell } from './ChatThreadShell'
 import { StageToolUis } from './stageToolUis'
 import { useAgentMessages } from './useAgentMessages'
+import {
+  createBuiltinPlatformReadTools,
+  mergeBuiltinWithSkillTools,
+} from './builtinPlatformTools'
+import { listCreativeHostSkills, resolveCreativeHostId, readStoredCreativeHostId } from '../creative/creativeSkillHost'
 import { bindSkillTools, createStageToolSet } from './stageTools'
 import { runStageAgent } from './pi/stageRunner'
 import { clearChatThread, loadChatThread, saveChatThread, threadTranscript, type ActiveSkill, type ChatThreadKey } from './threads'
@@ -387,20 +392,18 @@ export default function SkillChat({
     ;(async () => {
       try {
         const { skills, issues } = await loadSkills()
-        const host = skills.get(adapter.skillId)
+        const hosts = listCreativeHostSkills(skills.values())
+        const hostId = resolveCreativeHostId(hosts, readStoredCreativeHostId())
+        const host = hostId ? skills.get(hostId) : null
         if (!host) {
-          throw new Error(issues.find((x) => x.id === adapter.skillId)?.message || `技能「${adapter.skillId}」不可用`)
+          throw new Error(
+            issues.find((x) => x.id === hostId)?.message ||
+              '请先在设置 → SkillHub 安装 Agent 技能包；平台 read/submit 为内置工具。',
+          )
         }
         if (!alive) return
         setHostSkill(host)
-        setAvailable(
-          [...skills.values()].filter(
-            (s) =>
-              s.id !== host.id &&
-              (s.manifest.runtime === 'tools') &&
-              s.manifest.tools.some((t) => t.startsWith('read_') || t === 'get_shot_context'),
-          ),
-        )
+        setAvailable(hosts.filter((s) => s.id !== host.id))
         const thread = await loadChatThread(adapter.threadKey)
         if (!alive) return
         const restored = (thread?.messages || []).map((m) => ({
@@ -520,7 +523,17 @@ export default function SkillChat({
    * referenceDigest 始终存在（甚至为空串）：技能的 {{input:referenceDigest}}
    * 只有在键缺失时才被算作「缺输入」，空串是合法的「没有图」。
    */
-  const bootstrapSystem = (host: Skill) => buildWorkbenchAgentSystem(host, adapter, readonly)
+  const bootstrapSystem = (host: Skill) =>
+    [
+      buildCreativePiSystem(host),
+      `写回工具：${adapter.writeTool}；输出契约：${adapter.writeContract}`,
+      `编辑范围：${scope}`,
+      readonly.length
+        ? `只读技能：${readonly.map((s) => `${s.id} v${s.manifest.version}`).join('、')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
 
   /**
    * 本轮附件的文本标签。放进 userForModel 而不是技能模板输入，
@@ -668,10 +681,16 @@ export default function SkillChat({
     const system = bootstrapSystem(host)
     const attachText = [attachmentBlock(), placeholders.length ? `${placeholders.join('\n')}\n\n` : ''].filter(Boolean).join('')
     const userForModel = attachText ? `${attachText}${text}` : text
-    const tools = bindSkillTools(createStageToolSet(adapter), [
+    const platformCtx = {
+      projectName: adapter.threadKey.project,
+      epNo: adapter.threadKey.episode || 1,
+    }
+    const stageSet = createStageToolSet(adapter)
+    const skillTools = bindSkillTools(stageSet, [
       { skill: host, mode: 'host' },
       ...readonly.map((s) => ({ skill: s, mode: 'readonly' as const })),
     ])
+    const tools = mergeBuiltinWithSkillTools(createBuiltinPlatformReadTools(platformCtx), skillTools)
     const history = threadTranscript(messages)
     setTaskView(makeTaskView(host, system))
 

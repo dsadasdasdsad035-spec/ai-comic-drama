@@ -11,21 +11,24 @@ import { buildBoardSkillPrompt } from '../skills/board'
 import { assertSkillOutput } from '../skills/board'
 import { normalizeShotsIntakeOutput } from './shotsIntakeNormalize'
 
-export type IntakeTarget = 'shots' | 'prompts'
+export type IntakeTarget = 'shots' | 'prompts' | 'script'
 
 const SKILL_OF: Record<IntakeTarget, string> = {
   shots: 'shotlist-intake',
   prompts: 'prompt-intake',
+  script: 'script-intake',
 }
 
 export const INTAKE_CONTRACT: Record<IntakeTarget, string> = {
   shots: 'shots-v1',
   prompts: 'prompts-v1',
+  script: 'script-v1',
 }
 
 export const INTAKE_LABEL: Record<IntakeTarget, string> = {
   shots: '分镜',
   prompts: '提示词',
+  script: '分集剧本',
 }
 
 /** 单块超过这个字符数就不再一次性发送（多数模型窗口能容纳，但不该赌） */
@@ -69,6 +72,21 @@ export type IntakeResult = {
 }
 
 function mergeChunks(target: IntakeTarget, parts: unknown[]): unknown {
+  if (target === 'script') {
+    const byNo = new Map<number, Record<string, unknown>>()
+    let logline = ''
+    for (const p of parts) {
+      const rec = p as { logline?: string; episodes?: unknown[] }
+      if (!logline && rec.logline) logline = String(rec.logline)
+      for (const ep of Array.isArray(rec.episodes) ? rec.episodes : []) {
+        const no = Number((ep as { no?: unknown })?.no)
+        if (!Number.isFinite(no) || no <= 0) continue
+        byNo.set(no, ep as Record<string, unknown>)
+      }
+    }
+    const episodes = [...byNo.entries()].sort((a, b) => a[0] - b[0]).map(([, ep]) => ep)
+    return logline ? { logline, episodes } : { episodes }
+  }
   if (target === 'shots') {
     const byNo = new Map<string, Record<string, unknown>>()
     for (const p of parts) {
@@ -118,6 +136,9 @@ export async function runIntake(opts: {
   if (target === 'shots') {
     inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
     inputs.aspect = opts.context?.aspect || '16:9'
+  } else if (target === 'script') {
+    inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
+    if (opts.context?.epNo) inputs.episode = opts.context.epNo
   } else {
     inputs.style = resolveProjectStyle({ style: opts.context?.style }) ?? ''
   }

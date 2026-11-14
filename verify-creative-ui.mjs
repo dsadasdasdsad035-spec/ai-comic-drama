@@ -1,5 +1,5 @@
 /**
- * 创意工作室 UI 验收：八视图导航、隐藏项目/集、会话列表、模式切换、空态、窄屏抽屉、成本确认与晋升弹窗。
+ * 创意工作室 UI 验收：八视图导航、会话列表、纯聊天头、composer 附件空态、窄屏抽屉、成本确认。
  * 跑法：node verify-creative-ui.mjs
  */
 import { spawn, execFileSync } from 'node:child_process'
@@ -78,6 +78,31 @@ if (!up) {
   process.exit(1)
 }
 
+/** 临时创意宿主：仓库不再内置 creative-plan / video-reverse */
+const E2E_SKILL = 'e2e-creative-host'
+const e2eSkillDir = path.join(ROOT, 'skills', E2E_SKILL)
+const e2eSkillMd = path.join(e2eSkillDir, 'SKILL.md')
+const hadE2eSkill = fs.existsSync(e2eSkillDir)
+const e2eSkillText = `---
+name: ${E2E_SKILL}
+description: E2E 创意宿主夹具
+stage: creative
+runtime: tools
+tools: [read_skill]
+inputs: [topic]
+output: creative-plan-v1
+contracts: [creative-plan-v1]
+version: 1
+---
+## 角色与约束
+你是 E2E 夹具。
+
+## 任务
+用户说：{{input:topic}}
+`
+fs.mkdirSync(e2eSkillDir, { recursive: true })
+fs.writeFileSync(e2eSkillMd, e2eSkillText)
+
 // 配一个 mock 文本模型，避免聊天按钮因缺模型而禁用
 const settings = (await api('/api/settings')).settings
 settings.providers = [
@@ -95,6 +120,9 @@ await api('/api/settings', {
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(settings),
 })
+
+const skillIds = ((await api('/api/skills')).skills || []).map((s) => s.id)
+check('API 含 E2E 创意宿主', skillIds.includes(E2E_SKILL), skillIds.filter((id) => id.includes('creative') || id.includes('e2e')).join(','))
 
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 try {
@@ -116,6 +144,16 @@ try {
   await page.goto(`${APP}/#/p/${encodeURIComponent(NAME)}/creative`, { waitUntil: 'domcontentloaded' })
   await page.locator('.rail').waitFor({ timeout: 15000 })
   await page.locator('[data-creative-studio]').waitFor({ timeout: 15000 })
+  await page.waitForFunction(
+    (id) => {
+      const sel = document.querySelector('[data-creative-host-skill]')
+      return Boolean(sel && [...sel.options].some((o) => o.value === id))
+    },
+    E2E_SKILL,
+    { timeout: 20000 },
+  )
+  await page.locator('[data-creative-host-skill]').selectOption(E2E_SKILL)
+  await page.waitForTimeout(500)
 
   // 1) 导航全部落在左栏：只断言含创意，不锁死条目总数（分组会继续调整）
   const navNames = await page.locator('.rail-nav button').allInnerTexts()
@@ -152,20 +190,16 @@ try {
   )
   check('新会话已加入列表', (await page.locator('[data-creative-session]').count()) > sessionsBefore)
 
-  // 5) 模式切换
-  await page.locator('[data-creative-modes] [data-mode="reverse"]').click()
-  await page.waitForTimeout(600)
-  check('模式切到反推', (await page.locator('[data-creative-modes] [data-mode="reverse"]').getAttribute('aria-selected')) === 'true')
+  // 5) 纯聊天头：无模式 Tab，宿主与模型可选
+  check('无模式 Tab', (await page.locator('[data-creative-modes]').count()) === 0)
   const headerText = await page.locator('[data-creative-header]').innerText()
-  check('头部显示宿主技能', headerText.includes('video-reverse'), headerText.slice(0, 160))
+  check('头部显示宿主技能', headerText.includes(E2E_SKILL), headerText.slice(0, 160))
   check('头部显示文本模型', headerText.includes('mock-text') || headerText.includes('Mock Text'), headerText.slice(0, 160))
-  await page.locator('[data-creative-modes] [data-mode="plan"]').click()
-  await page.waitForTimeout(600)
-  check('模式切回策划', (await page.locator('[data-creative-header]').innerText()).includes('creative-plan'))
+  check('无创意附件条', (await page.locator('[data-chat-attachments]').count()) === 0)
 
   // 6) 空态与示例
   const empty = await page.locator('[data-creative-empty]').innerText()
-  check('空态说明不写项目', empty.includes('不会改动任何项目数据'), empty.slice(0, 120))
+  check('空态说明 Pi read_skill', empty.includes('read_skill'), empty.slice(0, 120))
   const suggestions = await page.locator('[data-chat-suggestion]').count()
   check('空态给出示例', suggestions >= 3, String(suggestions))
   await page.screenshot({ path: path.join(TMP, 'creative-empty.png') })
@@ -205,12 +239,10 @@ try {
   check('窄屏可打开会话列表', opened === 'true')
   await page.locator('.creative-list-scrim').click({ force: true })
 
-  // 10) 对话框：成本确认与晋升（直接渲染，不依赖真实付费调用）
+  // 10) 对话框：成本确认（直接渲染，不依赖真实付费调用）
   await page.setViewportSize({ width: 1500, height: 1000 })
   const hasCost = await page.locator('[data-cost-dialog]').count()
-  const hasPromote = await page.locator('[data-promote-dialog]').count()
   check('默认不弹成本确认', hasCost === 0)
-  check('默认不弹晋升确认', hasPromote === 0)
 
   // 11) 导航位置稳定：进出创意不位移
   const navNow = await page.locator('.rail-nav').evaluate((el) => Math.round(el.getBoundingClientRect().x))
@@ -268,6 +300,7 @@ try {
 } finally {
   await browser.close()
   child.kill()
+  if (!hadE2eSkill) fs.rmSync(e2eSkillDir, { recursive: true, force: true })
   fs.rmSync(TMP, { recursive: true, force: true })
 }
 

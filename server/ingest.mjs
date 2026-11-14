@@ -12,9 +12,8 @@ import net from 'node:net'
 import dns from 'node:dns/promises'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
+import { extractIngestUrl } from './ingest-url.mjs'
 
-/** 单文件上限：创意会话是单人工作流，不需要更大的体量 */
-export const MAX_SOURCE_BYTES = 200 * 1024 * 1024
 /** 直链/下载超时 */
 export const DOWNLOAD_TIMEOUT_MS = 180_000
 
@@ -108,9 +107,6 @@ const uploadAdapter = {
     const m = b64.match(/^data:[^;]*;base64,(.+)$/) || [null, b64]
     const bytes = Buffer.from(m[1], 'base64')
     if (!bytes.length) throw new Error('上传内容为空')
-    if (bytes.length > MAX_SOURCE_BYTES) {
-      throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
-    }
     const name = String(input.name || 'upload.mp4')
     const ext = isVideoFile(name) ? path.extname(name).toLowerCase() : '.mp4'
     const file = writeFileChunk(
@@ -144,22 +140,12 @@ const directAdapter = {
       if (type && !/^(video\/|application\/octet-stream)/i.test(type)) {
         throw new Error(`链接返回的不是视频（${type.split(';')[0]}）`)
       }
-      const len = Number(r.headers.get('content-length') || 0)
-      if (len && len > MAX_SOURCE_BYTES) {
-        throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
-      }
       const chunks = []
-      let total = 0
       if (r.body) {
         const reader = r.body.getReader()
         for (;;) {
           const { done, value } = await reader.read()
           if (done) break
-          total += value.length
-          if (total > MAX_SOURCE_BYTES) {
-            ctrl.abort()
-            throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
-          }
           chunks.push(Buffer.from(value))
         }
       }
@@ -226,7 +212,6 @@ const ytdlpAdapter = {
       '--no-playlist',
       '--no-warnings',
       '--restrict-filenames',
-      '--max-filesize', String(MAX_SOURCE_BYTES),
       '-f', 'mp4/bestvideo+bestaudio/best',
       '--merge-output-format', 'mp4',
       '-o', path.join(dir, `${ctx.sourceId}-%(id)s.%(ext)s`),
@@ -390,14 +375,10 @@ const dtkAdapter = {
           tried.push('empty')
           continue
         }
-        if (buf.length > MAX_SOURCE_BYTES) {
-          throw new Error(`视频超过 ${Math.round(MAX_SOURCE_BYTES / 1024 / 1024)}MB 上限`)
-        }
         bytes = buf
         usedUrl = candidate
         break
       } catch (e) {
-        if (/超过 .* 上限/.test(String(e?.message))) throw e
         tried.push(String(e?.message || e).slice(0, 40))
       }
     }
@@ -465,8 +446,11 @@ export function pickAdapter(input, config = {}) {
   }
   if (input.data) return BY_ID.get('upload')
 
-  const url = String(input.url || '').trim()
+  let url = extractIngestUrl(String(input.url || '').trim())
   if (!url) throw new Error('缺少链接或文件内容')
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error('未识别到有效的 http/https 链接，请只粘贴分享链接或整段口令（会自动提取 URL）')
+  }
 
   // 平台链接：优先交给已启用的解析器；一个都没有就明确说清楚，
   // 不要退回直链——分享页返回的是 HTML，用户只会看到「链接返回的不是视频」而不知道原因。
@@ -508,9 +492,11 @@ export async function ingestSourceToDir(input, ctx, config = {}) {
 
 /** 执行摄取；返回 { adapter, file, bytes, meta, warnings } */
 export async function ingestSource(input, ctx, config = {}) {
-  const adapter = pickAdapter(input, config)
+  const normalized = { ...input }
+  if (normalized.url) normalized.url = extractIngestUrl(String(normalized.url).trim())
+  const adapter = pickAdapter(normalized, config)
   const cfg = cfgFor(adapter.id, config)
-  const result = await adapter.ingest(input, ctx, cfg)
+  const result = await adapter.ingest(normalized, ctx, cfg)
   const warnings = []
   if (!fs.existsSync(result.file)) throw new Error('摄取失败：目标文件不存在')
   if (!isVideoFile(result.file)) warnings.push('文件扩展名不是常见视频格式，仍尝试用 ffprobe 读取')

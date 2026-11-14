@@ -117,7 +117,7 @@ check('画面请求包含上一镜', seedream[0]?.refImages?.includes(i1), JSON.
 check('画面请求不包含下一镜', !seedream[0]?.refImages?.includes(i3), JSON.stringify(seedream[0]?.refImages))
 check('画面提示词标明上一镜', /上一镜 S01/.test(String(seedream[0]?.prompt || '')), String(seedream[0]?.prompt || '').slice(-160))
 
-await page.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+await page.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await page.waitForTimeout(250)
 await page.locator('.si-foot button', { hasText: /生成视频|重出视频/ }).click()
 await page.waitForTimeout(4200)
@@ -197,7 +197,7 @@ check('图片参考总数不超过 10', (imgReq.refImages?.length || 0) <= 10, S
 check('图片超限仍按 10 张进入请求', (imgReq.refImages?.length || 0) <= 10, String(imgReq.refImages?.length))
 check('图片编号不超过实际图片', /图10=/.test(String(imgReq.prompt || '')) && !/图11=/.test(String(imgReq.prompt || '')), String(imgReq.prompt || '').slice(-160))
 const beforeVideo = seedance.length
-await page.locator('.si-tabs [role="tab"]', { hasText: '视频' }).click()
+await page.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await page.waitForTimeout(250)
 await page.locator('.si-foot button', { hasText: /生成视频|重出视频/ }).click()
 await page.waitForTimeout(1400)

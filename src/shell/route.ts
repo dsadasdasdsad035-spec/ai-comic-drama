@@ -13,6 +13,17 @@ export type Route =
 
 export const ROUTE_EVENT = 'sb-route'
 
+/** 打开素材页时默认切到「角色」Tab（旧 #/chars 链接与概览快捷入口用） */
+export const MATERIAL_TAB_CHARACTER_KEY = 'sb.material-tab'
+
+export function primeMaterialTabCharacter(): void {
+  try {
+    sessionStorage.setItem(MATERIAL_TAB_CHARACTER_KEY, 'character')
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+}
+
 export function hubHash(): string {
   return '#/'
 }
@@ -42,6 +53,10 @@ export function parseHash(rawHash: string): Route {
   }
   if (!project) return { kind: 'hub' }
   const rawView = parts[2] || ''
+  if (rawView === 'chars') {
+    primeMaterialTabCharacter()
+    return { kind: 'project', project, view: 'assets' }
+  }
   const view: ViewId = isViewId(rawView) ? rawView : 'overview'
   return { kind: 'project', project, view }
 }
@@ -72,6 +87,10 @@ export function readLastView(project: string, fallback: ViewId = 'overview'): Vi
   if (!project) return fallback
   try {
     const v = localStorage.getItem(LAST_VIEW_PREFIX + project)
+    if (v === 'chars') {
+      primeMaterialTabCharacter()
+      return 'assets'
+    }
     return isViewId(v) ? v : fallback
   } catch {
     return fallback

@@ -1,96 +1,47 @@
 # 技能作者指南
 
-技能是运行时可读的提示词数据，不是代码。每个技能一个目录：
+仓库**不附带**内置技能。仅支持 **SkillHub / 本地上传的 Agent 技能包** 作为 Pi **宿主**；**平台 `read_*` / `submit_*` / `validate_contract` 为应用内置工具**，不在 SKILL 里声明。
 
-```
-skills/<id>/SKILL.md
-```
+本地验收：`node verify-skill-upload-zip.mjs`
 
-`<id>` 只能是小写字母、数字和短横线（`^[a-z0-9][a-z0-9-]{0,63}$`），且必须与 frontmatter 的 `name` 一致。
-
-## 文件结构
+## Agent 技能包（唯一安装形态）
 
 ```markdown
 ---
-name: shotlist
-description: 一句话说明这个技能做什么；会出现在技能目录和设置页
-stage: shot
-runtime: json-tools
-tools: [read_episode, read_shots, submit_shots]
-inputs: [style, aspect, brief, target]
-output: shots-v1
-contracts: [shots-v1]
-version: 1
+name: my-skill
+description: |
+  一句话或长说明（支持多行）
+allowed-tools:
+  - Read
+metadata:
+  version: 1.0.0
 ---
-## 角色与约束
-（进入 system：角色、任务、硬约束、输出示例）
-
-## 任务
-（进入 prompt：本轮输入模板和任务说明）
+## my-skill
+操作说明（任意结构；Pi 用 read_skill_text 读全文）
 ```
 
-### frontmatter 字段
+- `name` 必须与 zip 目录 / 安装 id 一致（小写+连字符）。
+- **不要**写 `stage`、`tools`、`submit_*`、`## 角色与约束` / `## 任务` —— 旧 **workbench 形态已停用**。
+- 安装后：设置 → 已安装；创意顶栏选为宿主。
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `name` | 是 | 必须与目录 id 一致 |
-| `description` | 是 | 技能目录/设置页展示的简短说明 |
-| `stage` | 是 | 决定模型环节：`script` / `character` / `asset` / `shot` / `prompt` / `sceneCode` / `vision` / `videoVision` |
-| `runtime` | 是 | `json-tools`（普通工作台）或 `scene3d`（3D 场景） |
-| `tools` | 是 | 工具 id 数组；只能引用代码里已注册的工具 |
-| `inputs` | 是 | 任务模板会用到的输入键；每个都必须被 `{{input:key}}` 使用 |
-| `output` | 是 | 输出契约 id，必须出现在 `contracts` 里 |
-| `contracts` | 否 | 锁定契约 id 数组；缺省为 `[output]` |
-| `version` | 是 | 大于 0 的整数；用于覆盖版本与审计 |
+## 平台内置工具（非技能）
 
-## 输入占位符
+| 写工具 | 契约 |
+|--------|------|
+| submit_characters | characters-v1 |
+| submit_designs | designs-v1 |
+| submit_shots | shots-v1 |
+| submit_prompts | prompts-v1 |
+| submit_joins | joins-v1 |
 
-只认 `{{input:key}}`：
+另有 read_source、read_shots、read_skill_text、validate_contract 等。创意 Pi **默认绑定**；写回须顶栏已选项目。
 
-```
-画风：{{input:style}}
-```
+## 3D 运行时例外
 
-提示词里本来就有 `{{角色名}}`、`{{陈默}}` 这类示例，它们不会被当成占位符——这是刻意保留的。
-
-- 一次性生成：所有输入完整内联。
-- 聊天：超过 2000 字符的输入只留一行引用，由读工具按范围读取。
-- 未提供（undefined/null）的必需输入会阻止发送；空字符串是合法值。
-
-## 可编辑层与锁定契约
-
-- **可编辑**：`## 角色与约束` 和 `## 任务` 两节。设置页按技能保存为用户覆盖，存在 `skill_overrides` 表。
-- **锁定**：frontmatter、工具列表、输出 schema、代码 ABI、安全规则、JSON 协议。用户覆盖只能改正文，服务端会把内置 frontmatter 拼回去。
-- 未知契约或未知工具会让技能加载失败；一个坏的用户覆盖会退回内置版本并在设置页报错。
-
-## 只读技能与写能力
-
-- 只声明 `read_*` / `get_shot_context` 工具的技能是只读技能；新增只读技能只需要加一个 `SKILL.md`，不需要改代码。
-- 需要写产物的技能必须引用已注册的 `submit_*` 工具；写工具只能由宿主工作台使用，写操作只产生草稿，合并交给宿主。
-- 只读技能即使被加载到某个工作台，也不会获得宿主的写工具。
-
-## 内置技能
-
-| id | 工作台 | 输出契约 |
-|---|---|---|
-| `character` | 角色 | `characters-v1` |
-| `asset` | 素材 | `designs-v1` |
-| `shotlist` | 镜头表 | `shots-v1` |
-| `transition-planner` | 镜头表 · 镜间接缝（合并导演+提示词） | `joins-v1` |
-| `transition-director` | 镜间转场决策与 YAML handoff | `joins-v1` |
-| `cinematic-transition` | 转场首尾帧与桥接视频提示词 | `joins-v1` |
-| `prompt` | 提示词 | `prompts-v1` |
-| `scene3d` | 3D 场景聊天（含 DCC 预演技能包摘要；全文见 `scene3d/dcc-previs-pack.md`） | `scene3d-code-v1` |
-| `scene-code` | 一次性 3D 代码生成（非聊天） | `scene3d-code-v1` |
-| `scene-code-chat` | 一次性 3D 代码改写（非聊天） | `scene3d-code-v1` |
-
-`scene-code` / `scene-code-chat` 没有工具，也不出现在工作台聊天的只读技能列表里；它们只服务 `sceneCodeJob` 的一次性代码生成，角色层之外仍由锁定契约提供完整 ABI。
+若本地存在 `skills/scene3d/SKILL.md`（旧 manifest），仅供 **3D 场景 Agent**；与 SkillHub 宿主无关。
 
 ## 接口
 
-- `GET /api/skills`：返回有效技能列表（内置 + 用户覆盖）。
-- `GET /api/skills/<id>`：返回单个技能。
-- `PUT /api/skills/<id>`：保存正文覆盖（只接受正文；frontmatter 使用内置文件）。
-- `DELETE /api/skills/<id>`：恢复默认。
-
-服务端只读取 `skills/<id>/SKILL.md`，拒绝路径穿越、符号链接逃逸和超过 64KB 的文件；技能内容永远不会被执行。
+- `GET /api/skills`：已安装列表
+- `POST /api/skills/upload-zip`：仅 Agent 包
+- SkillHub：`/api/skillhub/install`

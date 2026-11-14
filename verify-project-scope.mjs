@@ -168,7 +168,7 @@ try {
   await page.waitForTimeout(1200)
   check('确认后切到 A', (await sel.inputValue()) === 'A', await sel.inputValue())
 
-  await page.getByRole('button', { name: '角色', exact: true }).click()
+  await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(500)
   textCalls.length = 0
   // 上沿改版后按钮文案从「从全剧拆角色」缩短为「从全剧拆」

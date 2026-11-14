@@ -324,7 +324,7 @@ export default function SceneAgentChat({
   const [sceneSkillMeta, setSceneSkillMeta] = useState<{
     id: string
     version: number
-    source: 'builtin' | 'override'
+    source: 'builtin' | 'override' | 'skillhub' | 'upload'
   } | null>(null)
   const [sceneSkill, setSceneSkill] = useState<Skill | null>(null)
   const inspectorSystemPrompt = sceneSkill

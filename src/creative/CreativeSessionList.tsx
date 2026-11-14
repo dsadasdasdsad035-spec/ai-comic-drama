@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { MoreHorizontal } from 'lucide-react'
-import { cn } from '@/chat-ui/lib/utils'
-import type { CreativeMode, CreativeSession } from './sessionStore'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { MoreHorizontal, Plus } from 'lucide-react'
+import type { CreativeSession } from './sessionStore'
 
-const MODE_LABEL: Record<CreativeMode, string> = { plan: '策划', reverse: '反推', remake: '复刻' }
+const MODE_LABEL: Record<string, string> = {
+  plan: '策划',
+  reverse: '反推',
+  remake: '翻拍',
+}
 
-/** 相对时间：7 天内说「N 分钟前」，更早显示日期 */
 function relativeTime(iso: string): string {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return ''
@@ -32,6 +34,7 @@ function SessionRow({
   onSelect,
   onEdit,
   onDelete,
+  expertLabel,
 }: {
   session: CreativeSession
   active: boolean
@@ -43,6 +46,8 @@ function SessionRow({
   onSelect: () => void
   onEdit: () => void
   onDelete: () => void
+  /** 会话绑定的专家显示名 */
+  expertLabel?: string
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -64,11 +69,12 @@ function SessionRow({
   }, [menuOpen])
 
   return (
-    <div
+    <article
       data-creative-session={session.id}
       data-active={active ? 'true' : 'false'}
-      className={cn('creative-list-item', active && 'on')}
+      className={`creative-session-card${active ? ' is-active' : ''}`}
     >
+      <span className="creative-session-accent" aria-hidden />
       {editing ? (
         <input
           autoFocus
@@ -82,16 +88,20 @@ function SessionRow({
           }}
         />
       ) : (
-        <button
-          type="button"
-          className="creative-list-main"
-          title={session.title || '未命名会话'}
-          onClick={onSelect}
-          onDoubleClick={onEdit}
-        >
-          <span className="creative-list-title">{session.title || '未命名会话'}</span>
-          <span className="creative-list-sub">
-            {MODE_LABEL[session.mode]} · {relativeTime(session.updatedAt || session.createdAt)}
+        <button type="button" className="creative-session-card-main" onClick={onSelect} onDoubleClick={onEdit}>
+          <span className="creative-session-card-title">{session.title || '未命名会话'}</span>
+          <span className="creative-session-card-meta">
+            <span className="creative-session-mode">{MODE_LABEL[session.mode] || session.mode}</span>
+            {expertLabel ? (
+              <>
+                <span aria-hidden>·</span>
+                <span className="creative-session-expert" data-creative-session-expert>
+                  {expertLabel}
+                </span>
+              </>
+            ) : null}
+            <span aria-hidden>·</span>
+            <span>{relativeTime(session.updatedAt || session.createdAt)}</span>
           </span>
         </button>
       )}
@@ -104,18 +114,11 @@ function SessionRow({
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((v) => !v)}
         >
-          <MoreHorizontal className="size-3.5" />
+          <MoreHorizontal className="size-3.5" aria-hidden />
         </button>
         {menuOpen ? (
           <div className="creative-list-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false)
-                onEdit()
-              }}
-            >
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onEdit() }}>
               重命名
             </button>
             <button
@@ -133,7 +136,7 @@ function SessionRow({
           </div>
         ) : null}
       </div>
-    </div>
+    </article>
   )
 }
 
@@ -147,6 +150,8 @@ export function CreativeSessionList({
   onNew,
   onRename,
   onDelete,
+  expertNameById,
+  projectCaption,
 }: {
   sessions: CreativeSession[]
   activeId: string
@@ -156,9 +161,21 @@ export function CreativeSessionList({
   onNew: () => void
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
+  expertNameById?: Record<string, string>
+  /** 侧栏副标题，如当前项目名 */
+  projectCaption?: string
 }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [query, setQuery] = useState('')
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return sessions
+    return sessions.filter((s) =>
+      [s.title, s.mode, MODE_LABEL[s.mode]].join(' ').toLowerCase().includes(q),
+    )
+  }, [sessions, query])
 
   const commit = (id: string) => {
     const title = draft.trim()
@@ -176,22 +193,46 @@ export function CreativeSessionList({
         aria-label="创意会话列表"
       >
         <header className="creative-list-head">
-          <b>创意会话</b>
+          <div className="creative-list-head-text">
+            <b>创意会话</b>
+            <p className="creative-list-head-sub">
+              {projectCaption ? projectCaption : '按项目分组 · 本机保存'}
+              {sessions.length > 0 ? (
+                <span className="creative-list-count">{sessions.length}</span>
+              ) : null}
+            </p>
+          </div>
           <button
             type="button"
             data-creative-action="new-session"
-            className="rounded border border-border px-1.5 py-0.5 text-[10px] hover:bg-muted"
+            className="creative-list-new"
             onClick={onNew}
             title="新建会话"
+            aria-label="新建会话"
           >
-            新会话
+            <Plus className="size-3.5" aria-hidden />
+            <span>新建</span>
           </button>
         </header>
+        {sessions.length > 0 ? (
+          <div className="creative-list-search-wrap">
+            <input
+              type="search"
+              className="st-input creative-list-search"
+              placeholder="搜索会话…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="搜索创意会话"
+            />
+          </div>
+        ) : null}
         <div className="creative-list-body">
           {sessions.length === 0 ? (
-            <p className="px-2 py-3 text-[11px] text-muted-foreground">还没有会话</p>
+            <p className="creative-list-empty">还没有会话，点「新会话」开始。</p>
+          ) : filtered.length === 0 ? (
+            <p className="creative-list-empty">没有匹配的会话。</p>
           ) : (
-            sessions.map((s) => (
+            filtered.map((s) => (
               <SessionRow
                 key={s.id}
                 session={s}
@@ -207,10 +248,17 @@ export function CreativeSessionList({
                   setDraft(s.title)
                 }}
                 onDelete={() => {
-                  if (window.confirm(`删除会话「${s.title || '未命名'}」？源视频与产物会一起清理。`)) {
+                  if (window.confirm(`删除会话「${s.title || '未命名'}」？聊天记录会一并清理。`)) {
                     onDelete(s.id)
                   }
                 }}
+                expertLabel={
+                  s.expertId && expertNameById?.[s.expertId]
+                    ? expertNameById[s.expertId]
+                    : s.expertId
+                      ? `专家·${s.expertId}`
+                      : undefined
+                }
               />
             ))
           )}

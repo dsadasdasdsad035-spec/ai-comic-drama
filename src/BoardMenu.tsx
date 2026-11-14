@@ -8,7 +8,8 @@ type Props = {
   batch: { total: number; done: number } | null
   charsOn: boolean
   diagOn: boolean
-  onAddShot: () => void
+  onAddImageShot: () => void
+  onAddVideoShot: () => void
   onGenAll: () => void
   onUnifyTransitions: () => void
   onFit: () => void
@@ -27,7 +28,8 @@ export default function BoardMenu({
   batch,
   charsOn,
   diagOn,
-  onAddShot,
+  onAddImageShot,
+  onAddVideoShot,
   onGenAll,
   onUnifyTransitions,
   onFit,
@@ -97,8 +99,11 @@ export default function BoardMenu({
           </button>
 
           <div className="bm-sec">画布</div>
-          <button className="bm-item" onClick={act(onAddShot)}>
-            新建镜头卡<span className="bm-hint">+</span>
+          <button className="bm-item" onClick={act(onAddImageShot)}>
+            新建生图镜<span className="bm-hint">Seedream</span>
+          </button>
+          <button className="bm-item" onClick={act(onAddVideoShot)}>
+            新建出片镜<span className="bm-hint">Seedance</span>
           </button>
           <button className="bm-item" onClick={act(onFit)}>
             适配视图<span className="bm-hint">Fit</span>

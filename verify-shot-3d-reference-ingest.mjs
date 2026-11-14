@@ -38,6 +38,7 @@ const result = await ingestShot3dReference(
 )
 
 check('返回站内 URL', result.videoUrl.startsWith(`/project-assets/${encodeURIComponent(NAME)}/`))
+check('返回 bytes 字段', Number(result.bytes) > 0, String(result.bytes))
 check('probe 有时长', Number(result.probe?.duration) > 0)
 
 const projBefore = readProject(rootDir, NAME)
