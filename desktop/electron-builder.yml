@@ -40,6 +40,9 @@ extraResources:
   # 技能与 Blender 宿主脚本：server/skills.mjs 与 server/blender.mjs 按 appRoot 相对读取
   - from: skills
     to: app/skills
+  # 平台内置创意专家：server/experts.mjs 按 process.cwd()（即本目录）读取 experts/<id>/
+  - from: experts
+    to: app/experts
   - from: scripts
     to: app/scripts
   # 第三方组件说明：应用内「关于 → 第三方组件说明」直接打开这份文件
