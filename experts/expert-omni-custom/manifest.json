@@ -1,0 +1,42 @@
+{
+  "id": "expert-omni-custom",
+  "name": "全能专家1",
+  "description": "创意全流程：读技能与项目数据，协助分镜、角色、素材与提示词草案并校验写回。",
+  "imageDescription": "",
+  "skillIds": [
+    "short-drama",
+    "short-drama-assets",
+    "short-drama-breakdown",
+    "short-drama-develop",
+    "short-drama-edit",
+    "short-drama-image-prompts",
+    "short-drama-novel-analyze",
+    "short-drama-produce",
+    "short-drama-review",
+    "short-drama-storyboard",
+    "short-drama-video-prompts",
+    "short-drama-write"
+  ],
+  "toolIds": [
+    "read_source",
+    "read_episodes",
+    "read_episode",
+    "read_characters",
+    "read_designs",
+    "read_shots",
+    "read_transition_recipes",
+    "list_camera_lexicon",
+    "get_camera_lexicon",
+    "read_skill",
+    "read_skill_text",
+    "list_installed_skills",
+    "validate_contract",
+    "submit_characters",
+    "submit_designs",
+    "submit_shots",
+    "submit_joins",
+    "submit_prompts",
+    "read_asset_detail",
+    "read_asset_inventory"
+  ]
+}

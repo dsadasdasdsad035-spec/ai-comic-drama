@@ -1,6 +1,15 @@
 # 技能作者指南
 
-仓库**不附带**内置技能。仅支持 **SkillHub / 本地上传的 Agent 技能包** 作为 Pi **宿主**；**平台 `read_*` / `submit_*` / `validate_contract` 为应用内置工具**，不在 SKILL 里声明。
+仓库**附带平台默认技能**，位于 `skills/<id>/SKILL.md`，随安装自动可用（`source: builtin`，只读）。
+安装 SkillHub / 本地上传的同名技能包会覆盖内置版本，卸载后回退到内置正文。
+
+当前内置技能（19 个）：
+
+- 短剧系列：`short-drama`、`short-drama-develop`、`short-drama-write`、`short-drama-breakdown`、`short-drama-storyboard`、`short-drama-assets`、`short-drama-image-prompts`、`short-drama-video-prompts`、`short-drama-produce`、`short-drama-edit`、`short-drama-review`、`short-drama-novel-analyze`
+- 小说系列：`novel-outline`、`novel-characters`、`novel-script`、`novel-staging`、`novel-storyboard`、`novel-art`
+- 角色参考：`character-refs`
+
+**平台 `read_*` / `submit_*` / `validate_contract` 为应用内置工具**，不在 SKILL 里声明。
 
 本地验收：`node verify-skill-upload-zip.mjs`
 

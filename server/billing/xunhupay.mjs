@@ -58,3 +58,32 @@ export async function createPayment({ tradeOrderId, totalFeeCny, title, notifyUr
   }
   return result
 }
+
+/**
+ * 主动查询订单（用于回调丢失时补单）。
+ * 返回 { status, paid, data }；status: OD=已支付 / WP=待付款 / CD=已取消
+ */
+export async function queryPayment(tradeOrderId) {
+  const appid = process.env.XUNHUPAY_APPID
+  const secret = process.env.XUNHUPAY_SECRET
+  if (!appid || !secret) throw new Error('虎皮椒未配置：请设置 XUNHUPAY_APPID 与 XUNHUPAY_SECRET')
+  const params = {
+    appid,
+    out_trade_order: String(tradeOrderId || ''),
+    time: String(Math.floor(Date.now() / 1000)),
+    nonce_str: crypto.randomBytes(16).toString('hex'),
+  }
+  params.hash = makeSign(params, secret)
+  const resp = await fetch(`${xunhuGateway()}/payment/query.html`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+    body: JSON.stringify(params),
+  })
+  const result = await resp.json().catch(() => ({}))
+  if (Number(result.errcode) !== 0) {
+    throw new Error(result.errmsg || '虎皮椒查询订单失败')
+  }
+  const data = result.data || {}
+  const status = String(data.status || '')
+  return { status, paid: status === 'OD', data }
+}

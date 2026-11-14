@@ -1,0 +1,37 @@
+{
+  "id": "expert-omni-custom-2",
+  "name": "全能专家2",
+  "description": "创意全流程：读技能与项目数据，协助分镜、角色、素材与提示词草案并校验写回。",
+  "imageDescription": "",
+  "skillIds": [
+    "character-refs",
+    "novel-art",
+    "novel-characters",
+    "novel-outline",
+    "novel-script",
+    "novel-staging",
+    "novel-storyboard"
+  ],
+  "toolIds": [
+    "read_source",
+    "read_episodes",
+    "read_episode",
+    "read_characters",
+    "read_designs",
+    "read_shots",
+    "read_transition_recipes",
+    "list_camera_lexicon",
+    "get_camera_lexicon",
+    "read_skill",
+    "read_skill_text",
+    "list_installed_skills",
+    "validate_contract",
+    "submit_characters",
+    "submit_designs",
+    "submit_shots",
+    "submit_joins",
+    "submit_prompts",
+    "read_asset_detail",
+    "read_asset_inventory"
+  ]
+}

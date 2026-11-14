@@ -14,7 +14,7 @@ import {
 import { getBillingSettings, patchBillingSettings } from './settings.mjs'
 import { getWalletSummary, listLedger, creditWallet } from './wallet.mjs'
 import { microFromCredits } from './constants.mjs'
-import { createPayment, verifyNotify, xunhuConfigured } from './xunhupay.mjs'
+import { createPayment, verifyNotify, xunhuConfigured, queryPayment } from './xunhupay.mjs'
 import { getBillingDb, withBillingTxn } from './db.mjs'
 import { seedPriceCatalogIfEmpty } from './price-catalog.mjs'
 import { buildReconciliationReport, simulatePaymentPaid } from './reconcile.mjs'
@@ -49,6 +49,57 @@ function requireSession(req) {
   const s = sessionFromToken(raw)
   if (!s) throw Object.assign(new Error('未登录'), { status: 401, kind: 'auth' })
   return { ...s, rawToken: raw }
+}
+
+/** 虎皮椒异步通知是 form-urlencoded（部分网关调试会发 JSON），两种都要吃 */
+async function readNotifyParams(req, readJson) {
+  const ct = String(req.headers?.['content-type'] || '').toLowerCase()
+  if (ct.includes('application/json')) return await readJson(req)
+  const raw = await new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size > 256 * 1024) {
+        reject(new Error('回调内容过大'))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+  const text = String(raw || '').trim()
+  if (!text) return {}
+  if (ct.includes('x-www-form-urlencoded') || text.includes('=')) {
+    return Object.fromEntries(new URLSearchParams(text))
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return Object.fromEntries(new URLSearchParams(text))
+  }
+}
+
+function plainText(res, status, body) {
+  res.statusCode = status
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+  res.end(body)
+}
+
+/** 订单入账（幂等）：已 paid 直接返回 */
+function settleOrderPaid(order, payload = {}) {
+  const d = getBillingDb()
+  if (order.status === 'paid') return false
+  d.prepare(
+    `UPDATE payment_orders SET status = 'paid', paid_at = datetime('now'), notify_payload = ? WHERE trade_order_id = ?`,
+  ).run(JSON.stringify(payload), order.trade_order_id)
+  const credits = order.credits_micro / 1_000_000
+  creditWallet(order.user_id, credits, 'recharge', 'payment_order', order.trade_order_id, {
+    pack_id: order.pack_id,
+  })
+  return true
 }
 
 function publicBase(req) {
@@ -139,11 +190,27 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
         return true
       }
       const order = getBillingDb()
-        .prepare('SELECT status, pack_id, amount_cny, credits_micro, paid_at FROM payment_orders WHERE trade_order_id = ? AND user_id = ?')
+        .prepare('SELECT * FROM payment_orders WHERE trade_order_id = ? AND user_id = ?')
         .get(tradeId, s.userId)
       if (!order) {
         json(res, 404, { ok: false, message: '订单不存在' })
         return true
+      }
+      // 回调可能丢失（被反代拦截、网络抖动），待支付时主动查上游补单
+      if (order.status === 'pending' && xunhuConfigured()) {
+        try {
+          const up = await queryPayment(tradeId)
+          if (up.paid) {
+            settleOrderPaid(order, { source: 'xunhupay_query', ...up.data })
+            const fresh = getBillingDb()
+              .prepare('SELECT status, paid_at FROM payment_orders WHERE trade_order_id = ?')
+              .get(tradeId)
+            order.status = fresh?.status || 'paid'
+            order.paid_at = fresh?.paid_at || null
+          }
+        } catch (e) {
+          console.warn('[billing] 主动查单失败', tradeId, (e && e.message) || e)
+        }
       }
       json(res, 200, {
         ok: true,
@@ -243,34 +310,36 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
     }
 
     if (url === '/api/billing/xunhupay/notify' && req.method === 'POST') {
-      const body = await readJson(req)
+      // 虎皮椒要求：处理成功返回纯文本 success，否则会重复通知
+      const body = await readNotifyParams(req, readJson)
       const secret = process.env.XUNHUPAY_SECRET
       if (!secret || !verifyNotify(body, secret)) {
-        json(res, 400, { ok: false, message: '签名校验失败' })
+        plainText(res, 400, 'fail: sign')
         return true
       }
       const tradeId = String(body.trade_order_id || '')
       const d = getBillingDb()
       const order = d.prepare('SELECT * FROM payment_orders WHERE trade_order_id = ?').get(tradeId)
       if (!order) {
-        json(res, 404, { ok: false, message: '订单不存在' })
+        plainText(res, 404, 'fail: order not found')
         return true
       }
       if (order.status === 'paid') {
-        json(res, 200, { ok: true, message: '已处理' })
+        plainText(res, 200, 'success')
+        return true
+      }
+      const status = String(body.status || 'OD')
+      if (status !== 'OD') {
+        plainText(res, 200, 'success')
         return true
       }
       const paidFee = Number(body.total_fee)
-      if (Math.abs(paidFee - Number(order.amount_cny)) > 0.01) {
-        json(res, 400, { ok: false, message: '金额不匹配' })
+      if (!Number.isFinite(paidFee) || Math.abs(paidFee - Number(order.amount_cny)) > 0.01) {
+        plainText(res, 400, 'fail: amount mismatch')
         return true
       }
-      d.prepare(
-        `UPDATE payment_orders SET status = 'paid', paid_at = datetime('now'), notify_payload = ? WHERE trade_order_id = ?`,
-      ).run(JSON.stringify(body), tradeId)
-      const credits = order.credits_micro / 1_000_000
-      creditWallet(order.user_id, credits, 'recharge', 'payment_order', tradeId, { pack_id: order.pack_id })
-      json(res, 200, { ok: true })
+      settleOrderPaid(order, body)
+      plainText(res, 200, 'success')
       return true
     }
 
