@@ -1,5 +1,5 @@
 import type { SettingsWorkbench } from '../../useSettingsWorkbench'
-import { loginBilling, logoutBilling, registerBilling, startRecharge, fetchRechargeOrderStatus, patchBillingSettingsAdmin, fetchReconciliationReport } from '../../../billingApi'
+import { loginBilling, logoutBilling, registerBilling, resendVerifyBilling, startRecharge, fetchRechargeOrderStatus, patchBillingSettingsAdmin, fetchReconciliationReport } from '../../../billingApi'
 
 type Props = { wb: SettingsWorkbench }
 
@@ -71,6 +71,26 @@ export function BillingPane({ wb }: Props) {
             {wb.billUser.email}
             {wb.billUser.email_verified ? '' : '（未验证邮箱，部分功能不可用）'} · 可用积分{' '}
             <strong>{wb.billWallet?.available_credits ?? 0}</strong>
+            {wb.billUser.email_verified ? null : (
+              <button
+                type="button"
+                className="btn"
+                disabled={wb.billBusy}
+                onClick={async () => {
+                  wb.setBillBusy(true)
+                  try {
+                    const r = await resendVerifyBilling(wb.billUser!.email)
+                    wb.toast(r.message || '已请求重发验证邮件')
+                  } catch (e) {
+                    wb.toast((e as Error).message)
+                  } finally {
+                    wb.setBillBusy(false)
+                  }
+                }}
+              >
+                重发验证邮件
+              </button>
+            )}
             <button type="button" className="btn" onClick={() => void logoutBilling().then(() => wb.refreshBilling())}>
               退出
             </button>

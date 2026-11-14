@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { openBillingDb } from './db.mjs'
 import {
   registerAndNotify,
+  resendVerification,
   loginUser,
   logoutToken,
   verifyEmail,
@@ -116,8 +117,41 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
 
     if (url === '/api/auth/register' && req.method === 'POST') {
       const body = await readJson(req)
-      const out = registerAndNotify(body.email, body.password, publicBase(req))
-      json(res, 200, { ok: true, email: out.email, message: '验证邮件已发送（开发环境见服务端日志）' })
+      const out = await registerAndNotify(body.email, body.password, publicBase(req))
+      // 邮件没发出去时不谎报：注册仍然成功，但要明确告知并用 resend 重试
+      if (!out.emailSent) {
+        json(res, 200, {
+          ok: true,
+          email: out.email,
+          email_sent: false,
+          message: `账户已创建，但验证邮件发送失败：${out.emailError || '未知原因'}。请检查邮件服务配置后点击「重发验证邮件」。`,
+        })
+        return true
+      }
+      json(res, 200, {
+        ok: true,
+        email: out.email,
+        email_sent: true,
+        message:
+          out.driver === 'console'
+            ? '账户已创建。当前为 console 邮件驱动，验证链接已打印到服务端日志。'
+            : '验证邮件已发送，请查收后在邮箱中完成验证。',
+      })
+      return true
+    }
+
+    if (url === '/api/auth/resend-verify' && req.method === 'POST') {
+      const body = await readJson(req)
+      const out = await resendVerification(body.email, publicBase(req))
+      // 成功与「已存在/已跳过」用同一句话，避免通过响应差异探测邮箱是否注册过。
+      // 仅当确实尝试发信且发信失败时才明确报错，否则运维无法发现邮件服务故障。
+      json(res, 200, {
+        ok: true,
+        message:
+          out.skipped || out.emailSent
+            ? '如果该邮箱已注册且未验证，验证邮件会很快送达。'
+            : '验证邮件发送失败，请稍后重试或联系管理员。',
+      })
       return true
     }
 

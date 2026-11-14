@@ -47,11 +47,14 @@ extraResources:
     to: app/THIRD-PARTY-NOTICES.md
   - from: desktop/licenses
     to: app/licenses
-  # server-build/app.mjs 的两个真实外部依赖（零依赖包，无需递归收集）
+  # server-build/app.mjs 的真实外部依赖（零依赖包，无需递归收集）
   - from: node_modules/zod
     to: app/node_modules/zod
   - from: node_modules/fflate
     to: app/node_modules/fflate
+  # 验证邮件 SMTP 驱动（server/billing/email.mjs 动态依赖）
+  - from: node_modules/nodemailer
+    to: app/node_modules/nodemailer
 
   # ---- 随包运行时二进制 ----
   - from: desktop/bin/node

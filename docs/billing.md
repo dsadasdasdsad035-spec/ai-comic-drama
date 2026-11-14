@@ -15,6 +15,19 @@
 - `XUNHUPAY_NOTIFY_URL` 必须指向**本服务**的 `/api/billing/xunhupay/notify`，且虎皮椒服务器能公网访问。
 - 前端生成请求已通过 `credentials: 'include'` 携带 `sb_session`，与设置页登录态一致。
 
+## 验证邮件
+
+`BILLING_EMAIL_DRIVER` 决定验证邮件的投递方式：
+
+| 驱动 | 行为 | 适用场景 |
+|---|---|---|
+| `console`（默认） | 验证链接打印到服务端日志 | 本地调试、测试 |
+| `smtp` | 通过 nodemailer 真实发信，需配 `BILLING_SMTP_*` | 生产环境 |
+
+**注意**：`console` 驱动下用户拿不到链接。桌面端看不到服务端日志，因此桌面端若需邮箱验证必须配置 `smtp`。
+
+注册时若邮件发送失败，接口仍返回 `ok: true`（账户已创建），但会带 `email_sent: false` 与具体原因，不谎报成功；用户可通过「重发验证邮件」重试。
+
 ## 验证
 
 ```bash
@@ -38,6 +51,7 @@ npm run verify:billing:e2e
 ## API
 
 - `POST /api/auth/register|login|logout`
+- `POST /api/auth/resend-verify`（重发验证邮件；对已注册/未注册返回同一话术）
 - `GET /api/auth/me`
 - `GET /api/billing/wallet|ledger|packs`
 - `POST /api/billing/recharge`

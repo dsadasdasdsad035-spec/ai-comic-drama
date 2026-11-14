@@ -40,10 +40,18 @@ export async function loginBilling(email: string, password: string) {
 }
 
 export async function registerBilling(email: string, password: string) {
-  return billJson<{ email: string; message: string }>('/api/auth/register', {
+  return billJson<{ email: string; email_sent?: boolean; message: string }>('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
+  })
+}
+
+export async function resendVerifyBilling(email: string) {
+  return billJson<{ message: string }>('/api/auth/resend-verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
   })
 }
 
