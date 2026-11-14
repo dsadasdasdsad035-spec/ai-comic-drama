@@ -19,6 +19,15 @@
 - **WHEN** 客户端 `PUT /api/experts` 提交自定义数组
 - **THEN** 持久化后再次 GET 反映更新；内置 id 写入 MUST 被拒绝
 
+### Requirement: 技能白名单通配
+
+`skillIds` 含 `*` 时 SHALL 视为「全部已安装技能可读」：`read_skill` / `read_skill_text` MUST 不再按 id 拦截，`{{skillIds}}` 占位符 MUST 渲染为「全部已安装技能（*）」。内置「全能专家」SHOULD 使用该通配，避免逐个挂载技能。
+
+#### Scenario: 通配读技能
+
+- **WHEN** 专家 `skillIds` 为 `["*"]` 且模型调用 `read_skill_text`
+- **THEN** 不返回「专家不允许读取技能」，而是按技能是否存在返回结果
+
 ### Requirement: list_experts 始终可用
 
 系统 SHALL 在创意 Pi 工具集中注册 `list_experts`，调用 `GET /api/experts` 返回摘要。该工具 MUST 在专家模式下始终注入，且 MUST NOT 出现在专家设置的工具勾选列表中。

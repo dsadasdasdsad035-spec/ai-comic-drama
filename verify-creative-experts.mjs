@@ -52,20 +52,22 @@ if (!up) {
 
 const expertsRes = await (await fetch(`${APP}/api/experts`)).json()
 check('GET /api/experts', expertsRes.ok === true, String(expertsRes.experts?.length ?? 0))
-check('内置至少 3 个专家', (expertsRes.experts?.length ?? 0) >= 3)
+const builtins = (expertsRes.experts || []).filter((e) => e.source === 'builtin')
+check('内置仅 1 个专家', builtins.length === 1, builtins.map((e) => e.id).join(','))
 
-const storyboard = expertsRes.experts?.find((e) => e.id === 'expert-storyboard')
-check('分镜教练 manifest', Boolean(storyboard), storyboard?.name || '')
+const omni = expertsRes.experts?.find((e) => e.id === 'expert-omni')
+check('全能专家 manifest', Boolean(omni), omni?.name || '')
+check('全能专家名称', omni?.name === '全能专家', omni?.name || '')
 check(
   '内置专家含图标地址',
   expertsRes.experts?.every((e) => e.source !== 'builtin' || String(e.iconUrl || '').includes('/icon')),
 )
 check(
-  '分镜教练图像描述',
-  Boolean(String(storyboard?.imageDescription || '').trim()),
-  storyboard?.imageDescription || '',
+  '全能专家图像描述',
+  Boolean(String(omni?.imageDescription || '').trim()),
+  omni?.imageDescription || '',
 )
-const iconRes = await fetch(`${APP}/api/experts/expert-storyboard/icon`)
+const iconRes = await fetch(`${APP}/api/experts/expert-omni/icon`)
 check('GET 专家图标', iconRes.ok && (iconRes.headers.get('content-type') || '').includes('svg'))
 
 const entry = path.join(TMP, 'entry.ts')
@@ -99,14 +101,14 @@ globalThis.fetch = (url, init) => {
 
 const lib = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'))
 
-const expert = storyboard
+const expert = omni
 const proj = '专家验收项目'
 const ep = 3
 
 const system = lib.buildExpertSystem(expert, { projectName: proj, epNo: ep })
 check('system 不含通用创意壳', !system.includes('list_installed_skills 发现'))
-check('system 含 soul 正文', system.includes('分镜教练'))
-check('占位符 expert-character 模板', lib.interpolateExpertSoul(expert.soul, { projectName: proj, epNo: ep, expert }).length > 0)
+check('system 含 soul 正文', system.includes('全流程'))
+check('占位符全能专家模板', lib.interpolateExpertSoul(expert.soul, { projectName: proj, epNo: ep, expert }).length > 0)
 
 const payload = lib.buildCreativeTurnPayload({
   host: null,
@@ -117,8 +119,9 @@ const payload = lib.buildCreativeTurnPayload({
   draftText: 'hi',
 })
 check('载荷含 list_experts', payload.toolNames.includes('list_experts'))
-check('分镜教练默认无 list_installed_skills', !payload.toolNames.includes('list_installed_skills'))
+check('全能专家含 list_installed_skills', payload.toolNames.includes('list_installed_skills'))
 check('载荷含 read_shots', payload.toolNames.includes('read_shots'))
+check('载荷含 submit_characters', payload.toolNames.includes('submit_characters'))
 
 const PI = lib.createPiNativeToolSet()
 const listExperts = PI.byName.get('list_experts')
@@ -127,10 +130,13 @@ const tools = lib.buildCreativeExpertTools(expert, platform, [], listExperts)
 const byName = new Map(tools.map((t) => [t.name, t]))
 check('运行时工具数', tools.length === payload.toolNames.length, String(tools.length))
 
+check('内置全能专家挂全部技能（*）', Array.isArray(omni?.skillIds) && omni.skillIds.includes('*'))
+check('system 占位符展示全部技能', system.includes('全部已安装技能'))
+
 const readText = byName.get('read_skill_text')
 if (readText) {
-  const denied = await readText.run({ id: 'not-in-whitelist' })
-  check('read_skill_text 白名单拒绝', denied?.ok === false, String(denied?.error || ''))
+  const denied = await readText.run({ id: 'not-installed-skill-id' })
+  check('read_skill_text 通配下不再报白名单拒绝', !String(denied?.error || '').includes('专家不允许读取技能'))
 } else {
   check('read_skill_text 存在于专家工具集', false)
 }
@@ -192,7 +198,7 @@ const zipImp = await fetch(`${APP}/api/experts/import-zip`, {
 const zipImpJson = await zipImp.json()
 check('zip 导入', zipImpJson.ok === true)
 check('zip 导入 id', zipImpJson.experts?.some((e) => e.id === 'expert-zip-verify'))
-const zipExport = await fetch(`${APP}/api/experts/expert-free-chat/export-zip`)
+const zipExport = await fetch(`${APP}/api/experts/expert-omni/export-zip`)
 check('zip 导出内置', zipExport.ok && zipExport.headers.get('content-type')?.includes('zip'))
 check('zip 导出字节', (await zipExport.arrayBuffer()).byteLength > 50)
 

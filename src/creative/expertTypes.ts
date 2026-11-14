@@ -14,3 +14,10 @@ export type CreativeExpert = {
 }
 
 export const EXPERT_NONE = ''
+
+/** skillIds 里的通配项：表示「全部已安装技能」都可读 */
+export const EXPERT_SKILL_WILDCARD = '*'
+
+export function expertHasAllSkills(skillIds: string[] | undefined): boolean {
+  return Array.isArray(skillIds) && skillIds.includes(EXPERT_SKILL_WILDCARD)
+}

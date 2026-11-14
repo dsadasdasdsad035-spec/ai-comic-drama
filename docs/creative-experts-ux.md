@@ -171,15 +171,13 @@ flowchart TB
 
 ---
 
-## 5. 默认专家模板（建议内置 2～3 个）
+## 5. 内置专家（仅一个）
 
 | id | 名称 | 默认技能 | 默认工具 |
 |----|------|----------|----------|
-| `expert-free-chat` | 自由创意 | （空，靠目录） | 平台读 + `list_*` + `read_skill_text`，无 submit |
-| `expert-storyboard` | 分镜教练 | 若干 shotlist 相关包 | 读项目 + `submit_shots` + validate |
-| `expert-character` | 角色设定 | character 相关包 | read/submit characters |
+| `expert-omni` | 全能专家 | `*`（全部已安装技能） | 平台读 + 技能读 + validate + 全套 submit_* |
 
-每个内置专家自带 `soul.md` 范例，用户可复制为自定义专家起点。
+`soul.md` 覆盖分镜、角色、素材与提示词流程；用户仍可在设置中另存自定义专家。
 
 ---
 

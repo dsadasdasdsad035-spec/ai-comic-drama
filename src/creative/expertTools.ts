@@ -1,12 +1,13 @@
 import type { ToolDef } from '../agent/tool'
 import { defineTool } from '../agent/tool'
-import type { CreativeExpert } from './expertTypes'
+import { expertHasAllSkills, type CreativeExpert } from './expertTypes'
 
 const SKILL_READ_TOOLS = new Set(['read_skill', 'read_skill_text'])
 
-/** 专家模式下限制 read_skill* 仅允许名单内 id */
+/** 专家模式下限制 read_skill* 仅允许名单内 id；名单含 `*` 表示全部已安装技能 */
 export function wrapSkillReadForExpert(tool: ToolDef, allowedSkillIds: string[]): ToolDef {
   if (!SKILL_READ_TOOLS.has(tool.name)) return tool
+  if (expertHasAllSkills(allowedSkillIds)) return tool
   const allowed = new Set(allowedSkillIds.map((x) => String(x).trim()).filter(Boolean))
   return defineTool({
     name: tool.name,

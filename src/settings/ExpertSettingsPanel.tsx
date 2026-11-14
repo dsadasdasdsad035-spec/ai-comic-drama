@@ -17,7 +17,7 @@ import {
   EXPERT_TOOL_GROUP_LABEL,
   groupExpertPlatformTools,
 } from '../creative/expertToolGroups'
-import type { CreativeExpert } from '../creative/expertTypes'
+import { EXPERT_SKILL_WILDCARD, type CreativeExpert } from '../creative/expertTypes'
 import { expertCardIconAlt, expertCardIconUrl } from '../creative/expertUi'
 import { SkillMarketIcon } from './skillMarketUi'
 import {
@@ -159,36 +159,100 @@ export function ExpertSettingsPanel({ toast }: Props) {
 
   const openNew = () => openDetail(emptyCustom(), 'overview')
 
-  /** 内置专家：fork 为可编辑自定义副本（不修改仓库内置） */
+  /** 内置专家：fork 为可编辑自定义副本（不修改仓库 experts/ 内置） */
   const forkBuiltinToCustom = useCallback(
-    (src: CreativeExpert, startTab: DetailTab = 'soul') => {
+    (src: CreativeExpert, startTab: DetailTab = 'soul'): CreativeExpert => {
       const fork = cloneExpertAsCustom(src, experts)
       setDetail(fork)
       setDraft(fork)
-      setSavedFingerprint(draftFingerprint(src))
+      setSavedFingerprint(draftFingerprint(fork))
       setTab(startTab)
-      toast(`已转为可编辑副本「${fork.id}」。保存后可在创意顶栏选用；内置模板不变。`)
+      toast(`已转为可编辑副本「${fork.id}」。保存后请在创意顶栏选用；内置「${src.name}」不变。`)
+      return fork
     },
     [experts, toast],
   )
 
+  /** 内置只读：改技能/工具时先 fork，避免勾选无反应 */
+  const ensureCustomDraft = useCallback((): CreativeExpert | null => {
+    if (!draft) return null
+    if (draft.source === 'custom') return draft
+    return forkBuiltinToCustom(draft, tab)
+  }, [draft, tab, forkBuiltinToCustom])
+
   const toggleTool = (name: string) => {
-    if (!draft || draft.source === 'builtin') return
-    const has = draft.toolIds.includes(name)
+    const base = ensureCustomDraft()
+    if (!base) return
+    const has = base.toolIds.includes(name)
     setDraft({
-      ...draft,
-      toolIds: has ? draft.toolIds.filter((x) => x !== name) : [...draft.toolIds, name],
+      ...base,
+      toolIds: has ? base.toolIds.filter((x) => x !== name) : [...base.toolIds, name],
     })
   }
 
+  /** 技能通配（*）表示全部已安装技能都可读 */
+  const skillWildcard = Boolean(draft?.skillIds.includes(EXPERT_SKILL_WILDCARD))
+
   const toggleSkill = (id: string) => {
-    if (!draft || draft.source === 'builtin') return
-    const has = draft.skillIds.includes(id)
+    const base = ensureCustomDraft()
+    if (!base) return
+    // 通配态下取消单个技能：先展开成「全部已安装 - 该 id」
+    if (base.skillIds.includes(EXPERT_SKILL_WILDCARD)) {
+      setDraft({
+        ...base,
+        skillIds: installedSkills.map((s) => s.id).filter((x) => x !== id),
+      })
+      return
+    }
+    const has = base.skillIds.includes(id)
     setDraft({
-      ...draft,
-      skillIds: has ? draft.skillIds.filter((x) => x !== id) : [...draft.skillIds, id],
+      ...base,
+      skillIds: has ? base.skillIds.filter((x) => x !== id) : [...base.skillIds, id],
     })
   }
+
+  const setSkillWildcard = (on: boolean) => {
+    const base = ensureCustomDraft()
+    if (!base) return
+    setDraft({
+      ...base,
+      skillIds: on
+        ? [EXPERT_SKILL_WILDCARD]
+        : base.skillIds.filter((x) => x !== EXPERT_SKILL_WILDCARD),
+    })
+  }
+
+  const mergeSkillIds = (ids: string[]) => {
+    const base = ensureCustomDraft()
+    if (!base) return
+    if (base.skillIds.includes(EXPERT_SKILL_WILDCARD)) return
+    const merged = new Set([...base.skillIds, ...ids.map((x) => String(x).trim()).filter(Boolean)])
+    setDraft({ ...base, skillIds: [...merged] })
+  }
+
+  const setSkillIdsExact = (ids: string[]) => {
+    const base = ensureCustomDraft()
+    if (!base) return
+    setDraft({
+      ...base,
+      skillIds: [...new Set(ids.map((x) => String(x).trim()).filter((x) => x && x !== EXPERT_SKILL_WILDCARD))],
+    })
+  }
+
+  const mergeToolIds = (names: string[]) => {
+    const base = ensureCustomDraft()
+    if (!base) return
+    const merged = new Set([...base.toolIds, ...names])
+    setDraft({ ...base, toolIds: [...merged] })
+  }
+
+  const setToolIdsExact = (names: string[]) => {
+    const base = ensureCustomDraft()
+    if (!base) return
+    setDraft({ ...base, toolIds: [...new Set(names)] })
+  }
+
+  const allMcpToolNames = useMemo(() => mcpTools.map((t) => t.externalName), [mcpTools])
 
   const persistCustomList = async (rows: CreativeExpert[]) => {
     setBusy(true)
@@ -396,7 +460,9 @@ export function ExpertSettingsPanel({ toast }: Props) {
               <div className="skill-market-card-meta">
                 <span className="st-hint">
                   {expert.source === 'builtin' ? '内置' : '自定义'} · {expert.toolIds.length} 工具 ·{' '}
-                  {expert.skillIds.length} 技能
+                  {expert.skillIds.includes(EXPERT_SKILL_WILDCARD)
+                    ? '全部技能'
+                    : `${expert.skillIds.length} 技能`}
                 </span>
               </div>
             </button>
@@ -441,7 +507,16 @@ export function ExpertSettingsPanel({ toast }: Props) {
             tabs={[
               { id: 'overview', label: '概览' },
               { id: 'soul', label: 'Soul' },
-              { id: 'skills', label: `技能${draft.skillIds.length ? ` · ${draft.skillIds.length}` : ''}` },
+              {
+                id: 'skills',
+                label: `技能${
+                  draft.skillIds.includes(EXPERT_SKILL_WILDCARD)
+                    ? ' · 全部'
+                    : draft.skillIds.length
+                      ? ` · ${draft.skillIds.length}`
+                      : ''
+                }`,
+              },
               { id: 'tools', label: `工具 · ${draft.toolIds.length}` },
               { id: 'advanced', label: '高级' },
             ]}
@@ -553,15 +628,58 @@ export function ExpertSettingsPanel({ toast }: Props) {
 
             {tab === 'skills' ? (
               <SkillDetailPanel title="可读技能" hint="Pi 只能对勾选的 id 调用 read_skill / read_skill_text。">
+                {draft.source === 'builtin' ? (
+                  <p className="creative-header-hint" role="status">
+                    内置专家不能直接改仓库配置。勾选技能会自动另存为自定义副本，点底部「保存」后在创意顶栏选用新 id。
+                  </p>
+                ) : null}
                 <input
                   type="search"
                   className="skill-market-search"
                   placeholder="筛选技能 id…"
                   value={skillFilter}
                   onChange={(e) => setSkillFilter(e.target.value)}
-                  disabled={draft.source === 'builtin'}
                   style={{ marginBottom: 8 }}
                 />
+                <label
+                  className="expert-skill-pick-row"
+                  style={{ gridTemplateColumns: 'auto 1fr', marginBottom: 8, fontWeight: 600 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={skillWildcard}
+                    onChange={(e) => setSkillWildcard(e.target.checked)}
+                  />
+                  <span>
+                    全部技能（*）
+                    <span className="st-hint"> · 无需逐个勾选，未来新装技能也自动可读</span>
+                  </span>
+                </label>
+                {installedSkills.length > 0 ? (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={skillWildcard}
+                      onClick={() => mergeSkillIds(installedSkills.map((s) => s.id))}
+                    >
+                      全选已安装
+                    </button>
+                    {skillFilter.trim() ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={skillWildcard || !filteredSkills.length}
+                        onClick={() => mergeSkillIds(filteredSkills.map((s) => s.id))}
+                      >
+                        全选当前筛选
+                      </button>
+                    ) : null}
+                    <button type="button" className="btn-ghost" onClick={() => setSkillIdsExact([])}>
+                      清空技能
+                    </button>
+                  </div>
+                ) : null}
                 {!filteredSkills.length ? (
                   <p className="st-hint">尚未安装技能；请先到 SkillHub 安装 Agent 包。</p>
                 ) : (
@@ -570,8 +688,7 @@ export function ExpertSettingsPanel({ toast }: Props) {
                       <label key={s.id} className="expert-skill-pick-row">
                         <input
                           type="checkbox"
-                          disabled={draft.source === 'builtin'}
-                          checked={draft.skillIds.includes(s.id)}
+                          checked={skillWildcard || draft.skillIds.includes(s.id)}
                           onChange={() => toggleSkill(s.id)}
                         />
                         <span>{s.id}</span>
@@ -585,25 +702,64 @@ export function ExpertSettingsPanel({ toast }: Props) {
 
             {tab === 'tools' ? (
               <SkillDetailPanel title="工具白名单" hint={toolCountLabel}>
+                {draft.source === 'builtin' ? (
+                  <p className="creative-header-hint" role="status">
+                    内置专家只读；勾选工具会先另存为自定义副本（与「技能」Tab 相同）。
+                  </p>
+                ) : null}
                 {soulHints.missingTools.length ? (
                   <p className="creative-header-alert" role="status">
                     Soul 引用未勾选：{soulHints.missingTools.join('、')}
                   </p>
                 ) : null}
-                {draft.source === 'custom' ? (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => setToolIdsExact([...ALL_PLATFORM_TOOLS, ...allMcpToolNames])}
+                  >
+                    全部勾选
+                  </button>
+                  <button type="button" className="btn" onClick={() => setToolIdsExact([...ALL_PLATFORM_TOOLS])}>
+                    全选平台工具
+                  </button>
                   <button
                     type="button"
                     className="btn"
-                    style={{ marginBottom: 8 }}
-                    onClick={() => setDraft({ ...draft, toolIds: [...DEFAULT_TOOLS] })}
+                    disabled={!allMcpToolNames.length}
+                    onClick={() => mergeToolIds(allMcpToolNames)}
+                  >
+                    全选 MCP
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      const base = ensureCustomDraft()
+                      if (!base) return
+                      setDraft({ ...base, toolIds: [...DEFAULT_TOOLS] })
+                    }}
                   >
                     恢复平台默认
                   </button>
-                ) : null}
+                  <button type="button" className="btn-ghost" onClick={() => setToolIdsExact(['read_source'])}>
+                    清空（保留 read_source）
+                  </button>
+                </div>
                 {Object.entries(GROUPED_TOOLS).map(([group, names]) =>
                   names.length ? (
-                    <fieldset key={group} className="st-field" disabled={draft.source === 'builtin'}>
-                      <legend>{EXPERT_TOOL_GROUP_LABEL[group] || group}</legend>
+                    <fieldset key={group} className="st-field">
+                      <legend>
+                        {EXPERT_TOOL_GROUP_LABEL[group] || group}
+                        <button
+                          type="button"
+                          className="btn-mini ghost"
+                          style={{ marginLeft: 8, fontWeight: 400 }}
+                          onClick={() => mergeToolIds(names)}
+                        >
+                          全选本组
+                        </button>
+                      </legend>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                         {names.map((name) => (
                           <label key={name} style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12 }}>
@@ -619,7 +775,7 @@ export function ExpertSettingsPanel({ toast }: Props) {
                     </fieldset>
                   ) : null,
                 )}
-                <fieldset className="st-field" disabled={draft.source === 'builtin'}>
+                <fieldset className="st-field">
                   <legend>MCP（创意聊天）</legend>
                   {!mcpTools.length ? (
                     <p className="st-hint">暂无 MCP：请到设置 → MCP 安装并勾选「创意聊天」。</p>

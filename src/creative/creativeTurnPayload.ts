@@ -6,7 +6,7 @@ import { builtinPlatformToolNames } from '../agent/builtinPlatformTools'
 import { isMarketInstalledSkill } from './creativeSkillHost'
 import { isAgentPackSkill } from '../skills/agentPack'
 import type { Skill } from '../skills/types'
-import type { CreativeExpert } from './expertTypes'
+import { expertHasAllSkills, type CreativeExpert } from './expertTypes'
 import { expertToolNames } from './expertTools'
 import { expertUsesShotEpisodeTools } from './creativeToolParamGate'
 
@@ -189,7 +189,11 @@ export function interpolateExpertSoul(
   soul: string,
   ctx: { projectName?: string; epNo?: number; expert: CreativeExpert },
 ): string {
-  const skillIds = ctx.expert.skillIds.length ? ctx.expert.skillIds.join('、') : '（空：禁止 read_skill*）'
+  const skillIds = expertHasAllSkills(ctx.expert.skillIds)
+    ? '全部已安装技能（*）'
+    : ctx.expert.skillIds.length
+      ? ctx.expert.skillIds.join('、')
+      : '（空：禁止 read_skill*）'
   return String(soul || '')
     .replaceAll('{{projectName}}', ctx.projectName?.trim() || '未选项目')
     .replaceAll('{{epNo}}', String(ctx.epNo ?? 1))
@@ -278,7 +282,11 @@ export function creativeTaskView(
     skillTitle: expert ? `专家 · ${expert.name}` : host ? host.manifest.name || host.id : '自动（技能目录）',
     skillSource: expert ? (expert.source === 'custom' ? 'override' : 'builtin') : host?.source ?? 'builtin',
     skillVersion: expert ? 1 : host?.manifest.version ?? 0,
-    readonly: expert ? expert.skillIds.map((id) => ({ id, version: 1 })) : [],
+    readonly: expert
+      ? expertHasAllSkills(expert.skillIds)
+        ? []
+        : expert.skillIds.map((id) => ({ id, version: 1 }))
+      : [],
     readTools: payload.toolNames,
     saveMode: 'immediate',
   }

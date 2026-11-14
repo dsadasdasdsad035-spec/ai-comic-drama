@@ -452,7 +452,13 @@ function createListExpertsTool(): ToolDef {
             name: e.name,
             description: e.description,
             imageDescription: e.imageDescription,
-            skillCount: Array.isArray(e.skillIds) ? e.skillIds.length : 0,
+            // skillIds 含 "*"：不逐个列技能，直接表示全部已安装技能
+            skillCount: Array.isArray(e.skillIds)
+              ? e.skillIds.includes('*')
+                ? null
+                : e.skillIds.length
+              : 0,
+            skillAll: Array.isArray(e.skillIds) && e.skillIds.includes('*'),
             toolCount: Array.isArray(e.toolIds) ? e.toolIds.length : 0,
             source: e.source,
           })),

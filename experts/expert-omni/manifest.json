@@ -1,0 +1,27 @@
+{
+  "id": "expert-omni",
+  "name": "全能专家",
+  "description": "创意全流程：读技能与项目数据，协助分镜、角色、素材与提示词草案并校验写回。",
+  "imageDescription": "靛青星芒图标，表示覆盖分镜、角色与素材的全能创意助手",
+  "skillIds": ["*"],
+  "toolIds": [
+    "read_source",
+    "read_episodes",
+    "read_episode",
+    "read_characters",
+    "read_designs",
+    "read_shots",
+    "read_transition_recipes",
+    "list_camera_lexicon",
+    "get_camera_lexicon",
+    "read_skill",
+    "read_skill_text",
+    "list_installed_skills",
+    "validate_contract",
+    "submit_characters",
+    "submit_designs",
+    "submit_shots",
+    "submit_joins",
+    "submit_prompts"
+  ]
+}
