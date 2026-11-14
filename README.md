@@ -4,10 +4,23 @@ AI 漫剧的可视化分镜工作台：分镜卡片自由排布 → 生成静帧
 
 ## 运行
 
+开发（Vite dev server，热更新）：
+
 ```bash
 npm install
 npm run dev      # http://127.0.0.1:5273
 ```
+
+生产 / 独立运行（静态产物 + 普通 Node 进程，不依赖 vite dev）：
+
+```bash
+npm run build    # tsc --noEmit && vite build && build:server
+npm start        # node server/index.mjs，默认 127.0.0.1:5273
+```
+
+- 端口：`SB_PORT`（默认 5273；`0` 表示由系统分配，启动行 `[server] listening http://...` 会打印实际端口）。`SB_HOST` 默认 `127.0.0.1`，容器内用 `0.0.0.0`。
+- 媒体根：`SB_MEDIA_ROOT` 决定 `/generated`、`/videos`、`/voices`、`/exports`、`/publish-packages` 的磁盘落点，默认 `<repo>/public`，容器内为 `/data/media`。URL 前缀不随媒体根变化。
+- 接口实现位于 `server/app.ts`，开发与独立运行共用同一份 handler。
 
 需要本机有 **ffmpeg（带 libass）**；API key 从以下位置读取：
 

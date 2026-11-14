@@ -1,9 +1,9 @@
 # 分镜画布（storyboard-canvas）应用镜像
 #
 # 设计取舍：
-# - API 与页面都在 Vite dev middleware 里（vite.config.ts 的 configureServer），
-#   所以镜像跑的是 `vite dev` 而不是 `vite preview`。这是当前架构事实，不是偷懒；
-#   等 server/index.mjs 拆出来后再换成静态产物 + 独立 Node 服务。
+# - API 与页面由 server/index.mjs 这一个普通 Node 进程托管（实现在 server/app.ts）。
+#   镜像不再跑 `vite dev`：dev server 的模块热更新与按需编译不适合生产。
+# - 媒体根由 SB_MEDIA_ROOT 决定，默认 /data/media；URL 前缀（/generated、/videos…）不变。
 # - ffmpeg 必须带 libass（字幕烧录）与 ffprobe（probe/抽帧）；Debian 的
 #   ffmpeg 包两者都有，比 ffmpeg-static 更完整。
 # - node:sqlite 需要 Node 22.5+；这里用 22.23（与开发机一致）。
@@ -79,42 +79,49 @@ RUN case "${TARGETARCH:-amd64}" in \
  && chmod +x /usr/local/bin/yt-dlp \
  && /usr/local/bin/yt-dlp --version
 
+# ---------------------------------------------------------------- 构建阶段
+# 只做产物：前端静态文件 + 服务端接口 bundle。
+# 不跑 tsc：类型检查是提交前的门（npm run build 里含 tsc），
+# 镜像构建只负责产物，避免把别人正在改的文件堵在部署之外。
+FROM base AS build
 WORKDIR /app
-
-# 先装依赖，利用层缓存
 COPY package.json package-lock.json ./
 RUN npm ci
-
-# Chromium：发布台用它校验会话与上传草稿（无头）。
-# 必须用 Playwright 自己的安装器，不能装 apt 的 chromium —— 版本与
-# playwright-core 的 CDP 协议不匹配会直接启动失败。
-# 浏览器放在镜像内固定路径，运行期不依赖 $HOME 缓存。
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx playwright-core install --with-deps chromium \
- && rm -rf /var/lib/apt/lists/*
-
-# 只安装依赖。不在这里跑 `npm run build`：
-# 应用运行时走 vite dev（API 在 configureServer 里），静态构建产物用不上；
-# 而 tsc 是「全仓库」门禁，别人正在改的文件会把镜像构建一起堵死。
-# 类型检查请在提交前跑 `npm run build`，那是代码质量的门，不是部署的门。
 COPY . .
+RUN npx vite build && npm run build:server
 
-# 可写目录：项目库、创意源视频、公共产物
-RUN mkdir -p /data/projects /data/creatives /app/public/generated /app/public/videos \
-    /app/public/voices /app/public/exports /app/public/publish-packages
+# ---------------------------------------------------------------- 运行阶段
+FROM base AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# 只装生产依赖。esbuild 只在 build:server 用，playwright-core 只在宿主机跑验收脚本用，
+# 两者都不该进运行镜像（原来的 Chromium 安装属于验收需求，不是运行需求）。
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# 运行期还需要仓库里的资产（skills/experts/scripts/public/presets 等）
+COPY . .
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/server-build ./server-build
+
+# 可写目录：项目库 + 媒体根（生成产物/视频/配音/导出/发布包都在媒体根下）
+RUN mkdir -p /data/projects /data/media/generated /data/media/videos \
+    /data/media/voices /data/media/exports /data/media/publish-packages
 
 ENV SB_PROJECTS_DIR=/data/projects \
+    SB_MEDIA_ROOT=/data/media \
+    SB_HOST=0.0.0.0 \
+    SB_PORT=5273 \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \
-    YTDLP_BIN=/usr/local/bin/yt-dlp \
-    HOST=0.0.0.0 \
-    PORT=5273
+    YTDLP_BIN=/usr/local/bin/yt-dlp
 
 EXPOSE 5273
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" > /dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${SB_PORT}/api/health" > /dev/null || exit 1
 
 # tini 收僵尸进程：ffmpeg / blender / yt-dlp 都是子进程
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["npx", "vite", "--host", "0.0.0.0", "--port", "5273", "--strictPort"]
+CMD ["node", "server/index.mjs"]

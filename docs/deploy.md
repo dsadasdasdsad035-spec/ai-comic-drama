@@ -110,14 +110,12 @@ APP_BIND_ADDR=0.0.0.0
 | `dtk-up.sh` 报找不到 setup token | 实例已初始化过 | 正常；脚本会跳过管理员创建，只铸造新 Key（`--force-key`） |
 | 构建失败 | 全仓库 `tsc` 有错 | 镜像构建不跑 `tsc`（见下）；请单独跑 `npm run build` 修类型 |
 
-## 关于镜像不跑 `npm run build`
+## 关于镜像不跑 `tsc`
 
-应用运行时走 `vite dev`，因为 API 全在 `vite.config.ts` 的 `configureServer` 里——这是当前架构事实。静态构建产物在运行时用不上，所以镜像不做构建。
+应用运行时走 `node server/index.mjs`：接口实现在 `server/app.ts`，构建阶段打成 `server-build/app.mjs`，页面是 `dist/` 静态产物。媒体落在 `SB_MEDIA_ROOT`（compose 里映射到 `./data/media`），URL 前缀不变。
 
-副作用是镜像构建不会拦住类型错误。类型检查请在提交前跑：
+镜像构建会跑 `npx vite build && npm run build:server`，但**不跑 `tsc`**，所以镜像构建不会拦住类型错误。类型检查请在提交前跑：
 
 ```bash
-npm run build     # tsc --noEmit && vite build
+npm run build     # tsc --noEmit && vite build && build:server
 ```
-
-要根治，需要把 API 抽成独立的 `server/index.mjs`（`DEPLOY-CHECKLIST.md` 里列为第一号阻塞项），之后镜像可以改成「静态产物 + Node 服务」，也能跑 `vite preview` 而非 dev server。

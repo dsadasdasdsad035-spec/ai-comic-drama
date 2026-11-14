@@ -6,7 +6,7 @@
 
 ```
 公网 :80  → 域名请求 301 到 HTTPS；IP 请求直接进代理（HTTP）
-公网 :443 → nginx（TLS + Basic Auth）→ app:5273（容器内 vite dev，API 在 configureServer 里）
+公网 :443 → nginx（TLS + Basic Auth）→ app:5273（容器内 node server/index.mjs，静态产物 + API）
                                         ↑
                           宿主仅回环 :5274（APP_BIND_ADDR=127.0.0.1）
 ```

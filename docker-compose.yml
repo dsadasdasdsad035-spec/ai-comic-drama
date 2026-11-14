@@ -25,6 +25,9 @@ services:
     environment:
       # 项目库与创意源视频都在这里（creatives 是 projects 的子目录）
       SB_PROJECTS_DIR: /data/projects
+      # 运行时媒体根：生成产物 / 视频 / 配音 / 导出 / 发布包
+      # 映射到 ./data/media，与旧版逐个挂 public 子目录的落点完全一致，无需搬数据
+      SB_MEDIA_ROOT: /data/media
       # 渠道 Key：留空则该渠道不可用，不会串到别的渠道
       ARK_API_KEY: ${ARK_API_KEY:-}
       ARK_AGENT_PLAN_API_KEY: ${ARK_AGENT_PLAN_API_KEY:-}
@@ -57,13 +60,9 @@ services:
     volumes:
       # 业务数据：SQLite + 项目媒体 + 创意源视频与证据帧
       - ./data/projects:/data/projects
-      # 可重生成的产物；单独挂出来便于清理
-      - ./data/media/generated:/app/public/generated
-      - ./data/media/videos:/app/public/videos
-      - ./data/media/voices:/app/public/voices
-      - ./data/media/exports:/app/public/exports
-      # 发布包：不挂卷的话容器一重建就全丢（导出包是交付物，必须持久化）
-      - ./data/media/publish-packages:/app/public/publish-packages
+      # 媒体根：可重生成的产物（generated/videos/voices/exports/publish-packages）
+      # 与旧版四个 public 子目录挂载一一对应，历史文件原地可用
+      - ./data/media:/data/media
     # 让容器能用 host.docker.internal 访问宿主机上跑的 DTK
     extra_hosts:
       - "host.docker.internal:host-gateway"

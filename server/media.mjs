@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { mediaPath, mediaPathFromUrl } from './paths.mjs'
 import { resolveRoot, safeProjectName } from './db.mjs'
 
 const ASSETS_DIR = 'assets'
@@ -215,7 +216,7 @@ export function migrateProjectMedia(appRoot, name, project) {
       return s
     }
     const dst = resolveProjectMediaPath(appRoot, name, file)
-    const src = path.join(appRoot, 'public', 'generated', file)
+    const src = mediaPath(appRoot, 'generated', file)
     try {
       if (!fs.existsSync(dst)) {
         if (!fs.existsSync(src)) {
@@ -296,7 +297,7 @@ export function resolveRef(ref, appRoot) {
   const pm = parseProjectMediaUrl(ref)
   const file = pm
     ? resolveProjectMediaPath(appRoot, pm.name, pm.file)
-    : path.join(appRoot, 'public', String(ref).split('?')[0].replace(/^\//, ''))
+    : mediaPathFromUrl(appRoot, ref)
   if (!fs.existsSync(file)) throw new Error(`参考图不存在：${ref}`)
   const size = fs.statSync(file).size
   if (size > MAX_REF_BYTES) throw new Error(`参考图超过 30MB：${ref}`)

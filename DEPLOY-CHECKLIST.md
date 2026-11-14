@@ -47,14 +47,14 @@ curl -s http://127.0.0.1:5299/api/publish/health | jq '{browserAvailable,ffmpegA
 
 ## 二、三个硬阻塞
 
-### 1. API 路由只在 dev server 里存在（最根本）
+### 1. API 路由只在 dev server 里存在（已解决）
 
-所有接口写在 `vite.config.ts` 的 `configureServer` 里 —— 这是 **Vite 插件钩子，只在 `vite dev` 生效**。
-`vite build` 出来的静态产物**没有任何 `/api`**，部署上去每个请求都是 404。
+> **2026-11 已修复**：接口实现已搬到 `server/app.ts`，由 `server/index.mjs`（普通 Node 进程）托管，
+> 镜像现在跑 `node server/index.mjs` + `dist/` 静态产物，不再依赖 `vite dev`。
+> 开发模式仍复用同一份 handler（见 `vite.config.ts` 的 `appServerPlugin`）。
+> 保留本节作为历史记录：当时确实是「`vite build` 产物没有任何 `/api`」。
 
-**改法**：把中间件抽成独立的 Node HTTP 服务（`server/index.mjs`），开发时由 Vite `proxy` 转发，
-生产时直接 `node server/index.mjs` 监听 `$PORT`。
-**工作量**：中（约 1 天）。要搬的东西：`/api/health · /api/project · /api/text · /api/generate · /api/voice · /api/seedance · /api/assemble · /api/lipsync · /api/lipsync/qa`。
+原问题：所有接口写在 `vite.config.ts` 的 `configureServer` 里 —— Vite 插件钩子，只在 `vite dev` 生效。
 
 ### 2. ffmpeg 只探测 macOS 路径
 

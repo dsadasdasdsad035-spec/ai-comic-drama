@@ -12,6 +12,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { parseProjectMediaUrl, resolveProjectMediaPath } from './media.mjs'
+import { mediaPath, mediaPathFromUrl, resolveMediaRoot } from './paths.mjs'
 
 const JOBS_DIR = '.blender-jobs'
 const HOST_SCRIPT = path.join('scripts', 'blender', 'host.py')
@@ -142,7 +143,8 @@ export async function blenderHealth({ refresh = false } = {}) {
 // ---------------------------------------------------------------- 路径与素材
 
 function publicDir(appRoot) {
-  return path.join(appRoot, 'public')
+  // 桌面端/容器下媒体根可能被重定向到可写目录，这里统一走路径模块
+  return resolveMediaRoot(appRoot)
 }
 
 function insideDir(dir, file) {
@@ -158,7 +160,7 @@ export function resolveAssetFile(appRoot, url) {
   const pm = parseProjectMediaUrl(raw)
   const file = pm
     ? resolveProjectMediaPath(appRoot, pm.name, pm.file)
-    : path.join(publicDir(appRoot), raw.replace(/^\//, ''))
+    : mediaPathFromUrl(appRoot, raw)
   if (!pm && !insideDir(publicDir(appRoot), file)) throw new Error(`素材路径越界：${raw}`)
   if (!fs.existsSync(file)) throw new Error(`素材文件不存在：${raw}`)
   return file
@@ -312,7 +314,7 @@ async function encodeAndExtract(appRoot, job) {
   if (!files.length) throw new Error('渲染没有产出任何帧')
   job.frames = files.length
 
-  const outDir = path.join(appRoot, 'public', 'videos')
+  const outDir = mediaPath(appRoot, 'videos')
   fs.mkdirSync(outDir, { recursive: true })
   const videoName = `blender-${frameStamp()}.mp4`
   const videoPath = path.join(outDir, videoName)
@@ -332,7 +334,7 @@ async function encodeAndExtract(appRoot, job) {
   }
   job.videoUrl = `/videos/${videoName}`
 
-  const genDir = path.join(appRoot, 'public', 'generated')
+  const genDir = mediaPath(appRoot, 'generated')
   fs.mkdirSync(genDir, { recursive: true })
   const picks = job.keyTimes.length ? job.keyTimes : [0, job.duration / 2, job.duration]
   job.frameUrls = []

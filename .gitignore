@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# 服务端接口实现的 esbuild 产物（npm run build:server 生成）
+server-build/
 
 # 运行时产物：图片 / 视频 / 配音 / 成片 / 字幕临时文件
 public/generated/
@@ -78,6 +80,8 @@ public/publish-packages/
 data/
 .dtk/
 deploy/proxy/.htpasswd
+# 部署目标与 SSH 凭据（deploy.sh 加载，含明文密码）
+deploy/.deploy.conf
 
 # 部署证书（只放目标机）
 deploy/ssl/

@@ -7,6 +7,7 @@ import crypto from 'node:crypto'
 import { probeMedia, extractFrame, MAX_FRAMES_PER_REQUEST } from './video-analyze.mjs'
 import { resolveCreativeFile } from './creative.mjs'
 import { parseProjectMediaUrl, resolveProjectMediaPath } from './media.mjs'
+import { mediaPathFromUrl } from './paths.mjs'
 
 const JOBS_DIR = '.vggt-jobs'
 const TTL_DAYS = Math.max(1, Number(process.env.VGGT_JOB_TTL_DAYS) || 7)
@@ -46,9 +47,7 @@ export function resolveLocalVideoRef(appRoot, ref) {
   if (!raw || /^https?:\/\//i.test(raw)) throw new Error('只支持本站视频路径')
   if (raw.startsWith('/creative/')) return resolveCreativeFile(appRoot, raw)
   if (raw.startsWith('/videos/') || raw.startsWith('/generated/')) {
-    const full = path.join(appRoot, 'public', raw.slice(1))
-    const rel = path.relative(path.join(appRoot, 'public'), full)
-    if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('视频路径越界')
+    const full = mediaPathFromUrl(appRoot, raw)
     if (!fs.existsSync(full)) throw new Error('视频文件不存在')
     return full
   }
