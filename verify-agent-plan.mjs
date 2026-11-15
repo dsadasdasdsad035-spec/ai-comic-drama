@@ -4,13 +4,14 @@
  * 2) 文本/图片请求命中 Agent Plan Base URL，参考图保留
  * 3) ark-plan 测试走 1-token 对话；volc-tts 测试区分鉴权/扣减
  * 4) 视频默认模型仍绑定标准 ark
- * 跑法：先 npm run dev，再 node verify-agent-plan.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-plan.mjs（地址只从 APP_URL 取）
  */
+import { requireServer } from './verify-lib.mjs'
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const APP_URL = 'http://127.0.0.1:5273'
+const APP_URL = await requireServer()
 let bad = 0
 const check = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' | ' + extra : ''}`)

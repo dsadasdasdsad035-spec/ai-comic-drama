@@ -1,17 +1,27 @@
 /**
  * 流式事件验收：服务端解析器、客户端解析器、纯 reducer、真实代理。
- * 需要 dev server：APP_URL=http://127.0.0.1:5274 node verify-agent-stream.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-stream.mjs（地址只从 APP_URL 取）
+ * 依赖真实文本模型的用例在缺凭据时记为「跳过」，不当成通过也不当成失败。
  */
 import { build } from 'esbuild'
 import path from 'node:path'
 import { ChatStreamParser } from './server/text-stream.mjs'
+import { requireServer } from './verify-lib.mjs'
 
-const BASE = process.env.APP_URL || 'http://127.0.0.1:5274'
+const BASE = await requireServer()
 const ROOT = path.resolve(import.meta.dirname)
 let bad = 0
+let passed = 0
+let skipped = 0
 const check = (name, cond, extra = '') => {
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ` | ${extra}` : ''}`)
-  if (!cond) bad++
+  if (cond) passed++
+  else bad++
+}
+/** 依赖真实代理凭据的用例：缺凭据记跳过并说明缺什么，不伪装成通过或失败 */
+const skip = (name, why) => {
+  console.log(`⏭️  ${name} | 跳过：${why}`)
+  skipped++
 }
 
 async function load(entry) {
@@ -211,7 +221,7 @@ async function sseCall(body) {
   })
   const ct = res.headers.get('content-type') || ''
   if (!ct.includes('text/event-stream')) {
-    const j = await res.json()
+    const j = await res.json().catch(() => ({}))
     return { fallback: true, json: j }
   }
   const parser = new SseEventParser()
@@ -228,48 +238,81 @@ async function sseCall(body) {
 }
 
 {
-  const r = await sseCall({ prompt: '用一句话介绍你自己', maxTokens: 200, model: 'lite', stream: true })
-  const types = r.fallback ? ['fallback'] : r.events.map((e) => e.type)
-  const done = r.fallback ? null : r.events.find((e) => e.type === 'done')
-  check('真实代理：流式返回 meta/done', r.fallback || (types.includes('meta') && done && String(done.text || '').length > 4), JSON.stringify({ types, text: done?.text?.slice(0, 30) }))
-  check('真实代理：不泄漏 think 推理', r.fallback || !/<think(?:ing)?>/i.test(String(done?.text || '')), String(done?.text || '').slice(0, 60))
-  check('真实代理：进度不超过总字符', r.fallback || r.events.every((e) => e.type !== 'progress' || Number(e.chars) <= String(done?.text || '').length + 8))
+  // 先打一次真实流：没有文本模型凭据时服务端会退回 JSON 失败响应，
+  // 这是环境缺依赖而不是产品回归，所以整组「依赖真实代理」的断言记跳过。
+  const live = await sseCall({ prompt: '用一句话介绍你自己', maxTokens: 200, model: 'lite', stream: true })
+  const liveMsg = live.fallback ? String(live.json?.message || live.json?.error || '服务端返回了非流式响应') : ''
+  const missingCredential = live.fallback && /key|密钥|凭据|credential|未配置|缺少/i.test(liveMsg)
+  const PROXY_CASES = [
+    '真实代理：流式返回 meta/done',
+    '真实代理：不泄漏 think 推理',
+    '真实代理：进度不超过总字符',
+    '真实代理：JSON 模式带 json 字段',
+    '真实代理：非流式结构不变',
+    '真实代理：可取消',
+  ]
 
-  const j = await sseCall({ prompt: '只输出 JSON：{"ok":true}', json: true, maxTokens: 120, model: 'lite', stream: true })
-  const jdone = j.fallback ? j.json : j.events.find((e) => e.type === 'done')
-  check('真实代理：JSON 模式带 json 字段', Boolean(jdone && jdone.json && jdone.json.ok === true), JSON.stringify(jdone && { json: jdone.json }))
+  if (missingCredential) {
+    for (const name of PROXY_CASES) skip(name, `未配置文本模型凭据（${liveMsg}）`)
+  } else if (live.fallback) {
+    // 有凭据却退回非流式：流式结构已经坏了，必须红
+    check('真实代理：必须返回 text/event-stream', false, liveMsg || JSON.stringify(live.json))
+    for (const name of PROXY_CASES.slice(1)) skip(name, '流式结构已失败，后续用例无意义')
+  } else {
+    const types = live.events.map((e) => e.type)
+    const done = live.events.find((e) => e.type === 'done')
+    const doneText = String(done?.text || '')
+    check(
+      '真实代理：流式返回 meta/done',
+      types.includes('meta') && Boolean(done) && doneText.length > 4,
+      JSON.stringify({ types, text: doneText.slice(0, 30) }),
+    )
+    check('真实代理：不泄漏 think 推理', !/<think(?:ing)?>/i.test(doneText), doneText.slice(0, 60))
+    check(
+      '真实代理：进度不超过总字符',
+      live.events.every((e) => e.type !== 'progress' || Number(e.chars) <= doneText.length + 8),
+    )
 
-  const plain = await fetch(`${BASE}/api/text`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: '只输出 JSON：{"ok":true}', json: true, maxTokens: 80, model: 'lite' }),
-  }).then((x) => x.json())
-  check('真实代理：非流式结构不变', plain.ok === true && plain.json?.ok === true && typeof plain.text === 'string')
+    const j = await sseCall({ prompt: '只输出 JSON：{"ok":true}', json: true, maxTokens: 120, model: 'lite', stream: true })
+    const jdone = j.fallback ? null : j.events.find((e) => e.type === 'done')
+    check('真实代理：JSON 模式带 json 字段', Boolean(jdone && jdone.json && jdone.json.ok === true), JSON.stringify(jdone && { json: jdone.json }))
 
-  // 取消：读到 meta 后 abort，服务端不应崩溃
-  const ctrl = new AbortController()
-  const res = await fetch(`${BASE}/api/text`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: '写一段 800 字的产品介绍', maxTokens: 2000, model: 'lite', stream: true }),
-    signal: ctrl.signal,
-  })
-  const reader = res.body.getReader()
-  await reader.read()
-  ctrl.abort()
-  let aborted = false
-  try {
-    for (;;) {
-      const { done } = await reader.read()
-      if (done) break
+    const plain = await fetch(`${BASE}/api/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '只输出 JSON：{"ok":true}', json: true, maxTokens: 80, model: 'lite' }),
+    }).then((x) => x.json())
+    check('真实代理：非流式结构不变', plain.ok === true && plain.json?.ok === true && typeof plain.text === 'string')
+
+    // 取消：读到 meta 后 abort，服务端不应崩溃
+    const ctrl = new AbortController()
+    const res = await fetch(`${BASE}/api/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: '写一段 800 字的产品介绍', maxTokens: 2000, model: 'lite', stream: true }),
+      signal: ctrl.signal,
+    })
+    const reader = res.body.getReader()
+    await reader.read()
+    ctrl.abort()
+    let aborted = false
+    try {
+      for (;;) {
+        const { done: finished } = await reader.read()
+        if (finished) break
+      }
+    } catch (e) {
+      aborted = (e && e.name === 'AbortError') || true
     }
-  } catch (e) {
-    aborted = (e && e.name === 'AbortError') || true
+    check('真实代理：可取消', aborted)
   }
-  check('真实代理：可取消', aborted)
-  const health = await fetch(`${BASE}/api/health`).then((x) => x.status)
+
+  // 服务可用性与凭据无关，始终检查
+  const health = await fetch(`${BASE}/api/health`).then((x) => x.status).catch(() => 0)
   check('真实代理：取消后服务仍可用', health === 200, String(health))
 }
 
-console.log(bad ? `\n${bad} 项失败` : '\n全部通过')
+console.log(`\n汇总：通过 ${passed}；失败 ${bad}；跳过 ${skipped}`)
+if (passed === 0 && skipped > 0) console.log('⚠️  全部断言都被跳过：这不算通过，请配置依赖后重跑')
+if (bad) console.error(`\n${bad} 项失败`)
 process.exit(bad ? 1 : 0)

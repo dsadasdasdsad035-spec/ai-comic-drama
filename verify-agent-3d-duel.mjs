@@ -2,7 +2,8 @@
  * 3D 调度 agent 验收：山体 + 男女双剑对打 + 环绕镜头。
  *
  * 默认 mock：脚本化模型调用工具，真实 Blender 渲染抓 5 帧，mock 视觉清单，真实渲染 4 秒 mp4。
- * 真实模型：AGENT_REAL=1 APP_URL=http://127.0.0.1:5280 node verify-agent-3d-duel.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-3d-duel.mjs（地址只从 APP_URL 取）
+ * 真实模型：AGENT_REAL=1 APP_URL=http://127.0.0.1:5273 node verify-agent-3d-duel.mjs
  *
  * 产物写入当前聊天 UI 变更的 evidence/。
  */
@@ -11,9 +12,9 @@ import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { selectProject } from './verify-lib.mjs'
+import { requireServer, selectProject } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
+const URL = await requireServer()
 const REAL = process.env.AGENT_REAL === '1'
 const NAME = `agent-duel-${REAL ? 'real' : 'mock'}-${Date.now()}`
 const PROMPT = '生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。'

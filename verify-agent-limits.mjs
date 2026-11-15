@@ -1,6 +1,6 @@
 /**
  * Agent 运行上限设置验收：默认值、夹取、旧设置兼容、保存不影响其他设置。
- * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-agent-limits.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-limits.mjs（地址只从 APP_URL 取）
  */
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
@@ -8,8 +8,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { requireServer } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
+const URL = await requireServer()
 const root = path.dirname(fileURLToPath(import.meta.url))
 const tmp = fs.mkdtempSync(path.join(root, '.verify-agent-limits-'))
 const entry = path.join(tmp, 'entry.ts')

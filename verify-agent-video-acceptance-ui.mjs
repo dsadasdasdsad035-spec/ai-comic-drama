@@ -1,16 +1,16 @@
 /**
  * 视频验收 UI 验收：真实浏览器渲染 4 秒 MP4，真实保存/抽帧，mock 文本与视觉响应。
  * 验证：finish → MP4 → MP4 抽帧 → 视频验收 → 保存；项目代码哈希/视频元数据一致。
- * 跑法：APP_URL=http://127.0.0.1:5280 node verify-agent-video-acceptance-ui.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-video-acceptance-ui.mjs（地址只从 APP_URL 取）
  */
 import { chromium } from 'playwright-core'
 import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { selectProject } from './verify-lib.mjs'
+import { requireServer, selectProject } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
+const URL = await requireServer()
 const REJECT = process.env.VIDEO_TEST_REJECT === '1'
 const NO_VISION = process.env.VIDEO_TEST_NO_VISION === '1'
 const STALE = process.env.VIDEO_TEST_STALE === '1'

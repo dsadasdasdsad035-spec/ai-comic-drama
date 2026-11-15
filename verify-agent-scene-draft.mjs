@@ -177,7 +177,11 @@ try {
   fs.rmSync(tmpRoot, { recursive: true, force: true })
 }
 
-// ---------- 2. 草稿工具 + 事件 + commit/trial 边界 ----------
+// ---------- 2. set_scene_code 的草稿路径（restricted 档） ----------
+// 六个 scene-draft 工具已按 scene-agent-runtime 规范下线，对模型只剩「整段提交」：
+// restricted 档下 set_scene_code 仍走服务端草稿（begin → 32KB 分片 append → commit 准入），
+// 这里覆盖分片、准入与「试运行成功才算落地」的门禁。
+const SETTINGS = { agentHostMode: 'restricted' }
 const lib = await load([
   'src/agent/sceneAgentTools.ts',
   'src/agent/agentMessageReducer.ts',
@@ -253,7 +257,26 @@ function memoryDraftClient(initial = '') {
 const events = []
 let draftCodeCalls = 0
 let trialCalls = 0
-const client = memoryDraftClient()
+let beginCalls = 0
+let appendCalls = 0
+let maxChunk = 0
+const inner = memoryDraftClient()
+const client = {
+  begin: (scope) => {
+    beginCalls++
+    return inner.begin(scope)
+  },
+  append: (id, chunk) => {
+    appendCalls++
+    maxChunk = Math.max(maxChunk, String(chunk).length)
+    return inner.append(id, chunk)
+  },
+  read: (...a) => inner.read(...a),
+  patch: (...a) => inner.patch(...a),
+  commit: (id) => inner.commit(id),
+  discard: (id) => inner.discard(id),
+  text: (id) => inner.text(id),
+}
 const session = lib.createSceneAgentSession()
 const deps = {
   getShotContext: () => '【镜头】S01｜3.0s｜16:9',
@@ -270,71 +293,113 @@ const deps = {
   draftClient: client,
   onEvent: (e) => events.push(e),
 }
-const { byName } = lib.createSceneAgentTools(deps, session)
-const invoke = (name, args = {}) => byName.get(name).invoke(args)
+const { byName } = lib.createSceneAgentTools(deps, session, undefined, SETTINGS)
+const invoke = (name, args = {}) => {
+  const tool = byName.get(name)
+  if (!tool) throw new Error(`工具未注册：${name}`)
+  return tool.invoke(args)
+}
 
-let r = await invoke('begin_scene_draft')
-check('begin 工具创建草稿', r.ok === true && session.draft?.lines === 0 && r.draftId)
-check('begin 发出 draft_started', events.some((e) => e.type === 'draft_started'))
+let r = await invoke('set_scene_code', { code: BASE })
+check(
+  'set_scene_code 写草稿后设为当前代码',
+  r.ok === true && session.code === BASE && Boolean(session.codeHash),
+  JSON.stringify({ ok: r.ok, error: r.error }),
+)
+check(
+  '提交后记录草稿 id、行数与 committedAt',
+  session.draft?.id === session.codeDraftId &&
+    session.draft?.lines === BASE.split('\n').length &&
+    Boolean(session.draft?.committedAt),
+  JSON.stringify({ id: session.draft?.id, codeDraftId: session.codeDraftId }),
+)
+check('短代码只追加一次', beginCalls === 1 && appendCalls === 1, `begin=${beginCalls} append=${appendCalls}`)
+check('发出 draft_started', events.some((e) => e.type === 'draft_started'))
+check('发出成功的 draft_committed', events.some((e) => e.type === 'draft_committed' && e.ok === true))
+check('提交草稿不触发 onDraftCode', draftCodeCalls === 0)
 
-const parts = BASE.split(/(?<=\n)/)
-r = await invoke('append_scene_draft', { chunk: parts.slice(0, 5).join('') })
-check('append 第一段', r.ok === true && r.lines > 0)
-r = await invoke('append_scene_draft', { chunk: parts.slice(5).join('') })
-check('append 第二段行数', r.ok === true && r.lines === BASE.split('\n').length, `${r.lines}`)
-r = await invoke('read_scene_draft', { startLine: 1, endLine: 4 })
-check('read 工具返回带行号片段', r.ok === true && /^1: import bpy/m.test(r.text), JSON.stringify(r.text))
-r = await invoke('patch_scene_draft', { startLine: 1, endLine: 2, text: 'import bpy\n# patched' })
-check('patch 工具替换片段', r.ok === true)
+// 长代码：单次 append 不得超过 32KB，超出必须分片
+const LONG = BASE.replace('def pose(t, mode):', '# ' + 'x'.repeat(40000) + '\ndef pose(t, mode):')
+appendCalls = 0
+maxChunk = 0
+const progressBefore = events.filter((e) => e.type === 'draft_progress').length
+r = await invoke('set_scene_code', { code: LONG })
+check('长代码提交成功', r.ok === true, String(r.error || ''))
+check('长代码按 32KB 分片追加', appendCalls >= 2, `chunks=${appendCalls}`)
+check('单次分片不超过 32KB', maxChunk <= 32 * 1024, `max=${maxChunk}`)
+check('分片写满整份代码', session.draft?.chars === LONG.length, `${session.draft?.chars}/${LONG.length}`)
+check(
+  '分片进度事件数与分片数一致',
+  events.filter((e) => e.type === 'draft_progress').length - progressBefore === appendCalls,
+  `events=${events.filter((e) => e.type === 'draft_progress').length - progressBefore} chunks=${appendCalls}`,
+)
 
-r = await invoke('commit_scene_draft')
-check('commit 通过准入并设为 session.code', r.ok === true && session.code?.includes('# patched') && session.codeHash)
-check('commit 不发 onDraftCode', draftCodeCalls === 0)
-check('commit 发出 draft_committed', events.some((e) => e.type === 'draft_committed' && e.ok === true))
-check('commit 记录 committedAt', Boolean(session.draft?.committedAt))
-
-// UI 状态：提交后是“已提交，待试运行”
+// UI 状态：提交后草稿卡是「已提交，待试运行」
+const draftPartOf = (m, id) => m.parts.find((p) => p.type === 'draft' && p.draftId === id)
 let msg = { id: 'm1', role: 'assistant', parts: [] }
 for (const e of events) msg = lib.applyAgentEvent(msg, e)
-let draftPart = msg.parts.find((p) => p.type === 'draft')
+const committedDraftId = session.codeDraftId
+let draftPart = draftPartOf(msg, committedDraftId)
 check('提交后草稿卡状态 committed', draftPart?.status === 'committed', draftPart?.status)
-
+check('两次提交各有一张草稿卡', msg.parts.filter((p) => p.type === 'draft').length === 2)
 r = await invoke('run_render')
 check('run_render 试运行成功', r.ok === true && trialCalls === 1)
 check('只有试运行成功才调 onDraftCode', draftCodeCalls === 1)
+check(
+  '试运行事件绑定到已提交草稿',
+  events.some((e) => e.type === 'draft_trial' && e.draftId === committedDraftId && e.ok === true),
+)
 msg = lib.applyAgentEvent(msg, events.find((e) => e.type === 'draft_trial'))
-draftPart = msg.parts.find((p) => p.type === 'draft')
+draftPart = draftPartOf(msg, committedDraftId)
 check('试运行后草稿卡状态 trial-passed', draftPart?.status === 'trial-passed', draftPart?.status)
 
-// 提交后再改：旧 session.code 仍有效，但下一次试运行不再算到新草稿上
-r = await invoke('append_scene_draft', { chunk: '\n# more' })
-check('提交后 append 回到暂存', r.ok === true && !session.draft?.committedAt && session.codeDraftId === undefined)
-const trialEventsBefore = events.filter((e) => e.type === 'draft_trial').length
-await invoke('run_render')
-check('未提交改动不产生新的 trial 状态', events.filter((e) => e.type === 'draft_trial').length === trialEventsBefore)
-
-// 准入失败：session.code 不变
+// 准入失败：草稿照常写入，但当前代码必须保持不变
 const beforeCode = session.code
-r = await invoke('begin_scene_draft')
-await invoke('append_scene_draft', { chunk: 'not python at all' })
-r = await invoke('commit_scene_draft')
-check('准入失败不改变 session.code', r.ok === false && session.code === beforeCode, JSON.stringify(r))
+const beforeHash = session.codeHash
+r = await invoke('set_scene_code', { code: 'not python at all' })
+check('准入失败返回可读错误', r.ok === false && /代码不可用/.test(String(r.error || '')), String(r.error || ''))
+check('准入失败不改变当前代码', session.code === beforeCode && session.codeHash === beforeHash)
 check('准入失败发出 ok=false 的 committed 事件', events.some((e) => e.type === 'draft_committed' && e.ok === false))
 
-r = await invoke('discard_scene_draft')
-check('discard 清理会话草稿', r.ok === true && !session.draft)
-check('discard 发出 draft_discarded', events.some((e) => e.type === 'draft_discarded'))
+// ---------- 3. 工具暴露面：草稿工具族已下线 ----------
+// scene-agent-runtime 规范要求两档都 MUST NOT 暴露这六个工具。
+const DRAFT_TOOL_NAMES = [
+  'begin_scene_draft',
+  'append_scene_draft',
+  'read_scene_draft',
+  'patch_scene_draft',
+  'commit_scene_draft',
+  'discard_scene_draft',
+]
+const hostDeps = {
+  ...deps,
+  agentHost: {
+    runBash: async () => ({ stdout: '' }),
+    readFile: async () => 'pass',
+    writeFile: async () => {},
+    listDir: async () => [],
+  },
+}
+{
+  const restricted = lib.createSceneAgentTools(deps, lib.createSceneAgentSession(), undefined, {
+    agentHostMode: 'restricted',
+  })
+  const names = [...restricted.byName.keys()]
+  check('restricted 档不暴露草稿工具族', DRAFT_TOOL_NAMES.every((n) => !names.includes(n)), names.join(','))
+  check('restricted 档保留 set_scene_code', names.includes('set_scene_code'), names.join(','))
+  check('restricted 档不暴露 shell 与 adopt', !names.includes('run_bash') && !names.includes('adopt_scene_from_job'))
 
-// set_scene_code 仍然是短代码快捷方式：内部写入草稿并立即 commit
-r = await invoke('set_scene_code', { code: BASE })
-check(
-  'set_scene_code 兼容（写入草稿并提交）',
-  r.ok === true && session.code === BASE && session.draft?.id === session.codeDraftId && Boolean(session.draft?.committedAt),
-  JSON.stringify({ ok: r.ok, draft: session.draft, codeDraftId: session.codeDraftId }),
-)
+  const full = lib.createSceneAgentTools(hostDeps, lib.createSceneAgentSession(), undefined, {
+    agentHostMode: 'full_host',
+  })
+  const fullNames = [...full.byName.keys()]
+  check('full_host 档暴露 shell 与 adopt', fullNames.includes('run_bash') && fullNames.includes('adopt_scene_from_job'), fullNames.join(','))
+  check('full_host 档同样不暴露草稿工具族', DRAFT_TOOL_NAMES.every((n) => !fullNames.includes(n)))
+}
 
-// ---------- 3. 历史压缩（pi 消息形状） ----------
-// compactPiHistory 是草稿分片折叠的唯一实现；这里覆盖「保留最近 4 次编辑 + 提交后编辑」规则。
+// ---------- 4. 历史压缩（旧会话记录里残留的草稿工具调用） ----------
+// 这些工具已经下线，但既有 transcript 里仍有它们的调用；compactPiHistory 必须仍能把
+// 连续分片折叠成摘要，否则老会话一续聊就爆上下文。夹具里的名字是历史数据，不是可调用工具。
 const messages = []
 for (let i = 0; i < 6; i++) {
   messages.push({
@@ -385,10 +450,10 @@ const callsOf = (list) =>
     .flatMap((m) => m.content.filter((c) => c.type === 'toolCall'))
 
 const compacted = lib.compactPiHistory(messages)
-const appendCalls = callsOf(compacted).filter((c) => c.name === 'append_scene_draft')
-check('历史压缩保留最近 4 次 + 提交后编辑', appendCalls.length === 5, `kept=${appendCalls.length}`)
+const appendCallsKept = callsOf(compacted).filter((c) => c.name === 'append_scene_draft')
+check('历史压缩保留最近 4 次 + 提交后编辑', appendCallsKept.length === 5, `kept=${appendCallsKept.length}`)
 check('历史压缩保留全部 commit', callsOf(compacted).some((c) => c.name === 'commit_scene_draft'))
-check('历史压缩保留最近编辑 tail', appendCalls.some((c) => c.id === 'append-tail'))
+check('历史压缩保留最近编辑 tail', appendCallsKept.some((c) => c.id === 'append-tail'))
 check('历史压缩插入摘要', compacted.some((m) => m.role === 'system' && String(m.content).includes('场景草稿')))
 const summary = compacted.find((m) => m.role === 'system')
 check('摘要包含提交 hash/行数', String(summary?.content).includes('abcdef1234') && String(summary?.content).includes('42'))
@@ -398,17 +463,8 @@ const compactedNoCommit = lib.compactPiHistory(messages.slice(0, 12))
 const noCommitAppends = callsOf(compactedNoCommit).filter((c) => c.name === 'append_scene_draft')
 check('无 commit 时也只保留最近 4 次', noCommitAppends.length === 4, `kept=${noCommitAppends.length}`)
 
-// ---------- 4. 提示词 ----------
-const skillPrompt = fs.readFileSync(path.join(ROOT, 'skills/scene3d/SKILL.md'), 'utf8')
-check(
-  '技能提示词包含草稿工具',
-  ['begin_scene_draft', 'append_scene_draft', 'read_scene_draft', 'patch_scene_draft', 'commit_scene_draft'].every((n) =>
-    skillPrompt.includes(n),
-  ),
-)
-
 if (bad) {
   console.error(`\n${bad} 项失败`)
   process.exit(1)
 }
-console.log('\n场景草稿单元验收通过')
+console.log('\n场景草稿验收通过（服务端存储 + set_scene_code 草稿路径 + 工具暴露面 + 历史压缩）')

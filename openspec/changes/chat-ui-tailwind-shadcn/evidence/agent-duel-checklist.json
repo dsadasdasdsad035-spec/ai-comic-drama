@@ -2,8 +2,8 @@
   "version": 1,
   "mode": "mock",
   "prompt": "生成一个 3D 的场景，场景中有山，有两个人，两个在用剑对打。一个男人，一个女人。并且环绕飞行了一段距离，镜头跟着环绕。镜头正对着男女对打。",
-  "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('.ctx-action').filter({ hasText: '编辑 3D 调度' })\n",
+  "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: '镜头表', exact: true })\n",
   "panel": "",
   "textCalls": 0,
-  "savedAt": "2026-10-29T10:49:55.092Z"
+  "savedAt": "2026-11-15T08:36:27.877Z"
 }

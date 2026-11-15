@@ -13,7 +13,32 @@
  * - base 默认 127.0.0.1:5273，自起 dev server 的脚本用 opts.base 覆盖。
  * - 不传项目名时，默认取列表第一个（与旧版自动选中第一个项目同规则）。
  */
-export const BASE = (process.env.SB_URL || 'http://127.0.0.1:5273').replace(/\/$/, '')
+export const BASE = (process.env.APP_URL || process.env.SB_URL || 'http://127.0.0.1:5273').replace(/\/$/, '')
+
+/**
+ * 需要现成 dev server 的脚本入口：地址只从 `APP_URL` 取，不再各自硬编码默认端口。
+ *
+ * 没有设置或服务不可达时直接给一句可读提示并退出——否则脚本会连着抛一堆
+ * ECONNREFUSED 栈，看起来像断言坏了，实际只是没人起服务。
+ *
+ * @returns {Promise<string>} 去掉尾部斜杠的地址
+ */
+export async function requireServer() {
+  const raw = String(process.env.APP_URL || '').trim()
+  if (!raw) {
+    console.error('服务未启动：请设置 APP_URL（例如 APP_URL=http://127.0.0.1:5273 node verify-xxx.mjs）')
+    process.exit(1)
+  }
+  const base = raw.replace(/\/$/, '')
+  try {
+    const res = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  } catch (e) {
+    console.error(`服务未启动：${base} 无法访问（${(e && e.message) || e}）`)
+    process.exit(1)
+  }
+  return base
+}
 
 /** 项目名放在 hash 的路径段里，中文/特殊字符必须编码 */
 export function projectUrl(name, view = 'board', base = BASE) {

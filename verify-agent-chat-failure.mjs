@@ -1,14 +1,14 @@
 /**
  * Agent 聊天失败/取消 UI 回归：模型 500 保留旧代码；运行中取消；输入可重试。
- * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-agent-chat-failure.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-chat-failure.mjs（地址只从 APP_URL 取）
  */
 import { chromium } from 'playwright-core'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { selectProject } from './verify-lib.mjs'
+import { requireServer, selectProject } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
+const URL = await requireServer()
 const NAME = `agent-fail-${Date.now()}`
 const CODE = fs.readFileSync(path.join(process.cwd(), 'fixtures/agent-duel-scene.py'), 'utf8').trim()
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex')

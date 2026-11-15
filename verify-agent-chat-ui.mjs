@@ -1,14 +1,14 @@
 /**
  * assistant-ui + LangGraph 聊天 UI 验收：脚本化模型、真实 Blender 渲染抓帧、mock vision。
- * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-agent-chat-ui.mjs
+ * 需要 dev server：APP_URL=http://127.0.0.1:5273 node verify-agent-chat-ui.mjs（地址只从 APP_URL 取）
  */
 import { chromium } from 'playwright-core'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { selectProject } from './verify-lib.mjs'
+import { requireServer, selectProject } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
+const URL = await requireServer()
 const NAME = `agent-ui-${Date.now()}`
 const evidence = 'openspec/changes/chat-ui-tailwind-shadcn/evidence'
 fs.mkdirSync(evidence, { recursive: true })

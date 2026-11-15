@@ -4,16 +4,16 @@
  * 长代码草稿 Playwright 验收：分片 begin/append → commit → 只读预览 → 真实试运行 →
  * 试运行通过后工作台代码更新 → 取消清理草稿。
  * 需要 dev server 与本机 Blender：
- *   APP_URL=http://127.0.0.1:5274 node verify-agent-draft.mjs
+ *   APP_URL=http://127.0.0.1:5273 node verify-agent-draft.mjs（地址只从 APP_URL 取）
  */
 console.log('⏭ verify-agent-draft 已废弃（scene-draft 工具已下线）。请运行：node verify-scene3d-adopt.mjs')
 process.exit(0)
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'
-import { selectProject } from './verify-lib.mjs'
+import { requireServer, selectProject } from './verify-lib.mjs'
 
-const URL = process.env.APP_URL || 'http://127.0.0.1:5274'
+const URL = await requireServer()
 const NAME = `verify-agent-draft-${Date.now()}`
 const evidence = 'openspec/changes/agent-scene-draft/evidence'
 fs.mkdirSync(evidence, { recursive: true })
