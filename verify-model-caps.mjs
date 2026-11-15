@@ -2,8 +2,9 @@
  * 模型能力谓词验证：
  * 1) 旧条目只认 cap
  * 2) 新条目按 caps 精确判断
- * 3) 视频参考可由 supportsVideoRef 提供
- * 4) 目录未接入模型不可运行
+ * 3) 生图族：image 与 view 互相蕴含，且不外溢到其他能力
+ * 4) 视频参考可由 supportsVideoRef 提供
+ * 5) 目录未接入模型不可运行
  *
  * 跑法：node verify-model-caps.mjs
  */
@@ -42,7 +43,12 @@ check('图像+三视图 image', modelHasCap(image, 'image'))
 check('图像+三视图 view', modelHasCap(image, 'view'))
 
 const legacyImage = { key: 'i2', label: 'I2', cap: 'image', provider: 'x', model: 'm' }
-check('旧图像条目不自动承接三视图', !modelHasCap(legacyImage, 'view'))
+check('旧图像条目承接三视图（生图族）', modelHasCap(legacyImage, 'view'))
+const legacyView = { key: 'v2', label: 'V2', cap: 'view', provider: 'x', model: 'm' }
+check('旧三视图条目承接图像（生图族）', modelHasCap(legacyView, 'image'))
+check('生图族不外溢到视频', !modelHasCap(legacyView, 'video'))
+check('生图族不外溢到文本', !modelHasCap(legacyImage, 'text'))
+check('生图不外溢到高质量文本', !modelHasCap(legacyImage, 'textPro'))
 
 const video = {
   key: 'v',

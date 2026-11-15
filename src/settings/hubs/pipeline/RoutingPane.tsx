@@ -2,7 +2,7 @@ import type { SettingsWorkbench } from '../../useSettingsWorkbench'
 import PipelinePreviewCard from '../../PipelinePreviewCard'
 import { CAP_META, STAGE_META } from '../../settingsMeta'
 import { isRunnableModel, modelHasCap } from '../../../modelCaps'
-import { resolveStageModel, stageModelEntries, textModelEntries } from '../../../ModelSelect'
+import { capModelEntries, resolveStageModel, stageModelEntries, textModelEntries } from '../../../ModelSelect'
 
 type Props = { wb: SettingsWorkbench }
 
@@ -26,8 +26,8 @@ export function RoutingPane({ wb }: Props) {
           const eligibleProviders = wb.providers.filter((p) =>
             wb.models.some((m) => m.provider === p.id && modelHasCap(m, c.cap) && isRunnableModel(m)),
           )
-          const providerModels = wb.models.filter(
-            (m) => m.provider === providerId && modelHasCap(m, c.cap) && isRunnableModel(m),
+          const providerModels = capModelEntries({ models }, c.cap, undefined, key).filter(
+            (m) => m.provider === providerId,
           )
           const invalid = Boolean(key) && (!model || !modelHasCap(model, c.cap) || !isRunnableModel(model))
           const providerMissingKey = wb.providers.find((p) => p.id === providerId)?.keyAvailable === false

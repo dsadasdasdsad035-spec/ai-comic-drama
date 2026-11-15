@@ -6,6 +6,7 @@ import type { Pricing } from './pricing'
 import { type CharacterSheet } from './characters'
 import CharacterCard from './CharacterCard'
 import { CapModelSelect, hasTextModels, StageModelSelect, type StagePick } from './ModelSelect'
+import { IMAGE_CAPS } from './modelCaps'
 import WorkbenchBar from './WorkbenchBar'
 
 export type CharacterBoardProps = {
@@ -153,6 +154,7 @@ export default function CharacterBoard({
             />
             <CapModelSelect
               cap="view"
+              caps={IMAGE_CAPS}
               label="三视图模型"
               settings={settings}
               value={viewModel}

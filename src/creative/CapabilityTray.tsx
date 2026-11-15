@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { AppSettings, Cap } from '../api'
-import { modelHasCap, isRunnableModel, modelCapsLabel } from '../modelCaps'
+import { modelCapsLabel } from '../modelCaps'
+import { capModelEntries } from '../ModelSelect'
 import type { CreativeSettings } from './settings'
 
 const CAP_ORDER: Array<{ cap: Cap; label: string; action?: string }> = [
@@ -30,9 +31,7 @@ export function CapabilityTray({
   const rows = useMemo(() => {
     return CAP_ORDER.map(({ cap, label, action }) => {
       const bound = creative.models?.[cap] || ''
-      const list = (settings?.models ?? []).filter(
-        (m) => (modelHasCap(m, cap) || (cap === 'videoRef' && m.supportsVideoRef)) && isRunnableModel(m),
-      )
+      const list = capModelEntries(settings, cap, undefined, bound || settings?.defaults?.[cap])
       const entry = bound ? list.find((m) => m.key === bound) : list.find((m) => m.key === settings?.defaults?.[cap])
       const fallback = entry || list[0]
       const status = bound && !list.some((m) => m.key === bound)

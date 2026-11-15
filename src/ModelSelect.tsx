@@ -88,6 +88,40 @@ export function hasTextModels(settings: AppSettings | null): boolean {
 }
 
 /**
+ * 按能力取可选模型，同一渠道同一模型只留一条。
+ *
+ * 生图族（image / view）互相蕴含后，同一个 Seedream 会在默认目录里以两行存在
+ * （如 ark-image 与 ark-view），两边下拉会各出现两条同名模型。这里按
+ * provider + modelId 去重，并优先保留：
+ * 1. preferKey 指向的那一行（已选键必须留在列表里，否则下拉显示空白）；
+ * 2. cap 与本次能力匹配的那一行；
+ * 3. 先出现的那一行。
+ * 这样存量 defaults.image / defaults.view 仍能各自命中自己的键。
+ */
+export function capModelEntries(
+  settings: { models?: ModelEntry[] } | null,
+  cap: Cap,
+  caps?: Cap[],
+  preferKey?: string,
+): ModelEntry[] {
+  const family = caps ?? [cap]
+  const matched = (settings?.models ?? []).filter(
+    (m) => family.some((c) => modelHasCap(m, c)) && isRunnableModel(m),
+  )
+  const keep = String(preferKey || '').trim()
+  /** 同名条目里谁该留下：已选键 > 能力匹配 > 先出现 */
+  const rank = (m: ModelEntry) => (m.key === keep ? 0 : m.cap === cap ? 1 : 2)
+  const byModel = new Map<string, ModelEntry>()
+  for (const m of matched) {
+    const id = `${m.provider}\u0000${m.model}`
+    const prev = byModel.get(id)
+    // set 已有键不改变插入位置，顺序仍按首次出现
+    if (!prev || rank(m) < rank(prev)) byModel.set(id, m)
+  }
+  return [...byModel.values()]
+}
+
+/**
  * 按能力选模型。空值 = 用设置页该能力的默认模型。
  * 出图 / 出片 / 配音 / 三视图共用，行为与旧 Inspector 里的 ModelPicker 一致。
  */
@@ -109,11 +143,8 @@ export function CapModelSelect({
   onChange: (key: string) => void
   className?: string
 }) {
-  const family = caps ?? [cap]
-  const list = (settings?.models ?? []).filter(
-    (m) => family.some((c) => modelHasCap(m, c)) && isRunnableModel(m),
-  )
   const defKey = settings?.defaults?.[cap] || ''
+  const list = capModelEntries(settings, cap, caps, value || defKey)
   const def = list.find((m) => m.key === defKey) || list[0]
   return (
     <label

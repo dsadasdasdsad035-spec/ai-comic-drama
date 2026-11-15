@@ -12,6 +12,7 @@ import {
 } from './api'
 import { buildDesignPrompt, designRatio } from './designExtract'
 import { CapModelSelect, StageModelSelect, type StagePick } from './ModelSelect'
+import { IMAGE_CAPS, isRunnableModel, modelHasCap } from './modelCaps'
 import { CharacterImageCropModal } from './CharacterImageCropModal'
 import type { MaterialCropPlan } from './imageMaterialCrop'
 import {
@@ -245,9 +246,12 @@ export default function AssetBoard({
       setErrors((x) => ({ ...x, [d.id]: '先补英文锚点（promptEn）再生成' }))
       return
     }
-    const imageModels = (settings?.models ?? []).filter((m) => m.cap === 'image')
+    // 生图族：图像与三视图是同一个能力，用谓词判断，避免选得到却在生成前被拦
+    const imageModels = (settings?.models ?? []).filter(
+      (m) => modelHasCap(m, 'image') && isRunnableModel(m),
+    )
     if (imageModels.length === 0) {
-      setErrors((x) => ({ ...x, [d.id]: '设置页还没有可用的图像模型' }))
+      setErrors((x) => ({ ...x, [d.id]: '设置页还没有可用的生图模型' }))
       return
     }
     setErrors((x) => {
@@ -532,6 +536,7 @@ export default function AssetBoard({
               />
               <CapModelSelect
                 cap="view"
+                caps={IMAGE_CAPS}
                 label="三视图模型"
                 settings={settings}
                 value={characterProps.viewModel}
@@ -543,6 +548,7 @@ export default function AssetBoard({
           <>
             <CapModelSelect
               cap="image"
+              caps={IMAGE_CAPS}
               label="设定图模型"
               settings={settings}
               value={imageModelKey}

@@ -1140,6 +1140,8 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
 function pickModel(cap: Cap, keyOverride?: string): { entry?: ModelEntry; provider?: Provider } {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
+  // 生图族由 modelHasCap 统一：image / view 任一声明都算数，
+  // 所以主声明为另一个生图能力的 key 在这里也能精确命中，不会回落默认位。
   const usable = (m: ModelEntry) => modelHasCap(m, cap) && isRunnableModel(m)
   const entry =
     (key && s.models.find((m) => m.key === key && usable(m))) ||
@@ -5514,25 +5516,34 @@ export function createAppHandler({ root }: { root: string }) {
               return
             }
 
-            if (url === '/api/camera-lexicon/import' && req.method === 'POST') {
-              const body = await readJson(req)
-              const project = safeProjectName(String(body?.project || '').trim())
-              const key = String(body?.key || '').trim()
-              if (!project || !key) {
-                res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, message: '需要 project 与 key' }))
-                return
-              }
-              const { importCameraLexiconPreset } = await import('./cameraLexicon.mjs')
-              const result = importCameraLexiconPreset(root, project, key)
-              res.end(JSON.stringify({ ok: true, ...result }))
-              return
-            }
-
             res.statusCode = 404
             res.end(JSON.stringify({ ok: false, kind: 'not-found', message: '未知的在线素材接口' }))
           } catch (e: any) {
             fail(e)
+          }
+          return
+        }
+
+        // ---- 镜头语言预置导入：把内置 MP4 复制进项目素材 ----
+        // 注意：这段曾嵌在 `/api/stock/` 分支里，路径永远匹配不上，
+        // 于是调用方拿到 HTML 404（表现为「代理返回了非 JSON 响应」）。
+        if (url === '/api/camera-lexicon/import' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const body = await readJson(req)
+            const project = safeProjectName(String(body?.project || '').trim())
+            const key = String(body?.key || '').trim()
+            if (!project || !key) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '需要 project 与 key' }))
+              return
+            }
+            const { importCameraLexiconPreset } = await import('./cameraLexicon.mjs')
+            const result = importCameraLexiconPreset(root, project, key)
+            res.end(JSON.stringify({ ok: true, ...result }))
+          } catch (e: any) {
+            res.statusCode = 500
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
           }
           return
         }
@@ -6729,6 +6740,30 @@ export function createAppHandler({ root }: { root: string }) {
             return
           }
 
+          // 参考图前置校验：渠道或模型不收参考图时必须直接失败。
+          // 静默丢弃参考图会让三视图 / 表情总图产出「不是这个人」的图，而用户以为成功。
+          const incomingRefs = [body.refImage, ...(Array.isArray(body.refImages) ? body.refImages : [])]
+            .filter(Boolean)
+            .map(String)
+            // 方舟不接受 svg 参考图；示例占位图是 svg，按无参考图处理
+            .filter((r) => !r.startsWith('data:image/svg'))
+          // apimart 由模型 features.imageRef 声明；方舟两档都收；其余渠道只做纯文生图
+          const refAccepted =
+            kind === 'apimart'
+              ? imgEntry.features?.imageRef !== 'none'
+              : kind === 'ark' || kind === 'ark-plan'
+          if (incomingRefs.length && !refAccepted) {
+            res.statusCode = 400
+            res.end(
+              JSON.stringify({
+                ok: false,
+                message: `模型「${imgEntry.label}」不支持参考图，请换一个支持参考图的模型`,
+                kind: 'unsupported',
+              }),
+            )
+            return
+          }
+
           if (kind === 'apimart') {
             const base = String(imgProvider?.baseUrl || 'https://api.apimart.ai/v1').replace(/\/+$/, '')
             const ratio = String(body.ratio || '16:9')
@@ -6738,11 +6773,6 @@ export function createAppHandler({ root }: { root: string }) {
               .filter(Boolean)
               .map(String)
               .filter((r) => !r.startsWith('data:image/svg'))
-            if (featureRef === 'none' && rawRefs.length) {
-              res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: `模型「${imgEntry.label}」不支持参考图`, kind: 'unsupported' }))
-              return
-            }
 
             const t0 = Date.now()
             const routeAbort = new AbortController()
@@ -6924,7 +6954,6 @@ export function createAppHandler({ root }: { root: string }) {
             response_format: 'url',
             ...(refSupported ? { watermark: false } : {}),
           }
-          const dropRefs: string[] = []
           if (refSupported && body.refImage) {
             const ref = String(body.refImage)
             // 方舟不接受 svg 参考图；示例占位图是 svg，直接跳过
@@ -6939,7 +6968,6 @@ export function createAppHandler({ root }: { root: string }) {
               .map((r) => resolveRef(r, root))
             payload.image = [...single, ...resolved].slice(0, 10)
           }
-          if (!refSupported) dropRefs.push(...[body.refImage, ...multiRefs].filter(Boolean).map(String))
 
           const t0 = Date.now()
           const routeAbort = new AbortController()
@@ -7097,7 +7125,6 @@ export function createAppHandler({ root }: { root: string }) {
               size,
               model,
               provider: imgProvider?.label || kind,
-              ...(dropRefs.length ? { warning: '该渠道不支持参考图，已按纯文生图处理', droppedRefs: dropRefs.length } : {}),
               ...(warnings.length ? { warning: warnings.join('，') + '，已使用成功结果', timedOut, failed } : {}),
               elapsed: Date.now() - t0,
             }),

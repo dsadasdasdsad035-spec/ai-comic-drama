@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import type { CharacterSheet } from './characters'
 import { CapModelSelect, type StagePick } from './ModelSelect'
+import { IMAGE_CAPS } from './modelCaps'
 import MediaPicker from './MediaPicker'
 import { fetchStockMeta } from './stock/api'
 import type { StockImportMeta } from './stock/types'
@@ -1155,6 +1156,7 @@ function InspectorBody({
 
         <CapModelSelect
           cap="image"
+          caps={IMAGE_CAPS}
           label="出图模型"
           settings={settings}
           value={pick.image}
