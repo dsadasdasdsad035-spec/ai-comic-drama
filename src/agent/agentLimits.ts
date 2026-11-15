@@ -1,6 +1,6 @@
 /**
- * 3D agent 的可配置运行上限。
- * 只开放总运行时长；图节点/步骤不暴露为产品设置。
+ * 所有聊天 Agent 的可配置运行上限（3D 调度与创意会话共用）。
+ * 只开放总运行时长；图节点/工具轮次不暴露为产品设置。
  */
 export type AgentLimitSettings = {
   totalSeconds?: number

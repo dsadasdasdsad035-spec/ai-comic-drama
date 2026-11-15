@@ -10,8 +10,8 @@ export function AgentPane({ wb }: Props) {
       <header className="st-sec-head">
         <h3>Agent 运行上限</h3>
         <span className="st-hint">
-          白模工作台（素材 → 镜头语言 → 自定义白模）agent 的总运行时长上限；超过会显示运行超时。线程按项目 +
-          白模条目恢复，关闭工作台会释放 Blender 沙箱并取消运行中的本轮。
+          所有聊天（白模工作台与创意会话）的总运行时长上限；超过会显示运行超时，已完成部分保留在会话里。
+          白模线程按项目 + 白模条目恢复，关闭工作台会释放 Blender 沙箱并取消运行中的本轮。
         </span>
       </header>
       <div className="st-grid">

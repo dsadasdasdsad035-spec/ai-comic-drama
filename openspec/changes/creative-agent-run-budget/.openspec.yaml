@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-11-15
+goal: 专家模式下长工作流不再被步数安全阀误杀；创意总时长接入 Agent 运行上限设置

@@ -75,7 +75,9 @@ function hasToolCall(message: AgentMessage): boolean {
  */
 export async function runStageAgent(input: RunStageAgentInput): Promise<RunStageAgentResult> {
   const runtime = input.stage ? stageRuntime(input.stage) : undefined
-  const maxSteps = Math.max(2, input.maxSteps ?? 16)
+  // 不传 maxSteps 时不设工具轮次预算：循环只由模型结束、取消、总时长或渠道错误终止。
+  // 显式传入时才作为内部安全阀（测试与需要主动保护的面使用）。
+  const maxSteps = input.maxSteps == null ? 0 : Math.max(2, input.maxSteps)
   const ask = input.ask || defaultAsk()
 
   const controller = new AbortController()
@@ -160,8 +162,8 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
       steps += 1
       // 没有工具调用 = 本轮自然结束；与升级前「工具循环结束即完成」一致。
       if (!hasToolCall(turn.message)) return undefined
-      // 步数上限只是内部安全阀：超过即终止，退出后补发可读错误。
-      if (steps >= maxSteps) {
+      // 显式步数上限只是内部安全阀：超过即终止，退出后补发可读错误。
+      if (maxSteps > 0 && steps >= maxSteps) {
         hitLimit = true
         return { action: 'end' }
       }
@@ -216,7 +218,8 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
 }
 
 function timeoutMessage(ms: number): string {
-  return `运行超时（${Math.round(ms / 1000)} 秒）`
+  // 超时是唯一的产品级预算；已完成部分仍在历史里，用户可接着做。
+  return `运行超时（${Math.round(ms / 1000)} 秒）；已完成部分已保留，回复「继续」可接着做`
 }
 
 /**

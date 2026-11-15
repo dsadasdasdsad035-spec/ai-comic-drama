@@ -168,6 +168,38 @@ await check('runStageAgent 执行工具循环并发出事件', async () => {
   assert.ok(events.some((e) => e.type === 'agent_step' && e.phase === 'end' && e.text?.includes('已更新')))
 })
 
+await check('默认没有工具轮次上限：连续 20 轮工具调用仍能收尾', async () => {
+  let call = 0
+  const events: AgentEvent[] = []
+  const ask = async () => {
+    call += 1
+    // 前 20 轮一直读项目；第 21 轮才给出最终答复。
+    if (call <= 20) {
+      return {
+        text: '',
+        finishReason: 'tool_calls',
+        toolCalls: [{ id: `read_${call}`, name: 'read_source', arguments: '{}' }],
+        modelLabel: 'mock',
+      } as never
+    }
+    return { text: '连续读取完成', finishReason: 'stop', toolCalls: [], modelLabel: 'mock' } as never
+  }
+  const result = await runStageAgent({
+    userText: '连读 20 次再总结',
+    system: shotlistSkill.role,
+    tools: hostTools,
+    stage: 'shot',
+    ask: ask as never,
+    onEvent: (e) => events.push(e),
+  })
+  assert.equal(result.error, undefined, `不应出现步数上限：${String(result.error)}`)
+  assert.ok(result.steps >= 20, `步数应至少 20，实际 ${result.steps}`)
+  assert.ok(
+    events.some((e) => e.type === 'agent_step' && e.phase === 'end' && e.text?.includes('连续读取完成')),
+    '应收到最终文本',
+  )
+})
+
 await check('runStageAgent 超过步数上限报错', async () => {
   const ask = async () =>
     ({
@@ -336,6 +368,7 @@ await check('超时返回可读错误并提前结束', async () => {
   })
   const elapsed = Date.now() - started
   assert.ok(result.error?.includes('运行超时'), String(result.error))
+  assert.ok(result.error?.includes('继续'), `超时文案应说明可继续：${String(result.error)}`)
   assert.ok(elapsed < 4000, `超时未提前结束：${elapsed}ms`)
   assert.ok(events.some((e) => e.type === 'error'))
 })
