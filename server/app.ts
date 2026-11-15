@@ -4329,6 +4329,13 @@ export function createAppHandler({ root }: { root: string }) {
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]
               }
+              // 画布几何：逐行增改与按 key 删除。校验在 writeProject 里做，
+              // 非法 key / 非有限坐标会抛错并被外层 catch 转成 400。
+              for (const k of ['canvas', 'canvasDelete']) {
+                if (body[k] === undefined) continue
+                if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
+                patch[k] = body[k]
+              }
               for (const k of ['source', 'logline', 'style', 'aspect']) {
                 if (body[k] === undefined) continue
                 if (typeof body[k] !== 'string') throw new Error(`${k} 必须是字符串`)

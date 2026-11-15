@@ -144,6 +144,27 @@ import {
   isShotCanvasNode,
   repairTransitionEdges,
 } from './canvasShots'
+import {
+  arrangeAll,
+  assetSlotPosition,
+  charSlotPosition,
+  nodeRect,
+  placeNewNode,
+  type ArrangeItem,
+  type PlacedRect,
+} from './canvasLayout'
+import {
+  canvasIdFromNodeId,
+  applyLayout,
+  assetKey,
+  assetNodeId,
+  diffLayout,
+  layoutSnapshot,
+  nodeKeyOf,
+  planLegacyCanvasMigration,
+  shotKey,
+  type CanvasSpot,
+} from './canvasLayoutStore'
 import { readCharacters, toProject } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 import { ensureSkillsMigrated } from './skills/migrate'
@@ -203,10 +224,18 @@ function matchChar(name: string, chars: CharacterSheet[]): CharacterSheet | unde
   )
 }
 
+/**
+ * 本地存档只当缓存：
+ * - v1：`{ nodes, edges, characters, epNo }`——沙盒（未选项目）画布的完整形状；
+ * - v2：`{ version: 2, edges, epNo }`——项目模式只存**边与集号**。
+ *   节点位置与素材卡身份已经随项目落库（`canvas_layouts` / `assets.canvas_id`），
+ *   再在本地存一份节点就成了第二个真相源，换端口/换机器就会两份数据打架。
+ */
 type Saved = {
-  nodes: ShotNodeType[]
+  version?: 1 | 2
+  nodes?: ShotNodeType[]
   edges: ShotEdgeType[]
-  characters: CharacterSheet[]
+  characters?: CharacterSheet[]
   /** 当前集也要记住，否则刷新后一律回到第 1 集，看起来像「别的集的卡片和视频丢了」 */
   epNo?: number
 }
@@ -216,6 +245,20 @@ function readSavedKey(key: string): Saved | null {
     const raw = localStorage.getItem(key)
     if (!raw) return null
     const p = JSON.parse(raw)
+    if (Number(p?.version) === 2) {
+      // v2 没有 nodes：只要还能取回边或集号就是有效存档，
+      // 否则会被当成「没存过」而回落到旧的全局画布迁移分支，把别的项目的画布灌进来
+      const ep = Number(p?.epNo)
+      const hasEp = Number.isFinite(ep) && ep > 0
+      if (!Array.isArray(p?.edges) && !hasEp) return null
+      return {
+        version: 2,
+        nodes: [],
+        edges: Array.isArray(p.edges) ? (p.edges as ShotEdgeType[]) : [],
+        characters: defaultCharacters,
+        epNo: hasEp ? ep : 1,
+      }
+    }
     if (!Array.isArray(p?.nodes)) return null
     const savedEp = Number(p.epNo)
     const hasSavedEp = Number.isFinite(savedEp) && savedEp > 0
@@ -291,7 +334,7 @@ function loadProjectSaved(name: string, shots: ProjectShot[]): Saved | null {
   }
 
   const ids = new Set(shots.map((s) => s.id))
-  const relevant = legacy.nodes.some((n) => {
+  const relevant = (legacy.nodes ?? []).some((n) => {
     const id = n.data?.shotId
     return Boolean(id && ids.has(String(id)))
   })
@@ -309,6 +352,172 @@ function loadProjectSaved(name: string, shots: ProjectShot[]): Saved | null {
 /** 派生边（参考连线、转场参考、cast 虚线）不参与关系菜单 */
 const isDerivedEdgeId = (id: string) =>
   id.startsWith('ref-') || id.startsWith('ref-tr|') || id.startsWith('cast-')
+
+/** 画布上已有素材卡的矩形：新增卡落位时用来避让 */
+const assetRectsOf = (list: ShotNodeType[]): PlacedRect[] =>
+  list
+    .filter((n) => (n as unknown as AssetNodeType).type === 'asset')
+    .map((n) => nodeRect('asset', n.position))
+
+const isAssetCanvasNode = (n: ShotNodeType) => (n as unknown as { type?: string }).type === 'asset'
+
+/**
+ * `project.assets` → 画布素材卡节点。
+ * 唯一派生点：节点 id 必须是 `asset-<canvasId>`，`shot.refIds` 里的 token 也是它，
+ * 所以缺 canvasId 的卡进不了画布（由 `ensureAssetCanvasIds` 先补齐）。
+ */
+function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
+  const out: ShotNodeType[] = []
+  assets.forEach((a, i) => {
+    if (!String(a.canvasId ?? '').trim()) return
+    out.push({
+      id: assetNodeId(a.canvasId),
+      type: 'asset',
+      // 缺存量位置的卡先按素材带落位；之后 applyLayout 用项目里的位置覆盖
+      position: assetSlotPosition(i),
+      data: {
+        title: a.title,
+        kind: a.kind,
+        url: a.url,
+        ...(a.designId ? { designId: a.designId } : {}),
+        ...(a.characterName ? { characterName: a.characterName } : {}),
+      },
+    } as unknown as ShotNodeType)
+  })
+  return out
+}
+
+/**
+ * 造一张新素材卡：id 由新 canvasId 派生（与 `shot.refIds` 同源），位置在素材带避让。
+ * 所有创建入口（加卡 / 在线素材 / 设定发布 / 表情总图）都走这里，
+ * 否则又会散出四种「随机 uid + 各自内联坐标」的写法。
+ */
+function newAssetCard(existing: ShotNodeType[], data: Record<string, unknown>): ShotNodeType {
+  const canvasId = uid()
+  return {
+    id: assetNodeId(canvasId),
+    type: 'asset',
+    position: placeNewNode('asset', assetRectsOf(existing)),
+    data,
+  } as unknown as ShotNodeType
+}
+
+/**
+ * 画布素材卡节点 → `assets` 载荷。
+ * 必须带 `canvasId`：服务端整表替换时这段是可选的兜底，但少传一次就要靠 kind+title 猜身份，
+ * 标题改过就猜不回来。
+ */
+function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
+  const out: ProjectAsset[] = []
+  for (const n of nodes) {
+    if (!isAssetCanvasNode(n)) continue
+    const d = n.data as unknown as {
+      kind?: string
+      title?: string
+      url?: string
+      designId?: string
+      characterName?: string
+    }
+    const canvasId = canvasIdFromNodeId(n.id)
+    out.push({
+      kind: d.kind || 'image',
+      title: d.title || '',
+      url: d.url || '',
+      ...(d.designId ? { designId: d.designId } : {}),
+      ...(d.characterName ? { characterName: d.characterName } : {}),
+      ...(canvasId ? { canvasId } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * 给缺 `canvasId` 的素材卡补一个并落库。
+ * 补一次就固定下来：之后无论重启多少次、端口换成什么，节点 id 都不变，参考连线才不会断。
+ */
+async function ensureAssetCanvasIds(projectName: string, assets: ProjectAsset[]): Promise<ProjectAsset[]> {
+  let missing = 0
+  const next = assets.map((a) => {
+    if (String(a.canvasId ?? '').trim()) return a
+    missing++
+    return { ...a, canvasId: uid() }
+  })
+  if (!missing) return next
+  try {
+    await patchProject(projectName, { assets: next } as never)
+  } catch {
+    /* 落库失败不阻塞打开：本轮仍用同一批 id，至少这一次的参考连线是对的 */
+  }
+  return next
+}
+
+/** 旧项目存档改名后保留的备份后缀（不删除，可回退） */
+const LEGACY_PROJECT_BACKUP_SUFFIX = ':legacy-backup'
+
+/**
+ * 存量 v1 本地画布 → 项目数据的一次性迁移。
+ *
+ * 只在项目还没有任何布局行时执行：已经有布局行说明新版已经写过，
+ * 这时旧存档再生效只会把用户后来摆的位置改回去。
+ * 成功后把 v1 存档原样改名到 `:legacy-backup`，并把「边 + 集号」转存成 v2 缓存。
+ */
+async function migrateLegacyCanvasIfNeeded(
+  projectName: string,
+  project: ProjectData,
+): Promise<(ReturnType<typeof planLegacyCanvasMigration> & { assets: ProjectAsset[] }) | null> {
+  if ((project.canvas ?? []).length > 0) return null
+  const key = projectCanvasKey(projectName)
+  let raw = ''
+  try {
+    raw = localStorage.getItem(key) || ''
+  } catch {
+    return null
+  }
+  if (!raw) return null
+  let parsed: { version?: number; nodes?: unknown[]; edges?: unknown[]; epNo?: unknown } | null = null
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!parsed || Number(parsed.version) === 2) return null
+  const nodes = Array.isArray(parsed.nodes) ? (parsed.nodes as never[]) : []
+  if (!nodes.length) return null
+
+  const assets = project.assets ?? []
+  const plan = planLegacyCanvasMigration(nodes, assets)
+  if (!plan.canvas.length && !plan.canvasIds.length) return null
+
+  // 先写卡身份再写位置：布局行按 canvasId 命名，身份没落库坐标就成了无主行
+  const byIndex = new Map(plan.canvasIds.map((c) => [c.index, c.canvasId]))
+  const nextAssets = assets.map((a, i) => {
+    const canvasId = byIndex.get(i)
+    return canvasId && !String(a.canvasId ?? '').trim() ? { ...a, canvasId } : a
+  })
+  try {
+    if (plan.canvasIds.length) await patchProject(projectName, { assets: nextAssets } as never)
+    if (plan.canvas.length) await patchProject(projectName, { canvas: plan.canvas } as never)
+  } catch {
+    // 迁移失败保持原样：旧存档不动，下次打开再试
+    return null
+  }
+
+  try {
+    localStorage.setItem(key + LEGACY_PROJECT_BACKUP_SUFFIX, raw)
+    const epNo = Number(parsed.epNo)
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 2,
+        edges: Array.isArray(parsed.edges) ? parsed.edges : [],
+        epNo: Number.isFinite(epNo) && epNo > 0 ? epNo : 1,
+      }),
+    )
+  } catch {
+    /* 配额不足时至少数据已经进了项目库 */
+  }
+  return { ...plan, assets: nextAssets }
+}
 
 function Shell() {
   const saved = useMemo(loadSaved, [])
@@ -386,6 +595,18 @@ function Shell() {
   const [projectAspect, setProjectAspect] = useState('16:9')
   const [projectStyle, setProjectStyle] = useState('')
   const assetsSnapRef = useRef('')
+  /**
+   * 画布布局的写回通道：
+   * - `layoutSnapRef` 是「已确认落库的位置」，拖动结束只提交与它不同的 key；
+   * - `layoutPendingRef` / `layoutDeleteRef` 是 400ms 合并窗口里的待提交项；
+   * - 水合与载入后重置快照，因此「只是加载」不会发出任何位置写回。
+   */
+  const layoutSnapRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+  const layoutPendingRef = useRef<Map<string, CanvasSpot>>(new Map())
+  const layoutDeleteRef = useRef<Set<string>>(new Set())
+  const layoutTimerRef = useRef<number | null>(null)
+  /** 待提交项归属的项目：切项目时仍写回原来那个，不串到新项目 */
+  const layoutProjectRef = useRef('')
   /** 服务端报告的缺失媒体引用（角色三视图 / 设定图） */
   const [missingMedia, setMissingMedia] = useState<Set<string>>(new Set())
   const { fitView, setCenter, getZoom } = useReactFlow()
@@ -414,6 +635,52 @@ function Shell() {
   useEffect(() => {
     voicesRef.current = voices
   }, [voices])
+
+  /** 立即提交待写回的布局：切项目、卸载前都不用等 400ms 合并窗口 */
+  const flushCanvasLayout = useCallback(() => {
+    if (layoutTimerRef.current !== null) {
+      window.clearTimeout(layoutTimerRef.current)
+      layoutTimerRef.current = null
+    }
+    const project = layoutProjectRef.current
+    const rows = [...layoutPendingRef.current.values()]
+    const deletes = [...layoutDeleteRef.current]
+    layoutPendingRef.current = new Map()
+    layoutDeleteRef.current = new Set()
+    layoutProjectRef.current = ''
+    if (!project || (!rows.length && !deletes.length)) return
+    // 失败不弹错：位置是低价值数据，下一次拖动会把新值再送一遍
+    void patchProject(project, {
+      ...(rows.length ? { canvas: rows } : {}),
+      ...(deletes.length ? { canvasDelete: deletes } : {}),
+    } as never).catch(() => {})
+  }, [])
+
+  /** 把坐标 / 删除并入待提交队列：400ms 内多次拖动只发一次请求 */
+  const queueCanvasLayout = useCallback(
+    (rows: CanvasSpot[] = [], deletes: string[] = [], project = projectName) => {
+      if (!project) return
+      if (layoutProjectRef.current && layoutProjectRef.current !== project) {
+        // 已经排了别的项目的写回：先把它送出去，别把 A 的位置写进 B
+        flushCanvasLayout()
+      }
+      layoutProjectRef.current = project
+      for (const row of rows) {
+        layoutDeleteRef.current.delete(row.key)
+        layoutPendingRef.current.set(row.key, row)
+      }
+      for (const key of deletes) {
+        layoutPendingRef.current.delete(key)
+        layoutDeleteRef.current.add(key)
+      }
+      if (layoutTimerRef.current !== null) window.clearTimeout(layoutTimerRef.current)
+      layoutTimerRef.current = window.setTimeout(() => flushCanvasLayout(), 400)
+    },
+    [flushCanvasLayout, projectName],
+  )
+
+  // 卸载（含切项目）前把还没送出的位置写回去
+  useEffect(() => () => flushCanvasLayout(), [flushCanvasLayout])
 
   /**
    * 项目列表只在大厅首屏与生命周期操作后拉取；打开项目时不再重复拉列表。
@@ -582,6 +849,8 @@ function Shell() {
       setNodes(nextNodes)
       setEdges(nextEdges)
       syncedRef.current = new Map()
+      // 水合后重置布局快照：这些位置来自项目/栅格，不该被当成用户改动写回去
+      layoutSnapRef.current = layoutSnapshot(nextNodes)
       for (const n of shotNodes) {
         if (n.data.shotId) syncedRef.current.set(String(n.data.shotId), bizSignature(n.data))
       }
@@ -810,7 +1079,8 @@ function Shell() {
     }
     ;(async () => {
       try {
-        const p = await getProject(projectName)
+        // 迁移与补 canvasId 都会改写项目数据，所以这里用可重新赋值的局部变量承接
+        let p = await getProject(projectName)
         if (!alive || epoch !== projectEpochRef.current) return
         projectSnapRef.current = p
         let shots = (p.shots ?? []) as ProjectShot[]
@@ -829,20 +1099,31 @@ function Shell() {
             shots = repairedOnLoad.shots
           }
         }
+        // 存量 v1 本地画布 → 项目库的一次性迁移（只在项目还没有布局行时跑）。
+        // 必须排在读素材卡之前：它会把旧节点 uid 写回 assets.canvas_id，位置写进 canvas。
+        const legacy = await migrateLegacyCanvasIfNeeded(projectName, p)
+        if (!alive || epoch !== projectEpochRef.current) return
+        if (legacy) {
+          p = { ...p, assets: legacy.assets, canvas: legacy.canvas }
+          console.info('[canvas] 旧画布迁移报告', {
+            命中素材卡: legacy.matchedCards,
+            未匹配素材卡: legacy.unmatchedCards,
+            遗留节点: legacy.droppedNodes,
+          })
+          const unmatched = legacy.unmatchedCards.length
+            ? `，${legacy.unmatchedCards.length} 张卡在素材库里找不到对应项（${legacy.unmatchedCards.slice(0, 2).join('、')}${legacy.unmatchedCards.length > 2 ? '…' : ''}）`
+            : ''
+          const dropped = legacy.droppedNodes.length ? `，忽略 ${legacy.droppedNodes.length} 个无业务 id 的遗留节点` : ''
+          setToast(`已把旧画布的 ${legacy.matchedCards} 张素材卡位置并入项目${unmatched}${dropped}`)
+          window.setTimeout(() => setToast(''), 5200)
+        }
         const stored = loadProjectSaved(projectName, shots)
-        const storedNodes = stored?.nodes ?? []
-        const storedAssets = storedNodes.filter(
-          (n) => (n as unknown as { type?: string }).type === 'asset',
-        )
-        const projectAssets = (p.assets ?? []) as ProjectAsset[]
-        const assetCards: ShotNodeType[] = storedAssets.length
-          ? storedAssets
-          : (projectAssets.map((a, i) => ({
-              id: `asset-${uid()}`,
-              type: 'asset',
-              position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
-              data: { title: a.title, kind: a.kind, url: a.url, ...(a.designId ? { designId: a.designId } : {}) },
-            })) as unknown as ShotNodeType[])
+        // 素材卡由 `project.assets` + `canvasId` 构建：节点 id 稳定为 `asset-<canvasId>`，
+        // 与 shot.refIds 里的 token 同源，重启/换端口/换机器都不会断链。
+        const projectAssets = await ensureAssetCanvasIds(projectName, (p.assets ?? []) as ProjectAsset[])
+        if (!alive || epoch !== projectEpochRef.current) return
+        p = { ...p, assets: projectAssets }
+        const assetCards = assetNodesFromAssets(projectAssets)
         const sheets = readCharacters(p.characters)
         const epSet = new Set<number>()
         for (const e of p.episodes ?? []) epSet.add(Number(e.no) || 1)
@@ -852,7 +1133,8 @@ function Shell() {
 
         // 与导入/Agent 写回共用同一条水合路径：项目是唯一真源，画布只是它的投影
         // 清空已经是真删：画布只反映项目里现存镜头，不再有「存档说清空过」这层状态
-        const loadedNodes = composeShotCanvasNodes(assetCards, shots)
+        // 位置最后用项目里的布局行覆盖：缺行的节点保留落位规则算出的栅格位置
+        const loadedNodes = applyLayout(composeShotCanvasNodes(assetCards, shots), p.canvas)
         const shotNodes = loadedNodes.filter(isShotCanvasNode)
         setNodes(loadedNodes)
         setEdges(composeShotCanvasEdges(stored?.edges?.length ? stored.edges : [], shotNodes))
@@ -877,7 +1159,12 @@ function Shell() {
           window.setTimeout(() => fitView({ nodes: focusTargets, padding: 0.25, minZoom: 0.4, duration: 400 }), 80)
         }
         charSnapRef.current = JSON.stringify(sheets.map(toProject))
-        assetsSnapRef.current = JSON.stringify(projectAssets)
+        // 载荷用节点反推：含 canvasId，且与 assets 同步通道的签名算法一致，避免刚载入就触发一次写回
+        assetsSnapRef.current = JSON.stringify(assetsPayloadOf(assetCards))
+        // 布局快照：水合/载入后重置，此刻不发起任何位置写回
+        layoutSnapRef.current = layoutSnapshot(loadedNodes)
+        // 迁移与补 id 改写过项目数据，快照要跟上（后面「素材页发布新卡」会读它的 canvas）
+        projectSnapRef.current = p
         setMissingMedia(new Set(Array.isArray(p.media?.missing) ? p.media.missing : []))
         if (p.media?.migrated) {
           setToast(`已把 ${p.media.migrated} 张参考图收进项目目录`)
@@ -1559,16 +1846,14 @@ function Shell() {
     }
   }
 
-  /** 加一张素材卡（场景/道具/图/视频），数据存画布 localStorage */
+  /**
+   * 加一张素材卡（场景/道具/图/视频）。
+   * 节点 id 由新生成的 canvasId 派生；位置由「新增即写位置」的副作用补写。
+   */
   const addAsset = () => {
-    const node = {
-      id: `asset-${uid()}`,
-      type: 'asset',
-      position: { x: 120, y: 220 },
-      data: { title: '新素材', kind: 'image', url: '' },
-    } as unknown as ShotNodeType
-    setNodes((ns) => [...ns, node])
-    setSelId(node.id)
+    const card = newAssetCard(nodesRef.current, { title: '新素材', kind: 'image', url: '' })
+    setNodes((ns) => [...ns, card])
+    setSelId(card.id)
   }
 
   const removeShot = (id: string) => {
@@ -1578,6 +1863,12 @@ function Shell() {
       void purgeRefIds([id])
       setToast('已删除素材卡，相关镜头参考连线已解除')
       window.setTimeout(() => setToast(''), 2600)
+      // 删卡要连布局行一起删，否则下次同名位置行会把它「复活」到旧坐标上
+      const key = nodeKeyOf(node)
+      if (key) {
+        layoutSnapRef.current.delete(key)
+        queueCanvasLayout([], [key])
+      }
       setNodes((ns) => ns.filter((n) => n.id !== id))
       setEdges((es) => es.filter((e) => e.source !== id && e.target !== id))
       setSelId(null)
@@ -1662,7 +1953,7 @@ function Shell() {
           role: c.role,
           image: c.image && !missingMedia.has(c.image) ? c.image : undefined,
         },
-        charPos[c.id] ?? { x: 80 + i * 170, y: -280 },
+        charPos[c.id] ?? charSlotPosition(i),
       ),
     )
     // 出场名单里有、但角色板没这张卡的名字 → 占位节点，连线不能丢
@@ -1677,7 +1968,7 @@ function Shell() {
         keep(
           missCharId(name),
           { name, role: '无角色卡', missing: true },
-          charPos[`miss:${name}`] ?? { x: 80 + (characters.length + i) * 170, y: -280 },
+          charPos[`miss:${name}`] ?? charSlotPosition(characters.length + i),
         ),
       )
     }
@@ -1701,19 +1992,13 @@ function Shell() {
     return ids
   }, [assetNodes])
 
-  /** 画布素材卡 → 素材库（DB assets 表）：卡片只是视图，数据落库才能跨会话/跨集复用 */
+  /**
+   * 画布素材卡 → 素材库（DB assets 表）：卡片只是视图，数据落库才能跨会话/跨集复用。
+   * 载荷必须带 `canvasId`（由节点 id 反解），否则整表替换会把这张卡换成新身份。
+   */
   useEffect(() => {
     if (!projectName || readyProject !== projectName) return
-    const cards = assetNodes.map((a) => {
-      const d = a.data as unknown as { kind?: string; title?: string; url?: string; designId?: string; characterName?: string }
-      return {
-        kind: d.kind || 'image',
-        title: d.title || '',
-        url: d.url || '',
-        ...(d.designId ? { designId: d.designId } : {}),
-        ...(d.characterName ? { characterName: d.characterName } : {}),
-      }
-    })
+    const cards = assetsPayloadOf(assetNodes)
     const sig = JSON.stringify(cards)
     if (sig === assetsSnapRef.current) return
     const t = window.setTimeout(() => {
@@ -1724,21 +2009,32 @@ function Shell() {
     return () => window.clearTimeout(t)
   }, [assetNodes, projectName])
 
-  /** 首次打开（画布上没有素材卡）时，用素材库把卡片补回来 */
+  /**
+   * 新增素材卡即写位置：任何创建入口（手动加卡 / 在线素材 / 设定发布 / 表情总图）
+   * 都会产出快照里没有的 key，这里统一补一行，避免各入口各写一遍。
+   * 只在「快照里没有」时触发，所以加载与拖动都不会被这里重复写回。
+   */
+  useEffect(() => {
+    if (!projectName || readyProject !== projectName) return
+    const rows: CanvasSpot[] = []
+    for (const n of assetNodes) {
+      const key = nodeKeyOf(n)
+      if (!key || layoutSnapRef.current.has(key)) continue
+      layoutSnapRef.current.set(key, { ...n.position })
+      rows.push({ key, x: n.position.x, y: n.position.y })
+    }
+    if (rows.length) queueCanvasLayout(rows)
+  }, [assetNodes, projectName, readyProject, queueCanvasLayout])
+
+  /**
+   * 素材库里已经有卡、画布上却一张都没有时，把卡片补进画布。
+   * 正常载入不会走到这里（载入阶段就由 `project.assets` 建好卡了）；
+   * 留给「素材页在画布已打开时发布新卡」这条路径。
+   */
   useEffect(() => {
     if (!projectName || readyProject !== projectName || assets.length === 0 || assetNodes.length > 0) return
-    const cards = assets.map((a, i) => ({
-      id: `asset-${uid()}`,
-      type: 'asset',
-      position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
-      data: {
-        title: a.title,
-        kind: a.kind,
-        url: a.url,
-        ...(a.designId ? { designId: a.designId } : {}),
-        ...(a.characterName ? { characterName: a.characterName } : {}),
-      },
-    })) as unknown as ShotNodeType[]
+    const cards = applyLayout(assetNodesFromAssets(assets), projectSnapRef.current?.canvas)
+    if (!cards.length) return
     setNodes((ns) => [...ns, ...cards])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName, assets.length])
@@ -2120,6 +2416,13 @@ function Shell() {
     const shotIds = sel
       .map((n) => (n.data.shotId ? String(n.data.shotId) : ''))
       .filter(Boolean)
+    // 素材卡的布局行要跟着删：留着会成为无主行，下次同 canvasId 复用时位置会被「复活」
+    const assetKeys = sel.filter(isAssetCanvasNode).map((n) => nodeKeyOf(n)).filter(Boolean)
+    const dropAssetLayout = () => {
+      if (!assetKeys.length) return
+      for (const key of assetKeys) layoutSnapRef.current.delete(key)
+      queueCanvasLayout([], assetKeys)
+    }
     if (shotIds.length > 0 && readyProject) {
       if (!window.confirm(`删除所选 ${sel.length} 张卡片？其中 ${shotIds.length} 镜会从项目里移除。`)) return
       const gone = new Set(shotIds)
@@ -2127,6 +2430,7 @@ function Shell() {
       void persistProjectShots(plan.next, plan.deletes)
         .then(() => {
           // 素材卡 / 实验卡不在项目里，单独从画布移除
+          dropAssetLayout()
           setNodes((ns) => ns.filter((n) => !ids.has(n.id) || Boolean(n.data.shotId)))
           setEdges((es) => es.filter((e) => !ids.has(e.source) && !ids.has(e.target)))
           setSelId(null)
@@ -2139,6 +2443,7 @@ function Shell() {
         })
       return
     }
+    dropAssetLayout()
     setNodes((ns) => ns.filter((n) => !ids.has(n.id)))
     setEdges((es) => es.filter((e) => !ids.has(e.source) && !ids.has(e.target)))
     setSelId(null)
@@ -2338,9 +2643,6 @@ function Shell() {
       }
       const fresh = withImage.filter((d) => !existing.has(d.id))
       const updated = withImage.length - fresh.length
-      const base = nodesRef.current.filter(
-        (n) => (n as unknown as AssetNodeType).type === 'asset',
-      ).length
 
       setNodes((prev) => {
         const out = prev.map((n) => {
@@ -2359,23 +2661,16 @@ function Shell() {
             },
           }
         })
-        let i = 0
+        // 逐个落位：新卡要看到前面几张刚算出的位置，否则批量发布会互相压住
         for (const design of fresh) {
-          const slot = base + i++
-          out.push({
-            id: `asset-${uid()}`,
-            type: 'asset',
-            position: {
-              x: 80 + (slot % 4) * 250,
-              y: -560 - Math.floor(slot / 4) * 180,
-            },
-            data: {
+          out.push(
+            newAssetCard(out, {
               title: design.name,
               kind: design.kind,
               url: design.image,
               designId: design.id,
-            },
-          } as unknown as ShotNodeType)
+            }),
+          )
         }
         return out
       })
@@ -2405,7 +2700,6 @@ function Shell() {
           const d = n.data as unknown as { title?: string; kind?: string }
           if (d.title) index.set(keyOf(d.title, String(d.kind ?? 'image')), i)
         })
-        let slot = out.filter((n) => (n as unknown as AssetNodeType).type === 'asset').length
         for (const asset of next) {
           const kind = String(asset.kind ?? 'image')
           const at = index.get(keyOf(asset.title, kind))
@@ -2417,13 +2711,15 @@ function Shell() {
             } as unknown as ShotNodeType
             continue
           }
-          out.push({
-            id: `asset-${uid()}`,
-            type: 'asset',
-            position: { x: 80 + (slot % 4) * 250, y: -560 - Math.floor(slot / 4) * 180 },
-            data: { title: asset.title, kind, url: asset.url },
-          } as unknown as ShotNodeType)
-          slot++
+          out.push(
+            newAssetCard(out, {
+              title: asset.title,
+              kind,
+              url: asset.url,
+              ...(asset.designId ? { designId: asset.designId } : {}),
+              ...(asset.characterName ? { characterName: asset.characterName } : {}),
+            }),
+          )
         }
         return out
       })
@@ -2434,18 +2730,9 @@ function Shell() {
   /** 在线素材导入 → 直接生成一张素材卡（不建连线，不覆盖已手改内容） */
   const addAssetCardFromStock = useCallback(
     (input: { title: string; kind: string; url: string }) => {
-      const base = nodesRef.current.filter((n) => (n as unknown as AssetNodeType).type === 'asset').length
       setNodes((prev) => [
         ...prev,
-        {
-          id: `asset-${uid()}`,
-          type: 'asset',
-          position: {
-            x: 80 + (base % 4) * 250,
-            y: -560 - Math.floor(base / 4) * 180,
-          },
-          data: { title: input.title, kind: input.kind, url: input.url },
-        } as unknown as ShotNodeType,
+        newAssetCard(prev, { title: input.title, kind: input.kind, url: input.url }),
       ])
       setToast(`已导入素材：${input.title}`)
       window.setTimeout(() => setToast(''), 2400)
@@ -2501,25 +2788,14 @@ function Shell() {
         )
         setToast('已更新画布上的表情总图')
       } else {
-        const base = nodesRef.current.filter(
-          (n) => (n as unknown as AssetNodeType).type === 'asset',
-        ).length
         setNodes((prev) => [
           ...prev,
-          {
-            id: `asset-${uid()}`,
-            type: 'asset',
-            position: {
-              x: 80 + (base % 4) * 250,
-              y: -560 - Math.floor(base / 4) * 180,
-            },
-            data: {
-              title,
-              kind: 'expression-sheet',
-              url: sheet.image,
-              characterName: character.name,
-            },
-          } as unknown as ShotNodeType,
+          newAssetCard(prev, {
+            title,
+            kind: 'expression-sheet',
+            url: sheet.image,
+            characterName: character.name,
+          }),
         ])
         setToast('已发布表情总图到画布')
       }
@@ -3421,6 +3697,64 @@ function Shell() {
       })
   }
 
+  /**
+   * 整理画布：按类型重排位置（分镜按镜号、素材向上生长、角色单行）。
+   * 只改位置，不动任何业务数据；不弹确认，因为重复点击结果完全一致。
+   */
+  const tidyCanvas = () => {
+    const all = nodesRef.current
+    const items: ArrangeItem[] = []
+    for (const n of all) {
+      const type = (n as unknown as { type?: string }).type
+      if (type === 'asset') {
+        items.push({ id: n.id, kind: 'asset', ...nodeRect('asset', n.position) })
+      } else if (isShotCanvasNode(n) && n.data?.shotId) {
+        // 手搓的无业务 ID 实验卡不参与：它们没有镜号，重排会打乱用户临时摆的对照组
+        items.push({
+          id: n.id,
+          kind: 'shot',
+          ...nodeRect('shot', n.position, { seconds: Number(n.data.seconds) || 3 }),
+          episode: Number(n.data.episode) || 1,
+          no: String(n.data.no ?? ''),
+          seconds: Number(n.data.seconds) || 3,
+        })
+      }
+    }
+    for (const n of charNodes) {
+      items.push({ id: n.id, kind: 'char', ...nodeRect('char', n.position) })
+    }
+    if (!items.length) return
+
+    const placed = arrangeAll(items)
+    const arranged = nodesRef.current.map((n) => {
+      const p = placed.get(n.id)
+      return p ? { ...n, position: p } : n
+    })
+    setNodes(arranged)
+    // 整理后的位置也要落库：位置已从 localStorage 搬到项目里，这里不写就等于白整理
+    const moved = diffLayout(arranged, layoutSnapRef.current)
+    for (const row of moved) layoutSnapRef.current.set(row.key, { x: row.x, y: row.y })
+    if (moved.length) queueCanvasLayout(moved)
+    // 角色位置单独的真相源：不同步写回就会出现「一半排好一半没动」
+    setCharPos((prev) => {
+      const next = { ...prev }
+      for (const n of charNodes) {
+        const p = placed.get(n.id)
+        if (!p) continue
+        next[n.id.startsWith('char-') ? n.id.slice(5) : n.id] = p
+      }
+      try {
+        localStorage.setItem('storyboard-char-pos', JSON.stringify(next))
+      } catch {
+        /* 配额不足时只改内存，不影响本次整理 */
+      }
+      return next
+    })
+    setToast(`已整理 ${items.length} 张卡片`)
+    window.setTimeout(() => setToast(''), 2400)
+    window.setTimeout(() => fitView({ padding: 0.15, minZoom: 0.3, duration: 420 }), 80)
+  }
+
   const resetAll = () => {
     try {
       if (projectName) localStorage.removeItem(projectCanvasKey(projectName))
@@ -3462,21 +3796,19 @@ function Shell() {
     if (!projectName || readyProject !== projectName) return
     const t = window.setTimeout(() => {
       try {
+        // 项目模式只缓存边与集号：节点位置在 canvas_layouts，素材卡身份在 assets.canvas_id。
+        // 关窗口前先把未提交的位置 flush 掉，否则最后一次拖动会留在 400ms 窗口里丢掉。
+        flushCanvasLayout()
         localStorage.setItem(
           projectCanvasKey(projectName),
-          JSON.stringify({
-            nodes,
-            edges,
-            characters,
-            epNo,
-          }),
+          JSON.stringify({ version: 2, edges, epNo }),
         )
       } catch {
         /* 图片过大超出配额时静默失败，不影响使用 */
       }
     }, 400)
     return () => window.clearTimeout(t)
-  }, [nodes, edges, characters, epNo, projectName, readyProject])
+  }, [nodes, edges, characters, epNo, projectName, readyProject, flushCanvasLayout])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -3892,6 +4224,7 @@ function Shell() {
                 onGenAll={generateAll}
                 onUnifyTransitions={unifyTransitions}
                 onFit={() => fitView({ padding: 0.2, duration: 400 })}
+                onTidy={tidyCanvas}
                 onToggleChars={toggleChars}
                 onToggleDiag={() => setDiagOn((v) => !v)}
                 onClear={clearCanvas}
@@ -4000,7 +4333,17 @@ function Shell() {
                     localStorage.setItem('storyboard-char-pos', JSON.stringify(next))
                     return next
                   })
+                  return
                 }
+                // 分镜 / 素材卡：用落点覆盖后再与快照比对，只提交坐标真的变了的 key。
+                // 一次拖动 = 一行请求；水合后快照被重置，所以「只是加载」不会发请求。
+                const withDrop = nodesRef.current.map((n) =>
+                  n.id === node.id ? { ...n, position: node.position } : n,
+                )
+                const changed = diffLayout(withDrop, layoutSnapRef.current)
+                if (!changed.length) return
+                for (const row of changed) layoutSnapRef.current.set(row.key, { x: row.x, y: row.y })
+                queueCanvasLayout(changed)
               }}
               onMove={(_, vp) => {
                 const lite = vp.zoom < 0.55

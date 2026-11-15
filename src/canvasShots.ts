@@ -5,9 +5,17 @@
  * 否则会出现「加载后」与「导入后」两种栅格和两套连线，布局反复漂移。
  */
 import type { ProjectShot } from './api'
+import {
+  SHOT_COLS,
+  SHOT_GAP,
+  SHOT_ROW_H,
+  compareShotNo,
+  measureNode,
+  shotEpisodeOrigins,
+} from './canvasLayout'
 import type { ShotEdgeType, ShotNodeType } from './data'
 import { shotToData } from './shotSync'
-import { cardWidth, uid, type ShotData } from './types'
+import { uid, type ShotData } from './types'
 
 /** 画布节点里哪些是分镜（素材卡 / 角色卡不进播放序列） */
 export const isShotCanvasNode = (n: ShotNodeType) => {
@@ -24,12 +32,47 @@ const isDemoCard = (n: ShotNodeType) => !n.data?.shotId && /^S\d+$/.test(n.id)
 export function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): ShotNodeType[] {
   const byShot = new Map<string, ShotNodeType>()
   for (const n of prev) if (n.data?.shotId) byShot.set(String(n.data.shotId), n)
-  const counters = new Map<number, { col: number; row: number }>()
   // 已被认领的节点 id：两个镜头共用同一个「集 + 镜号」时（历史数据里 no 重复），
   // 按 no 回找会同时命中同一个旧节点，产出两个同 id 节点 —— React 会去重成一张卡。
   const claimed = new Set<string>()
+
+  // 落位序列按「集号升序 + 镜号数值」算，不用 shots 数组下标：
+  // 写回时命中镜会被提到前面（mergeShots），用下标定槽位会让新镜头乱窜。
+  const epOf = (s: ProjectShot) => Number(s.episode) || 1
+  const grouped = new Map<number, ProjectShot[]>()
+  for (const s of shots) {
+    const ep = epOf(s)
+    const list = grouped.get(ep) ?? []
+    list.push(s)
+    grouped.set(ep, list)
+  }
+  const episodes = [...grouped.keys()].sort((a, b) => a - b)
+  const origins = shotEpisodeOrigins(
+    episodes.map((ep) => Math.max(1, Math.ceil((grouped.get(ep)?.length ?? 0) / SHOT_COLS))),
+  )
+  const epOrigin = new Map<number, number>()
+  episodes.forEach((ep, i) => epOrigin.set(ep, origins[i] ?? 0))
+
+  /** shotId → 名义槽位；列 x 用已占用宽度累加，卡片随时长变宽也不会互相压住 */
+  const slotPos = new Map<string, { x: number; y: number }>()
+  for (const ep of episodes) {
+    const list = [...(grouped.get(ep) ?? [])].sort(
+      (a, b) => compareShotNo(a.no, b.no) || String(a.id).localeCompare(String(b.id)),
+    )
+    let x = 0
+    list.forEach((sh, index) => {
+      const row = Math.floor(index / SHOT_COLS)
+      if (index > 0 && index % SHOT_COLS === 0) x = 0
+      slotPos.set(String(sh.id), {
+        x,
+        y: (epOrigin.get(ep) ?? 0) + row * SHOT_ROW_H,
+      })
+      x += measureNode('shot', { seconds: Number(sh.seconds) || 3 }).w + SHOT_GAP
+    })
+  }
+
   return shots.map((sh, i) => {
-    const ep = Number(sh.episode) || 1
+    const ep = epOf(sh)
     const old =
       byShot.get(sh.id) ??
       [...byShot.values()].find(
@@ -40,17 +83,7 @@ export function buildShotNodes(prev: ShotNodeType[], shots: ProjectShot[]): Shot
       )
     if (old) claimed.add(old.id)
     if (old?.data?.shotId && old.data.shotId !== sh.id) byShot.delete(String(old.data.shotId))
-    const c = counters.get(ep) ?? { col: 0, row: 0 }
-    const position = old?.position ?? {
-      x: c.col * (cardWidth(Number(sh.seconds) || 3) + 56),
-      y: (ep - 1) * 380 + c.row * 340,
-    }
-    c.col += 1
-    if (c.col >= 6) {
-      c.col = 0
-      c.row += 1
-    }
-    counters.set(ep, c)
+    const position = old?.position ?? slotPos.get(String(sh.id)) ?? { x: 0, y: 0 }
     const base: ShotData = old?.data ?? {
       no: sh.no ?? `S${String(i + 1).padStart(2, '0')}`,
       seconds: 3,

@@ -120,6 +120,18 @@
 - 删到**一个不剩**：顶栏显示「（无项目）」，项目视图进入空状态，系统不会自动建项目。
 - 画布 key 必须清掉：否则用同名新建项目后，旧画布会整份捞回来。
 
+### 画布的真相源（`canvas-layout-persistence` 起）
+
+- **节点位置**在项目库里（`canvas_layouts`，key 只有 `shot:<shotId>` / `asset:<canvasId>` 两种），**素材卡身份**在 `assets.canvas_id`。
+- 本地只缓存**边与集号**（`{ version: 2, edges, epNo }`），不再写 `nodes` / `characters`：
+  桌面端每次启动的服务端口不同，`localStorage` 按 origin 隔离，存节点就等于把布局绑在一个随机端口上。
+- 删除项目时 `canvas_layouts` 随 `PROJECT_CASCADE` 一起清掉；本地那份 v2 缓存仍按项目名删除，
+  同名重建不会捞回旧的边。
+- 拖动卡片结束才写回（400ms 合并窗口，一次拖动只发一行）；载入/水合不写回。
+- 旧版 v1 本地画布在项目**还没有任何布局行**时一次性迁移：旧节点 uid 写进 `assets.canvas_id`、
+  位置写进 `canvas_layouts`，随后把 v1 存档改名成 `…:legacy-backup`（保留可回退），
+  界面上会提示命中数、未匹配的素材卡与忽略的遗留节点。
+
 ## 相关文件
 
 | 文件 | 职责 |

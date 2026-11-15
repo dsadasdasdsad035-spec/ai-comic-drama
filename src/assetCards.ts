@@ -68,15 +68,24 @@ export function mergeAssetCards(
       kind,
       ...(raw.designId ? { designId: String(raw.designId).trim() } : {}),
       ...(raw.characterName ? { characterName: String(raw.characterName).trim() } : {}),
+      ...(String(raw.canvasId ?? '').trim() ? { canvasId: String(raw.canvasId).trim() } : { canvasId: undefined }),
     }
     const key = assetCardKey(card)
     const at = next.findIndex((a) => assetCardKey(a) === key)
     if (at >= 0) {
-      next[at] = { ...next[at], ...card }
+      const merged: ProjectAsset = { ...next[at], ...card }
+      // 画布身份只增不减：更新载荷没带 canvasId 时不能覆盖掉已有值。
+      // 覆盖掉就等于把这张卡从画布上「换了一张」，shot.refIds 里的 asset-<canvasId> 会立刻断链。
+      const canvasId = String(card.canvasId ?? '').trim() || String(next[at].canvasId ?? '').trim()
+      if (canvasId) merged.canvasId = canvasId
+      else delete merged.canvasId
+      next[at] = merged
       updated.push(next[at])
     } else {
-      next.push(card)
-      added.push(card)
+      const created: ProjectAsset = { ...card }
+      if (!String(created.canvasId ?? '').trim()) delete created.canvasId
+      next.push(created)
+      added.push(created)
     }
   }
   return { next, added, updated }

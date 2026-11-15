@@ -83,7 +83,19 @@ CREATE TABLE IF NOT EXISTS assets (
   note     TEXT DEFAULT '',
   tags     TEXT DEFAULT '[]',
   design_id TEXT DEFAULT '',
+  canvas_id TEXT DEFAULT '',
   sort     INTEGER DEFAULT 0
+);
+-- 画布节点几何：只存位置，不存内容。node_key 形如 shot:E01-S03 / asset:<canvasId>。
+-- 单独成表而不是加列到 assets/shots：assets 落库是整表替换，几何跟着重写会因一次漏传就丢位置。
+CREATE TABLE IF NOT EXISTS canvas_layouts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  node_key   TEXT NOT NULL,
+  x          REAL NOT NULL,
+  y          REAL NOT NULL,
+  updated_at TEXT,
+  UNIQUE(project_id, node_key)
 );
 CREATE TABLE IF NOT EXISTS designs (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1470,6 +1482,8 @@ function assemble(p) {
       note: a.note || '',
       tags: JSON.parse(a.tags || '[]'),
       ...(a.design_id ? { designId: a.design_id } : {}),
+      // 画布节点 id 由它派生（asset-<canvasId>）；空串表示这张卡还没有画布身份
+      ...(a.canvas_id ? { canvasId: a.canvas_id } : {}),
     }))
   const designs = db
     .prepare('SELECT * FROM designs WHERE project_id = ? ORDER BY sort, id')
@@ -1536,6 +1550,11 @@ function assemble(p) {
     .prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
     .map(rowToShot)
+  // 画布几何：按 node_key 排序，读回顺序稳定（前端 diff 依赖它不变）
+  const canvas = db
+    .prepare('SELECT node_key, x, y FROM canvas_layouts WHERE project_id = ? ORDER BY node_key')
+    .all(pid)
+    .map((row) => ({ key: row.node_key, x: Number(row.x), y: Number(row.y) }))
   return {
     schema: 1,
     name: p.title || p.name,
@@ -1552,6 +1571,7 @@ function assemble(p) {
     sceneLayouts,
     episodes,
     shots,
+    canvas,
   }
 }
 
@@ -1602,18 +1622,45 @@ export function writeProject(root, name, data = {}) {
 
   if (data.assets !== undefined) {
     if (!Array.isArray(data.assets)) throw new Error('assets 必须是数组')
+    // 画布身份兜底：调用方可能没带 canvasId（旧客户端、或某条同步通道漏传）。
+    // 这里按 design_id 优先、其次 kind+title 沿用旧值——整表替换最容易丢的就是这个字段，
+    // 丢了就等于素材参考连线断链，所以服务端再拦一次，而不是只在某一处前端代码里保证。
+    const oldAssets = db.prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY sort, id').all(pid)
+    const byDesign = new Map()
+    const byTitle = new Map()
+    for (const a of oldAssets) {
+      const cid = String(a.canvas_id || '').trim()
+      if (!cid) continue
+      const designId = String(a.design_id || '').trim()
+      if (designId && !byDesign.has(designId)) byDesign.set(designId, cid)
+      const key = `${a.kind || 'image'}:${String(a.title || '').trim()}`
+      if (!byTitle.has(key)) byTitle.set(key, cid)
+    }
+    const used = new Set()
+    const clean = data.assets.map((a) => {
+      const kind = String(a?.kind || 'image')
+      const title = String(a?.title || '')
+      const designId = String(a?.designId || '').trim()
+      let canvasId = String(a?.canvasId || '').trim()
+      if (!canvasId) canvasId = byDesign.get(designId) || byTitle.get(`${kind}:${title.trim()}`) || ''
+      // 同一身份被两张卡同时占用会让画布出现两个同 id 节点，后来的让位
+      if (canvasId && used.has(canvasId)) canvasId = ''
+      if (canvasId) used.add(canvasId)
+      return { kind, title, url: String(a?.url || ''), note: String(a?.note || ''), tags: a?.tags ?? [], designId, canvasId }
+    })
     db.prepare('DELETE FROM assets WHERE project_id = ?').run(pid)
-    for (const [i, a] of data.assets.entries()) {
+    for (const [i, a] of clean.entries()) {
       db.prepare(
-        'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,sort) VALUES (?,?,?,?,?,?,?,?)',
+        'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,canvas_id,sort) VALUES (?,?,?,?,?,?,?,?,?)',
       ).run(
         pid,
-        String(a?.kind || 'image'),
-        String(a?.title || ''),
-        String(a?.url || ''),
-        String(a?.note || ''),
-        JSON.stringify(a?.tags ?? []),
-        String(a?.designId || ''),
+        a.kind,
+        a.title,
+        a.url,
+        a.note,
+        JSON.stringify(a.tags),
+        a.designId,
+        a.canvasId,
         i,
       )
     }
@@ -1689,6 +1736,45 @@ export function writeProject(root, name, data = {}) {
         `INSERT INTO scene_layouts (project_id,layout_id,episode,scene_no,layout,sort,updated_at)
          VALUES (?,?,?,?,?,?,?)`,
       ).run(pid, d.id, d.episode, d.sceneNo, JSON.stringify(d), i, now)
+    }
+  }
+
+  // 画布几何：逐行 upsert，只在用户完成拖动/增删卡片后提交。
+  // 与 assets 的整表替换区分开——这里漏传一个 key 只是那一张卡回到默认落位，不会丢别的卡。
+  if (data.canvas !== undefined) {
+    if (!Array.isArray(data.canvas)) throw new Error('canvas 必须是数组')
+    if (data.canvas.length > MAX_CANVAS_ROWS) {
+      throw new Error(`canvas 单次最多 ${MAX_CANVAS_ROWS} 行，收到 ${data.canvas.length} 行`)
+    }
+    const upsert = db.prepare(
+      `INSERT INTO canvas_layouts (project_id,node_key,x,y,updated_at) VALUES (?,?,?,?,?)
+       ON CONFLICT(project_id,node_key) DO UPDATE SET x=excluded.x, y=excluded.y, updated_at=excluded.updated_at`,
+    )
+    const seen = new Set()
+    for (const [i, item] of data.canvas.entries()) {
+      const key = assertCanvasKey(item?.key, `canvas 第 ${i + 1} 项`)
+      const x = Number(item?.x)
+      const y = Number(item?.y)
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        throw new Error(`canvas 第 ${i + 1} 项的坐标不是有限数`)
+      }
+      // 同一 key 在一次请求里重复出现，以第一次为准：后面的更容易是重排残留
+      if (seen.has(key)) continue
+      seen.add(key)
+      upsert.run(pid, key, x, y, now)
+    }
+  }
+
+  // 删除与顺序无关但语义优先：同一 key 既提交坐标又声明删除时以删除为准
+  // （与 deleteShotIds 的既有约定一致：同一 id 两处出现时以删除为准）
+  if (data.canvasDelete !== undefined) {
+    if (!Array.isArray(data.canvasDelete)) throw new Error('canvasDelete 必须是数组')
+    if (data.canvasDelete.length > MAX_CANVAS_ROWS) {
+      throw new Error(`canvasDelete 单次最多 ${MAX_CANVAS_ROWS} 项，收到 ${data.canvasDelete.length} 项`)
+    }
+    const del = db.prepare('DELETE FROM canvas_layouts WHERE project_id = ? AND node_key = ?')
+    for (const [i, raw] of data.canvasDelete.entries()) {
+      del.run(pid, assertCanvasKey(raw, `canvasDelete 第 ${i + 1} 项`))
     }
   }
 
@@ -1776,6 +1862,32 @@ export function normalizeShotsMode(mode) {
   if (!m) return 'partial'
   if (!SHOTS_MODES.includes(m)) throw new Error(`shotsMode 只能是 partial 或 full，收到：${m}`)
   return m
+}
+
+/**
+ * 画布布局的 key 形态：`shot:<shotId>` / `asset:<canvasId>`。
+ *
+ * 只用这两种前缀，是因为节点 id 必须能由 key 确定性派生（素材卡 id 就是
+ * `asset-<canvasId>`，与 shot.refIds 里的 token 同源）。多一种前缀就多一处
+ * 「派生规则」与「实际节点 id」对不上的机会。
+ */
+export const CANVAS_KEY_PREFIXES = ['shot:', 'asset:']
+
+/** 单次布局写入的行数上限：>5000 一定是把整块画布当补丁发过来了 */
+export const MAX_CANVAS_ROWS = 5000
+
+export function isCanvasNodeKey(key) {
+  const k = String(key ?? '')
+  return CANVAS_KEY_PREFIXES.some((p) => k.startsWith(p) && k.length > p.length)
+}
+
+/** 校验并规整 key；不合法直接抛错，让外层 400 而不是静默丢一行 */
+export function assertCanvasKey(key, where = 'canvas') {
+  const k = String(key ?? '').trim()
+  if (!isCanvasNodeKey(k)) {
+    throw new Error(`${where} 的 key 无效：${k || '(空)'}（只接受 shot:<shotId> 或 asset:<canvasId>）`)
+  }
+  return k
 }
 
 /**

@@ -27,6 +27,8 @@ export const PROJECT_CASCADE = [
   { table: 'scenes', column: 'project_id', key: 'id' },
   { table: 'episodes', column: 'project_id', key: 'id' },
   { table: 'scene_layouts', column: 'project_id', key: 'id' },
+  // 画布几何：不随项目删除就是永远回收不掉的孤儿行
+  { table: 'canvas_layouts', column: 'project_id', key: 'id' },
   { table: 'stock_imports', column: 'project_id', key: 'id' },
   { table: 'chat_threads', column: 'project', key: 'name' },
   {

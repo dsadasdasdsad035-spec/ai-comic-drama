@@ -117,4 +117,41 @@ check('表演变更使手改快照过期', () => {
   assert.equal(stale.stale, true)
 })
 
+check('refIds 指向不存在的素材卡只报警告不抛错', () => {
+  const schedule = {
+    scene: { w: 10, h: 10 },
+    blocking: { keys: [] },
+    duration: 5,
+    ready: true,
+    status: '生效' as const,
+    reason: '',
+  }
+  const data = {
+    no: 'S01',
+    seconds: 5,
+    size: '中景',
+    move: '固定',
+    dialogue: '',
+    prompt: 'x',
+    marks: [],
+    refImage: '/a.jpg',
+    refIds: ['asset-ghost', 'asset-live'],
+    performance: [{ character: 'A', emotion: 'neutral', intensity: 3, speaks: false }],
+  }
+  const req = buildShotVideoRequest({
+    data: data as never,
+    nodeId: 'n1',
+    nodes: [
+      { id: 'n1', type: 'shot', data, position: { x: 0, y: 0 } } as never,
+      { id: 'asset-live', type: 'asset', data: {}, position: { x: 0, y: 0 } } as never,
+    ],
+    characters: [],
+    schedule,
+  })
+  const issue = req.warnings.find((i) => i.code === 'ref-orphan-asset')
+  assert.ok(issue, '应报 ref-orphan-asset')
+  assert.equal(issue?.level, 'warn')
+  assert.ok(issue?.message.includes('1 条'))
+})
+
 if (process.exitCode !== 1) console.log('\n全部通过')

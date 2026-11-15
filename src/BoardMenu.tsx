@@ -13,6 +13,8 @@ type Props = {
   onGenAll: () => void
   onUnifyTransitions: () => void
   onFit: () => void
+  /** 按分区与栅格重排画布（只改位置，可重复执行） */
+  onTidy: () => void
   onToggleChars: () => void
   onToggleDiag: () => void
   /** 清空画布 = 删除当前集全部镜头（真删，需二次确认） */
@@ -36,6 +38,7 @@ export default function BoardMenu({
   onGenAll,
   onUnifyTransitions,
   onFit,
+  onTidy,
   onToggleChars,
   onToggleDiag,
   onClear,
@@ -111,6 +114,13 @@ export default function BoardMenu({
           </button>
           <button className="bm-item" onClick={act(onFit)}>
             适配视图<span className="bm-hint">Fit</span>
+          </button>
+          <button
+            className="bm-item"
+            onClick={act(onTidy)}
+            title="按分区与栅格重排全部卡片：分镜按镜号、素材向上生长、角色单行；只改位置，可重复执行"
+          >
+            整理画布<span className="bm-hint">Tidy</span>
           </button>
           <button className={`bm-item ${charsOn ? 'on' : ''}`} onClick={act(onToggleChars)}>
             角色上画布

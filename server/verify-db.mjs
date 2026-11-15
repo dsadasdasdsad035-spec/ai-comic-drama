@@ -185,6 +185,114 @@ check('清理后 full 写回的新标记仍保留', dirtyCount() > 0, String(dir
 const afterRestart = db.cleanupLegacyOrphanMarks()
 check('清理不会二次执行', afterRestart === 0 && dirtyCount() > 0, `清理 ${afterRestart} 条`)
 
+// ---- 画布布局持久化 ----
+// 1.1 老库补列：SCHEMA 新增表/列后，已有库启动时应自动补齐
+{
+  const side = new DatabaseSync(db.dbPath(tmp))
+  try {
+    const cols = side.prepare('PRAGMA table_info(assets)').all().map((r) => r.name)
+    check('assets 含 canvas_id 列', cols.includes('canvas_id'), cols.join(','))
+    const tables = side.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name)
+    check('存在 canvas_layouts 表', tables.includes('canvas_layouts'))
+  } finally {
+    side.close()
+  }
+}
+
+// 1.2/1.3 逐行 upsert、按 key 删除、非法 key 报错、未传不清空
+db.createProject(tmp, 'layout', { title: '布局' })
+db.writeProject(tmp, 'layout', {
+  canvas: [
+    { key: 'shot:E01-S02', x: 620, y: 40 },
+    { key: 'shot:E01-S01', x: 60, y: 40 },
+  ],
+})
+const laid = db.readProject(tmp, 'layout').canvas
+check(
+  'canvas 读回按 key 排序且内容一致',
+  JSON.stringify(laid) ===
+    JSON.stringify([
+      { key: 'shot:E01-S01', x: 60, y: 40 },
+      { key: 'shot:E01-S02', x: 620, y: 40 },
+    ]),
+  JSON.stringify(laid),
+)
+db.writeProject(tmp, 'layout', { canvas: [{ key: 'shot:E01-S01', x: 200, y: 90 }] })
+const moved = db.readProject(tmp, 'layout').canvas
+check(
+  '同一 key 再写是覆盖不是新增',
+  moved.length === 2 && moved.find((c) => c.key === 'shot:E01-S01')?.x === 200,
+  JSON.stringify(moved),
+)
+// 未传 canvas 时既有布局必须保留（与其它顶层字段同一合并语义）
+db.writeProject(tmp, 'layout', { style: '极简' })
+check('未传 canvas 不清空既有布局', db.readProject(tmp, 'layout').canvas.length === 2)
+// 同一请求里重复 key 以第一次为准
+db.writeProject(tmp, 'layout', {
+  canvas: [
+    { key: 'asset:dup-1', x: 1, y: 1 },
+    { key: 'asset:dup-1', x: 999, y: 999 },
+  ],
+})
+const dupRow = db.readProject(tmp, 'layout').canvas.find((c) => c.key === 'asset:dup-1')
+check('同请求重复 key 以第一次为准', dupRow?.x === 1, JSON.stringify(dupRow))
+// 删除优先于写入
+db.writeProject(tmp, 'layout', {
+  canvas: [{ key: 'asset:dup-1', x: 5, y: 5 }],
+  canvasDelete: ['asset:dup-1'],
+})
+check('canvasDelete 与写入同 key 时以删除为准', !db.readProject(tmp, 'layout').canvas.some((c) => c.key === 'asset:dup-1'))
+
+let keyErr = ''
+try {
+  db.writeProject(tmp, 'layout', { canvas: [{ key: 'bogus:1', x: 0, y: 0 }] })
+} catch (e) {
+  keyErr = e.message
+}
+check('非法 key 报错', keyErr.includes('shot:'), keyErr)
+
+let numErr = ''
+try {
+  db.writeProject(tmp, 'layout', { canvas: [{ key: 'shot:E01-S09', x: Number.NaN, y: 0 }] })
+} catch (e) {
+  numErr = e.message
+}
+check('非有限坐标报错', numErr.includes('有限数'), numErr)
+check('isCanvasNodeKey 只认两种前缀', db.isCanvasNodeKey('shot:E01-S01') && db.isCanvasNodeKey('asset:abc') && !db.isCanvasNodeKey('asset:'))
+
+// 2.1 整表替换时不带 canvasId 的卡沿用旧身份
+db.writeProject(tmp, 'layout', {
+  assets: [
+    { kind: 'image', title: '雨夜巷口', url: '/generated/a.jpg', canvasId: 'cid-keep' },
+    { kind: 'prop', title: '旧伞', url: '/generated/b.jpg', canvasId: 'cid-prop' },
+  ],
+})
+const withCanvasId = db.readProject(tmp, 'layout').assets
+check('assets 读回 canvasId', withCanvasId.map((a) => a.canvasId).join(',') === 'cid-keep,cid-prop', JSON.stringify(withCanvasId))
+// 第二次落库不带 canvasId（模拟某条通道漏传）
+db.writeProject(tmp, 'layout', {
+  assets: [
+    { kind: 'image', title: '雨夜巷口', url: '/generated/a2.jpg' },
+    { kind: 'prop', title: '旧伞', url: '/generated/b.jpg' },
+  ],
+})
+const keptId = db.readProject(tmp, 'layout').assets
+check(
+  '不带 canvasId 的整表替换沿用旧身份',
+  keptId.map((a) => a.canvasId).join(',') === 'cid-keep,cid-prop',
+  JSON.stringify(keptId),
+)
+check('沿用身份时内容仍按新值写入', keptId[0].url === '/generated/a2.jpg', keptId[0].url)
+// designId 优先于标题：改名不改变身份
+db.writeProject(tmp, 'layout', {
+  assets: [{ kind: 'scene', title: '改名后的场景', url: '/generated/c.jpg', designId: 'd-1', canvasId: 'cid-design' }],
+})
+db.writeProject(tmp, 'layout', {
+  assets: [{ kind: 'scene', title: '再改一次', url: '/generated/c.jpg', designId: 'd-1' }],
+})
+const byDesign = db.readProject(tmp, 'layout').assets.find((a) => a.designId === 'd-1')
+check('改标题后按 designId 保住身份', byDesign?.canvasId === 'cid-design', JSON.stringify(byDesign))
+
 console.log(`\nDB 文件: ${db.dbPath(tmp)}`)
 if (bad) {
   console.log(`❌ ${bad} 项失败`)

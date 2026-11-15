@@ -60,6 +60,8 @@ function seedProject(name, { shots = 2 } = {}) {
       { id: `${name}-l1`, episode: 1, sceneNo: 1, w: 6, h: 4, source: 'manual', objects: [] },
     ],
     assets: [{ kind: 'image', title: '参考图', url: `/project-assets/${name}/ref.png` }],
+    // 画布几何：删除项目时必须随级联一起清掉，否则留下永远回收不掉的孤儿行
+    canvas: [{ key: `shot:${name}-s1`, x: 60, y: 40 }],
   })
   dbm.upsertStockImport(TMP, name, {
     provider: 'pexels',
@@ -97,7 +99,7 @@ function rowsOf(name) {
 
 const PROJECT_TABLES = [
   'shots', 'characters', 'assets', 'designs', 'scenes', 'episodes',
-  'scene_layouts', 'stock_imports', 'chat_threads',
+  'scene_layouts', 'canvas_layouts', 'stock_imports', 'chat_threads',
 ]
 
 function writeMedia(name) {
@@ -173,7 +175,7 @@ const keepRows = rowsOf('keep')
 check(
   '其他项目数据不受影响',
   keepRows.project === true &&
-    ['characters', 'assets', 'designs', 'scenes', 'episodes', 'scene_layouts', 'stock_imports', 'chat_threads'].every(
+    ['characters', 'assets', 'designs', 'scenes', 'episodes', 'scene_layouts', 'canvas_layouts', 'stock_imports', 'chat_threads'].every(
       (t) => keepRows[t] === 1,
     ) &&
     keepRows.shots === 2,
@@ -412,6 +414,29 @@ try {
     body: JSON.stringify({}),
   })
   check('API 同名新建被拒', dup.json?.ok === false && /已存在/.test(dup.json?.message || ''))
+
+  // 画布几何：合法写入可读回、未传不清空、非法 key 走 400
+  const postJson = (body) =>
+    api('/api/project?name=api-fresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  const wroteCanvas = await postJson({ canvas: [{ key: 'shot:E01-S01', x: 120, y: 30 }] })
+  check('API 写画布布局 200', wroteCanvas.status === 200, `status=${wroteCanvas.status}`)
+  const backCanvas = (await api('/api/project?name=api-fresh')).json?.project?.canvas
+  check(
+    'API 读回画布布局',
+    JSON.stringify(backCanvas) === JSON.stringify([{ key: 'shot:E01-S01', x: 120, y: 30 }]),
+    JSON.stringify(backCanvas),
+  )
+  await postJson({ style: '水墨' })
+  const stillThere = (await api('/api/project?name=api-fresh')).json?.project?.canvas
+  check('API 未传 canvas 不清空布局', stillThere?.length === 1, JSON.stringify(stillThere))
+  const badCanvas = await postJson({ canvas: [{ key: 'bogus:1', x: 0, y: 0 }] })
+  check('API 非法画布 key 400', badCanvas.status === 400, `status=${badCanvas.status}`)
+  const badCoord = await postJson({ canvas: [{ key: 'shot:E01-S01', x: '左', y: 0 }] })
+  check('API 非数字坐标 400', badCoord.status === 400, `status=${badCoord.status}`)
 
   // ---------------------------------------------------------------- 3. 界面
 

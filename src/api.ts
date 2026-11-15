@@ -754,6 +754,12 @@ export type ProjectAsset = {
   designId?: string
   /** expression-sheet 素材归属的角色名；普通素材为空 */
   characterName?: string
+  /**
+   * 画布身份（稳定 UUID）。画布节点 id 由它派生（`asset-<canvasId>`），
+   * `shot.refIds` 里的 `asset-<canvasId>` 也指向它；标题改名不会改变它。
+   * 首次进画布时生成一次并随素材卡落库；旧数据为空时由前端补写。
+   */
+  canvasId?: string
 }
 
 export type DesignKind = 'scene' | 'prop'
@@ -774,6 +780,12 @@ export type DesignSheet = {
   activeIdx?: number
 }
 
+/**
+ * 画布节点几何（服务端 `canvas_layouts` 的一行）。
+ * key 只有两种形态：`shot:<shotId>` / `asset:<canvasId>`。
+ */
+export type ProjectCanvasSpot = { key: string; x: number; y: number }
+
 export type ProjectData = {
   name?: string
   logline?: string
@@ -784,6 +796,8 @@ export type ProjectData = {
   characters?: unknown[]
   /** 素材库：场景 / 道具 / 参考图（画布素材卡的数据源） */
   assets?: ProjectAsset[]
+  /** 画布节点位置：随项目落库，本地只剩边与集号缓存 */
+  canvas?: ProjectCanvasSpot[]
   /** 场景/道具设定卡：发布前的工作区，不随 assets 整表回写 */
   designs?: DesignSheet[]
   /** 素材·镜头语言：项目级自定义白模（Blender 代码 + 渲染 MP4） */
@@ -903,6 +917,10 @@ export type ProjectPatch = {
   deleteShotIds?: string[]
   characters?: unknown[]
   assets?: ProjectAsset[]
+  /** 逐行写入画布位置（按 key upsert）；不传即保留既有布局 */
+  canvas?: ProjectCanvasSpot[]
+  /** 按 key 删除画布位置（删素材卡时用）；与 canvas 同 key 时以删除为准 */
+  canvasDelete?: string[]
   designs?: DesignSheet[]
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   episodes?: unknown[]
