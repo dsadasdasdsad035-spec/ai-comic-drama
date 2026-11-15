@@ -2685,8 +2685,13 @@ function Shell() {
   )
 
   /**
-   * 素材卡写回后同步画布：按「标题 + 类型」对齐既有节点，保留位置与连线；
-   * 新卡放进分镜上方的素材带，不改动名字对不上的卡。
+   * 素材卡写回后同步画布：先按 `canvasId`（真实身份）对齐，其次才按「标题 + 类型」；
+   * 全新卡片沿用载荷里的 `canvasId`，绝不另生成一个。
+   *
+   * 为什么身份优先：节点 id 是 `shot.refIds` 里 `asset-<canvasId>` 的锚点。
+   * 只按标题匹配时，同一张卡在素材页改个名字就会被当成新卡、换一个 uid，
+   * 之前连到分镜的参考连线会当场消失；带 `canvasId` 的卡若在画布上不存在，
+   * 也必须用这个 id 建节点，否则 agent 刚写下的 refIds 同样接不上。
    */
   const syncAssetCards = useCallback(
     (next: ProjectAsset[]) => {
@@ -2694,32 +2699,47 @@ function Shell() {
       const keyOf = (title: string, kind: string) => `${kind}::${title}`
       setNodes((prev) => {
         const out = [...prev]
-        const index = new Map<string, number>()
+        const byTitle = new Map<string, number>()
+        const byCanvasId = new Map<string, number>()
         out.forEach((n, i) => {
           if ((n as unknown as AssetNodeType).type !== 'asset') return
           const d = n.data as unknown as { title?: string; kind?: string }
-          if (d.title) index.set(keyOf(d.title, String(d.kind ?? 'image')), i)
+          if (d.title) byTitle.set(keyOf(d.title, String(d.kind ?? 'image')), i)
+          const cid = canvasIdFromNodeId(n.id)
+          if (cid) byCanvasId.set(cid, i)
         })
         for (const asset of next) {
           const kind = String(asset.kind ?? 'image')
-          const at = index.get(keyOf(asset.title, kind))
+          const canvasId = String(asset.canvasId ?? '').trim()
+          const at = (canvasId ? byCanvasId.get(canvasId) : undefined) ?? byTitle.get(keyOf(asset.title, kind))
+          const fields = {
+            title: asset.title,
+            kind,
+            url: asset.url,
+            ...(asset.designId ? { designId: asset.designId } : {}),
+            ...(asset.characterName ? { characterName: asset.characterName } : {}),
+          }
           if (at !== undefined) {
             const node = out[at]
-            out[at] = {
-              ...node,
-              data: { ...node.data, title: asset.title, kind, url: asset.url },
-            } as unknown as ShotNodeType
+            // 只用载荷覆盖内容，节点 id 不动：改 id 等于把画布上的连线全部拆掉
+            out[at] = { ...node, data: { ...node.data, ...fields } } as unknown as ShotNodeType
+            if (canvasId && !byCanvasId.has(canvasId)) byCanvasId.set(canvasId, at)
+            byTitle.set(keyOf(asset.title, kind), at)
             continue
           }
-          out.push(
-            newAssetCard(out, {
-              title: asset.title,
-              kind,
-              url: asset.url,
-              ...(asset.designId ? { designId: asset.designId } : {}),
-              ...(asset.characterName ? { characterName: asset.characterName } : {}),
-            }),
-          )
+          if (canvasId) {
+            // 新卡但身份已存在：用载荷的 canvasId 建节点，refIds 才不会指向空节点
+            out.push({
+              id: assetNodeId(canvasId),
+              type: 'asset',
+              position: placeNewNode('asset', assetRectsOf(out)),
+              data: fields,
+            } as unknown as ShotNodeType)
+            byCanvasId.set(canvasId, out.length - 1)
+          } else {
+            out.push(newAssetCard(out, fields))
+          }
+          byTitle.set(keyOf(asset.title, kind), out.length - 1)
         }
         return out
       })

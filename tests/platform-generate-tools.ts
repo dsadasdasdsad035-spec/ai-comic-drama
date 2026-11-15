@@ -250,7 +250,10 @@ async function main() {
       assert.equal(body.image, undefined, '有参考图时不再退回首帧模式')
       assert.equal(body.seconds, 5)
       assert.equal(body.ratio, '9:16')
-      assert.equal(body.prompt, '镜头缓慢推进', '正文走统一拼装，取 video_prompt')
+      // 正文以 video_prompt 为底，再追加运镜/参考图槽位/约束等指令块
+      assert.ok(body.prompt.startsWith('镜头缓慢推进'), '正文以 video_prompt 开头')
+      assert.ok(body.prompt.includes('参考图：[图1]=角色「阿岚」外观'), '参考图槽位要写进正文，模型才知道图序')
+      assert.ok(body.prompt.includes('【约束】'), '约束块随正文提交')
     } finally {
       restore()
     }
