@@ -161,9 +161,15 @@ export function collectShotReferences(input: {
   nodes: ShotNodeType[]
   characters: CharacterSheet[]
   missingMedia?: Set<string>
+  /**
+   * 严格模式：显式连上的角色/素材解析不出来时记进 missing，交给调用方报错。
+   * 画布不传（保持「能出图就出图」），Agent 出图必须传（宁可报错也不出没参考的图）。
+   */
+  strict?: boolean
 }): ReferenceCollection {
   const data = input.node.data
   const refIds = data.refIds ?? []
+  const strict = Boolean(input.strict)
   const { prev, next } = neighborShots(input.node, input.nodes)
   const refs: ResolvedShotReference[] = []
   const seen = new Set<string>()
@@ -209,7 +215,18 @@ export function collectShotReferences(input: {
       : fallbackCast.map((name) => ({ token: `cast:${name}`, key: name }))
     for (const item of wanted) {
       const card = input.characters.find((c) => c.id === item.key || c.name === item.key)
-      if (!card?.image) continue
+      if (!card) {
+        if (strict && item.token.startsWith('char-')) {
+          addMissing(missing, item.token, `角色「${item.key}」`, '角色已不在角色库')
+        }
+        continue
+      }
+      if (!card.image) {
+        if (strict && item.token.startsWith('char-')) {
+          addMissing(missing, item.token, `角色「${card.name}」`, '还没有三视图')
+        }
+        continue
+      }
       if (missingMedia.has(card.image)) {
         addMissing(missing, item.token, `角色「${card.name}」`, '三视图文件缺失')
         continue
@@ -249,8 +266,23 @@ export function collectShotReferences(input: {
     if (!rid.startsWith('asset-')) continue
     const asset = input.nodes.find((n) => n.id === rid)
     const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
-    if (!d || d.kind === 'expression-sheet' || !d.url) continue
-    if (assetMediaType((d.kind || 'image') as never, d.url) !== 'image') continue
+    if (!d) {
+      if (strict) addMissing(missing, rid, '素材卡', '不在画布上，请重新连线或改用角色/相邻镜参考')
+      continue
+    }
+    const label = `素材「${d.title || rid}」`
+    if (d.kind === 'expression-sheet') {
+      if (strict) addMissing(missing, rid, label, '表情总图不参与图片参考')
+      continue
+    }
+    if (!d.url) {
+      if (strict) addMissing(missing, rid, label, '还没有图片')
+      continue
+    }
+    if (assetMediaType((d.kind || 'image') as never, d.url) !== 'image') {
+      if (strict) addMissing(missing, rid, label, '不是图片，不能作图片参考')
+      continue
+    }
     if (missingMedia.has(d.url)) {
       addMissing(missing, rid, `素材「${d.title || rid}」`, '素材图片文件缺失')
       continue

@@ -27,11 +27,24 @@ import { dialogueToText, parseDialogue } from '../prompts'
 import { voiceFingerprint } from '../performance'
 import { createStageToolSet, createPiNativeToolSet, type StageToolSet } from './stageTools'
 import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
+import { readCharacters, type ProjectChar } from '../charMap'
 import { createMaterialTools } from './materialTools'
 import { defineTool, type ToolDef } from './tool'
+import { collectShotReferences, limitReferences } from '../shotReferences'
+import {
+  buildShotVideoRequest,
+  effectiveVideoPrompt,
+  videoOmitToastMessages,
+  type VideoModelInput,
+} from '../videoPrompt'
+import { buildShotNodes } from '../canvasShots'
+import type { ShotNodeType } from '../data'
 
 /** 新建项目目录名规则，与新建项目对话框一致 */
 const PROJECT_NAME_RE = /^[a-zA-Z0-9_-]{1,40}$/
+
+/** Seedream 多参考图上限，与画布「参考图超过 10 张」提示共用同一个数 */
+const MAX_REFERENCE_IMAGES = 10
 
 /** 破坏性动作的确认请求；宿主决定怎么问，工具只管要不要 */
 export type BuiltinConfirmRequest = {
@@ -72,7 +85,7 @@ export type BuiltinPlatformCtx = {
    * 角色图片类变更：立即落库并同步界面状态。
    * 不走角色整表草稿的防抖合并——`mergeCharacters` 有意保留旧图片，用它写图会被静默丢弃。
    */
-  commitCharacters?: (next: CharacterSheet[]) => void | Promise<void>
+  commitCharacters?: (next: ProjectChar[]) => void | Promise<void>
   /** 表情总图八格裁剪；默认走浏览器 canvas 实现，测试可注入桩 */
   cropSheet?: (sheet: CharacterExpressionSheet, project: string) => Promise<{ sheet: CharacterExpressionSheet; errors: string[] }>
   /**
@@ -80,6 +93,19 @@ export type BuiltinPlatformCtx = {
    * 只写 project.assets 不行：画布已有节点时不会再从 assets 重建，用户会看到「提交成功但画布上没有卡」。
    */
   onAssetsWritten?: (assets: ProjectAsset[]) => void | Promise<void>
+  /**
+   * 画布生成上下文：参考连线解析要节点、角色表与坏链集合。
+   * 缺省时退化成「用项目快照重建节点」，素材卡 token 会解析不到（strict 下报错而不是静默丢参考）。
+   */
+  getCanvasContext?: () => {
+    nodes: ShotNodeType[]
+    characters: CharacterSheet[]
+    missingMedia: Set<string>
+  }
+  /** 画布当前选中的视频模型；出片沿用同一个渠道，否则两条路径会落到不同模型 */
+  getSelectedVideoModel?: () => VideoModelInput | null
+  /** 画布当前出片分辨率 */
+  getVideoResolution?: () => string
 }
 
 function resolveEpNo(input: BuiltinPlatformCtx): number {
@@ -124,6 +150,33 @@ async function ensureProjectLoaded(input: BuiltinPlatformCtx): Promise<ProjectDa
   const data = await getProject(name)
   input.setSnapshot?.(data)
   return data
+}
+
+/**
+ * 参考解析上下文：优先宿主当前画布，否则用项目快照重建镜头节点。
+ *
+ * 重建只覆盖镜头；素材卡节点 id 是运行时生成的，快照里没有，所以无画布时
+ * `asset-` token 必然解析不到——交给 strict 报错，而不是静默少送一张图。
+ */
+function generationContext(
+  input: BuiltinPlatformCtx,
+  project: ProjectData,
+): { nodes: ShotNodeType[]; characters: CharacterSheet[]; missingMedia: Set<string> } {
+  const host = input.getCanvasContext?.()
+  const base = host?.nodes ?? []
+  // buildShotNodes 会复用已有节点（保留位置与手改数据），并为缺画面的镜头补一张，
+  // 这样 Agent 处理非当前集的镜头时也能拿到邻居关系。
+  const shotNodes = buildShotNodes(base, project.shots ?? [])
+  const others = base.filter((n) => !String((n.data as unknown as { shotId?: string })?.shotId ?? ''))
+  return {
+    nodes: [...shotNodes, ...others],
+    characters: host?.characters ?? readCharacters(project.characters),
+    missingMedia: host?.missingMedia ?? new Set<string>(),
+  }
+}
+
+function shotNodeOf(nodes: ShotNodeType[], shot: ProjectShot): ShotNodeType | undefined {
+  return nodes.find((n) => String(n.data?.shotId ?? '') === shot.id)
 }
 
 function createReadAdapter(input: BuiltinPlatformCtx): WorkbenchChatAdapter {
@@ -532,17 +585,51 @@ function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
           error: `镜 ${shot.no} 还没有首帧提示词。下一步：先用 submit_shots 写入 keyframe_prompt 或 desc，再出图。`,
         }
       }
+      // 参考解析放在成本确认之前：注定出一张没参考的图，就不该先问用户花不花这笔钱
+      const ctx = generationContext(input, project)
+      const node = shotNodeOf(ctx.nodes, shot)
+      if (!node) {
+        return { ok: false, error: `镜 ${shot.no} 不在画布上，无法解析参考连线。下一步：刷新画布后重试` }
+      }
+      const collected = collectShotReferences({
+        node,
+        nodes: ctx.nodes,
+        characters: ctx.characters,
+        missingMedia: ctx.missingMedia,
+        strict: true,
+      })
+      if (collected.missing.length) {
+        const first = collected.missing[0]
+        return {
+          ok: false,
+          error: `${first.label}：${first.reason}。下一步：补上参考素材后重试，或在画布删除这条参考连线`,
+        }
+      }
+      // 与画布同构：不占「当前镜预览」位，全部额度留给连线参考（Seedream 上限 10 张）
+      const limited = limitReferences(collected.refs, MAX_REFERENCE_IMAGES)
+      const refUrls = limited.used.map((r) => r.url)
+      const refLabels = limited.used.map((r, i) => `图${i + 1}=${r.label}`)
+      const finalPrompt = refLabels.length
+        ? `${text}\n\n参考图说明：${refLabels.join('，')}。对应主体必须与参考图保持一致。`
+        : text
+      const omittedNotes = limited.omitted.map((r) => r.label)
       const ratio = String(project.aspect || '').trim() || '16:9'
       const gate = await requireCost(input, {
         action: 'generate_keyframe',
         title: '生成首帧',
-        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}，画幅 ${ratio}（单张）`,
-        payload: { project: name, episode: ep, no: shot.no, ratio },
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}，画幅 ${ratio}（单张）· 参考图 ${refUrls.length} 张`,
+        payload: { project: name, episode: ep, no: shot.no, ratio, refs: refUrls.length },
       })
       if (!gate.ok) return gate
       let urls: string[] = []
       try {
-        const res = await generateImage({ prompt: text, ratio, n: 1, project: name })
+        const res = await generateImage({
+          prompt: finalPrompt,
+          ratio,
+          n: 1,
+          project: name,
+          ...(refUrls.length ? { refImages: refUrls } : {}),
+        })
         urls = (res.urls?.length ? res.urls : [res.url]).filter(Boolean)
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || String(e) }
@@ -556,10 +643,12 @@ function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
       if (!written.ok) return written
       return {
         ok: true,
-        summary: `镜 ${shot.no} 已出首帧并写回`,
+        summary: `镜 ${shot.no} 已出首帧并写回${refUrls.length ? `（参考 ${refUrls.length} 张）` : ''}`,
         no: shot.no,
         keyframe: primary,
         candidates,
+        refs: refUrls.length,
+        ...(omittedNotes.length ? { omitted: omittedNotes } : {}),
       }
     },
   })
@@ -606,21 +695,70 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
         }
       }
       const ratio = String(project.aspect || '').trim() || '16:9'
-      const seconds = Math.max(1, Number(shot.seconds) || 5)
-      const image = String(shot.keyframe ?? '').trim()
+      const ctx = generationContext(input, project)
+      const node = shotNodeOf(ctx.nodes, shot)
+      if (!node) {
+        return { ok: false, error: `镜 ${shot.no} 不在画布上，无法解析参考连线。下一步：刷新画布后重试` }
+      }
+      // 与画布出片同一个拼装入口：参考图/参考视频/音频/首帧/正文全部由它决定
+      const videoModel = input.getSelectedVideoModel?.() ?? null
+      const request = buildShotVideoRequest({
+        data: node.data,
+        nodeId: node.id,
+        nodes: ctx.nodes,
+        characters: ctx.characters,
+        missingMedia: ctx.missingMedia,
+        model: videoModel,
+        resolution: input.getVideoResolution?.() ?? '',
+      })
+      const blocked = request.blocking[0]
+      if (blocked) return { ok: false, error: `${blocked.message}（镜 ${shot.no}）` }
+      const effective = effectiveVideoPrompt(request, node.data.videoPromptOverride)
+      const seconds = request.seconds || Math.max(1, Number(shot.seconds) || 5)
+      const imageUrls = request.refs.map((r) => r.url)
+      const resolution = request.resolution === '480p' || request.resolution === '720p' ? request.resolution : undefined
+      const modelKey = videoModel?.key || ''
+      const omitted = videoOmitToastMessages(request)
       const gate = await requireCost(input, {
         action: 'generate_clip',
         title: '提交出片任务',
-        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}，${seconds}s，画幅 ${ratio}${image ? '' : '（无首帧，按参考图模式提交）'}`,
-        payload: { project: name, episode: ep, no: shot.no, seconds, ratio },
+        detail:
+          `项目「${name}」第 ${ep} 集 镜 ${shot.no}，${seconds}s，画幅 ${ratio}` +
+          `，参考图 ${imageUrls.length} 张${request.video ? '，参考视频 1 条' : ''}` +
+          `${request.mode === 'native' ? '，原生音频' : ''}`,
+        payload: {
+          project: name,
+          episode: ep,
+          no: shot.no,
+          seconds,
+          ratio,
+          mode: request.mode,
+          refs: imageUrls.length,
+        },
       })
       if (!gate.ok) return gate
       try {
         const submitted = await startVideo({
-          prompt: text,
+          ...(request.mode === 'native'
+            ? {
+                refImages: imageUrls,
+                generateAudio: true,
+                ...(request.audio ? { audioRef: request.audio.url } : {}),
+              }
+            : request.video
+              ? {
+                  refVideos: [request.video.url],
+                  ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
+                }
+              : imageUrls.length > 0
+                ? { refImages: imageUrls }
+                : { image: request.firstFrame?.url || '' }),
+          prompt: effective.text,
           seconds,
           ratio,
-          ...(image ? { image } : {}),
+          ...(resolution ? { resolution } : {}),
+          ...(request.video || request.mode === 'native' ? {} : { cameraFixed: node.data.move === '固定' }),
+          ...(modelKey ? { modelKey } : {}),
         })
         return {
           ok: true,
@@ -628,6 +766,7 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
           no: shot.no,
           jobId: submitted.id,
           ...(submitted.mode ? { mode: submitted.mode } : {}),
+          ...(omitted.length ? { omitted } : {}),
         }
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || String(e) }
@@ -667,11 +806,9 @@ function createGenerateVoiceTool(input: BuiltinPlatformCtx): ToolDef {
       const lines = parseDialogue(spoken)
       const speaker = String(lines[0]?.speaker ?? '').trim()
       const char = speaker
-        ? (project.characters || []).find(
-            (c) => String((c as { name?: unknown }).name ?? '') === speaker,
-          )
+        ? readCharacters(project.characters).find((c) => c.name === speaker)
         : undefined
-      const voiceId = String((char as { voiceId?: string } | undefined)?.voiceId ?? '').trim()
+      const voiceId = String(char?.voiceId ?? '').trim()
       const gate = await requireCost(input, {
         action: 'generate_voice',
         title: '生成台词配音',

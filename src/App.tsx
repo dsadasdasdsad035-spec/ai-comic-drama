@@ -144,7 +144,7 @@ import {
   isShotCanvasNode,
   repairTransitionEdges,
 } from './canvasShots'
-import { toProject, toSheet, type ProjectChar } from './charMap'
+import { readCharacters, toProject } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 import { ensureSkillsMigrated } from './skills/migrate'
 import { buildEditList, transitionFor } from './editList'
@@ -837,7 +837,7 @@ function Shell() {
               position: { x: 120 + (i % 3) * 240, y: 220 + Math.floor(i / 3) * 160 },
               data: { title: a.title, kind: a.kind, url: a.url, ...(a.designId ? { designId: a.designId } : {}) },
             })) as unknown as ShotNodeType[])
-        const sheets = ((p.characters ?? []) as ProjectChar[]).map(toSheet)
+        const sheets = readCharacters(p.characters)
         const epSet = new Set<number>()
         for (const e of p.episodes ?? []) epSet.add(Number(e.no) || 1)
         for (const s of shots) epSet.add(Number(s.episode) || 1)
@@ -3660,12 +3660,21 @@ function Shell() {
                   })
                   .filter((a) => a.title !== '' && a.url !== ''),
               commitCharacters: (next) => {
-                const list = next as CharacterSheet[]
+                // 落库通道统一收接口形状（蛇形），这里转成界面模型交给 React 状态
+                const list = readCharacters(next)
                 charactersRef.current = list
                 setCharacters(list)
                 return saveCharactersNow(list)
               },
               onAssetsWritten: (next) => syncAssetCards(next as ProjectAsset[]),
+              // 参考连线解析：Agent 出图/出片要和画布按钮走同一套解析，就得拿到同一份画布状态
+              getCanvasContext: () => ({
+                nodes: nodesRef.current,
+                characters: charactersRef.current,
+                missingMedia,
+              }),
+              getSelectedVideoModel: () => selectedVideoModel,
+              getVideoResolution: () => vidRes,
             }}
           />
         ) : view === 'account' ? (

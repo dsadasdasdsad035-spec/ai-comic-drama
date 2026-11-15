@@ -57,7 +57,7 @@ function shots(): ProjectShot[] {
       keyframe_prompt: '雨夜街口，霓虹反射',
       video_prompt: '镜头缓慢推进',
       keyframe: '/old/s01.jpg',
-      refIds: ['char-lan'],
+      refIds: ['char-阿岚'],
       dialogue: '阿岚：别回头。',
     } as unknown as ProjectShot,
     {
@@ -80,7 +80,9 @@ function project(): ProjectData {
     aspect: '9:16',
     style: '赛博',
     shots: shots(),
-    characters: [{ id: 'char-lan', name: '阿岚', voiceId: 'voice-lan' }],
+    characters: [
+      { id: 'char-lan', name: '阿岚', image: '/project-assets/demo/lan.png', voiceId: 'voice-lan' },
+    ],
     designs: [],
     assets: [],
     episodes: [],
@@ -153,13 +155,63 @@ async function main() {
       const s01 = box.snap.shots.find((s) => s.id === 'E01-S01')!
       assert.equal(s01.keyframe, '/project-assets/demo/s01-new.jpg')
       assert.deepEqual(s01.candidates, ['/project-assets/demo/s01-new.jpg'])
-      assert.deepEqual(s01.refIds, ['char-lan'], '生成不得改参考连线')
+      assert.deepEqual(s01.refIds, ['char-阿岚'], '生成不得改参考连线')
       assert.equal(box.snap.designs.length, 0, '生成不得创建素材卡')
       const gen = calls.find((c) => c.url.includes('/api/seedream'))
       assert.ok(gen, '应真的调用生图接口')
       const body = JSON.parse(String(gen?.init?.body))
       assert.equal(body.ratio, '9:16', '画幅取项目设置')
-      assert.equal(body.prompt, '雨夜街口，霓虹反射', '默认用该镜的首帧提示词')
+      assert.ok(String(body.prompt).startsWith('雨夜街口，霓虹反射'), '默认用该镜的首帧提示词')
+      assert.deepEqual(body.refImages, ['/project-assets/demo/lan.png'], '角色连线必须作为参考图送出')
+      assert.ok(String(body.prompt).includes('参考图说明'), '参考图要有用途说明')
+      assert.ok(String(body.prompt).includes('阿岚'), '说明要标出对应主体')
+    } finally {
+      restore()
+    }
+  })
+
+  await check('角色没有三视图时拒绝出图且零消耗', async () => {
+    const { calls, restore } = stubFetch(() => ({ ok: true, urls: ['/x.jpg'] }))
+    let costAsked = 0
+    try {
+      let snap = project()
+      snap.characters = [{ id: 'char-lan', name: '阿岚' }] as unknown as ProjectData['characters']
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示项目',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        askCost: async () => {
+          costAsked++
+          return true
+        },
+      })
+      const r = await toolOf(tools, 'generate_keyframe').invoke({ no: 'S01' })
+      assert.equal(r.ok, false)
+      assert.ok(String(r.error).includes('三视图'), String(r.error))
+      assert.equal(calls.length, 0, '解析失败时不该发任何请求')
+      assert.equal(costAsked, 0, '解析失败时不该先问成本')
+    } finally {
+      restore()
+    }
+  })
+
+  await check('素材卡不在画布上时报错而不是静默少送', async () => {
+    const { calls, restore } = stubFetch(() => ({ ok: true, urls: ['/x.jpg'] }))
+    try {
+      let snap = project()
+      snap.shots[0] = { ...snap.shots[0], refIds: ['asset-not-on-canvas'] }
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示项目',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        askCost: async () => true,
+      })
+      const r = await toolOf(tools, 'generate_keyframe').invoke({ no: 'S01' })
+      assert.equal(r.ok, false)
+      assert.ok(String(r.error).includes('画布'), String(r.error))
+      assert.equal(calls.length, 0)
     } finally {
       restore()
     }
@@ -194,9 +246,56 @@ async function main() {
       assert.equal(s01.clip, undefined, '受理阶段不得写成片')
       assert.equal(calls.filter((c) => c.url.includes('/api/project')).length, 0)
       const body = JSON.parse(String(calls.find((c) => c.url.includes('/api/seedance'))?.init?.body))
-      assert.equal(body.image, '/old/s01.jpg', '有首帧就按首帧出片')
+      assert.deepEqual(body.refImages, ['/project-assets/demo/lan.png'], '角色连线必须作为参考图送出')
+      assert.equal(body.image, undefined, '有参考图时不再退回首帧模式')
       assert.equal(body.seconds, 5)
       assert.equal(body.ratio, '9:16')
+      assert.equal(body.prompt, '镜头缓慢推进', '正文走统一拼装，取 video_prompt')
+    } finally {
+      restore()
+    }
+  })
+
+  await check('相邻镜连线进入出片参考图', async () => {
+    const { calls, restore } = stubFetch((url) => {
+      if (url.includes('/api/seedance')) return { ok: true, id: 'job-prev' }
+      return { ok: true }
+    })
+    try {
+      let snap = project()
+      snap.shots[1] = { ...snap.shots[1], refIds: ['shot-prev'] }
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示项目',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        askCost: async () => true,
+      })
+      const r = await toolOf(tools, 'generate_clip').invoke({ no: 'S02' })
+      assert.equal(r.ok, true, String(r.error ?? ''))
+      const body = JSON.parse(String(calls.find((c) => c.url.includes('/api/seedance'))?.init?.body))
+      assert.deepEqual(body.refImages, ['/old/s01.jpg'], '上镜首帧要作为连贯参考送出')
+    } finally {
+      restore()
+    }
+  })
+
+  await check('没有参考也没有首帧时出片被阻塞且不提交', async () => {
+    const { calls, restore } = stubFetch(() => ({ ok: true, id: 'job-x' }))
+    try {
+      let snap = project()
+      snap.shots[1] = { ...snap.shots[1], keyframe: undefined, refIds: [] }
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示项目',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        askCost: async () => true,
+      })
+      const r = await toolOf(tools, 'generate_clip').invoke({ no: 'S02' })
+      assert.equal(r.ok, false)
+      assert.ok(String(r.error).includes('连线'), String(r.error))
+      assert.equal(calls.length, 0, '阻塞时不该提交出片')
     } finally {
       restore()
     }

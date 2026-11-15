@@ -23,8 +23,12 @@ import { ChatStep } from '@/chat-ui/ChatStep'
 import { CreativeToolUis } from './CreativeToolUis'
 import { useAgentMessages } from '../agent/useAgentMessages'
 import { createBuiltinPlatformTools, mergeBuiltinWithSkillTools } from '../agent/builtinPlatformTools'
+import type { ShotNodeType } from '../data'
+import type { CharacterSheet } from '../characters'
+import type { VideoModelInput } from '../videoPrompt'
 import { bindSkillTools, createPiNativeToolSet, type SkippedSkillTool } from '../agent/stageTools'
 import { runStageAgent } from '../agent/pi/stageRunner'
+import { resolveAgentLimits } from '../agent/agentLimits'
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import { CreativeSessionList } from './CreativeSessionList'
 import { CreativeHeader } from './CreativeHeader'
@@ -206,6 +210,17 @@ export type CreativeStudioProps = {
     getCanvasAssets?: () => { id: string; title: string; url: string }[]
     commitCharacters?: (next: unknown[]) => void | Promise<void>
     onAssetsWritten?: (assets: unknown[]) => void | Promise<void>
+    /**
+     * 参考连线解析所需的画布状态。缺省时工具用项目快照重建镜头节点，
+     * 素材卡 token 会解析不到（strict 下报错而不是静默丢掉参考）。
+     */
+    getCanvasContext?: () => {
+      nodes: ShotNodeType[]
+      characters: CharacterSheet[]
+      missingMedia: Set<string>
+    }
+    getSelectedVideoModel?: () => VideoModelInput | null
+    getVideoResolution?: () => string
   }
 }
 
@@ -620,6 +635,9 @@ export default function CreativeStudio({
       getCanvasAssets: materialHost?.getCanvasAssets,
       commitCharacters: materialHost?.commitCharacters,
       onAssetsWritten: materialHost?.onAssetsWritten,
+      getCanvasContext: materialHost?.getCanvasContext,
+      getSelectedVideoModel: materialHost?.getSelectedVideoModel,
+      getVideoResolution: materialHost?.getVideoResolution,
     })
     const listExpertsTool = PI_NATIVE_TOOLS.byName.get('list_experts')
     let tools: ToolDef[]
@@ -649,6 +667,8 @@ export default function CreativeStudio({
         sessionId: session.id,
         modelKey,
         stage: 'creative',
+        // 总时长是唯一的产品预算：取设置页「Agent 运行上限」，缺省 300 秒。
+        totalMs: resolveAgentLimits(settings).totalMs,
         signal: controller.signal,
         onEvent: updateEvent,
       })
