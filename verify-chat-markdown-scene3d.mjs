@@ -26,7 +26,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-md-3d-'))
 const PROJECTS = path.join(TMP, 'projects')
 const NAME = `md-3d-${Date.now()}`
 const SHEET_ID = 'wb-regression'
-const EVIDENCE = path.join(ROOT, 'openspec/changes/chat-markdown-render/evidence')
+const EVIDENCE = path.join(ROOT, 'openspec/changes/archive/2026-11-15-chat-markdown-render/evidence')
 
 let bad = 0
 const check = (name, cond, extra = '') => {
@@ -166,7 +166,7 @@ try {
   check('无页面错误', pageErrors.length === 0, pageErrors.join('; '))
 
   await panel.screenshot({ path: path.join(EVIDENCE, 'scene3d-markdown-and-tools.png') })
-  console.log('\n截图：openspec/changes/chat-markdown-render/evidence/scene3d-markdown-and-tools.png')
+  console.log('\n截图：openspec/changes/archive/2026-11-15-chat-markdown-render/evidence/scene3d-markdown-and-tools.png')
 } catch (e) {
   bad++
   console.error(`❌ 运行异常：${e?.message || String(e)}`)

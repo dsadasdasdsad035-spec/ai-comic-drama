@@ -22,7 +22,7 @@ const APP = `http://127.0.0.1:${PORT}`
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-md-sessions-'))
 const PROJECTS = path.join(TMP, 'projects')
 const NAME = `md-seed-${Date.now()}`
-const EVIDENCE = path.join(ROOT, 'openspec/changes/chat-markdown-render/evidence')
+const EVIDENCE = path.join(ROOT, 'openspec/changes/archive/2026-11-15-chat-markdown-render/evidence')
 
 let bad = 0
 const check = (name, cond, extra = '') => {
@@ -178,7 +178,7 @@ try {
   check('无页面错误', errors.length === 0, errors.join('; '))
 
   await page.locator('[data-chat-root]').screenshot({ path: path.join(EVIDENCE, 'creative-prefix-and-markdown.png') })
-  console.log(`\n截图：openspec/changes/chat-markdown-render/evidence/creative-prefix-and-markdown.png`)
+  console.log(`\n截图：openspec/changes/archive/2026-11-15-chat-markdown-render/evidence/creative-prefix-and-markdown.png`)
 } catch (e) {
   bad++
   console.error(`❌ 运行异常：${e?.message || String(e)}`)
