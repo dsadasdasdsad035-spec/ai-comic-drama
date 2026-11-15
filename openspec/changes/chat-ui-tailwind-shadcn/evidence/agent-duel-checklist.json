@@ -5,5 +5,5 @@
   "error": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: '镜头表', exact: true })\n",
   "panel": "",
   "textCalls": 0,
-  "savedAt": "2026-11-15T08:36:27.877Z"
+  "savedAt": "2026-11-15T11:15:23.072Z"
 }
