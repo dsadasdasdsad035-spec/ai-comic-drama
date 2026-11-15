@@ -3605,6 +3605,53 @@ body.si-resizing {
   line-height: 1.65;
 }
 
+/* 提交目标：正文到底发给哪个模型与参数 */
+.vp-submit {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  font-size: var(--fs-2xs);
+}
+
+.vp-submit-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.vp-submit-label {
+  color: var(--muted);
+}
+
+.vp-submit-line code {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+.vp-submit-meta {
+  color: var(--muted);
+}
+
+.vp-submit-meta span + span::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--line);
+}
+
+.vp-verbatim {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  line-height: 1.55;
+}
+
 .vp-refs {
   display: flex;
   flex-direction: column;

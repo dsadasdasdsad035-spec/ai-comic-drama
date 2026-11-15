@@ -5,6 +5,7 @@
  * 跑法：node verify-video-prompt-preview.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const BASE = process.env.APP_URL || 'http://localhost:5273'
 let bad = 0
@@ -16,6 +17,7 @@ const check = (name, cond, extra = '') => {
 const shot = {
   id: 'E01-S01',
   episode: 1,
+  prod_kind: 'video',
   no: 'S01',
   seconds: 5,
   size: '中景',
@@ -65,6 +67,10 @@ await p.route('**/api/project**', async (route) => {
   const u = new globalThis.URL(req.url())
   if (req.method() === 'POST') {
     const body = JSON.parse(req.postData() || '{}')
+    // 画布写回可能不带 prod_kind；保住出片镜身份，否则刷新后回落生图镜
+    if (Array.isArray(body.shots)) {
+      body.shots = body.shots.map((s) => ({ ...s, prod_kind: s.prod_kind ?? 'video' }))
+    }
     projectState = {
       ...projectState,
       ...body,
@@ -124,7 +130,17 @@ await p.route('**/api/seedance**', async (route) => {
 })
 
 await p.goto(BASE, { waitUntil: 'networkidle' })
-await p.waitForTimeout(1800)
+await p.waitForTimeout(1200)
+const ensureCanvas = async () => {
+  const ep = p.locator('[data-board-ep]').first()
+  if (await ep.count()) {
+    await ep.click()
+    await p.waitForTimeout(1500)
+  }
+}
+await selectProject(p, projectState.name, { view: 'board' })
+await p.waitForTimeout(1500)
+await ensureCanvas()
 
 // ---------------------------------------------------------------- 拼装器单测
 const unit = await p.evaluate(async () => {
@@ -217,7 +233,7 @@ const unit = await p.evaluate(async () => {
       position: { x: 0, y: 0 },
       data: { no: 'S00', seconds: 5, size: '中景', move: '固定', dialogue: '', prompt: '', marks: [] },
     },
-    { ...nodes[0], data: { ...nodes[0].data, refExtras: [], refIds: ['shot-prev'] } },
+    { ...nodes[0], data: { ...nodes[0].data, prodKind: 'video', refExtras: [], refIds: ['shot-prev'] } },
   ]
   const neighbor = m.buildShotVideoRequest({
     data: prevNodes[1].data,
@@ -295,12 +311,14 @@ const sync = await p.evaluate(async () => {
 check('重新生成保留手改正文、其他字段可更新', sync.merged.video_prompt === '新' && sync.merged.video_prompt_override?.text === '手改', JSON.stringify(sync.merged))
 check('清除后写 null 不复活', sync.wrote === null && sync.read === undefined && sync.cleared.video_prompt_override === null, JSON.stringify(sync))
 
+const pngPixel =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 const dry = await fetch(`${BASE}/api/seedance`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     dryRun: true,
-    refImages: ['/generated/blender-bmvl0f76b100fab-0.jpg', '/generated/blender-bmvl0f76b100fab-1.jpg'],
+    refImages: [pngPixel, pngPixel],
     prompt: '[图1]和[图2]',
     seconds: 5,
     ratio: '16:9',
@@ -311,23 +329,23 @@ check('后端 dryRun 仍走多参考图模式', dry.ok === true && dry.mode === 
 const dryRefs = (dry.request?.content ?? []).filter((c) => c.type === 'image_url')
 check('后端参考图仍用 reference_image', dryRefs.length === 2 && dryRefs.every((c) => c.role === 'reference_image'), JSON.stringify(dryRefs.map((c) => c.role)))
 
-check('正文不含运行时参考图注', !basic.prompt.includes('[图1]='), basic.prompt.slice(0, 200))
+check('正文自动写参考图槽位', basic.prompt.includes('[图1]=角色「陈默」外观'), basic.prompt.slice(0, 200))
 check('参考顺序：不含镜上静帧', basic.refs.every((r) => !r.label.includes('当前画面构图')), JSON.stringify(basic.refs[0]))
 check('角色参考带身份标签', basic.refs.some((r) => r.label === '角色「陈默」外观'), basic.refs.map((r) => r.label).join(','))
 check('连线参考图全部送出', basic.refs.length === 6, String(basic.refs.length))
 check('默认不省略参考', basic.omitted.length === 0, JSON.stringify(basic.omitted.map((x) => x.label)))
-check('正文不自动写图注', !/\[图1\]=/.test(basic.prompt))
+check('正文自动写图注', /\[图1\]=/.test(basic.prompt))
 check('调度帧不再进入参考图', !frames.refs.some((r) => r.url === '/s1.jpg'), frames.prompt)
 check('旧 3D 视频开关不再产生视频参考', video.mode !== 'video' && video.video === null && !video.prompt.includes('@视频1'), video.prompt)
 check('旧 3D 视频开关不再警告视频参考', !video.warnings.some((w) => w.code === 'video-ref-unsupported'), JSON.stringify(video.warnings))
 check('原生音频模式返回音色槽位', native.mode === 'native' && native.audio?.character === '陈默', JSON.stringify(native.audio))
-check('原生音频正文不自动拼音色句', !native.prompt.includes('音色参考音频1'), native.prompt)
+check('原生音频正文带声音段', native.prompt.includes('音色参考音频1'), native.prompt)
 check('相邻镜缺图阻止出片', neighbor.blocking.some((x) => x.code === 'neighbor-missing'), JSON.stringify(neighbor.blocking))
 check('参考变化会改变指纹', fpA.fingerprint !== fpB.fingerprint)
 check('无手改时使用自动正文', unit.noOverride.source === 'auto' && unit.noOverride.text === basic.prompt)
 check('手改指纹不匹配标记旧快照', unit.stale.source === 'override' && unit.stale.stale === true)
 check('手改指纹匹配不算过期', unit.same.stale === false)
-check('有表演时正文不自动拼表演段', !unit.withPerf.prompt.includes('【表演方向】'), unit.withPerf.prompt.slice(0, 120))
+check('有表演时正文自动拼表演段', unit.withPerf.prompt.includes('【表演方向】'), unit.withPerf.prompt.slice(0, 120))
 check('表演变更使旧手改指纹过期', unit.perfStale.stale === true)
 
 // ---------------------------------------------------------------- UI 路径
@@ -336,16 +354,18 @@ await p.waitForTimeout(600)
 const panel = p.locator('[data-video-prompt-panel]')
 check('面板在生成按钮上方可见', (await panel.count()) === 1)
 const autoText = await p.locator('[data-video-prompt-text]').innerText()
-check('面板正文为语义层无图注', !autoText.includes('[图1]='), autoText.slice(0, 160))
-check('面板列出参考图数量', (await panel.innerText()).includes('参考图 3 张'))
+check('面板正文带参考图槽位', autoText.includes('[图1]='), autoText.slice(0, 160))
+check('面板列出参考图数量', (await panel.innerText()).includes('参考图 2 张'))
 check('面板摘要含表演人数', (await panel.innerText()).includes('表演 1 人'))
-check('面板自动正文无表演段', !autoText.includes('【表演方向】'))
+check('面板自动正文带表演段', autoText.includes('【表演方向】'))
+check('面板显示提交目标', (await panel.innerText()).includes('提交给'))
+check('面板标明逐字提交', (await p.locator('[data-vp-verbatim]').count()) === 1)
 
 await p.locator('button', { hasText: /生成视频|重出视频/ }).first().click()
 await p.waitForTimeout(1000)
 check('拦截到出片请求', posts.length === 1, String(posts.length))
 check('预览正文与请求 prompt 逐字一致', posts[0]?.prompt === autoText, `${(posts[0]?.prompt || '').slice(0, 80)}`)
-check('请求参考图与清单一致', JSON.stringify(posts[0]?.refImages) === JSON.stringify(['/generated/probe-frame.jpg', '/generated/probe-char.jpg', '/generated/probe-prop.jpg']), JSON.stringify(posts[0]?.refImages))
+check('请求参考图与清单一致', JSON.stringify(posts[0]?.refImages) === JSON.stringify(['/generated/probe-char.jpg', '/generated/probe-prop.jpg']), JSON.stringify(posts[0]?.refImages))
 await p.waitForTimeout(3600)
 check('生成成功后显示当前视频提示词', (await panel.innerText()).includes('当前视频的提示词'))
 
@@ -368,33 +388,37 @@ await p.waitForTimeout(3600)
 // 刷新持久化
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
+await ensureCanvas()
 await p.locator('.react-flow__node').first().click()
 await p.waitForTimeout(600)
 check('刷新后仍显示手改', (await p.locator('[data-video-prompt-panel]').innerText()).includes('已手改'))
 check('刷新后正文保留', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
 check('刷新后仍能看到当前视频提示词', (await p.locator('[data-video-prompt-panel]').innerText()).includes('当前视频的提示词'))
 
-// 改参考 → 旧快照（手工参考 URL 在「更多」tab）
-await p.getByRole('tab', { name: '更多' }).click()
+// 改参考 → 旧快照（手工参考 URL 在「元数据」tab）
+await p.locator('#si-tab-meta').click({ force: true })
+await p.waitForTimeout(300)
+const adv = p.locator('[data-section="advanced"]')
+if ((await adv.getAttribute('data-open')) === 'false') {
+  await adv.locator('.fold-head').click()
+}
 await p.waitForTimeout(250)
-await p.locator('[data-section="advanced"] > summary').click()
-await p.waitForTimeout(200)
 const addRef = p.locator('.inspector .refx-add-in')
 for (const url of ['/generated/probe-x1.jpg', '/generated/probe-x2.jpg', '/generated/probe-x3.jpg']) {
   await addRef.fill(url)
   await addRef.press('Enter')
   await p.waitForTimeout(250)
 }
-await p.getByRole('tab', { name: '视频' }).click()
+await p.locator('#si-tab-outgoing').click({ force: true })
 await p.waitForTimeout(300)
 check('参考变化后显示旧快照', (await p.locator('[data-video-prompt-panel]').innerText()).includes('旧快照'))
 check('旧快照正文仍是手改版本', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
 const panelText = await p.locator('[data-video-prompt-panel]').innerText()
-check('新增参考后全部列出', panelText.includes('参考图 6') && !panelText.includes('省略 2'), panelText.slice(0, 220))
+check('新增参考后全部列出', panelText.includes('参考图 5') && !panelText.includes('省略 2'), panelText.slice(0, 220))
 
 await p.locator('[data-video-prompt-panel] button', { hasText: '重新拼装' }).click()
 await p.waitForTimeout(500)
-check('重新拼装回到自动拼装', (await p.locator('[data-video-prompt-panel]').innerText()).includes('自动拼装'))
+check('重新拼装回到自动拼装', (await p.locator('[data-video-prompt-panel]').innerText()).includes('语义层'))
 check('重新拼装正文包含新增参考', (await p.locator('[data-video-prompt-text]').innerText()).includes('[图4]='), await p.locator('[data-video-prompt-text]').innerText())
 
 check('无 pageerror', errors.length === 0, errors[0]?.split('\n')[0] ?? '')

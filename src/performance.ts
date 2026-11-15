@@ -114,9 +114,10 @@ export function performanceVideoEntryCount(performance: PerformanceEntry[] | und
 }
 
 /**
- * 视频出片自动正文中的【表演方向】段；无有效 performance 时返回空串。
+ * 表演方向正文（不含小标题）：角色情绪、强度、动作、视线、是否说话，
+ * 以及逐行台词的情绪/语速/音量/重音。语义层与脚本拼装共用同一份文字。
  */
-export function performanceVideoPromptBlock(
+export function performanceDirectionText(
   performance: PerformanceEntry[] | undefined,
   dialogue: { speaker: string; text: string }[],
   delivery: DialogueDelivery[] | undefined,
@@ -127,7 +128,7 @@ export function performanceVideoPromptBlock(
   const roleLines = entries.map((e) => {
     const bits = [`${e.character}：${emotionLabel(e.emotion)}，强度 ${e.intensity ?? 3}`]
     if (e.action?.trim()) bits.push(e.action.trim())
-    else if (e.gaze?.trim()) bits.push(`视线${e.gaze.trim()}`)
+    if (e.gaze?.trim()) bits.push(`视线${e.gaze.trim()}`)
     if (e.speaks) bits.push('本镜说话')
     return bits.join('，')
   })
@@ -145,8 +146,20 @@ export function performanceVideoPromptBlock(
     if (parts.length) deliveryBits.push(`${speaker}台词：${parts.join('，')}`)
   })
 
-  const body = [...roleLines, ...deliveryBits].join('；')
-  return `\n\n【表演方向】${body}`
+  return [...roleLines, ...deliveryBits].join('；')
+}
+
+/**
+ * 视频出片自动正文中的【表演方向】段；无有效 performance 时返回空串。
+ * @deprecated 出片正文改用 performanceDirectionText + 统一指令块拼装
+ */
+export function performanceVideoPromptBlock(
+  performance: PerformanceEntry[] | undefined,
+  dialogue: { speaker: string; text: string }[],
+  delivery: DialogueDelivery[] | undefined,
+): string {
+  const body = performanceDirectionText(performance, dialogue, delivery)
+  return body ? `\n\n【表演方向】${body}` : ''
 }
 
 /** 指纹用：稳定序列化表演与逐行 delivery */

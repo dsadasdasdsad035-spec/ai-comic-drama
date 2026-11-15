@@ -223,7 +223,7 @@ async function readJsonRes(res: Response) {
 /** 提交视频任务，返回任务 id（生成需要 1~4 分钟，不阻塞 HTTP） */
 export async function startVideo(
   o: VideoOpts,
-): Promise<{ id: string; mode?: 'ref' | 'first' | 'video'; skipped?: string[] }> {
+): Promise<{ id: string; mode?: 'ref' | 'first' | 'video'; skipped?: string[]; prompt?: string }> {
   let res: Response
   try {
     res = await apiFetch('/api/seedance', {
@@ -236,7 +236,7 @@ export async function startVideo(
   }
   const j = await readJsonRes(res)
   if (!j.ok) throw new Error(proxyErrorMessage(j, '提交失败'))
-  return { id: j.id as string, mode: j.mode, skipped: j.skipped }
+  return { id: j.id as string, mode: j.mode, skipped: j.skipped, prompt: j.prompt }
 }
 
 /** 轮询直到出片；onTick 每次回调可用于刷新计时 */

@@ -1435,6 +1435,8 @@ type VideoJob = {
   elapsed?: number
   /** 方舟任务 id，便于排查与后续恢复 */
   taskId?: string
+  /** 本次实际提交给模型服务商的正文（含服务端补充的范围约束） */
+  prompt?: string
 }
 
 const videoJobs = new Map<string, VideoJob>()
@@ -6204,6 +6206,11 @@ export function createAppHandler({ root }: { root: string }) {
             const resolution = body.resolution === '720p' ? '720p' : '480p'
             const prompt = String(body.prompt || '').trim() || '镜头缓慢推进，环境细节自然流动，人物保持姿态'
             const cameraFixed = Boolean(body.cameraFixed)
+            /** 直接调 API 的调用方可能没写 @视频1；补一句范围约束，避免白模风格被整段照搬 */
+            const videoRefScopeSuffix =
+              '参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。'
+            const withVideoRefScope = (text: string, on: boolean) =>
+              on && !text.includes('@视频1') ? `${text}\n\n${videoRefScopeSuffix}` : text
 
             // 视频族解析：显式 key 在 video / videoRef 两族精确命中；视频参考必须由条目声明能力
             const wantKey = String(body.modelKey || '').trim()
@@ -6402,12 +6409,13 @@ export function createAppHandler({ root }: { root: string }) {
 
               let payload: Record<string, unknown>
               let nativeAudioUrl = ''
+              const finalPrompt = withVideoRefScope(prompt, effVideoRefMode)
               try {
                 if (generateAudio) nativeAudioUrl = await resolveApimartAudioRef(root, audioRefInput)
                 payload = buildApimartVideoPayload({
                   family,
                   model,
-                  prompt,
+                  prompt: finalPrompt,
                   ratio,
                   seconds,
                   resolution,
@@ -6467,10 +6475,10 @@ export function createAppHandler({ root }: { root: string }) {
 
               const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
               const startedAt = Date.now()
-              videoJobs.set(id, { status: 'running', startedAt })
+              videoJobs.set(id, { status: 'running', startedAt, prompt: finalPrompt })
               const outDir = mediaPath(root, 'videos')
               fs.mkdirSync(outDir, { recursive: true })
-              res.end(JSON.stringify({ ok: true, id, mode, family, model, skipped, provider: provider.label }))
+              res.end(JSON.stringify({ ok: true, id, mode, family, model, skipped, provider: provider.label, prompt: finalPrompt }))
 
               ;(async () => {
                 let taskId = ''
@@ -6491,6 +6499,7 @@ export function createAppHandler({ root }: { root: string }) {
                     startedAt,
                     elapsed: Date.now() - startedAt,
                     taskId,
+                    prompt: finalPrompt,
                   })
                   if (apimartVidBill && !apimartVidBill.skipBilling) {
                     finalizeApimartVideo(apimartVidBill)
@@ -6509,6 +6518,7 @@ export function createAppHandler({ root }: { root: string }) {
                     startedAt,
                     elapsed: Date.now() - startedAt,
                     ...(upstreamId ? { taskId: upstreamId } : {}),
+                    prompt: finalPrompt,
                   })
                 }
               })()
@@ -6585,10 +6595,7 @@ export function createAppHandler({ root }: { root: string }) {
             }
 
             // 直接调 API 的调用方可能没写 @视频1；服务端补一句范围约束，避免白模风格被整段照搬
-            const finalPrompt =
-              videoRefMode && !prompt.includes('@视频1')
-                ? `${prompt}\n\n参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。`
-                : prompt
+            const finalPrompt = withVideoRefScope(prompt, videoRefMode)
 
             let payload: Record<string, unknown>
             try {
@@ -6636,12 +6643,12 @@ export function createAppHandler({ root }: { root: string }) {
 
             const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
             const startedAt = Date.now()
-            videoJobs.set(id, { status: 'running', startedAt })
+            videoJobs.set(id, { status: 'running', startedAt, prompt: finalPrompt })
 
             const outDir = mediaPath(root, 'videos')
             fs.mkdirSync(outDir, { recursive: true })
 
-            res.end(JSON.stringify({ ok: true, id, mode, model, skipped }))
+            res.end(JSON.stringify({ ok: true, id, mode, model, skipped, prompt: finalPrompt }))
 
             // 提交后后台轮询，前端继续用本地 job id 查询
             ;(async () => {
@@ -6663,6 +6670,7 @@ export function createAppHandler({ root }: { root: string }) {
                   startedAt,
                   elapsed: Date.now() - startedAt,
                   taskId,
+                  prompt: finalPrompt,
                 })
               } catch (e) {
                 const raw = String((e as Error)?.message || e)
@@ -6681,6 +6689,7 @@ export function createAppHandler({ root }: { root: string }) {
                   startedAt,
                   elapsed: Date.now() - startedAt,
                   ...(taskId ? { taskId } : {}),
+                  prompt: finalPrompt,
                 })
               }
             })()

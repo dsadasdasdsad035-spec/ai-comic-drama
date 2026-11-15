@@ -14,6 +14,17 @@ export type OutgoingVideoPromptRefPrefix = {
   purpose: string
 }
 
+/** 面板上展示的「提交目标」：让用户确认正文到底发给哪个模型 */
+export type VideoSubmitTarget = {
+  modelLabel: string
+  modelId?: string
+  providerLabel?: string
+  modeLabel: string
+  seconds: number
+  resolution?: string
+  ratio?: string
+}
+
 export type OutgoingVideoPromptPanelProps = {
   summary: ReactNode
   refs: VideoAttachment[]
@@ -36,6 +47,8 @@ export type OutgoingVideoPromptPanelProps = {
   advancedSlot?: ReactNode
   /** 出片 Inspector：附件与槽位默认展开 */
   defaultRefsOpen?: boolean
+  /** 正文实际提交的视频模型与参数 */
+  submitTarget?: VideoSubmitTarget
 }
 
 /**
@@ -62,6 +75,7 @@ export default function OutgoingVideoPromptPanel({
   hasVideoUrl,
   advancedSlot,
   defaultRefsOpen = false,
+  submitTarget,
 }: OutgoingVideoPromptPanelProps) {
   const [open, setOpen] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -181,6 +195,23 @@ export default function OutgoingVideoPromptPanel({
       >
           <div className="vp-summary">{summary}</div>
 
+          {submitTarget ? (
+            <div className="vp-submit" data-vp-submit>
+              <div className="vp-submit-line">
+                <span className="vp-submit-label">提交给</span>
+                <b>{submitTarget.modelLabel}</b>
+                {submitTarget.modelId ? <code>{submitTarget.modelId}</code> : null}
+              </div>
+              <div className="vp-submit-line vp-submit-meta">
+                {submitTarget.providerLabel ? <span>{submitTarget.providerLabel}</span> : null}
+                <span>{submitTarget.modeLabel}</span>
+                <span>{submitTarget.seconds}s</span>
+                <span>{submitTarget.resolution || '默认分辨率'}</span>
+                {submitTarget.ratio ? <span>{submitTarget.ratio}</span> : null}
+              </div>
+            </div>
+          ) : null}
+
           {refCount > 0 ? (
             <Fold
               className="vp-refs-disclosure"
@@ -272,6 +303,10 @@ export default function OutgoingVideoPromptPanel({
               <pre className="vp-text" data-video-prompt-text>
                 {effective.text}
               </pre>
+
+              <p className="vp-verbatim" data-vp-verbatim>
+                以上正文逐字提交给 {submitTarget?.modelLabel ?? '视频模型'}；附件按上方槽位提交，正文不会再被服务端改写。
+              </p>
 
               <div className="vp-actions vp-actions--manual">
                 <span className="vp-actions-label">正文</span>

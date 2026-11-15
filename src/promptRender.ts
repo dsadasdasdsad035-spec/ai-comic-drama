@@ -1,13 +1,17 @@
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import { parseDialogue } from './prompts'
-import type { ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
+import type { DialogueDelivery, PerformanceEntry, ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
 import { transitionDialogueText, transitionRecipePromptBlock, type TransitionInputMode } from './transitionGen'
 import { getTransitionRecipe } from './transitionRecipes'
 import { resolveShotLexiconRef } from './cameraLexicon'
+import { nativeAudioPrompt } from './nativeAudio'
+import { performanceDirectionText } from './performance'
 import { shortHash } from './hash'
 import {
+  buildReferenceImagesPromptHint,
   buildShotVideoRequest,
+  buildVideoReferencePromptHint,
   type ShotVideoRequest,
   type VideoAttachment,
   type VideoModelInput,
@@ -287,28 +291,34 @@ export function assembleShotPromptScript(bundle: PromptRenderBundle): string {
 
   if (creative.dialogue?.trim()) sections.push(`【台词】\n${creative.dialogue.trim()}`)
 
-  const perf = creative.performance
-  if (Array.isArray(perf) && perf.length > 0) {
-    const lines = perf
-      .map((p) => {
-        const row = p as { character?: string; emotion?: string; action?: string }
-        if (!row.character) return ''
-        const bits = [row.emotion, row.action].filter(Boolean)
-        return `${row.character}：${bits.join('，') || '在场'}`
-      })
-      .filter(Boolean)
-    if (lines.length) sections.push(`【表演】\n${lines.join('；')}`)
+  // 原生音频：台词 + 音色参考说明
+  const nativeChar = creative.nativeAudio?.mode === 'native' ? creative.nativeAudio.character || '' : ''
+  const audioSubmitted = assets.some((a) => a.submitted && a.slot === 'audio')
+  if (nativeChar) {
+    const sound = nativeAudioPrompt(nativeChar, parseDialogue(creative.dialogue ?? ''), audioSubmitted)
+    if (sound) sections.push(sound)
   }
 
+  // 表演方向：情绪/强度/动作/视线/说话 + 逐行语速/音量/重音
+  const perf = performanceDirectionText(
+    creative.performance as PerformanceEntry[] | undefined,
+    parseDialogue(creative.dialogue ?? ''),
+    creative.dialogueDelivery as DialogueDelivery[] | undefined,
+  )
+  if (perf) sections.push(`【表演方向】\n${perf}`)
+
+  // 参考：图片槽位映射 + 视频运动范围 + 音频音色
   const submitted = assets.filter((a) => a.submitted)
-  if (submitted.length) {
-    const lines = submitted.map((a) => {
-      const slot =
-        a.slot === 'image' ? `图${a.index}` : a.slot === 'video' ? `视频${a.index || 1}` : `音频${a.index || 1}`
-      return `${slot}：${a.label}（${assetInheritLabel(a.inherit)}）`
-    })
-    sections.push(`【参考】\n${lines.join('；')}`)
-  }
+  const submittedImages = submitted.filter((a) => a.slot === 'image')
+  const submittedVideo = submitted.find((a) => a.slot === 'video')
+  const submittedAudio = submitted.find((a) => a.slot === 'audio')
+  const refParts: string[] = []
+  const imageHint = buildReferenceImagesPromptHint(submittedImages, Boolean(submittedVideo))
+  if (imageHint) refParts.push(imageHint)
+  const videoHint = buildVideoReferencePromptHint(submittedVideo)
+  if (videoHint) refParts.push(videoHint)
+  if (submittedAudio) refParts.push(`音频${submittedAudio.index || 1}：${submittedAudio.label}（只继承音色与说话风格）`)
+  if (refParts.length) sections.push(`【参考】\n${refParts.join('\n')}`)
 
   const ruleBits = [...(continuity.identityLocks ?? []), ...(continuity.forbidden ?? [])].filter(Boolean)
   if (ruleBits.length) sections.push(`【约束】\n${ruleBits.join('；')}`)

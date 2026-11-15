@@ -27,7 +27,7 @@ import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialI
 import PerformanceEditor from './PerformanceEditor'
 import NativeAudioPanel from './NativeAudioPanel'
 import { VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
-import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
+import OutgoingVideoPromptPanel, { type VideoSubmitTarget } from './OutgoingVideoPromptPanel'
 import Fold from './Fold'
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
@@ -504,10 +504,12 @@ function ShotVideoPromptPanel({
   data,
   request,
   onPatch,
+  submitTarget,
 }: {
   data: ShotData
   request: ShotVideoRequest
   onPatch: (p: Partial<ShotData>) => void
+  submitTarget?: VideoSubmitTarget
 }) {
   const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
   const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
@@ -565,6 +567,7 @@ function ShotVideoPromptPanel({
       }
       videoMeta={meta}
       hasVideoUrl={Boolean(data.videoUrl)}
+      submitTarget={submitTarget}
       defaultRefsOpen
     />
   )
@@ -1200,7 +1203,22 @@ function InspectorBody({
             </a>
           </div>
         )}
-        {videoRequest ? <ShotVideoPromptPanel data={d} request={videoRequest} onPatch={set} /> : null}
+        {videoRequest ? (
+          <ShotVideoPromptPanel
+            data={d}
+            request={videoRequest}
+            onPatch={set}
+            submitTarget={{
+              modelLabel: selectedVideoModel?.label ?? '未选模型',
+              modelId: selectedVideoModel?.model,
+              providerLabel: videoProvider?.label,
+              modeLabel: VIDEO_MODE_LABEL[videoRequest.mode],
+              seconds: videoRequest.seconds,
+              resolution: videoRequest.resolution || vidRes,
+              ratio,
+            }}
+          />
+        ) : null}
         <Fold
           className="vid-settings"
           idPrefix="vid-settings"

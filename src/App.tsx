@@ -3090,6 +3090,8 @@ function Shell() {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
           window.setTimeout(() => setToast(''), 3000)
         }
+        // 服务端会回报它实际使用的正文（含范围约束等改写），优先记录它
+        const submittedPrompt = String(res.prompt || effective.text)
         const taskId = res.id
         const done = await waitVideo(taskId, (elapsed) =>
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
@@ -3102,7 +3104,7 @@ function Shell() {
           videoUpstreamRecover: undefined,
           videoMeta: {
             url: done.url,
-            prompt: effective.text,
+            prompt: submittedPrompt,
             fingerprint: request.fingerprint,
             modelKey,
             createdAt,
