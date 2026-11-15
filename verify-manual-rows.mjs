@@ -130,15 +130,52 @@ try {
     body: JSON.stringify({ shots: seed }),
   })
 
-  // 1) 缺席只标 orphan
+  // 1) 整表写回（shotsMode: full）缺席才标 orphan；缺省 partial 不标
   await api(`/api/project?name=${PROJECT}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ shots: [{ id: 'E01-S01', desc: 'a2' }, { id: 'E01-S03' }] }),
+    body: JSON.stringify({
+      shots: [{ id: 'E01-S01', desc: 'a2' }, { id: 'E01-S03' }],
+      shotsMode: 'full',
+    }),
   })
   let j = await api(`/api/project?name=${PROJECT}`)
   const s2 = (j.project.shots || []).find((s) => s.id === 'E01-S02')
-  check('缺席镜头仍保留并标 orphan（保护未回退）', Boolean(s2) && s2.orphan === true, JSON.stringify(s2))
+  check('整表写回缺席仍标 orphan（保护未回退）', Boolean(s2) && s2.orphan === true, JSON.stringify(s2))
+
+  // 1b) 局部写回（缺省）不得给未提交的镜头打标记：先整表洗白，再单镜写回
+  await api(`/api/project?name=${PROJECT}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots: seed, shotsMode: 'full' }),
+  })
+  await api(`/api/project?name=${PROJECT}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots: [{ id: 'E01-S01', desc: 'a3' }] }),
+  })
+  j = await api(`/api/project?name=${PROJECT}`)
+  const partialShots = j.project.shots || []
+  check(
+    '缺省局部写回不新增 orphan',
+    partialShots.every((s) => s.orphan !== true),
+    JSON.stringify(partialShots.map((s) => [s.id, s.orphan])),
+  )
+  check('局部写回不丢其他镜头', partialShots.length === seed.length, `${partialShots.length}/${seed.length}`)
+  check(
+    '局部写回只改提交的镜',
+    partialShots.find((s) => s.id === 'E01-S01')?.desc === 'a3' &&
+      partialShots.find((s) => s.id === 'E01-S02')?.desc === 'b',
+    JSON.stringify(partialShots.map((s) => [s.id, s.desc])),
+  )
+
+  // 1c) 非法 shotsMode 直接 400，不落库
+  const badMode = await api(`/api/project?name=${PROJECT}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots: [{ id: 'E01-S01' }], shotsMode: 'whole' }),
+  })
+  check('非法 shotsMode 被拒', badMode.status === 400, JSON.stringify(badMode.status))
 
   // 2) 显式删除
   const r2 = await api(`/api/project?name=${PROJECT}`, {

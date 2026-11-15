@@ -266,7 +266,8 @@ const toolSpecs = {
     expect: 'fail',
     reason: /工位|出片/,
   },
-  generate_clip: { args: { no: 'S01' }, expect: 'fail', reason: /成本确认|确认通道/ },
+  // 统一拼装先判阻塞：该镜没有任何连线参考，出片在成本确认之前就被拒
+  generate_clip: { args: { no: 'S01' }, expect: 'fail', reason: /连线|参考图|成本确认|确认通道/ },
   generate_voice: { args: { no: 'S01', text: '验收台词' }, expect: 'fail', reason: /成本确认|确认通道/ },
   generate_character_views: { args: { character: '验收' }, expect: 'fail', reason: /找不到角色/ },
   generate_expression_sheet: { args: { character: '验收' }, expect: 'fail', reason: /找不到角色/ },
@@ -652,6 +653,52 @@ const readProjectNow = async () => {
     String(cat?.look_cn || '') === '白色幼猫' && String(cat?.look_en || '') === 'a small white kitten',
     `cn=${String(cat?.look_cn)} en=${String(cat?.look_en)}`,
   )
+}
+
+// --- 2.8 写回模式与宿主刷新：局部写回不标孤儿、写回成功才通知宿主 ---
+{
+  const readProjectNow = async () => (await (await fetch(`${APP}/api/project?name=${proj}`)).json()).project || {}
+  let refreshed = 0
+  const hosted = lib.createBuiltinPlatformTools({
+    projectName: proj,
+    epNo: 1,
+    onProjectDataChanged: () => {
+      refreshed++
+    },
+  })
+  const hostedTools = new Map(lib.mergeBuiltinWithSkillTools(hosted, skillTools).map((t) => [t.name, t]))
+
+  const before = ((await readProjectNow()).shots || []).length
+  const added = await hostedTools.get('submit_shots').invoke({
+    shots: [
+      { no: 'S97', scene_no: 1, scene_slug: '街口', seconds: 2, size: '中景', move: '固定', desc: '刷新验收一' },
+      { no: 'S98', scene_no: 1, scene_slug: '街口', seconds: 2, size: '中景', move: '固定', desc: '刷新验收二' },
+      { no: 'S96', scene_no: 1, scene_slug: '街口', seconds: 2, size: '中景', move: '固定', desc: '刷新验收三' },
+    ],
+  })
+  const after = (await readProjectNow()).shots || []
+  check('submit_shots 三镜写回成功', added?.ok === true, added?.error || added?.summary || '')
+  check('镜头数按提交增量增加', after.length === before + 3, `${before} -> ${after.length}`)
+  check('写回成功后通知宿主刷新一次', refreshed === 1, `refreshed=${refreshed}`)
+  const orphanAfterSubmit = after.filter((s) => s?.orphan === true)
+  check(
+    '整表写回不误标孤儿（其余镜头全部随快照提交）',
+    orphanAfterSubmit.length === 0,
+    orphanAfterSubmit.map((s) => String(s.id || s.no)).join(','),
+  )
+
+  // 单镜写回（link_shot_refs 同一通道）不得给其他镜头打标记
+  const linked = await hostedTools.get('link_shot_refs').invoke({ no: 'S96', kind: 'character', names: ['主角'] })
+  const afterLink = (await readProjectNow()).shots || []
+  check('link_shot_refs 写回成功', linked?.ok === true, linked?.error || linked?.summary || '')
+  const orphanAfterLink = afterLink.filter((s) => s?.orphan === true)
+  check(
+    '局部写回不给其他镜头打孤儿标记',
+    orphanAfterLink.length === 0,
+    orphanAfterLink.map((s) => String(s.id || s.no)).join(','),
+  )
+  check('局部写回保留其他镜头', afterLink.length === after.length, `${afterLink.length}/${after.length}`)
+  check('每次写回成功都通知宿主', refreshed === 2, `refreshed=${refreshed}`)
 }
 
 console.log('\n--- 汇总 ---')

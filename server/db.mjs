@@ -411,7 +411,52 @@ function open(root) {
   // 历史空标识回填：这些卡存在但读工具拿不到 key，等于对所有 agent 隐形
   const filled = backfillDesignIds()
   if (filled) console.log(`[db] 已补齐 ${filled} 张设定卡的标识`)
+  // 历史孤儿标记一次性清理：旧版每次单镜写回都会给其余镜头打 orphan，
+  // 标记既不可见也不可清理，只会经读工具喂给模型。只跑一次，由 settings 把关。
+  const cleaned = cleanupLegacyOrphanMarks()
+  if (cleaned) console.log(`[db] 已清理 ${cleaned} 条历史孤儿标记`)
   return db
+}
+
+/** 一次性清理的持久标记键；存在即表示已执行，不再重复清理 */
+export const LEGACY_ORPHAN_CLEANUP_KEY = 'shots.orphanCleanedAt'
+
+/**
+ * 清理升级前遗留的 `orphan` 标记（幂等）。
+ *
+ * 为什么只跑一次而不是每次读取时过滤：`full` 模式仍会把缺席镜头标成 orphan，
+ * 那是有效的诊断信号；每次过滤会把新标记一起吞掉，等于隐瞒问题。
+ * @returns {number} 本次清理的行数
+ */
+export function cleanupLegacyOrphanMarks() {
+  if (!db) return 0
+  if (getSettingRaw(db, LEGACY_ORPHAN_CLEANUP_KEY) !== undefined) return 0
+  let changes = 0
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    const r = db
+      .prepare(
+        `UPDATE shots SET extra = json_remove(extra, '$.orphan')
+         WHERE extra IS NOT NULL AND json_valid(extra) AND json_extract(extra, '$.orphan') = 1`,
+      )
+      .run()
+    changes = Number(r.changes) || 0
+    db.prepare('INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at').run(
+      LEGACY_ORPHAN_CLEANUP_KEY,
+      JSON.stringify(new Date().toISOString()),
+      new Date().toISOString(),
+    )
+    db.exec('COMMIT')
+  } catch (e) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      /* 忽略 */
+    }
+    console.error('[db] 历史孤儿标记清理失败：', e?.message || e)
+    return 0
+  }
+  return changes
 }
 
 /**
@@ -1717,11 +1762,29 @@ export function createProject(root, name, init = {}) {
 }
 
 /**
+ * 写回模式：
+ * - `partial`（缺省）：本次提交只是「要改的那几条」，其余镜头原样保留且**不打标记**。
+ * - `full`：本次提交声明为「当前全集」，缺席的既有镜头保留并标 orphan（保护性保留，不删）。
+ *
+ * 为什么缺省是 partial：漏传 `full` 只是少一个诊断标记；漏传 `partial`
+ * 会让每一次单镜写回都生产不可见、不可清理的孤儿（这正是本次要修的病）。
+ */
+export const SHOTS_MODES = ['partial', 'full']
+
+export function normalizeShotsMode(mode) {
+  const m = String(mode ?? '').trim()
+  if (!m) return 'partial'
+  if (!SHOTS_MODES.includes(m)) throw new Error(`shotsMode 只能是 partial 或 full，收到：${m}`)
+  return m
+}
+
+/**
  * 字段级合并：只更新 incoming 里出现的字段，未出现的保持原样。
- * 不在 incoming 里的现有镜头**保留并标 orphan**，不静默删。
+ * 只有 `full` 模式才把不在 incoming 里的现有镜头标 orphan；`partial` 不碰标记。
  * handEdited 的手改保护不在这里做（保存是人的意图；保护在生成时）。
  */
-export function mergeShots(existing = [], incoming = []) {
+export function mergeShots(existing = [], incoming = [], mode = 'partial') {
+  const resolved = normalizeShotsMode(mode)
   const byId = new Map()
   for (const s of existing) if (s && s.id) byId.set(s.id, s)
   const out = []
@@ -1748,9 +1811,10 @@ export function mergeShots(existing = [], incoming = []) {
     out.push(merged)
   }
 
+  // 局部写回：未提交的镜头原样保留（含它们已有的标记），不新打 orphan
   for (const s of existing) {
     if (!s || !s.id || touched.has(s.id)) continue
-    out.push({ ...s, orphan: true })
+    out.push(resolved === 'full' ? { ...s, orphan: true } : s)
   }
   return out
 }

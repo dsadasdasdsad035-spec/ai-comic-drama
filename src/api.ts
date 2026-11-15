@@ -893,6 +893,12 @@ export async function deleteProjects(names: string[]): Promise<{
 
 export type ProjectPatch = {
   shots?: ProjectShot[]
+  /**
+   * 镜头写回模式：
+   * - `partial`（缺省）：本次只是「要改的那几条」，其余镜头原样保留、不标 orphan。
+   * - `full`：本次声明为「当前全集」，缺席的既有镜头保留并标 orphan（保护性保留，不删）。
+   */
+  shotsMode?: 'partial' | 'full'
   /** 显式删除这些镜头 id（缺席不等于删除：缺席只标 orphan） */
   deleteShotIds?: string[]
   characters?: unknown[]
@@ -923,14 +929,31 @@ export async function patchProject(
   return { shots: j.shots ?? [], characters: j.characters ?? [], savedAt: j.savedAt }
 }
 
-/** 只回写镜头的便捷形式 */
+export type ShotWriteMode = 'partial' | 'full'
+
+export type MergeShotsOpts = {
+  deleteShotIds?: string[]
+  /** 缺省 partial：只改提交的镜，其余不标 orphan */
+  mode?: ShotWriteMode
+}
+
+/**
+ * 只回写镜头的便捷形式。
+ *
+ * `mode` 决定服务端怎么对待「这次没提交的镜头」：
+ * - `partial`（缺省）：只改提交的镜，其余原样保留。单镜写回、画布防抖、导入子集都走它。
+ * - `full`：声明本次是全集，缺席的既有镜头会被标 orphan（保护性保留，不删）。
+ */
 export async function mergeProjectShots(
   name: string,
   shots: ProjectShot[],
-  deleteShotIds?: string[],
+  opts: MergeShotsOpts = {},
 ): Promise<{ shots: ProjectShot[]; savedAt: string }> {
+  const mode = opts.mode ?? 'partial'
+  const deleteShotIds = opts.deleteShotIds
   const r = await patchProject(name, {
     shots,
+    shotsMode: mode,
     ...(deleteShotIds?.length ? { deleteShotIds } : {}),
   })
   return { shots: r.shots, savedAt: r.savedAt }

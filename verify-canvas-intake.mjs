@@ -129,6 +129,23 @@ const seedShots = ['S01', 'S02'].map((no) => ({
   keyframe_prompt: '',
   video_prompt: '',
 }))
+// 第二集的一镜：导入文件只覆盖第 1 集，它必须原样保留且不被标孤儿
+const episode2Shot = {
+  id: 'E02-S01',
+  episode: 2,
+  no: 'S01',
+  scene_no: 1,
+  scene_slug: 'SC01',
+  seconds: 4,
+  size: '全景',
+  move: '固定',
+  desc: '第二集原有镜头',
+  dialogue: [],
+  cast: [],
+  keyframe_prompt: 'ep2 keyframe',
+  video_prompt: '',
+}
+seedShots.push(episode2Shot)
 
 async function boot() {
   for (let i = 0; i < 80; i++) {
@@ -152,7 +169,10 @@ async function boot() {
       source: '画布导入验收',
       style: '写实',
       aspect: '16:9',
-      episodes: [{ no: 1, title: 'EP1', scenes: [{ no: 1, slug: 'SC01' }] }],
+      episodes: [
+        { no: 1, title: 'EP1', scenes: [{ no: 1, slug: 'SC01' }] },
+        { no: 2, title: 'EP2', scenes: [{ no: 1, slug: 'SC01' }] },
+      ],
       characters: [],
       shots: seedShots,
       designs: [],
@@ -217,9 +237,23 @@ try {
   // 对话框关闭会触发一次重新水合：等状态稳定再数节点，避免读到中间帧
   await page.waitForTimeout(600)
   const afterFirst = await readShots()
-  check('画布导入：写入项目（3 镜）', afterFirst.length === 3, String(afterFirst.length))
+  check('画布导入：写入项目（第 1 集 3 镜 + 第 2 集 1 镜）', afterFirst.length === 4, String(afterFirst.length))
   check('画布导入：画布出现卡片（3 镜）', (await nodeCount()) === 3, String(await nodeCount()))
-  check('画布导入：结构镜头首帧为空也能上画布', afterFirst.every((s) => !String(s.keyframe_prompt ?? '').trim()))
+  check(
+    '画布导入：结构镜头首帧为空也能上画布',
+    afterFirst.filter((s) => s.episode === 1).every((s) => !String(s.keyframe_prompt ?? '').trim()),
+  )
+  // 5.2 只影响覆盖集：第 2 集镜头必须原样保留，且不被标孤儿
+  const ep2 = afterFirst.find((s) => s.id === 'E02-S01')
+  check('导入只含第 1 集：第 2 集镜头仍在', Boolean(ep2), JSON.stringify(afterFirst.map((s) => s.id)))
+  check('导入只含第 1 集：第 2 集镜头无 orphan', ep2?.orphan !== true, JSON.stringify(ep2?.orphan))
+  check(
+    '导入只含第 1 集：第 2 集镜头字段不变',
+    ep2?.desc === episode2Shot.desc &&
+      ep2?.seconds === episode2Shot.seconds &&
+      ep2?.keyframe_prompt === episode2Shot.keyframe_prompt,
+    JSON.stringify({ desc: ep2?.desc, seconds: ep2?.seconds, keyframe: ep2?.keyframe_prompt }),
+  )
 
   // 2) 重复导入同一文件：镜数与节点数不变
   const secondPlan = await openIntake(csvPath)
@@ -227,7 +261,7 @@ try {
   await page.locator('[data-intake-apply]').click()
   await page.waitForTimeout(900)
   const afterSecond = await readShots()
-  check('重复导入：项目仍是 3 镜', afterSecond.length === 3, String(afterSecond.length))
+  check('重复导入：项目仍是 3 镜（第 1 集）+ 第 2 集 1 镜', afterSecond.length === 4, String(afterSecond.length))
   check('重复导入：画布仍是 3 镜', (await nodeCount()) === 3, String(await nodeCount()))
 
   // 3) 落库失败：对话框保留、画布与项目都不变
@@ -241,7 +275,7 @@ try {
   check('落库失败：对话框保留', (await page.locator('.intake-dialog').count()) === 1)
   check('落库失败：给出错误', /模拟落库失败/.test(await page.locator('[data-intake-apply-error]').innerText()))
   check('落库失败：画布不变（3 镜）', (await nodeCount()) === 3, String(await nodeCount()))
-  check('落库失败：项目不变（3 镜）', (await readShots()).length === 3, String((await readShots()).length))
+  check('落库失败：项目不变（4 镜）', (await readShots()).length === 4, String((await readShots()).length))
   await page.locator('.intake-dialog button', { hasText: '取消' }).click()
   await page.waitForTimeout(300)
 

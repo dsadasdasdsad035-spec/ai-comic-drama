@@ -23,6 +23,7 @@ const TESTS = [
   'tests/creative-tools.ts',
   'tests/platform-tool-coverage.ts',
   'tests/shot-field-policy.ts',
+  'tests/shot-write-mode.ts',
   'tests/platform-generate-tools.ts',
   'tests/project-lifecycle.ts',
   'tests/script-writeback.ts',

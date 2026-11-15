@@ -29,7 +29,11 @@ export type ProjectDraftCtx = {
   /** 可选：落库实现；默认走 HTTP。测试借此注入失败，宿主也可换成别的写入通道。 */
   writer?: {
     patch?: (name: string, patch: ProjectPatch) => Promise<unknown>
-    mergeShots?: (name: string, shots: ProjectShot[], deleteShotIds?: string[]) => Promise<unknown>
+    mergeShots?: (
+      name: string,
+      shots: ProjectShot[],
+      opts?: { deleteShotIds?: string[]; mode?: 'partial' | 'full' },
+    ) => Promise<unknown>
   }
   /** 可选：项目媒体清单；素材卡地址校验用，默认走 HTTP */
   listMediaUrls?: (name: string) => Promise<string[]>
@@ -68,6 +72,11 @@ export async function applyProjectDraft(
   const epNo = resolveDraftEpNo(ctx)
   const writePatch = ctx.writer?.patch ?? patchProject
   const writeShots = ctx.writer?.mergeShots ?? mergeProjectShots
+  /**
+   * 契约写回都是「按当前快照重算出的全集」：缺席=被删是模型/合并的意图，
+   * 因此显式声明 full，让服务端把缺席的旧镜头标成 orphan 而不是静默丢弃。
+   */
+  const FULL = { mode: 'full' as const }
 
   if (contractId === 'script-v1') {
     // 按集号合并：本次没出现的集必须原样保留，否则一次改第 2 集会把整部剧本删成 1 集。
@@ -103,7 +112,7 @@ export async function applyProjectDraft(
       const base = blankShot(ep, no)
       return { ...base, ...s, id: base.id, episode: ep }
     })
-    const failed = await commit(() => writeShots(ctx.projectName, withIds))
+    const failed = await commit(() => writeShots(ctx.projectName, withIds, FULL))
     if (failed) return failed
     ctx.setSnapshot({ ...p, shots: withIds })
     ctx.onProjectDataChanged?.()
@@ -156,7 +165,7 @@ export async function applyProjectDraft(
       // 锚点展开读的是驼峰字段 lookEn，必须先转成界面模型，否则蛇形角色永远解析不出锚点
       readCharacters(p.characters),
     )
-    const failed = await commit(() => writeShots(ctx.projectName, shots))
+    const failed = await commit(() => writeShots(ctx.projectName, shots, FULL))
     if (failed) return failed
     ctx.setSnapshot({ ...p, shots })
     ctx.onProjectDataChanged?.()
@@ -172,7 +181,7 @@ export async function applyProjectDraft(
       ? (payload as { joins: JoinDraft[] }).joins
       : []
     const r = applyJoinsToShots(p.shots || [], joins)
-    const failed = await commit(() => writeShots(ctx.projectName, r.shots))
+    const failed = await commit(() => writeShots(ctx.projectName, r.shots, FULL))
     if (failed) return failed
     ctx.setSnapshot({ ...p, shots: r.shots })
     ctx.onProjectDataChanged?.()

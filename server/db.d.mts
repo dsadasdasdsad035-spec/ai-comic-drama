@@ -30,7 +30,9 @@ export declare function createProject(
   name: string,
   init?: Record<string, any>,
 ): { name: string; created: boolean }
-export declare function mergeShots(existing: any[] | undefined, incoming: any[]): any[]
+export declare function mergeShots(existing: any[] | undefined, incoming: any[], mode?: 'partial' | 'full'): any[]
+export declare const SHOTS_MODES: string[]
+export declare function normalizeShotsMode(mode?: unknown): 'partial' | 'full'
 export declare function deleteShots(existing: any[] | undefined, ids: string[]): { shots: any[]; removed: number }
 export declare function pruneDanglingTransitions(shots: any[]): { shots: any[]; cleared: number }
 export declare function findDuplicateShotNos(shots: any[]): { episode: number; no: string; ids: string[] }[]

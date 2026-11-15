@@ -221,6 +221,11 @@ export type CreativeStudioProps = {
     }
     getSelectedVideoModel?: () => VideoModelInput | null
     getVideoResolution?: () => string
+    /**
+     * 项目数据被 Agent 写回后通知宿主重新拉取快照。
+     * 缺省时画布要等用户切走再切回才更新，看起来像「写回没生效」。
+     */
+    onProjectDataChanged?: () => void | Promise<void>
   }
 }
 
@@ -638,6 +643,7 @@ export default function CreativeStudio({
       getCanvasContext: materialHost?.getCanvasContext,
       getSelectedVideoModel: materialHost?.getSelectedVideoModel,
       getVideoResolution: materialHost?.getVideoResolution,
+      onProjectDataChanged: materialHost?.onProjectDataChanged,
     })
     const listExpertsTool = PI_NATIVE_TOOLS.byName.get('list_experts')
     let tools: ToolDef[]

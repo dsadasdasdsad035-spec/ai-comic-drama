@@ -63,7 +63,8 @@ export type BuiltinPlatformCtx = {
   /** 可选：工作台已加载项目时传入，避免重复拉取 */
   getSnapshot?: () => ProjectData | null
   setSnapshot?: (p: ProjectData) => void
-  onProjectDataChanged?: () => void
+  /** 项目数据被写回后的回调：宿主据此重新拉快照，让画布立刻看到 Agent 的改动 */
+  onProjectDataChanged?: () => void | Promise<void>
   /**
    * 破坏性动作的确认通道。未提供时创建项目/改项目元信息/删镜头一律 fail-closed：
    * 没有用户见过的确认，就不该落库。
@@ -481,7 +482,8 @@ function createDeleteShotsTool(input: BuiltinPlatformCtx): ToolDef {
       const drop = new Set(ids)
       const remaining = (project.shots || []).filter((s) => !drop.has(String(s.id)))
       try {
-        await mergeProjectShots(name, remaining, ids)
+        // 整表写回：remaining 是删除后的全集，按 full 让服务端对缺席镜做保护性标记
+        await mergeProjectShots(name, remaining, { deleteShotIds: ids, mode: 'full' })
       } catch (e) {
         return { ok: false, error: (e as Error)?.message || String(e) }
       }
@@ -536,7 +538,8 @@ async function writeShotBack(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const name = input.projectName.trim()
   try {
-    await patchProject(name, { shots: [next] })
+    // 局部写回（不标孤儿）：只发这一镜，其余镜头在服务端原样保留
+    await patchProject(name, { shots: [next], shotsMode: 'partial' })
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || String(e) }
   }

@@ -70,7 +70,8 @@ export function createShotPromptRefineAdapter(deps: ShotPromptRefineDeps): Workb
       const hit = shots[0]
       const tpl = hit.video_prompt_render_meta.templateVersion || getPromptRenderTemplateVersion()
       deps.setSnapshot({ ...p, shots: merged.shots })
-      void mergeProjectShots(deps.projectName, merged.shots)
+      // 整表写回：merged.shots 是按快照重算的全集，按 full 声明才能对缺席镜做保护
+      void mergeProjectShots(deps.projectName, merged.shots, { mode: 'full' })
       const row = merged.shots.find((s) => s.id === deps.shotNodeId || String(s.no) === deps.shotNo)
       if (row?.video_prompt_rendered) {
         deps.onShotPatched(deps.shotNodeId, {

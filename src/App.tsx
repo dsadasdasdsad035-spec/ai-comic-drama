@@ -690,7 +690,8 @@ function Shell() {
           window.setTimeout(() => setToast(''), 3200)
         }
         const mergeDeletes = [...new Set([...plan.deletes, ...repaired.idMap.keys()])]
-        const r = await mergeProjectShots(readyProject, repaired.shots, mergeDeletes)
+        // 局部写回（不标孤儿）：导入结果只是「文件覆盖到的集」，其他集必须原样保留
+        const r = await mergeProjectShots(readyProject, repaired.shots, { deleteShotIds: mergeDeletes })
         saved = r.shots
         setProjectShots(saved)
       }
@@ -722,7 +723,8 @@ function Shell() {
       const invalid = validateShotNos(repaired.shots)
       if (invalid) throw new Error(invalid)
       const mergeDeletes = [...new Set([...deletes, ...repaired.idMap.keys()])]
-      const r = await mergeProjectShots(readyProject, repaired.shots, mergeDeletes)
+      // 整表写回：next 是重新规划后的全集，缺席即删除意图，服务端按 full 标孤儿做保护
+      const r = await mergeProjectShots(readyProject, repaired.shots, { deleteShotIds: mergeDeletes, mode: 'full' })
       setProjectShots(r.shots)
       hydrateCanvasShots(r.shots, { episode: epNo, fit: opts.fit })
       setEpVersion((v) => v + 1)
@@ -815,7 +817,11 @@ function Shell() {
         const repairedOnLoad = reconcileProjectShots(shots)
         if (repairedOnLoad.changed > 0) {
           try {
-            const r = await mergeProjectShots(projectName, repairedOnLoad.shots, [...repairedOnLoad.idMap.keys()])
+            // 整表写回：进画布前的一次性对齐，提交的是项目全集，按 full 保留缺席镜
+            const r = await mergeProjectShots(projectName, repairedOnLoad.shots, {
+              deleteShotIds: [...repairedOnLoad.idMap.keys()],
+              mode: 'full',
+            })
             shots = r.shots
             setToast(`已修正 ${repairedOnLoad.changed} 条镜头 id 与集号不一致`)
             window.setTimeout(() => setToast(''), 3600)
@@ -1093,6 +1099,7 @@ function Shell() {
             ...s,
             refIds: (s.refIds ?? []).filter((x) => !drop.has(x)),
           }))
+        // 局部写回（不标孤儿）：只发受影响的镜
         if (changed.length) await mergeProjectShots(projectName, changed)
       } catch {
         /* 落库失败不阻塞删卡；下次打开仍可从 refIds 看到旧值 */
@@ -1118,6 +1125,7 @@ function Shell() {
               ? (s.refIds ?? []).map((x) => (x === rid ? `char-${to}` : x)).filter((x) => !drop.has(x))
               : (s.refIds ?? []).filter((x) => x !== rid && !drop.has(x)),
           }))
+        // 局部写回（不标孤儿）：只发受影响的镜
         if (changed.length) await mergeProjectShots(projectName, changed)
       } catch {
         /* 迁移失败不阻塞界面；下次打开画布仍可从 refIds 看到原值 */
@@ -2583,6 +2591,7 @@ function Shell() {
         changed.push(nodeToShot(n.data, id))
       }
       if (changed.length === 0) return
+      // 局部写回（不标孤儿）：这里只发本次真正改过的镜，未改的必须原样保留
       mergeProjectShots(projectName, changed).catch(() => {
         /* 写回失败不打断画布操作，工作台「重新加载」可看到差异 */
       })
@@ -3675,6 +3684,8 @@ function Shell() {
               }),
               getSelectedVideoModel: () => selectedVideoModel,
               getVideoResolution: () => vidRes,
+              // Agent 写回后立刻重读项目：不传 fit，避免打断用户当前视口
+              onProjectDataChanged: () => void refreshProjectSnapshot(),
             }}
           />
         ) : view === 'account' ? (

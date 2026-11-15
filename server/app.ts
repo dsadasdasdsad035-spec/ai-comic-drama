@@ -37,6 +37,7 @@ import {
   readProject,
   writeProject,
   mergeShots,
+  normalizeShotsMode,
   deleteShots,
   pruneDanglingTransitions,
   findDuplicateShotNos,
@@ -4293,7 +4294,12 @@ export function createAppHandler({ root }: { root: string }) {
               if (deleteIds !== undefined && !Array.isArray(deleteIds)) {
                 throw new Error('deleteShotIds 必须是字符串数组')
               }
-              if (Array.isArray(body.shots)) patch.shots = mergeShots(cur.shots, body.shots)
+              if (Array.isArray(body.shots)) {
+                // 写回模式：partial（缺省）= 只改提交的镜，其余不标孤儿；full = 声明为全集。
+                // 非法值由 normalizeShotsMode 抛出，外层 catch 统一回 400
+                const shotsMode = normalizeShotsMode(body.shotsMode)
+                patch.shots = mergeShots(cur.shots, body.shots, shotsMode)
+              }
               if (Array.isArray(deleteIds) && deleteIds.length) {
                 const ids = deleteIds.map((x: unknown) => String(x))
                 if (ids.some((x: string) => !x)) throw new Error('deleteShotIds 不能含空值')
