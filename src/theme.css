@@ -3262,6 +3262,27 @@ body.si-resizing {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 出片设置里的时长输入：与「运镜与语义」同一份镜头数据 */
+.vid-len-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.vid-len-field > span {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.vid-len-field input[type='number'] {
+  width: 72px;
+  flex: 0 0 auto;
 }
 
 .vid-note {

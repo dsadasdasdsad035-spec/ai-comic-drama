@@ -12,7 +12,7 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-native-audio-'))
 const entry = path.join(tmp, 'entry.ts')
 const abs = (p) => JSON.stringify(path.join(root, p))
-fs.writeFileSync(entry, [`export * from ${abs('src/nativeAudio.ts')}`, `export * from ${abs('server/apimart.mjs')}`].join('\n') + '\n')
+fs.writeFileSync(entry, [`export * from ${abs('src/nativeAudio.ts')}`, `export * from ${abs('src/videoSeconds.ts')}`, `export * from ${abs('server/apimart.mjs')}`].join('\n') + '\n')
 const bundle = path.join(tmp, 'bundle.mjs')
 execFileSync(path.join(root, 'node_modules', '.bin', 'esbuild'), [
   entry, '--bundle', '--platform=node', '--format=esm', '--log-level=error', `--outfile=${bundle}`,
@@ -32,7 +32,9 @@ const other = lib.audioRefCapabilitiesFor({ providerKind: 'ark', model: 'seedanc
 
 check('APIMart Seedance 2.5 能力', caps?.audioRefField === 'audio_url' && caps.maxRefAudios === 1 && caps.minVideoSeconds === 4)
 check('其他渠道不开放', other === null)
-check('4s 模型下限映射为 5s 门禁', lib.nativeAudioGateSeconds(4, caps) === 5)
+check('4s 模型下限映射为 5s 请求', lib.shotRequestSeconds({ seconds: 4, nativeAudio: true, nativeAudioMinVideoSeconds: caps.minVideoSeconds }).seconds === 5)
+check('4.2s 原生音频请求 5s', lib.shotRequestSeconds({ seconds: 4.2, modelId: 'seedance-2.5', nativeAudio: true, nativeAudioMinVideoSeconds: caps.minVideoSeconds }).seconds === 5)
+check('4.4s 原生音频请求 5s', lib.shotRequestSeconds({ seconds: 4.4, modelId: 'seedance-2.5', nativeAudio: true, nativeAudioMinVideoSeconds: caps.minVideoSeconds }).seconds === 5)
 let r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 5 })
 check('单说话人可用', r.ok && r.character === '陈默' && r.url === sample.url)
 r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 4 })

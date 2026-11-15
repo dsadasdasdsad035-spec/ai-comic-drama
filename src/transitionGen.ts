@@ -2,7 +2,6 @@ import { extractFrames, type ModelEntry } from './api'
 import { parseDialogue } from './prompts'
 import {
   audioRefCapabilitiesFor,
-  nativeAudioGateSeconds,
   nativeAudioPrompt,
   nativeAudioRef,
 } from './nativeAudio'
@@ -28,6 +27,7 @@ import {
   purposeOfShotReference,
 } from './videoPrompt'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT } from './videoRefLimits'
+import { shotRequestSeconds } from './videoSeconds'
 import {
   isFreshVideoPromptRender,
   getPromptRenderTemplateVersion,
@@ -888,26 +888,26 @@ export function buildTransitionVideoPreview(input: {
   const supportsLastFrame = Boolean(input.model?.features?.lastFrame)
   const nativeMode = g.audioMode === 'native'
   const modelFeatures = input.model?.features
-  const req = transitionRequestSeconds(
-    g.targetSeconds,
-    input.model?.model,
-    Boolean(g.boundary?.out && g.boundary?.in),
-    { nativeAudio: nativeMode },
-  )
-  const dialogue = parseDialogue(transitionDialogueText(input.source, input.target))
-  const performance = [...(input.source.data.performance ?? []), ...(input.target.data.performance ?? [])]
   const audioCaps = audioRefCapabilitiesFor({
     providerKind: input.model?.providerKind,
     model: input.model?.model,
     audioOut: input.model?.features?.audioOut,
   })
+  const req = transitionRequestSeconds(
+    g.targetSeconds,
+    input.model?.model,
+    Boolean(g.boundary?.out && g.boundary?.in),
+    { nativeAudio: nativeMode, nativeAudioMinVideoSeconds: audioCaps?.minVideoSeconds },
+  )
+  const dialogue = parseDialogue(transitionDialogueText(input.source, input.target))
+  const performance = [...(input.source.data.performance ?? []), ...(input.target.data.performance ?? [])]
   const nativeRef = nativeMode
     ? nativeAudioRef({
         dialogue,
         performance,
         characters: input.characters ?? [],
         caps: audioCaps,
-        seconds: nativeAudioGateSeconds(req.seconds, audioCaps),
+        seconds: req.seconds,
       })
     : null
   const styleTokensForFp = transitionStyleRefTokens(
@@ -1144,15 +1144,8 @@ export function buildTransitionVideoPreview(input: {
   }
 }
 
-/** 与 server/video.mjs 的 videoCapsFor 对齐的客户端下限（用于请求时长与提示） */
-export function videoMinSeconds(modelId: string | undefined): number {
-  const id = String(modelId || '').toLowerCase()
-  if (/seedance[-_]?1[-_.]?5(?:[-_.]|$)/.test(id)) return 4
-  if (/seedance[-_]?1[-_.]?0(?:[-_.]|$)/.test(id)) return 2
-  if (/kling/.test(id)) return 3
-  if (/seedance[-_]?2[-_.]?5(?:[-_.]|$)/.test(id)) return 4
-  return 2
-}
+/** 与 server/video.mjs / server/apimart.mjs 的时长档位对齐：求解逻辑只保留在 videoSeconds */
+export { videoMinSeconds } from './videoSeconds'
 
 export function modelSupportsLastFrame(entry: ModelEntry | undefined): boolean {
   return Boolean(entry?.features?.lastFrame)
@@ -1163,14 +1156,19 @@ export function transitionRequestSeconds(
   targetSeconds: number,
   modelId: string | undefined,
   submitsLastFrame: boolean,
-  opts?: { nativeAudio?: boolean },
+  opts?: { nativeAudio?: boolean; nativeAudioMinVideoSeconds?: number },
 ): { seconds: number; trimTo?: number } {
-  const min = videoMinSeconds(modelId)
-  const nativeFloor = opts?.nativeAudio ? 5 : 0
-  const effectiveMin = Math.max(min, nativeFloor)
   const target = Math.max(0.8, Number(targetSeconds) || 1.2)
-  if (submitsLastFrame) return { seconds: Math.max(effectiveMin, Math.round(target)) }
-  return { seconds: Math.max(effectiveMin, Math.ceil(target + 0.6)), trimTo: target }
+  const raw = submitsLastFrame ? Math.round(target) : Math.ceil(target + 0.6)
+  const { seconds } = shotRequestSeconds({
+    seconds: raw,
+    modelId,
+    nativeAudio: opts?.nativeAudio,
+    nativeAudioMinVideoSeconds: opts?.nativeAudio
+      ? (opts?.nativeAudioMinVideoSeconds ?? 4)
+      : undefined,
+  })
+  return submitsLastFrame ? { seconds } : { seconds, trimTo: target }
 }
 
 /** 关键帧提示词：面板留空时用上一镜/下一镜的提示词兜底；边界帧由文案描述，不拼进参考图 */

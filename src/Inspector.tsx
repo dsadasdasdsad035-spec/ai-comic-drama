@@ -33,6 +33,7 @@ import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
 import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
+import { requestSecondsNote } from './videoSeconds'
 import { videoRefLimitLabel } from './videoRefLimits'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
 import { performanceVideoEntryCount } from './performance'
@@ -523,7 +524,8 @@ function ShotVideoPromptPanel({
     <OutgoingVideoPromptPanel
       summary={
         <>
-          {VIDEO_MODE_LABEL[request.mode]} · {request.seconds}s
+          {VIDEO_MODE_LABEL[request.mode]} ·{' '}
+          {requestSecondsNote(request.shotSeconds, request.seconds, request.secondsFloor)}
           {request.resolution ? ` · ${request.resolution}` : ''} · 正文来自{sourceLabel}
           <br />
           参考图 {request.refs.length}
@@ -698,6 +700,13 @@ function InspectorBody({
   })
   const sceneNo = Math.max(1, Math.round(Number(d.sceneNo) || 1))
   const sceneLabel = d.sceneSlug || `场 ${sceneNo}`
+  /** 请求秒数只从拼装结果取；拼装缺失时退回本地取整，避免界面出现空值 */
+  const requestSeconds = videoRequest?.seconds ?? effectiveSeconds(d.seconds)
+  const requestSecondsText = requestSecondsNote(
+    (videoRequest?.shotSeconds ?? Number(d.seconds)) || 0,
+    requestSeconds,
+    videoRequest?.secondsFloor ?? null,
+  )
 
   const [prefs, setPrefs] = useState<InspectorPrefs>(() => loadInspectorPrefs())
   const panelRef = useRef<HTMLElement>(null)
@@ -819,7 +828,7 @@ function InspectorBody({
     hasImage,
     candidateCount: d.candidates?.length ?? 0,
     hasVideo: Boolean(d.videoUrl),
-    seconds: d.seconds,
+    seconds: requestSeconds,
     promptSource: activeVideoPrompt?.source ?? 'auto',
     promptStale: activeVideoPrompt?.stale ?? false,
     nativeAudio: d.audioMode === 'native',
@@ -1197,7 +1206,7 @@ function InspectorBody({
           idPrefix="vid-settings"
           sectionId="videoSettings"
           title="出片设置"
-          meta={`${selectedVideoModel?.label ?? '未选模型'} · ${vidRes} · ${Math.min(12, Math.max(2, Math.round(d.seconds)))}s · ¥${money(videoCost(price, Math.round(d.seconds), vidRes))}`}
+          meta={`${selectedVideoModel?.label ?? '未选模型'} · ${vidRes} · ${requestSecondsText} · ¥${money(videoCost(price, requestSeconds, vidRes))}`}
           open={!prefs.collapsed.videoSettings}
           onToggle={() => toggleSection('videoSettings')}
         >
@@ -1209,15 +1218,26 @@ function InspectorBody({
             onVidResChange={setVidRes}
           />
         <div className="gen-controls">
-          <span className="vid-len">
-            {Math.min(12, Math.max(2, Math.round(d.seconds)))}s · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
+          <label className="field vid-len-field">
+            <span>时长（秒）</span>
+            <input
+              type="number"
+              step="0.1"
+              min="0.1"
+              data-shot-seconds
+              value={d.seconds}
+              onChange={(e) => set({ seconds: Number(e.target.value) || 0.1 })}
+            />
+          </label>
+          <span className="vid-len" data-shot-request-seconds>
+            {requestSecondsText} · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
           </span>
         </div>
 
         <p className="vid-note">
           连线了参考图就走<b>多参考图模式</b>（reference_image）；连线了视频素材则同时送
-          <b> reference_video</b>（首期只取第一条）。未连线参考图时无法出片。时长取镜头时长（2~12
-          秒），按 tokens 计费。
+          <b> reference_video</b>（首期只取第一条）。未连线参考图时无法出片。小时长会按模型下限
+          与原生音频门槛自动抬高请求秒数，界面同时显示镜头时长与请求秒数。
         </p>
         {(videoRequest?.refs.length ?? 0) > 0 && (
           <p className="vid-refs">参考图 {videoRequest!.refs.length} 张（画布连线）· 多图模式</p>
@@ -1502,7 +1522,7 @@ function InspectorBody({
               ) : videoReason ? (
                 videoReason
               ) : (
-                `约 ¥${money(videoCost(price, Math.round(d.seconds), vidRes))} / 次`
+                `约 ¥${money(videoCost(price, requestSeconds, vidRes))} / 次`
               )}
             </div>
           </>

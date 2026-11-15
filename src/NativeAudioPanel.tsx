@@ -1,13 +1,13 @@
 import { parseDialogue } from './prompts'
 import {
   nativeAudioFingerprint,
-  nativeAudioGateSeconds,
   nativeAudioRef,
   nativeAudioStale,
   type AudioRefCapabilities,
 } from './nativeAudio'
 import type { CharacterSheet } from './characters'
 import type { ShotData } from './types'
+import { shotRequestSeconds } from './videoSeconds'
 
 type Props = {
   data: ShotData
@@ -31,7 +31,12 @@ export default function NativeAudioPanel({
   forcedOffHint,
 }: Props) {
   const dialogue = parseDialogue(data.dialogue)
-  const requestSeconds = nativeAudioGateSeconds(Number(data.seconds) || 0, caps)
+  /** 与出片请求同源：原生音频门槛由 shotRequestSeconds 解出，面板不再自行抬高秒数 */
+  const requestSeconds = shotRequestSeconds({
+    seconds: Number(data.seconds) || 0,
+    nativeAudio: Boolean(caps?.supported),
+    nativeAudioMinVideoSeconds: caps?.minVideoSeconds,
+  }).seconds
   const ref = nativeAudioRef({
     dialogue,
     performance: data.performance,

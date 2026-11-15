@@ -14,12 +14,6 @@ export type AudioRefCapabilities = {
 }
 
 /** 真实 APIMart 探测结果：单个 audio_url 字符串；2 秒视频被拒绝。产品门禁：名义镜头须大于 4 秒（不含 4）。 */
-/** 原生音频能力判断用的请求秒数：API 要求严格大于 minVideoSeconds（4s 模型下限 → 至少 5s 请求） */
-export function nativeAudioGateSeconds(seconds: number, caps: AudioRefCapabilities | null): number {
-  const n = Number(seconds) || 0
-  if (!caps?.supported) return n
-  return Math.max(n, caps.minVideoSeconds + 1)
-}
 
 export const APIMART_SEEDANCE_AUDIO_CAPS: AudioRefCapabilities = {
   supported: true,
@@ -71,7 +65,7 @@ export function nativeAudioRef(input: {
   if (Number(input.seconds) < minReq) {
     return {
       ok: false,
-      reason: `原生音频请求须至少 ${minReq} 秒（当前按 ${input.seconds}s 计；转场勾选后将自动抬高请求时长）`,
+      reason: `原生音频请求须至少 ${minReq} 秒（当前按 ${input.seconds}s 计）`,
     }
   }
   const speakers = speakingNames(input.dialogue, input.performance)

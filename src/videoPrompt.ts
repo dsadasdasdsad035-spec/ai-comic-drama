@@ -2,7 +2,6 @@ import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import {
   audioRefCapabilitiesFor,
-  nativeAudioGateSeconds,
   nativeAudioRef,
 } from './nativeAudio'
 import { parseDialogue } from './prompts'
@@ -20,6 +19,7 @@ import {
 import { shotAutoScriptPrompt } from './promptRender'
 import type { ShotData, VideoPromptOverride } from './types'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
+import { secondsFloorReason, shotRequestSeconds, videoMaxSeconds, type SecondsFloor } from './videoSeconds'
 
 export type VideoRequestMode = 'first' | 'ref' | 'video' | 'native'
 
@@ -54,7 +54,12 @@ export type ShotVideoRequest = {
   /** 首期只使用第一条视频素材，其余在这里说明 */
   omittedVideos: { label: string; reason: string }[]
   textSource: 'video_prompt' | 'prompt_fallback' | 'fallback' | 'script_assembled' | 'template_render'
+  /** 实际提交给视频接口的秒数；界面与成本只看这个值 */
   seconds: number
+  /** 镜头时长原值，用于展示「镜头 Xs → 请求 Ys」 */
+  shotSeconds: number
+  /** 请求秒数相对镜头时长的抬升原因；null 表示只有取整或范围夹取 */
+  secondsFloor: SecondsFloor | null
   resolution: string
   warnings: VideoRequestIssue[]
   blocking: VideoRequestIssue[]
@@ -204,7 +209,6 @@ export function buildShotVideoRequest(input: {
   resolution?: string
 }): ShotVideoRequest {
   const d = input.data
-  const seconds = Math.round(Number(d.seconds) || 0)
   const resolution = String(input.resolution || '')
   const dialogue = parseDialogue(d.dialogue)
   const nativeMode = d.audioMode === 'native'
@@ -213,13 +217,21 @@ export function buildShotVideoRequest(input: {
     model: input.model?.model,
     audioOut: input.model?.audioOut,
   })
+  /** 唯一时长来源：取整、模型下限与原生音频门槛都在这里解出，后续一律读 seconds */
+  const shotSeconds = Number(d.seconds) || 0
+  const { seconds, floor: secondsFloor } = shotRequestSeconds({
+    seconds: shotSeconds,
+    modelId: input.model?.model,
+    nativeAudio: nativeMode,
+    nativeAudioMinVideoSeconds: nativeMode ? audioCaps?.minVideoSeconds : undefined,
+  })
   const nativeRef = nativeMode
     ? nativeAudioRef({
         dialogue,
         performance: d.performance,
         characters: input.characters,
         caps: audioCaps,
-        seconds: nativeAudioGateSeconds(Number(d.seconds) || 0, audioCaps),
+        seconds,
       })
     : null
 
@@ -317,6 +329,21 @@ export function buildShotVideoRequest(input: {
   })
 
   const warnings: VideoRequestIssue[] = []
+  if (secondsFloor) {
+    warnings.push({
+      code: 'seconds-raised',
+      level: 'warn',
+      message: `镜头 ${shotSeconds.toFixed(1)}s → 请求 ${seconds}s（${secondsFloorReason(secondsFloor)}）`,
+    })
+  }
+  const modelMax = videoMaxSeconds(input.model?.model)
+  if (seconds > modelMax) {
+    warnings.push({
+      code: 'seconds-over-model-max',
+      level: 'warn',
+      message: `当前模型上限 ${modelMax} 秒，请求 ${seconds}s 会被服务端拒绝`,
+    })
+  }
   const orphanAssets = (d.refIds ?? []).filter(
     (rid) => rid.startsWith('asset-') && !input.nodes.some((n) => n.id === rid),
   )
@@ -417,6 +444,8 @@ export function buildShotVideoRequest(input: {
         omittedVideos,
         textSource: 'script_assembled',
         seconds,
+        shotSeconds,
+        secondsFloor,
         resolution,
         warnings,
         blocking,
@@ -437,6 +466,8 @@ export function buildShotVideoRequest(input: {
     omittedVideos,
     textSource,
     seconds,
+    shotSeconds,
+    secondsFloor,
     resolution,
     warnings,
     blocking,
