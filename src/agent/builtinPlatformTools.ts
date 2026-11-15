@@ -552,6 +552,8 @@ function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
     name: 'generate_keyframe',
     description:
       '【平台内置】给一个生图镜生成首帧。只对工位为「生图」的镜开放；出片镜请先切回生图。' +
+      '会把该镜画布连线上的角色三视图、素材图与表情参考作为多参考图送出（上限 10 张），没连线就是纯提示词出图。' +
+      '连线指向的角色没有三视图、素材卡不在画布上时直接失败且不发起请求。' +
       '生成前必须取得成本确认。成功写回该镜 keyframe 并追加候选；不创建素材卡、不改参考连线。',
     schema: z.object({
       no: z.string().min(1).describe('镜号，例如 S03'),
@@ -664,6 +666,8 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
     name: 'generate_clip',
     description:
       '【平台内置】为一个分镜提交出片任务，提交成功立刻返回 jobId，不等成片。' +
+      '参考图、参考视频、音频与首帧由该镜画布连线经统一拼装决定，并沿用画布当前视频模型与分辨率；' +
+      '既没有首帧也没有连线参考时会拒绝提交。' +
       '生成前必须取得成本确认。成片由任务中心轮询落库，这里不会写 clip 字段。',
     schema: z.object({
       no: z.string().min(1).describe('镜号，例如 S03'),

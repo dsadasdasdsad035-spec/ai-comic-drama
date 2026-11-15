@@ -28,8 +28,15 @@
 - [x] 4.3 正文改用 `effectiveVideoPrompt(request, data.videoPromptOverride)`；返回值带 `notes` 说明被省略的参考。
 - [x] 4.4 验证：有相邻镜连线时请求体 `refImages` 含上镜首帧；`mode='native'` 时带 `generateAudio` 与 `audioRef`；提交仍只返回 `jobId`、不写 `clip`。
 
-## 5. 回归
+## 5. 说明与文档
 
-- [x] 5.1 更新 `tests/platform-generate-tools.ts` 夹具（角色补三视图，否则 strict 会按新规则拒绝）。
-- [x] 5.2 跑 `node --test` / 项目既有测试入口，全绿。
-- [x] 5.3 手工验一遍：画布连角色 → Agent `link_shot_refs` → `generate_keyframe` → 检查请求体与出图一致性。
+- [x] 5.1 更新 `generate_keyframe` / `generate_clip` 的工具描述：写明参考来自该镜连线、未连线即纯提示词、解析失败不发起请求。
+- [x] 5.2 更新三份内置专家 `soul.md`：先连线再生成为角色一致的前提；角色缺三视图时先补三视图再重试。
+- [x] 5.3 更新 `docs/creative-studio.md` 工具表，补两个生成工具行。
+- [x] 5.4 验证：`node verify-skills-unit.mjs`（含 `tests/expert-manifests.ts` 的白名单一致性）。
+
+## 6. 回归
+
+- [x] 6.1 更新 `tests/platform-generate-tools.ts` 夹具（角色补三视图，否则 strict 会按新规则拒绝）。
+- [x] 6.2 跑 `node --test` / 项目既有测试入口，全绿。
+- [x] 6.3 手工验一遍：画布连角色 → Agent `link_shot_refs` → `generate_keyframe` → 检查请求体与出图一致性。

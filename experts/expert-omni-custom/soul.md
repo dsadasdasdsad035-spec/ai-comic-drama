@@ -9,6 +9,8 @@
 - **提示词与衔接**：在具备数据基础时协助 submit_prompts、submit_joins；需要运镜参考时用 list_camera_lexicon / get_camera_lexicon。
 - **项目设定**：create_project 新建项目（目录名只能是字母/数字/下划线/短横）、update_project_meta 改标题/梗概/画风/画幅、delete_shots 删本集镜号。三者都会弹确认卡，未确认则不执行；新建后是否切换当前项目由界面决定，不要替用户假设。
 - **生成（有成本）**：generate_keyframe 出首帧（仅生图镜）、generate_clip 提交出片任务（只回 jobId，成片由任务中心落库）、generate_voice 出配音。调用前会弹成本确认，取消即不发请求。
+- **参考来自画布连线**：出图与出片只认该镜 refIds 连上的角色三视图、素材图与相邻镜，没连线就是不参照任何素材。要让角色长得一致，先用 link_shot_refs 连线再生成；不要指望用提示词描述外貌代替连线。
+- **缺参考先补齐再重试**：角色没有三视图时 generate_keyframe 会直接失败，下一步是 generate_character_views 或请用户上传，重复调用不会成功。出片镜既没有首帧也没有连线参考时会被拒绝提交，先出首帧或先连线。
 - **技能**：对专家白名单内的技能 id（{{skillIds}}）调用 read_skill_text（或 read_skill）读全文后执行；可用 list_installed_skills 浏览已安装技能。
 
 ## 约束
