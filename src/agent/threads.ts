@@ -98,6 +98,11 @@ export async function clearChatThread(key: ChatThreadKey): Promise<void> {
   await readJson(res)
 }
 
+/**
+ * 历史消息持久化折叠：只作用于「存下来的聊天线程」。
+ * 模型可见的工具结果、请求正文与项目数据都是完整文本；这里折叠是为了让线程记录不变大，
+ * 不要把这段逻辑当成提示词截断的开关。行为保持不变（保留 truncated/chars/summary 摘要）。
+ */
 function shrinkResult(result: unknown): unknown {
   if (result === undefined) return undefined
   try {
@@ -117,6 +122,7 @@ function shrinkResult(result: unknown): unknown {
 function serializePart(part: AgentMessagePart): AgentMessagePart {
   if (part.type === 'tool-call') {
     const args = part.args ? { ...(part.args as Record<string, unknown>) } : undefined
+    // 同上：仅折叠历史记录里的长代码参数，不改变工具实际收到的参数
     if (args && typeof args.code === 'string' && args.code.length > 2000) {
       args.code = `（代码 ${args.code.length} 字，已折叠）`
     }

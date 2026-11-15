@@ -47,10 +47,10 @@ export function normalizeVisualBrief(raw: unknown, usedVision = true): VisualBri
     .filter(Boolean)
     .slice(0, 8)
     .map((x) => ({
-      ...(x!.name ? { name: String(x!.name).slice(0, 30) } : {}),
+      ...(x!.name ? { name: String(x!.name) } : {}),
       screen: oneOf(x!.screen, ['left', 'center', 'right'] as const, 'center'),
       depth: oneOf(x!.depth, ['near', 'mid', 'far'] as const, 'mid'),
-      ...(x!.occludedBy ? { occludedBy: String(x!.occludedBy).slice(0, 30) } : {}),
+      ...(x!.occludedBy ? { occludedBy: String(x!.occludedBy) } : {}),
       ...(x!.facing
         ? { facing: oneOf(x!.facing, ['camera', 'away', 'left', 'right'] as const, 'camera') }
         : {}),
@@ -62,7 +62,7 @@ export function normalizeVisualBrief(raw: unknown, usedVision = true): VisualBri
     .map((x) => ({
       kind: oneOf(x!.kind, ['wall', 'door', 'window', 'prop', 'floor'] as const, 'prop'),
       ...(x!.side ? { side: oneOf(x!.side, ['left', 'right', 'back', 'front'] as const, 'front') } : {}),
-      description: String(x!.description || '').slice(0, 120),
+      description: String(x!.description || ''),
     }))
     .filter((x) => x.description)
   const cam = asObj(o.cameraHint) || {}
@@ -71,17 +71,17 @@ export function normalizeVisualBrief(raw: unknown, usedVision = true): VisualBri
     usedVision,
     subjects,
     visible,
-    ...(o.shotSize ? { shotSize: String(o.shotSize).slice(0, 30) } : {}),
+    ...(o.shotSize ? { shotSize: String(o.shotSize) } : {}),
     ...(Object.keys(cam).length
       ? {
           cameraHint: {
             ...(cam.height ? { height: oneOf(cam.height, ['low', 'eye', 'high'] as const, 'eye') } : {}),
-            ...(cam.angle ? { angle: String(cam.angle).slice(0, 80) } : {}),
-            ...(cam.notes ? { notes: String(cam.notes).slice(0, 160) } : {}),
+            ...(cam.angle ? { angle: String(cam.angle) } : {}),
+            ...(cam.notes ? { notes: String(cam.notes) } : {}),
           },
         }
       : {}),
-    ...(o.composition ? { composition: String(o.composition).slice(0, 200) } : {}),
+    ...(o.composition ? { composition: String(o.composition) } : {}),
     ...(typeof o.confidence === 'number' && Number.isFinite(o.confidence)
       ? { confidence: Math.min(1, Math.max(0, o.confidence)) }
       : {}),

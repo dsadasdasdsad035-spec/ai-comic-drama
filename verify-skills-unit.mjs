@@ -34,6 +34,7 @@ const TESTS = [
   'tests/expert-manifests.ts',
   'tests/asset-cards.ts',
   'tests/canvas-layout-store.ts',
+  'tests/prompt-text-integrity.ts',
 ]
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-unit-'))
 let failed = 0

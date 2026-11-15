@@ -225,9 +225,10 @@ export function buildShotPromptRenderBundle(input: {
     assets: assetsFromRequest(input.request),
     scene: {
       subjects: cast,
-      castStates: (d.performance ?? []).map((p) => `${p.character}:${p.emotion ?? ''}`).join('；') || d.prompt.slice(0, 120),
+      // 无表演数据时用画面正文兜底；正文整段透传，不做字符切片
+      castStates: (d.performance ?? []).map((p) => `${p.character}:${p.emotion ?? ''}`).join('；') || d.prompt,
       location: d.sceneSlug || '',
-      environment: d.prompt.slice(0, 200),
+      environment: d.prompt,
       lighting: '',
     },
     creative: {
@@ -378,7 +379,8 @@ export function buildTransitionPromptRenderBundle(input: {
       ],
       castStates: `${input.source.data.no}→${input.target.data.no}`,
       location: input.source.data.sceneSlug || input.target.data.sceneSlug || '',
-      environment: [input.source.data.prompt, input.target.data.prompt].filter(Boolean).join(' | ').slice(0, 300),
+      // 两镜环境描述整段透传，不做字符切片
+      environment: [input.source.data.prompt, input.target.data.prompt].filter(Boolean).join(' | '),
     },
     creative: {
       desc: g.prompt,

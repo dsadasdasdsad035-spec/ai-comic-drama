@@ -3,16 +3,26 @@ import type { AgentEvent } from './sceneAgentTypes'
 /** 错误信息仍限制长度，避免整段堆栈进聊天。 */
 const MAX_ERROR_TEXT = 2000
 
+/**
+ * 超预算的结果只做显式标记，不切片：
+ * 以前会把 JSON.stringify 后的字符串切一半塞进 `preview`，下游看到的是一段坏 JSON，
+ * 无法分辨哪里被切掉。现在整份返回，另附 `truncated` / `chars` 说明原始长度。
+ */
 function safe(value: unknown, max = 6000): unknown {
   if (value == null) return value
-  if (typeof value === 'string') return value.slice(0, max)
-  try {
-    const json = JSON.stringify(value)
-    if (json.length <= max) return value
-    return { truncated: true, preview: json.slice(0, max) }
-  } catch {
-    return String(value).slice(0, max)
+  let text: string | null = null
+  if (typeof value === 'string') {
+    text = value
+  } else {
+    try {
+      text = JSON.stringify(value)
+    } catch {
+      text = null
+    }
   }
+  if (text == null) return String(value)
+  if (text.length <= max) return value
+  return { truncated: true, chars: text.length, value }
 }
 
 function lineCount(code: string): number {

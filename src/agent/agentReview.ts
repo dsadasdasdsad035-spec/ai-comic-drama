@@ -67,6 +67,23 @@ async function buildSheet(frames: AgentFrame[]): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.84)
 }
 
+/** 把视觉模型的 JSON 回执整理成验收结果；reason / summary 原样保留，不做字符裁剪 */
+export function buildVisionReviewFromRaw(
+  raw: Record<string, unknown>,
+  requirements: string[],
+  modelKey: string,
+): AgentReview {
+  const items = normalizeItems(raw, requirements)
+  const passed = items.length > 0 && items.every((x) => x.ok)
+  return {
+    passed,
+    usedVision: true,
+    modelKey,
+    items,
+    ...(raw.summary ? { summary: String(raw.summary) } : {}),
+  }
+}
+
 function normalizeItems(raw: unknown, requirements: string[]): AgentReviewItem[] {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const list = Array.isArray(o.items) ? o.items : []
@@ -85,7 +102,7 @@ function normalizeItems(raw: unknown, requirements: string[]): AgentReviewItem[]
       key: String(matched?.key || `req-${i}`),
       label: req,
       ok: Boolean(matched?.ok),
-      ...(matched?.reason ? { reason: String(matched.reason).slice(0, 200) } : {}),
+      ...(matched?.reason ? { reason: String(matched.reason) } : {}),
     })
   }
   return out
@@ -141,15 +158,7 @@ export async function reviewFramesWithVision(input: {
       signal: input.signal,
     })
     const raw = r.json && typeof r.json === 'object' ? (r.json as Record<string, unknown>) : {}
-    const items = normalizeItems(raw, input.requirements)
-    const passed = items.length > 0 && items.every((x) => x.ok)
-    return {
-      passed,
-      usedVision: true,
-      modelKey: r.modelKey || modelKey,
-      items,
-      ...(raw.summary ? { summary: String(raw.summary).slice(0, 500) } : {}),
-    }
+    return buildVisionReviewFromRaw(raw, input.requirements, r.modelKey || modelKey)
   } catch (e) {
     return {
       passed: false,

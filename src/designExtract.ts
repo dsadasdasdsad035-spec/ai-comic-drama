@@ -24,8 +24,8 @@ export function digestAllShots(shots: ProjectShot[]): string {
       return [
         no,
         s.cast?.length ? `出场：${s.cast.join('、')}` : '',
-        dialogue ? `台词：${dialogue.replace(/\s+/g, ' ').slice(0, 90)}` : '',
-        frame ? `画面：${frame.replace(/\s+/g, ' ').slice(0, 140)}` : '',
+        dialogue ? `台词：${dialogue.replace(/\s+/g, ' ')}` : '',
+        frame ? `画面：${frame.replace(/\s+/g, ' ')}` : '',
       ]
         .filter(Boolean)
         .join(' ｜ ')

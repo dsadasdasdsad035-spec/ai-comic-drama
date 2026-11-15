@@ -412,8 +412,6 @@ export function inheritedTransitionRefs(
   return collectInherited(source, target, nodes, characters, missingMedia)
 }
 
-const cutPromptSnippet = (s: string) => (s.length > 90 ? `${s.slice(0, 90)}…` : s)
-
 const CAMERA_HEIGHT: Record<'low' | 'eye' | 'high', string> = {
   low: '低机位',
   eye: '眼平',
@@ -464,8 +462,9 @@ export function transitionContinuityBlock(source: ShotNodeType, target: ShotNode
     const parts = [aCam ? `上一镜 ${aCam}` : '', bCam ? `下一镜 ${bCam}` : ''].filter(Boolean)
     lines.push(`机位：${parts.join('；')}。`)
   }
-  const aAct = cutPromptSnippet(String(source.data.videoPrompt || source.data.prompt || '').trim())
-  const bAct = cutPromptSnippet(String(target.data.videoPrompt || target.data.prompt || '').trim())
+  // 动作衔接引用两镜完整正文：不做字符切片，避免把句子截在半途
+  const aAct = String(source.data.videoPrompt || source.data.prompt || '').trim()
+  const bAct = String(target.data.videoPrompt || target.data.prompt || '').trim()
   if (aAct || bAct) {
     const lead = [
       aAct ? `上一镜结束于「${aAct}」` : '',
@@ -477,15 +476,15 @@ export function transitionContinuityBlock(source: ShotNodeType, target: ShotNode
   return `\n\n衔接：\n${lines.join('\n')}`
 }
 
+/** 空正文时的预填建议：用两镜完整正文拼一段可继续编辑的中文过渡描述 */
 export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeType): string {
   const a = String(source.data.videoPrompt || source.data.prompt || '').trim()
   const b = String(target.data.videoPrompt || target.data.prompt || '').trim()
-  const cut = cutPromptSnippet
   if (!a && !b) return '两个镜头之间的过渡瞬间：保持同一空间、同一人物与同一光线，画面自然衔接。'
   return (
     '两个镜头之间的过渡瞬间，保持人物外观、服装、场景与光线一致。' +
-    (a ? `上一镜：${cut(a)}。` : '') +
-    (b ? `下一镜：${cut(b)}。` : '')
+    (a ? `上一镜：${a}。` : '') +
+    (b ? `下一镜：${b}。` : '')
   )
 }
 
@@ -506,14 +505,18 @@ export function transitionDialogueText(source: ShotNodeType, target: ShotNodeTyp
     .join('\n')
 }
 
-/** 无模板渲染时仅用语义层桥接正文（Agent/面板 prompt），不再运行时拼食谱/衔接/尾句 */
+/**
+ * 语义层桥接正文：只回 Agent/面板写入的正文。
+ * 正文为空时返回空串——由调用方作为「未填写」状态处理，不再静默用兜底正文顶替。
+ * 需要一段可继续编辑的建议文本时用 `defaultTransitionPrompt`（仅用于预填，不参与出片拼装）。
+ */
 export function semanticTransitionVideoPrompt(
-  source: ShotNodeType,
-  target: ShotNodeType,
+  _source: ShotNodeType,
+  _target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
   const g = normalizeGenerated(generated)
-  return g.prompt.trim() || defaultTransitionPrompt(source, target)
+  return g.prompt.trim()
 }
 
 /** @deprecated 用 semanticTransitionVideoPrompt */
@@ -726,13 +729,14 @@ function finalizeTransitionPromptText(
   refs: VideoAttachment[],
   video: VideoAttachment | null,
   submitRefs: boolean,
+  continuity = '',
 ): string {
   if (source === 'override') return base
-  // 仅保留结构锚点（首尾帧槽位）；参考图/视频映射交给模板渲染或语义正文，不再运行时拼接
+  // 仅保留衔接块与结构锚点（首尾帧槽位）；参考图/视频映射交给模板渲染或语义正文，不再运行时拼接
   void submitRefs
   void refs
   void video
-  return base + buildTransitionStructurePromptHint(attachments)
+  return base + continuity + buildTransitionStructurePromptHint(attachments)
 }
 
 export type TransitionPromptPanelRefPrefix = {
@@ -1076,6 +1080,16 @@ export function buildTransitionVideoPreview(input: {
     warnings.push(transitionWarn('transition-merge-warn', w))
   }
 
+  // 正文为空不再是「静默兜底」：明确告诉用户这条接缝还没有正文
+  if (effectivePrompt.source === 'auto' && !effectivePrompt.text.trim()) {
+    blocking.push(
+      transitionBlock(
+        'transition-prompt-empty',
+        '正文未填写：请在「画面与过渡」里写一段桥接描述，或保存手改正文后再出片',
+      ),
+    )
+  }
+
   const continuityPreview = transitionContinuityBlock(input.source, input.target)
   const submittedStyleCount = styleRefs.filter((r) => r.submitted).length
   const promptBody = effectivePrompt.text
@@ -1086,6 +1100,8 @@ export function buildTransitionVideoPreview(input: {
     refs,
     video,
     submitStyle,
+    // 自动路径把衔接约束并入正文；手改正文整段逐字发送，不掺入任何自动段落
+    continuityPreview,
   )
 
   if (nativeMode) {

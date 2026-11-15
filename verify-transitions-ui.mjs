@@ -184,6 +184,15 @@ const headOfEdge = async () => {
 const timelineText = () => page.locator('.ntl-sum').innerText()
 const shot = (n) => page.screenshot({ path: path.join(shotsDir, n) })
 
+/** 重载后会回到「分集目录」：画布页先出选集卡，点进第 1 集才有分镜卡与连线 */
+const reenterBoard = async () => {
+  const cards = page.locator('.board-ep-card')
+  if (await cards.count()) await cards.first().click()
+  await page.locator('.wb-bar-detail').waitFor({ state: 'visible', timeout: 20000 })
+  await page.waitForLoadState('networkidle').catch(() => {})
+  await page.waitForTimeout(1800)
+}
+
 await page.goto(`${APP_URL.replace(/\/$/, '')}/#/`, { waitUntil: 'domcontentloaded' })
 // 大厅是唯一入口：按 hash 打开被 mock 的项目（项目列表在页面里读，mock 才生效）
 const trName = await page.evaluate(async () => {
@@ -201,8 +210,7 @@ if (trName) {
   }, trName)
 }
 await page.locator('.rail').waitFor({ timeout: 20000 })
-await page.waitForLoadState('networkidle').catch(() => {})
-await page.waitForTimeout(1800)
+await reenterBoard()
 
 check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
 check('初始一条硬切', (await relationNow()) === 'cut', await edgeClass())
@@ -256,6 +264,17 @@ await page.locator('.tr-seg button', { hasText: '生成' }).click()
 await page.waitForTimeout(400)
 const panel2 = await page.locator('.tr-panel').innerText()
 check('切到生成模式', panel2.includes('出片设置'))
+check('空正文：面板提示「正文未填写」', panel2.includes('正文未填写'))
+check('空正文：可见状态条出现', (await page.locator('.tr-prompt-empty').count()) === 1)
+check(
+  '空正文：出片按钮被阻断',
+  !(await page.locator('.tr-panel footer button', { hasText: '生成视频' }).isEnabled()),
+)
+await page.locator('.tr-prompt-empty button', { hasText: '用上下镜正文预填' }).click()
+await page.waitForTimeout(400)
+const prefilled = await page.locator('.tr-panel textarea.tr-prompt').first().inputValue()
+check('预填按钮写入可编辑正文', prefilled.trim().length > 20, prefilled.slice(0, 120))
+check('预填后空正文状态消失', (await page.locator('.tr-prompt-empty').count()) === 0)
 check('首尾帧默认未选', panel2.includes('首帧未选 · 尾帧未选'))
 check(
   '首尾帧非必填，生成按钮可用',
@@ -315,7 +334,7 @@ await page.evaluate((k) => {
   localStorage.setItem(k, JSON.stringify(p))
 }, key)
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForTimeout(1800)
+await reenterBoard()
 check('清空边后重载恢复转场线', (await headOfEdge()).includes('生成 1.2s'), await relationNow())
 check('恢复后总长仍 6.8s', (await timelineText()).includes('6.8s'), await timelineText())
 await shot('transition-05-repaired.png')
@@ -324,7 +343,7 @@ await shot('transition-05-repaired.png')
 await page.waitForTimeout(2200)
 state.project.shots[0].keyframe = IMG3
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForTimeout(1800)
+await reenterBoard()
 check('边界变化后线条标失效', (await page.locator('.react-flow__edge-shot.edge-state-stale').count()) === 1)
 await clickEdge()
 await page.locator('.ctx-menu .ctx-actions button', { hasText: '转场设置' }).click()
@@ -372,7 +391,7 @@ state.project.shots[0].transition_out = {
 }
 await page.evaluate((k) => localStorage.removeItem(k), key)
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForTimeout(1800)
+await reenterBoard()
 check('非相邻线条标 inactive', (await page.locator('.react-flow__edge-shot.edge-state-inactive').count()) === 1)
 const warn = await page.locator('.ntl-warn').allTextContents()
 check('时间线提示未参与', warn.some((x) => x.includes('转场未参与')), warn.join('|'))

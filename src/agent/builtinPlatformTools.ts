@@ -819,7 +819,7 @@ function createGenerateVoiceTool(input: BuiltinPlatformCtx): ToolDef {
       const gate = await requireCost(input, {
         action: 'generate_voice',
         title: '生成台词配音',
-        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}：${spoken.slice(0, 60)}${spoken.length > 60 ? '…' : ''}`,
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}：${spoken}`,
         payload: { project: name, episode: ep, no: shot.no, speaker },
       })
       if (!gate.ok) return gate

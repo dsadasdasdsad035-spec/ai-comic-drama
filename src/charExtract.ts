@@ -35,8 +35,8 @@ export function digestShots(
       [
         `${s.no ?? ''}`,
         s.cast?.length ? `出场：${s.cast.join('、')}` : '',
-        s.dialogue ? `台词：${s.dialogue.replace(/\s+/g, ' ').slice(0, 90)}` : '',
-        s.prompt ? `画面：${s.prompt.slice(0, 70)}` : '',
+        s.dialogue ? `台词：${s.dialogue.replace(/\s+/g, ' ')}` : '',
+        s.prompt ? `画面：${s.prompt.replace(/\s+/g, ' ')}` : '',
       ]
         .filter(Boolean)
         .join(' ｜ '),

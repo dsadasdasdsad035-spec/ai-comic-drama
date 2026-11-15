@@ -25,6 +25,7 @@ import {
 import {
   autoTransitionVideoPrompt,
   buildTransitionVideoPreview,
+  defaultTransitionPrompt,
   effectiveTransitionVideoPrompt,
   ensureTransitionBoundary,
   INPUT_MODE_LABEL,
@@ -220,6 +221,11 @@ export default function TransitionPanel({
     () => autoTransitionVideoPrompt(source, target, { ...g, videoPromptOverride: undefined }),
     [source, target, g],
   )
+  // 空正文时的「预填」建议：只在用户主动点按钮时使用，不参与出片拼装
+  const prefillPrompt = useMemo(
+    () => (autoPrompt.trim() ? autoPrompt : defaultTransitionPrompt(source, target)),
+    [autoPrompt, source, target],
+  )
 
   const commit = (next: Partial<TransitionOut>) => {
     const merged = normalizeTransitionOut({ ...t, ...next, to: shotKey(target) }, shotKey(target))
@@ -341,6 +347,8 @@ export default function TransitionPanel({
   const clamped = clampEffectSeconds(effect.seconds, aDur, bDur)
   const videoState = g.video?.state ?? 'idle'
   const hasOverride = preview.promptSource === 'override'
+  /** 正文未填写：语义层没有正文，出片会阻塞，面板要把这件事说清楚 */
+  const promptEmpty = !hasOverride && autoPrompt.trim().length === 0
   const boundaryBlocking = preview.blocking.some((m) => m.code === 'transition-boundary-missing')
   const panelModel = useMemo(() => transitionPreviewToPromptPanelModel(preview, vidRes), [preview, vidRes])
   const transitionEffective = useMemo(
@@ -553,18 +561,31 @@ export default function TransitionPanel({
           <label className="field">
             <span>
               画面与过渡
-              <i className="hint-inline" title="写入转场提示词；留空则从上/下镜推导">
+              <i className="hint-inline" title="写入转场提示词；留空则出片会提示正文未填写">
                 Seedance
               </i>
             </span>
             <textarea
               className="tr-prompt"
               value={g.prompt}
-              placeholder="环境、运动、人物衔接…留空则从上/下镜提示词推导"
+              placeholder="环境、运动、人物衔接…留空会提示正文未填写，可点下方「用上下镜正文预填」"
               onChange={(e) => setGenerated({ prompt: e.target.value })}
               rows={3}
             />
           </label>
+          {promptEmpty ? (
+            <div className="tr-warn tr-prompt-empty">
+              <span>正文未填写：留空无法出片，请补写一段桥接描述。</span>
+              <button
+                type="button"
+                className="btn-ghost"
+                title="把上/下镜正文拼成一段可继续编辑的过渡描述"
+                onClick={() => setGenerated({ prompt: prefillPrompt })}
+              >
+                用上下镜正文预填
+              </button>
+            </div>
+          ) : null}
           {hasOverride ? (
             <div className="gen-note vp-field-note">
               当前使用手改提示词，本字段的修改不会影响出片；要重新接管请在上方面板点「重新拼装」。
@@ -670,7 +691,8 @@ export default function TransitionPanel({
               onRebuildOverride={() =>
                 setGenerated({
                   videoPromptOverride: {
-                    text: autoPrompt,
+                    // 重新拼装用可编辑的预填正文，避免写出一段空的手改正文
+                    text: prefillPrompt,
                     fingerprint: preview.promptFingerprint,
                     createdAt: new Date().toISOString(),
                   },

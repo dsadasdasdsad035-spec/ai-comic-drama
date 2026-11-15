@@ -687,7 +687,11 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         episode: Number(shot.episode) || 0,
         ...resolveShotVideoPrompt(shot),
         ...(typeof shot.video_prompt_rendered === 'string' && shot.video_prompt_rendered.trim()
-          ? { templateRenderedChars: shot.video_prompt_rendered.length }
+          ? {
+              // 模板渲染正文全文返回；chars 只做长度提示，不代替正文
+              templateRendered: shot.video_prompt_rendered,
+              templateRenderedChars: shot.video_prompt_rendered.length,
+            }
           : {}),
       }
     },
@@ -974,7 +978,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       run: async () => {
         const bundle = adapter.promptRenderBundle?.() ?? null
         if (!bundle) return { ok: false, error: 'bundle 不可用' }
-        return { ok: true, bundle: boundJson(bundle) as PromptRenderBundle }
+        // 整份返回：模板渲染的正文要能逐字核对，不能折叠成 preview
+        return { ok: true, bundle: bundle as PromptRenderBundle }
       },
     })
     readByName.set(readBundle.name, readBundle)
@@ -1019,6 +1024,20 @@ function createReadSkillTool(): ToolDef {
   })
 }
 
+/** 技能列表行：描述原样输出，不按字符裁剪 */
+export function skillSummaryRow(s: Skill) {
+  return {
+    id: s.id,
+    name: s.manifest.name || s.id,
+    description: s.manifest.description || '',
+    stage: s.manifest.stage,
+    profile: s.profile || 'workbench',
+    source: s.source,
+    version: s.manifest.version,
+    readWith: (s.profile || 'workbench') === 'agent-pack' ? 'read_skill_text' : 'read_skill',
+  }
+}
+
 function createListInstalledSkillsTool(): ToolDef {
   return defineTool({
     name: 'list_installed_skills',
@@ -1052,16 +1071,7 @@ function createListInstalledSkillsTool(): ToolDef {
       return {
         ok: true,
         count: list.length,
-        skills: list.map((s) => ({
-          id: s.id,
-          name: s.manifest.name || s.id,
-          description: (s.manifest.description || '').slice(0, 240),
-          stage: s.manifest.stage,
-          profile: s.profile || 'workbench',
-          source: s.source,
-          version: s.manifest.version,
-          readWith: (s.profile || 'workbench') === 'agent-pack' ? 'read_skill_text' : 'read_skill',
-        })),
+        skills: list.map((s) => skillSummaryRow(s)),
         loadIssues: issues.map((x) => ({ id: x.id, message: x.message })),
       }
     },
