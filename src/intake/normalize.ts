@@ -8,6 +8,19 @@
  * 所以这三个值必须独立归一化，不能直接塞进契约。
  */
 import { MOVES, SHOT_SIZES } from '../types'
+import type { IntakeDialogueLine } from './diff'
+import { parseDialogueAnnotation } from '../shotCellSyntax'
+
+/** 与导出一致的转义逆运算：把槽位分隔符的全角写法还原 */
+function unescField(raw: string): string {
+  return raw
+    .replace(/／/g, '/')
+    .replace(/：/g, ':')
+    .replace(/｝/g, '}')
+    .replace(/｛/g, '{')
+    .replace(/［/g, '[')
+    .replace(/］/g, ']')
+}
 
 /** 所有会被当作「区间」的破折号：连字符、短破折号、长破折号、波浪号 */
 const RANGE_SEP = /[-–—~～至到]/
@@ -139,6 +152,13 @@ export function normalizeMove(raw: unknown): string | null {
 }
 
 const SPEAKER_PREFIX = /^([^：:]{1,12})[：:]\s*(.+)$/
+/**
+ * 带内联表演标注的说话人前缀：`角色[情绪/强度/语速/音量]{强调}：台词`。
+ *
+ * 说话人段排除 `[` `]` `{` `}`，方括号与花括号只能出现在标注位里，
+ * 这样台词原文里的 `[系统]警告` 永远不会被误当成说话人。
+ */
+const SPEAKER_WITH_ANNOTATION = /^([^：:\[\]{}]{1,12})(\[[^\]]*\])?(\{[^}]*\})?[：:]\s*(.+)$/
 /** 明确不是角色的说话人：这些不进 cast，也不当成角色 */
 const NARRATOR = /^(旁白|画外音|内心独白|os|vo|narrator)$/i
 /** 声音/音乐类描述：不产生台词 */
@@ -146,12 +166,14 @@ const SOUND_ONLY =
   /^(雨声|环境声|音乐|音效|脚步声|心跳|呼吸|风声|雷声|[^：:]{0,6}(声|音乐|音效)[^：:]{0,12})$|^[^：:]*[。，,；;]$/
 
 export type DialogueCell = {
-  /** 真正要进镜头台词的条目 */
-  lines: { speaker: string; text: string }[]
+  /** 真正要进镜头台词的条目；逐条带内联表演标注 */
+  lines: IntakeDialogueLine[]
   /** 旁白单独标出（说话人是旁白，不进 cast） */
-  narrators: { speaker: string; text: string }[]
+  narrators: IntakeDialogueLine[]
   /** 音效/音乐等不产生台词的文字，保留备查 */
   sounds: string[]
+  /** 是否有任何一条带表演标注 */
+  hasDelivery: boolean
 }
 
 /**
@@ -160,10 +182,17 @@ export type DialogueCell = {
  * 规则：按「说话人：」切段。有前缀的算台词（旁白另记）；
  * 没前缀的整段算声音说明。绝不含糊地全部塞进台词，
  * 否则配音会把「雨声」念出来。
+ *
+ * 说话人与冒号之间的 `[..]{..}` 是台词表演标注：只解析这一段，
+ * 冒号之后的原文逐字进入台词。这样台词里出现 `[` `{` 不需要转义。
  */
 export function splitDialogueCell(raw: unknown): DialogueCell {
-  const s = String(raw ?? '').trim()
-  const out: DialogueCell = { lines: [], narrators: [], sounds: [] }
+  // 表格单元格装不下换行，导出会把换行写成 `<br>`；这里先还原成换行，
+  // 否则两个角色的台词会被并成一段，配音时只剩一个说话人。
+  const s = String(raw ?? '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .trim()
+  const out: DialogueCell = { lines: [], narrators: [], sounds: [], hasDelivery: false }
   if (!s) return out
 
   // 先按句末标点 + 换行切成候选段，再逐段判断有没有说话人前缀
@@ -173,13 +202,16 @@ export function splitDialogueCell(raw: unknown): DialogueCell {
     .filter(Boolean)
 
   for (const seg of segments) {
-    const m = seg.match(SPEAKER_PREFIX)
-    if (m) {
-      const speaker = m[1].trim()
-      const text = m[2].trim()
+    const withAnn = seg.match(SPEAKER_WITH_ANNOTATION)
+    if (withAnn) {
+      const speaker = unescField(withAnn[1].trim())
+      const text = withAnn[4].trim()
       if (!text) continue
-      if (NARRATOR.test(speaker)) out.narrators.push({ speaker, text })
-      else out.lines.push({ speaker, text })
+      const delivery = parseDialogueAnnotation(`${withAnn[2] ?? ''}${withAnn[3] ?? ''}`)
+      if (delivery) out.hasDelivery = true
+      const line: IntakeDialogueLine = { speaker, text, ...(delivery ?? {}) }
+      if (NARRATOR.test(speaker)) out.narrators.push(line)
+      else out.lines.push(line)
       continue
     }
     if (SOUND_ONLY.test(seg)) out.sounds.push(seg)

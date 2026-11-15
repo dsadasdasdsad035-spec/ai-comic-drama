@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { SCENE_CODE_ABI } from '../sceneCodePrompt'
+import { ASPECT_OPTIONS } from '../project/aspect'
 
 export type ContractResult = { ok: true; value: unknown } | { ok: false; errors: string[] }
 
@@ -41,6 +42,13 @@ const scriptV1 = passthrough({
       }),
     )
     .min(1),
+})
+
+const projectMetaV1 = passthrough({
+  title: z.string().min(1).optional(),
+  logline: z.string().optional(),
+  style: z.string().optional(),
+  aspect: z.enum(ASPECT_OPTIONS).optional(),
 })
 
 const characterItem = passthrough({
@@ -86,6 +94,25 @@ const designItem = passthrough({
 const designsV1 = passthrough({
   scenes: z.array(designItem).optional().default([]),
   props: z.array(designItem).optional().default([]),
+})
+
+/**
+ * 素材卡。`kind` 与画布徽标、Inspector 下拉共用六种取值；
+ * `designId` 来自设定卡，`characterName` 只用于表情总图——两者是去重依据，
+ * 缺了它们就只能按标题判定，用户一改名就会多出一张卡。
+ */
+const assetCardItem = passthrough({
+  title: z.string().min(1),
+  kind: z.enum(['scene', 'prop', 'image', 'video', 'audio', 'expression-sheet']),
+  url: z.string().min(1),
+  designId: z.string().optional(),
+  characterName: z.string().optional(),
+  note: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+})
+
+const assetsV1 = passthrough({
+  assets: z.array(assetCardItem).min(1),
 })
 
 const emotionEnum = z.enum([
@@ -305,8 +332,10 @@ const creativePlanV1 = passthrough({
 
 const REGISTRY: Record<string, SkillContract> = {
   'script-v1': { id: 'script-v1', label: '分集剧本', schema: scriptV1 },
+  'project-meta-v1': { id: 'project-meta-v1', label: '项目设定', schema: projectMetaV1 },
   'characters-v1': { id: 'characters-v1', label: '角色锚点', schema: charactersV1 },
   'designs-v1': { id: 'designs-v1', label: '场景/道具设定', schema: designsV1 },
+  'assets-v1': { id: 'assets-v1', label: '素材卡', schema: assetsV1 },
   'shots-v1': { id: 'shots-v1', label: '分镜', schema: shotsV1 },
   'joins-v1': { id: 'joins-v1', label: '镜间接缝', schema: joinsV1 },
   'prompts-v1': { id: 'prompts-v1', label: '首帧/视频提示词', schema: promptsV1 },
@@ -333,6 +362,8 @@ export function getContract(id: string): SkillContract | undefined {
 export const CONTRACT_WRITE_HINTS: Record<string, string> = {
   'designs-v1':
     '按类型与名称合并写回：同名卡只补空字段，已有图片、候选图与手工锚点保留；本次未提交的卡不会被删除，删除请走素材页的人工卡片操作。',
+  'assets-v1':
+    '按 designId 或「characterName + expression-sheet」去重合并，其次按「类型 + 标题」：已有的卡只更新、不新增；本次未提交的卡不会被删除。url 必须是当前项目里已存在的媒体地址。',
 }
 
 export function contractWriteHint(id: string): string {

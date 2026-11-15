@@ -13,7 +13,7 @@
 #### Scenario: 文本消息
 
 - **WHEN** 助手返回解释
-- **THEN** 以正常消息文本渲染，支持 Markdown
+- **THEN** 该文本按 `chat-message-markdown` 能力的渲染契约展示，标题、强调、列表、行内代码与表格均为富文本，围栏代码以折叠块呈现
 
 #### Scenario: 工具消息
 

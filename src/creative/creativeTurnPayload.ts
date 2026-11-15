@@ -167,8 +167,17 @@ export function creativeAttachmentBlock(attachments: ChatAttachment[]): string {
   return `${lines.join('\n')}\n\n`
 }
 
-/** 与 bindCreativeTools 过滤规则一致，仅用于展示 */
-export function listCreativeToolNames(skills: Array<{ skill: Skill; mode: 'host' | 'readonly' }>): string[] {
+/**
+ * 检查器展示用的工具名清单。
+ *
+ * 只列真实能绑定的名字：平台工具 + 本轮 MCP 工具是可用全集，
+ * 技能声明了但运行时没有的名字不展示（否则检查器会替幽灵工具背书）。
+ */
+export function listCreativeToolNames(
+  skills: Array<{ skill: Skill; mode: 'host' | 'readonly' }>,
+  extraToolNames: string[] = [],
+): string[] {
+  const available = new Set<string>([...builtinPlatformToolNames(), ...extraToolNames])
   const names = new Set<string>()
   for (const { skill, mode } of skills) {
     for (const name of skill.manifest.tools) {
@@ -178,6 +187,7 @@ export function listCreativeToolNames(skills: Array<{ skill: Skill; mode: 'host'
       ) {
         continue
       }
+      if (!available.has(name)) continue
       names.add(name)
     }
   }
@@ -267,7 +277,10 @@ export function buildCreativeTurnPayload(input: {
   return {
     system: buildCreativePiSystem(input.host, workspace),
     userForModel: attach + draft,
-    toolNames: [...listCreativeToolNames(bindings), ...(input.extraToolNames || [])].sort(),
+    toolNames: [
+      ...listCreativeToolNames(bindings, input.extraToolNames || []),
+      ...(input.extraToolNames || []),
+    ].sort(),
     piMemoryPreview,
     priorPiMessages,
   }

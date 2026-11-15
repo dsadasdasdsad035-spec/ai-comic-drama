@@ -23,7 +23,7 @@ import { ChatStep } from '@/chat-ui/ChatStep'
 import { CreativeToolUis } from './CreativeToolUis'
 import { useAgentMessages } from '../agent/useAgentMessages'
 import { createBuiltinPlatformTools, mergeBuiltinWithSkillTools } from '../agent/builtinPlatformTools'
-import { bindSkillTools, createPiNativeToolSet } from '../agent/stageTools'
+import { bindSkillTools, createPiNativeToolSet, type SkippedSkillTool } from '../agent/stageTools'
 import { runStageAgent } from '../agent/pi/stageRunner'
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import { CreativeSessionList } from './CreativeSessionList'
@@ -60,6 +60,9 @@ import {
   type CreativeToolParamConfirmRequest,
 } from './creativeToolParamGate'
 import { ToolParamConfirmDialog, type ToolParamPrompt } from './ToolParamConfirmDialog'
+import { DestructiveConfirmDialog, type DestructivePrompt } from './DestructiveConfirmDialog'
+import { CostConfirmDialog, type CostPrompt } from './CostConfirmDialog'
+import type { BuiltinConfirmRequest, BuiltinCostRequest } from '../agent/builtinPlatformTools'
 
 const STEP_LINE = /^第 (\d+) 轮 · ([\s\S]*)$/
 const PI_NATIVE_TOOLS = createPiNativeToolSet()
@@ -189,6 +192,21 @@ export type CreativeStudioProps = {
   onOpenMcp?: () => void
   /** 打开设置 → 创意专家 */
   onOpenExperts?: () => void
+  /**
+   * 新建项目成功后的列表刷新钩子。
+   * 工具只负责落库，切不切当前项目、列表怎么刷由界面决定。
+   */
+  onProjectCreated?: (name: string) => void | Promise<void>
+  /**
+   * 宿主画布与角色通道：
+   * 素材工具按标题连参考需要画布节点 id，角色外观写入需要立即落库，
+   * 素材卡写回需要同步画布。缺哪一项，对应工具就 fail-closed 并说明原因。
+   */
+  materialHost?: {
+    getCanvasAssets?: () => { id: string; title: string; url: string }[]
+    commitCharacters?: (next: unknown[]) => void | Promise<void>
+    onAssetsWritten?: (assets: unknown[]) => void | Promise<void>
+  }
 }
 
 /**
@@ -205,6 +223,8 @@ export default function CreativeStudio({
   onOpenAllSkills,
   onOpenMcp,
   onOpenExperts,
+  onProjectCreated,
+  materialHost,
 }: CreativeStudioProps) {
   const { messages, setMessages, running, setRunning, abortRef, begin, updateEvent, patchAssistant } = useAgentMessages()
 
@@ -236,6 +256,19 @@ export default function CreativeStudio({
   // 否则清理函数会随渲染反复执行并重复保存。
   const reportSaveErrorRef = useRef(reportSaveError)
   reportSaveErrorRef.current = reportSaveError
+
+  /**
+   * 技能声明了、运行时却没注册的工具：给一条可读提示，不静默跳过。
+   * 不写 console：桌面端用户看不到控制台，提示必须落在界面上。
+   */
+  const reportSkippedSkillTools = useCallback(
+    (skipped: SkippedSkillTool[]) => {
+      const names = [...new Set(skipped.map((s) => s.name))]
+      onToast?.(`技能声明的 ${names.join('、')} 运行时未注册，本次未绑定`)
+    },
+    [onToast],
+  )
+
   const [hostSkill, setHostSkill] = useState<Skill | null>(null)
   const [mcpToolNames, setMcpToolNames] = useState<string[]>([])
   const mcpToolsRef = useRef<ToolDef[]>([])
@@ -255,6 +288,8 @@ export default function CreativeStudio({
   const saveTimer = useRef<number | null>(null)
   const epNoRef = useRef(epNo)
   const [toolParamPrompt, setToolParamPrompt] = useState<ToolParamPrompt | null>(null)
+  const [destructivePrompt, setDestructivePrompt] = useState<DestructivePrompt | null>(null)
+  const [costPrompt, setCostPrompt] = useState<CostPrompt | null>(null)
 
   useEffect(() => {
     epNoRef.current = epNo
@@ -269,6 +304,41 @@ export default function CreativeStudio({
             setToolParamPrompt(null)
             if (!ok) resolve(null)
             else resolve(episode ?? req.episode)
+          },
+        })
+      }),
+    [],
+  )
+
+  /**
+   * 破坏性动作确认：新建项目 / 改项目设定 / 删分镜。
+   * 只在这张卡上点「确认执行」才返回 true，取消、Esc、关掉都按拒绝。
+   */
+  const requestDestructiveConfirm = useCallback(
+    (req: BuiltinConfirmRequest) =>
+      new Promise<boolean>((resolve) => {
+        setDestructivePrompt({
+          ...req,
+          resolve: (ok) => {
+            setDestructivePrompt(null)
+            resolve(ok)
+          },
+        })
+      }),
+    [],
+  )
+
+  /**
+   * 成本确认：出图 / 出片 / 配音。取消就一个请求都不发。
+   */
+  const requestCostConfirm = useCallback(
+    (req: BuiltinCostRequest) =>
+      new Promise<boolean>((resolve) => {
+        setCostPrompt({
+          ...req,
+          resolve: (ok) => {
+            setCostPrompt(null)
+            resolve(ok)
           },
         })
       }),
@@ -541,14 +611,25 @@ export default function CreativeStudio({
       setEpNo: setEpNoForTools,
       confirm: requestToolParamConfirm,
     }
-    const platformTools = createBuiltinPlatformTools({ projectName: projectKey, epNo: getEpNo })
+    const platformTools = createBuiltinPlatformTools({
+      projectName: projectKey,
+      epNo: getEpNo,
+      confirm: requestDestructiveConfirm,
+      askCost: requestCostConfirm,
+      onProjectCreated: (created) => onProjectCreated?.(created),
+      getCanvasAssets: materialHost?.getCanvasAssets,
+      commitCharacters: materialHost?.commitCharacters,
+      onAssetsWritten: materialHost?.onAssetsWritten,
+    })
     const listExpertsTool = PI_NATIVE_TOOLS.byName.get('list_experts')
     let tools: ToolDef[]
     if (activeExpert && listExpertsTool) {
       tools = buildCreativeExpertTools(activeExpert, platformTools, mcpToolsRef.current, listExpertsTool)
     } else {
       const skillTools = hostSkill
-        ? bindSkillTools(PI_NATIVE_TOOLS, [{ skill: hostSkill, mode: 'host' }])
+        ? bindSkillTools(PI_NATIVE_TOOLS, [{ skill: hostSkill, mode: 'host' }], {
+            onSkipped: reportSkippedSkillTools,
+          })
         : bindSkillTools(PI_NATIVE_TOOLS, [])
       tools = [...mergeBuiltinWithSkillTools(platformTools, skillTools), ...mcpToolsRef.current]
     }
@@ -663,6 +744,15 @@ export default function CreativeStudio({
           prompt={toolParamPrompt}
           onResolve={(ok, episode) => toolParamPrompt.resolve(ok, episode)}
         />
+      ) : null}
+      {destructivePrompt ? (
+        <DestructiveConfirmDialog
+          prompt={destructivePrompt}
+          onResolve={(ok) => destructivePrompt.resolve(ok)}
+        />
+      ) : null}
+      {costPrompt ? (
+        <CostConfirmDialog prompt={costPrompt} onResolve={(ok) => costPrompt.resolve(ok)} />
       ) : null}
       <CreativeSessionList
         sessions={sessions}

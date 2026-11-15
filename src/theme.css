@@ -12686,6 +12686,28 @@ body,
 .char-main {
   min-width: 0;
 }
+.char-preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.char-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.char-preview-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.char-preview-frame {
+  width: 100%;
+  height: 560px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg);
+}
 .char-sheet-pane {
   display: flex;
   flex-direction: column;

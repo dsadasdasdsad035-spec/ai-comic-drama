@@ -261,7 +261,8 @@ async function main() {
       source: 'builtin',
     } as never
     const names = bindCreativeTools(set, [{ skill, mode: 'readonly' }]).map((t) => t.name)
-    assert.deepEqual(names, ['read_video_shots'])
+    // read_skill 是只读技能的固定附带项（读正文才可能看懂别的技能），其余读写/付费工具不该出现
+    assert.deepEqual(names, ['read_video_shots', 'read_skill'])
   })
 
   console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

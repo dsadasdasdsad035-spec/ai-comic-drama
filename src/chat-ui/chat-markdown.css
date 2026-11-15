@@ -1,0 +1,195 @@
+/**
+ * 会话消息 Markdown 排版。
+ *
+ * 只在 .chat-ui .chat-md 作用域内生效：chat.css 里那条
+ * `.chat-ui h1~h4 / p { font-size: inherit; font-weight: inherit }`
+ * 与 `.chat-ui a { text-decoration: none }` 是其它聊天组件依赖的 reset，
+ * 这里用双类选择器提高特异性覆盖，不改动 reset 本身，也不用 !important。
+ */
+
+.chat-ui .chat-md {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- 标题 */
+
+.chat-ui .chat-md h1,
+.chat-ui .chat-md h2,
+.chat-ui .chat-md h3,
+.chat-ui .chat-md h4 {
+  margin: 0.85em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--foreground);
+}
+
+.chat-ui .chat-md > :first-child {
+  margin-top: 0;
+}
+
+.chat-ui .chat-md h1 {
+  font-size: 1.3em;
+}
+
+.chat-ui .chat-md h2 {
+  font-size: 1.15em;
+}
+
+.chat-ui .chat-md h3 {
+  font-size: 1.05em;
+}
+
+.chat-ui .chat-md h4 {
+  font-size: 1em;
+}
+
+/* ---------------------------------------------------------------- 段落与强调 */
+
+.chat-ui .chat-md p {
+  margin: 0.5em 0;
+  line-height: 1.65;
+}
+
+.chat-ui .chat-md p:first-child {
+  margin-top: 0;
+}
+
+.chat-ui .chat-md p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-ui .chat-md strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.chat-ui .chat-md em {
+  font-style: italic;
+}
+
+.chat-ui .chat-md del {
+  opacity: 0.7;
+}
+
+/* ---------------------------------------------------------------- 列表 */
+
+.chat-ui .chat-md ul,
+.chat-ui .chat-md ol {
+  margin: 0.5em 0;
+  padding-left: 1.35em;
+}
+
+.chat-ui .chat-md ul {
+  list-style: disc;
+}
+
+.chat-ui .chat-md ol {
+  list-style: decimal;
+}
+
+.chat-ui .chat-md li {
+  margin: 0.2em 0;
+  line-height: 1.6;
+}
+
+.chat-ui .chat-md li > ul,
+.chat-ui .chat-md li > ol {
+  margin: 0.2em 0;
+}
+
+.chat-ui .chat-md li::marker {
+  color: var(--muted-foreground);
+}
+
+/* 任务列表：去掉项目符号，checkbox 与文本对齐 */
+.chat-ui .chat-md li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.1em;
+}
+
+.chat-ui .chat-md input[type='checkbox'] {
+  margin-right: 0.35em;
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------------------------- 引用 */
+
+.chat-ui .chat-md blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 0.75em;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.chat-ui .chat-md blockquote p {
+  margin: 0.25em 0;
+}
+
+/* ---------------------------------------------------------------- 链接 */
+
+.chat-ui .chat-md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.chat-ui .chat-md a:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* ---------------------------------------------------------------- 代码 */
+
+.chat-ui .chat-md .chat-md-inline-code {
+  padding: 0.1em 0.32em;
+  border-radius: 3px;
+  background: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+/* Pre 组件取不到 code 子节点时的兜底渲染 */
+.chat-ui .chat-md pre {
+  margin: 0.6em 0;
+  padding: 0.5em 0.6em;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-size: 0.92em;
+}
+
+/* ---------------------------------------------------------------- 表格 */
+
+.chat-ui .chat-md .chat-md-table-wrap {
+  margin: 0.6em 0;
+}
+
+.chat-ui .chat-md .chat-md-table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.chat-ui .chat-md .chat-md-table th,
+.chat-ui .chat-md .chat-md-table td {
+  padding: 0.3em 0.55em;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-ui .chat-md .chat-md-table th {
+  background: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- 分隔线 */
+
+.chat-ui .chat-md hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}

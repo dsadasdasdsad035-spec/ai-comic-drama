@@ -20,7 +20,12 @@ import { parseSkillText } from '../src/skills/parse'
 import { buildSkillPrompt } from '../src/skills/render'
 
 const root = process.cwd()
-const read = (id: string) => fs.readFileSync(path.join(root, 'skills', id, 'SKILL.md'), 'utf8')
+/**
+ * 工作台技能（script/character/shotlist…）改为 SkillHub 安装，仓库不再内置；
+ * 这些断言要对旧版正文做逐字比对，所以正文钉在 tests/fixtures/skills 下。
+ */
+const FIXTURE_SKILLS = path.join(root, 'tests', 'fixtures', 'skills')
+const read = (id: string) => fs.readFileSync(path.join(FIXTURE_SKILLS, id, 'SKILL.md'), 'utf8')
 const parse = (id: string) => parseSkillText(id, read(id), 'builtin')
 
 let bad = 0
@@ -49,8 +54,8 @@ check('asset 角色层逐字等于旧 ASSET_SYS', () => assert.equal(asset.role,
 check('shotlist 合并分镜与提示词规则', () => {
   assert.ok(shotlist.role.includes('keyframe_prompt') && shotlist.role.includes('video_prompt'))
   assert.ok(shotlist.role.includes('{{角色名}}'))
-  assert.ok(shotlist.tools.includes('read_characters'))
-  assert.equal(shotlist.version, 3)
+  assert.ok(shotlist.manifest.tools.includes('read_characters'))
+  assert.equal(shotlist.manifest.version, 3)
 })
 check('prompt 角色层逐字等于旧 PROMPT_SYS', () => assert.equal(prompt.role, PROMPT_SYS))
 check('script BASE 未被拆开', () => assert.ok(SCRIPT_BASE.length > 0 && script.role.startsWith(SCRIPT_BASE)))

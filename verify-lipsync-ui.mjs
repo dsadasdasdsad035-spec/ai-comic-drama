@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5342
@@ -71,8 +72,7 @@ await page.route('**/api/lipsync**', async (route) => {
 
 try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.locator('table.wb-table').waitFor({ timeout: 15000 })
   await page.locator('.perf-cell button', { hasText: '编辑' }).first().click()

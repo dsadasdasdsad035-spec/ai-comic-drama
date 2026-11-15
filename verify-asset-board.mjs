@@ -217,8 +217,8 @@ try {
 
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1600)
-  const projectSel = page.locator('.topbar-project select')
-  check('默认项目为 A', (await projectSel.inputValue()) === 'A', await projectSel.inputValue())
+  const railName = () => page.locator('.rail-project-name').first()
+  check('默认项目为 A', (await railName().innerText()).includes('A'), await railName().innerText())
 
   // ---- 设置页 ----
   await page.getByRole('button', { name: '设置', exact: true }).click()

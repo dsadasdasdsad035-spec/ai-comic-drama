@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5345
@@ -73,8 +74,7 @@ await page.route('**/generated/**', async (route) => route.fulfill({ status: 200
 
 try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.locator('.react-flow__node').first().waitFor({ timeout: 15000 })
   await page.locator('.react-flow__node').first().click()
   await page.locator('[data-native-audio]').waitFor({ timeout: 10000 })

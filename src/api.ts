@@ -709,8 +709,19 @@ export type ProjectShot = {
   visual_brief?: VisualBrief
   visual_brief_meta?: VisualBriefMeta
   motion_note?: string
+  /** 绑定的镜头语言条目 key；空则未绑定，不从 move/size 反推 */
+  lexicon_ref_key?: string | null
+  /** 该条目导入项目后的视频地址；未导入过则为空 */
+  lexicon_ref_url?: string | null
+  /** 为 true 时把 lexicon_ref_url 作为运镜参考视频提交 */
+  motion_lexicon_as_ref?: boolean
   /** 视频出片是否带说话角色表情单格；缺失按 false，避免旧项目自动占槽 */
   use_expression_ref?: boolean
+  /**
+   * 出图候选（画布态的产物列表）。
+   * shots 表没有专列，服务端把它原样收进 shots.extra 落库，读项目时展开。
+   */
+  candidates?: string[]
 }
 
 export type ProjectEpisode = {
@@ -893,6 +904,8 @@ export type ProjectPatch = {
   logline?: string
   style?: string
   aspect?: string
+  /** 项目标题（显示名）；目录名不随之改变 */
+  title?: string
 }
 
 /** 局部回写：只传的字段会更新，未传的一律保留 */

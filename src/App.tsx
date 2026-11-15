@@ -135,6 +135,8 @@ import {
 import { resolveVideoUpstreamRecover } from './videoRecover'
 import { COMPOSE_HINT, composeReference } from './compose'
 import { bizSignature, nodeToShot, shotToData } from './shotSync'
+import { downloadEpisodeMarkdown } from './storyboardMarkdown'
+import { buildShotRefIndex } from './shotRefIndex'
 import {
   buildShotNodes,
   composeShotCanvasEdges,
@@ -2356,6 +2358,48 @@ function Shell() {
     [setNodes, fitView, missingMedia],
   )
 
+  /**
+   * 素材卡写回后同步画布：按「标题 + 类型」对齐既有节点，保留位置与连线；
+   * 新卡放进分镜上方的素材带，不改动名字对不上的卡。
+   */
+  const syncAssetCards = useCallback(
+    (next: ProjectAsset[]) => {
+      if (!next.length) return
+      const keyOf = (title: string, kind: string) => `${kind}::${title}`
+      setNodes((prev) => {
+        const out = [...prev]
+        const index = new Map<string, number>()
+        out.forEach((n, i) => {
+          if ((n as unknown as AssetNodeType).type !== 'asset') return
+          const d = n.data as unknown as { title?: string; kind?: string }
+          if (d.title) index.set(keyOf(d.title, String(d.kind ?? 'image')), i)
+        })
+        let slot = out.filter((n) => (n as unknown as AssetNodeType).type === 'asset').length
+        for (const asset of next) {
+          const kind = String(asset.kind ?? 'image')
+          const at = index.get(keyOf(asset.title, kind))
+          if (at !== undefined) {
+            const node = out[at]
+            out[at] = {
+              ...node,
+              data: { ...node.data, title: asset.title, kind, url: asset.url },
+            } as unknown as ShotNodeType
+            continue
+          }
+          out.push({
+            id: `asset-${uid()}`,
+            type: 'asset',
+            position: { x: 80 + (slot % 4) * 250, y: -560 - Math.floor(slot / 4) * 180 },
+            data: { title: asset.title, kind, url: asset.url },
+          } as unknown as ShotNodeType)
+          slot++
+        }
+        return out
+      })
+    },
+    [setNodes],
+  )
+
   /** 在线素材导入 → 直接生成一张素材卡（不建连线，不覆盖已手改内容） */
   const addAssetCardFromStock = useCallback(
     (input: { title: string; kind: string; url: string }) => {
@@ -3331,26 +3375,27 @@ function Shell() {
     window.setTimeout(() => fitView({ padding: 0.12, minZoom: 0.66, duration: 400 }), 60)
   }
 
-  const exportJson = () => {
-    const payload = {
-      project: '回收人 · 分镜',
-      exportedAt: new Date().toISOString(),
-      shots: nodes.map((n) => ({
-        id: n.id,
-        ...n.data,
-        position: n.position,
-        marks: n.data.marks,
-      })),
-      relations: edges.map((e) => ({ from: e.source, to: e.target, relation: e.data?.relation ?? 'cut' })),
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'storyboard.json'
-    a.click()
-    URL.revokeObjectURL(url)
+  /**
+   * 导出当前集：数据取自项目级镜头（含画面描述与完整提示词），
+   * 不用画布节点——节点没有 desc，且只覆盖当前集的一部分。
+   */
+  const exportEpisode = () => {
+    const doc = downloadEpisodeMarkdown(
+      {
+        projectName: currentSummary.title || projectName || '未命名',
+        style: projectStyle,
+        aspect: projectAspect,
+        episodes,
+        shots: projectShots,
+        // 素材标题只在画布节点上，导出侧只做查表，不碰节点
+        refIndex: buildShotRefIndex(characters, nodes),
+      },
+      epNo,
+    )
+    setToast(`已导出 ${doc.fileName}`)
+    window.setTimeout(() => setToast(''), 2800)
   }
+
 
   useEffect(() => {
     if (!projectName || readyProject !== projectName) return
@@ -3519,9 +3564,6 @@ function Shell() {
               </span>
             )}
             <TaskCenter />
-            <button className="btn" onClick={exportJson}>
-              导出 JSON
-            </button>
           </>
         }
         railFooter={<ThemeToggle />}
@@ -3556,6 +3598,24 @@ function Shell() {
             onOpenAllSkills={() => changeView('settings', { settingsSection: 'skills' })}
             onOpenMcp={() => changeView('settings', { settingsSection: 'mcp' })}
             onOpenExperts={() => changeView('settings', { settingsSection: 'experts' })}
+            onProjectCreated={() => void reloadProjects()}
+            materialHost={{
+              getCanvasAssets: () =>
+                nodesRef.current
+                  .filter((n) => (n as unknown as AssetNodeType).type === 'asset')
+                  .map((n) => {
+                    const d = n.data as unknown as { title?: string; url?: string }
+                    return { id: n.id, title: String(d.title ?? ''), url: String(d.url ?? '') }
+                  })
+                  .filter((a) => a.title !== '' && a.url !== ''),
+              commitCharacters: (next) => {
+                const list = next as CharacterSheet[]
+                charactersRef.current = list
+                setCharacters(list)
+                return saveCharactersNow(list)
+              },
+              onAssetsWritten: (next) => syncAssetCards(next as ProjectAsset[]),
+            }}
           />
         ) : view === 'account' ? (
           <AccountPage
@@ -3629,6 +3689,12 @@ function Shell() {
             onAddEpisode={() => void handleAddEpisode()}
             onImportScript={openScriptImport}
             addBusy={addEpisodeBusy}
+            projectTitle={currentSummary.title || projectName}
+            refIndex={buildShotRefIndex(characters, nodes)}
+            onNotice={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3200)
+            }}
           />
         ) : (
         <div className="canvas-workspace" data-canvas-shots data-board-phase="canvas">
@@ -3686,6 +3752,20 @@ function Shell() {
               }
               actions={
                 <>
+                  <button
+                    className="btn"
+                    disabled={!readyProject || epProjectShots.length === 0}
+                    title={
+                      !readyProject
+                        ? '先在顶栏选择项目'
+                        : epProjectShots.length === 0
+                          ? '当前集没有镜头，无可导出内容'
+                          : '把当前集导出为分镜表 Markdown，可直接回灌导入入口'
+                    }
+                    onClick={exportEpisode}
+                  >
+                    导出
+                  </button>
                   <button
                     className="btn"
                     disabled={!readyProject}
@@ -4087,6 +4167,7 @@ function Shell() {
             episodes={episodes}
             chars={characters}
             characterSheets={characters}
+            refIndex={buildShotRefIndex(characters, nodes)}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 2800)

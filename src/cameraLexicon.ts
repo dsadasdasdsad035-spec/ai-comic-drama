@@ -43,6 +43,25 @@ export function getCameraLexiconEntry(key: string): CameraLexiconEntry | undefin
   return catalog.entries.find((e) => e.key === k)
 }
 
+/**
+ * 按 key 或中文名解析条目，用于表格导入。
+ *
+ * 只认精确匹配：中文名与 key 都不做模糊匹配。参考视频决定成片运镜风格，
+ * 猜错一条等于让整镜的运动方式变成用户没选过的东西，而且不会报错。
+ */
+export function resolveCameraLexiconByName(
+  raw: string,
+): { entry?: CameraLexiconEntry; candidates?: CameraLexiconEntry[] } {
+  const v = String(raw ?? '').trim()
+  if (!v) return {}
+  const byKey = getCameraLexiconEntry(v)
+  if (byKey) return { entry: byKey }
+  const byCn = catalog.entries.filter((e) => e.cn === v)
+  if (byCn.length === 1) return { entry: byCn[0] }
+  if (byCn.length > 1) return { candidates: byCn }
+  return {}
+}
+
 export function listCameraLexicon(filter?: {
   category?: LexiconCategory
   section?: number

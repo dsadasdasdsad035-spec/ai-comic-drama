@@ -3,6 +3,7 @@
  * 需要 dev server：APP_URL=http://127.0.0.1:5280 node verify-neighbor-ui.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const A = `neighbor-a-${Date.now()}`
@@ -62,8 +63,8 @@ await page.route('**/api/seedance**', (route) => {
   return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, status: 'succeeded', url: '/videos/fake-neighbor.mp4' }) })
 })
 
-const selectProject = async (name) => {
-  await page.locator('.topbar-project select').selectOption(name)
+const openShotTable = async (name) => {
+  await selectProject(page, name)
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(600)
@@ -88,7 +89,7 @@ const openMenu = async (id) => {
 }
 
 await page.goto(URL, { waitUntil: 'networkidle' })
-await selectProject(A)
+await openShotTable(A)
 const n2 = await nodeId(A, 'E01-S02')
 const beforeEdges = await page.locator('.react-flow__edge').count()
 await openMenu(n2)
@@ -137,7 +138,7 @@ check('首帧动作只更新当前镜头', (await nodeData(A, n2))?.refImage ===
 await page.keyboard.press('Escape')
 await page.waitForTimeout(200)
 
-await page.locator('.topbar-project select').selectOption(B)
+await selectProject(page, B)
 await page.waitForTimeout(700)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(500)
@@ -176,7 +177,7 @@ await api(`/api/project?name=${encodeURIComponent(C)}`, {
 })
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(700)
-await page.locator('.topbar-project select').selectOption(C)
+await selectProject(page, C)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(600)
@@ -214,7 +215,7 @@ await createProject(D, [{
 }])
 await page.reload({ waitUntil: 'networkidle' })
 await page.waitForTimeout(700)
-await page.locator('.topbar-project select').selectOption(D)
+await selectProject(page, D)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(600)

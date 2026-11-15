@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5361
@@ -157,7 +158,7 @@ try {
 
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)
-  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await selectProject(page, PROJECT)
   await page.waitForTimeout(1200)
 
   // —— 结构一致性：角色聊天与分镜聊天的输入区几何关系相同

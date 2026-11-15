@@ -10,6 +10,12 @@ import type { Skill } from '../skills/types'
 import { isAgentPackSkill, parseAgentPackMeta } from '../skills/agentPack'
 import { getSkill, getSkillTextRecord, loadSkills } from '../skills/registry'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
+import {
+  packFields,
+  packRecords,
+  recordSize,
+  truncationNote,
+} from './readBudget'
 import type { PromptRenderBundle } from '../promptRender'
 import { defineTool, type ToolDef } from './tool'
 
@@ -35,6 +41,152 @@ function filterByName<T extends { name?: unknown }>(items: T[], names?: string[]
   return items.filter((x) => set.has(String(x.name || '')))
 }
 
+/** 单条物料记录的上限：超过也只标 oversized，不切字段 */
+const SINGLE_RECORD_BUDGET = 12_000
+
+/**
+ * 单条记录的返回形状：整条给出，不切 JSON。
+ * 单条本身就超预算时标 `oversized` 与 `chars`，让调用方自己决定要不要再要。
+ */
+function singleRecord(value: unknown): Record<string, unknown> {
+  const packed = packRecords([value], SINGLE_RECORD_BUDGET)
+  return {
+    record: packed.items[0],
+    ...(packed.oversized ? { oversized: true, chars: recordSize(value) } : {}),
+  }
+}
+
+function shotIdOf(shot: Record<string, unknown>): string {
+  return String(shot.id || '').trim()
+}
+
+function shotNoOf(shot: Record<string, unknown>): string {
+  return String(shot.no || '').trim()
+}
+
+export type ShotLocator = { shotId?: string; no?: string; episode?: number }
+
+export type ShotVideoPromptRead = {
+  text: string | null
+  /** 与画布出片预览同序：手改快照 → 语义层 video_prompt → 首帧 keyframe_prompt → 画布脚本拼装 */
+  source: 'override' | 'video_prompt' | 'keyframe_prompt' | 'script_assembled'
+  /** 手改快照指纹与最近一次模板渲染指纹不一致；只提示，不阻止出片 */
+  stale: boolean
+  /** 正文只能由画布脚本拼装：读工具不给近似结果 */
+  requiresCanvas?: boolean
+  note?: string
+}
+
+/**
+ * 该镜最终会发给视频模型的正文。
+ *
+ * 顺序对齐画布 `buildShotVideoRequest` + `effectiveVideoPrompt`：手改快照整段逐字发送；
+ * 否则 `video_prompt`，再否则 `keyframe_prompt`（画布的 prompt_fallback），
+ * 三者都没有时画布走 `shotAutoScriptPrompt` 按画布上下文拼装——读工具没有节点/角色上下文，
+ * 这里如实返回 `text: null`，不猜。
+ */
+export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideoPromptRead {
+  const override = asRecord(shot.video_prompt_override)
+  const overrideText = typeof override.text === 'string' ? override.text : ''
+  if (overrideText.trim()) {
+    const meta = asRecord(shot.video_prompt_render_meta)
+    const fp = String(override.fingerprint || '')
+    const stale = Boolean(fp && meta.fingerprint && String(meta.fingerprint) !== fp)
+    return {
+      text: overrideText,
+      source: 'override',
+      stale,
+      ...(stale
+        ? { note: '手改快照与最近一次模板渲染指纹不一致：画布内容可能已变，出片预览会提示过期（但仍按手改发送）' }
+        : {}),
+    }
+  }
+  const vp = typeof shot.video_prompt === 'string' ? shot.video_prompt : ''
+  if (vp.trim()) return { text: vp, source: 'video_prompt', stale: false }
+  const kp = typeof shot.keyframe_prompt === 'string' ? shot.keyframe_prompt : ''
+  if (kp.trim()) {
+    return {
+      text: kp,
+      source: 'keyframe_prompt',
+      stale: false,
+      note: '该镜没有语义层出片提示词，画布会退回首帧正文兜底',
+    }
+  }
+  return {
+    text: null,
+    source: 'script_assembled',
+    stale: false,
+    requiresCanvas: true,
+    note: '该镜正文只能由画布按运镜/角色/参考图脚本拼装；读工具没有画布上下文，不返回近似结果。请在画布出片预览查看',
+  }
+}
+
+type LocateShotResult =
+  | { ok: true; shot: Record<string, unknown> }
+  | { ok: false; [key: string]: unknown }
+
+/** 按 shotId 或镜号定位单镜；找不到/有歧义时给出可读原因与可用范围 */
+export async function locateShot(
+  loadShots: () => Promise<Array<Record<string, unknown>>>,
+  loc: ShotLocator,
+): Promise<LocateShotResult> {
+  const all = await loadShots()
+  const episode = loc.episode
+  const scoped = episode ? all.filter((s) => Number(s.episode) === Number(episode)) : all
+  const wantId = String(loc.shotId || '').trim()
+  const wantNo = String(loc.no || '').trim()
+
+  if (!wantId && !wantNo) {
+    return {
+      ok: false,
+      error: '需要 shotId 或 no 之一来定位镜头',
+      hint: '先用 read_shots / read_episode 拿到镜号或镜 id',
+    }
+  }
+
+  if (wantId) {
+    const hit = scoped.find((s) => shotIdOf(s) === wantId)
+    if (hit) return { ok: true, shot: hit }
+    // 给了 episode 却不在这一集：说清楚它属于哪一集，比「找不到」有用
+    const elsewhere = all.find((s) => shotIdOf(s) === wantId)
+    if (elsewhere) {
+      const ep = Number(elsewhere.episode) || 0
+      return {
+        ok: false,
+        error: `shotId「${wantId}」不在${episode ? `第 ${episode} 集` : '当前范围'}${ep ? `，它属于第 ${ep} 集` : ''}`,
+        hint: ep ? `去掉 episode，或改成 episode: ${ep}` : '去掉 episode 过滤',
+      }
+    }
+  } else {
+    const matches = scoped.filter((s) => shotNoOf(s).toUpperCase() === wantNo.toUpperCase())
+    if (matches.length === 1) return { ok: true, shot: matches[0] }
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        error: `镜号「${wantNo}」在${episode ? `第 ${episode} 集` : '多集'}中了 ${matches.length} 次，无法确定是哪一镜`,
+        candidates: matches.slice(0, 20).map((s) => ({
+          shotId: shotIdOf(s),
+          no: shotNoOf(s),
+          episode: Number(s.episode) || 0,
+        })),
+        hint: '补 episode，或直接用 shotId',
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    error: `找不到镜头${wantId ? ` shotId「${wantId}」` : ` 镜号「${wantNo}」`}${episode ? `（第 ${episode} 集）` : ''}`,
+    available: {
+      ...(episode ? { episode } : {}),
+      count: scoped.length,
+      shotNos: scoped.map(shotNoOf).filter(Boolean).slice(0, 60),
+      shotIds: scoped.slice(0, 20).map(shotIdOf),
+    },
+    hint: '镜号形如 S01/S02；可先用 read_shots 确认该集实际镜号',
+  }
+}
+
 /** 物料分类：角色 / 场景 / 道具 / 素材卡 / 项目级自定义白模 */
 export const MATERIAL_CATEGORIES = ['characters', 'scenes', 'props', 'assets', 'whitebox'] as const
 export type MaterialCategory = (typeof MATERIAL_CATEGORIES)[number]
@@ -42,6 +194,16 @@ export type MaterialCategory = (typeof MATERIAL_CATEGORIES)[number]
 /** 白模代码返回上限：整段 build_scene 才算可用，切太短没有价值 */
 const MATERIAL_CODE_MAX = 20_000
 const MATERIAL_ROW_LIMIT = 200
+
+/**
+ * 读工具的字符预算，按「装整条」生效（见 readBudget.ts）。
+ * 分镜最占地方：16 镜左右约 2.4 万字符，一集 31 镜分两次游标续读即可读完。
+ */
+const SHOT_LIST_BUDGET = 24_000
+/** 分镜按 id 精确读的单次条数上限；超出时显式列出未返回的 id */
+const SHOT_ID_LIMIT = 100
+/** 角色 / 设定卡 / 转场食谱 / 分集等非分镜列表 */
+const LIST_BUDGET = 8_000
 
 export type MaterialRow = {
   category: MaterialCategory
@@ -140,9 +302,17 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   let snapshotPromise: Promise<ProjectData> | null = null
   const snapshot = () => (snapshotPromise ??= adapter.projectSnapshot())
 
-  const scriptData = async (): Promise<{ source: string; logline: string; episodes: unknown[]; style: string; aspect: string }> => {
+  const scriptData = async (): Promise<{
+    title: string
+    source: string
+    logline: string
+    episodes: unknown[]
+    style: string
+    aspect: string
+  }> => {
     const p = await snapshot()
     return {
+      title: String(p.name || ''),
       source: String(p.source || ''),
       logline: String(p.logline || ''),
       episodes: Array.isArray(p.episodes) ? p.episodes : [],
@@ -180,11 +350,21 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 
   const readSource = defineTool({
     name: 'read_source',
-    description: '读取当前项目的原著/梗概。只读；返回可能被截断。',
+    description:
+      '读取当前项目的原著与项目设定。只读；原著正文可能被截断，标题/梗概/画风/画幅始终给出。' +
+      '画风与画幅是出首帧与出片提示词的必要上下文，未填时为空值。',
     schema: z.object({}),
     run: async () => {
       const d = await scriptData()
-      return { ok: true, source: d.source, chars: d.source.length }
+      return {
+        ok: true,
+        title: d.title,
+        source: d.source,
+        chars: d.source.length,
+        logline: d.logline,
+        style: d.style,
+        aspect: d.aspect,
+      }
     },
   })
 
@@ -199,7 +379,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       const episodes = episode
         ? d.episodes.filter((e) => Number(asRecord(e).no) === Number(episode))
         : d.episodes
-      return { ok: true, episodes: boundJson(episodes), total: d.episodes.length }
+      const packed = packRecords(episodes, LIST_BUDGET)
+      const note = truncationNote(packed)
+      return {
+        ok: true,
+        episodes: packed.items,
+        ...packFields(packed),
+        ...(note ? { note: `${note}；也可以用 episode 只读某一集` } : {}),
+      }
     },
   })
 
@@ -214,7 +401,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       const filtered = names?.length
         ? list.filter((x) => names.includes(String(asRecord(x).name || '')))
         : list
-      return { ok: true, characters: boundJson(filtered), total: list.length }
+      const packed = packRecords(filtered, LIST_BUDGET)
+      const note = truncationNote(packed)
+      return {
+        ok: true,
+        characters: packed.items,
+        ...packFields(packed),
+        ...(note ? { note } : {}),
+      }
     },
   })
 
@@ -233,29 +427,94 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         if (names?.length && !names.includes(String(o.name || ''))) return false
         return true
       })
-      return { ok: true, designs: boundJson(filtered), total: list.length }
+      const packed = packRecords(filtered, LIST_BUDGET)
+      const note = truncationNote(packed)
+      return {
+        ok: true,
+        designs: packed.items,
+        ...packFields(packed),
+        ...(note ? { note } : {}),
+      }
     },
   })
 
   const readShots = defineTool({
     name: 'read_shots',
-    description: '读取分镜（项目镜头数据）。只读；可用 episode / shotIds 过滤，limit 控制条数。',
+    description:
+      '读取分镜（项目镜头数据）。只读；可用 episode / shotIds / cursor 过滤，limit 控制条数。' +
+      '响应按整条装填（不会切半个镜头）：拿到的每条都是完整记录，含 video_prompt、transition_out、refIds 等末尾字段。' +
+      'truncated 为 true 时带 nextCursor，原样回传即可续读，直到 nextCursor 消失。',
     schema: z.object({
       episode: z.number().int().min(1).optional().describe('只读第 N 集'),
-      shotIds: z.array(z.string()).max(100).optional().describe('只读这些 shot.id'),
+      shotIds: z
+        .array(z.string())
+        .optional()
+        .describe('只读这些 shot.id；此时返回完整记录，不受列表预算影响'),
+      cursor: z.string().optional().describe('续读游标：上一次响应返回的 nextCursor（即上一批最后一镜的 shot.id）'),
       limit: z.number().int().min(1).max(200).optional().describe('最多返回多少镜'),
     }),
-    run: async ({ episode, shotIds, limit }) => {
+    run: async ({ episode, shotIds, cursor, limit }) => {
       const all = await shotsData()
       let list = all
       if (episode) list = list.filter((s) => Number(s.episode) === Number(episode))
+
+      // 按 id 精确读：每次都是完整记录，只受条数上限约束
       if (shotIds?.length) {
         const set = new Set(shotIds.map(String))
-        list = list.filter((s) => set.has(String(s.id || '')))
+        const hit = list.filter((s) => set.has(String(s.id || '')))
+        const kept = hit.slice(0, SHOT_ID_LIMIT)
+        const notReturned = hit.slice(SHOT_ID_LIMIT).map((s) => String(s.id || ''))
+        const notFound = shotIds.map(String).filter((id) => !hit.some((s) => String(s.id || '') === id))
+        return {
+          ok: true,
+          shots: kept,
+          total: hit.length,
+          returned: kept.length,
+          ...(notReturned.length
+            ? {
+                truncated: true,
+                notReturned,
+                note: `单次按 id 最多取 ${SHOT_ID_LIMIT} 镜；未返回的 id 见 notReturned，分批再取`,
+              }
+            : {}),
+          ...(notFound.length ? { notFound } : {}),
+        }
       }
-      if (limit) list = list.slice(0, limit)
-      const maxChars = shotIds?.length && shotIds.length <= 4 ? 200_000 : 8000
-      return { ok: true, shots: boundJson(list, maxChars), total: all.length }
+
+      // 游标指向上一批最后一镜；镜头被删或换了集时不猜位置，让调用方从头读
+      let start = 0
+      const cur = String(cursor || '').trim()
+      if (cur) {
+        const at = list.findIndex((s) => String(s.id || '') === cur)
+        if (at < 0) {
+          return {
+            ok: false,
+            error: `续读游标「${cur}」在本集找不到：镜头可能已删除，或 cursor 属于另一集`,
+            hint: '去掉 cursor 重新从头部读取，再用新的 nextCursor 续读',
+            firstIds: list.slice(0, 5).map((s) => String(s.id || '')),
+          }
+        }
+        start = at + 1
+      }
+      const rest = start > 0 ? list.slice(start) : list
+      const scoped = limit ? rest.slice(0, limit) : rest
+      const packed = packRecords(scoped, SHOT_LIST_BUDGET)
+      const hasMore = packed.truncated || scoped.length < rest.length
+      const last = packed.items[packed.items.length - 1]
+      const nextCursor = hasMore && last ? String(last.id || '') : undefined
+      const remaining = list.length - start - packed.returned
+      return {
+        ok: true,
+        shots: packed.items,
+        total: list.length,
+        returned: packed.returned,
+        ...(hasMore ? { truncated: true } : {}),
+        ...(packed.oversized ? { oversized: true } : {}),
+        ...(nextCursor ? { nextCursor } : {}),
+        ...(hasMore && nextCursor
+          ? { note: `本次返回 ${packed.returned} 镜（本集共 ${list.length} 镜，剩 ${remaining} 镜）：用 cursor: "${nextCursor}" 续读` }
+          : {}),
+      }
     },
   })
 
@@ -273,21 +532,23 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     run: async ({ category, move, size, q, limit }) => {
       const { listCameraLexicon: list } = await import('../cameraLexicon')
       const rows = list({ category, move, size, q, limit })
+      const packed = packRecords(
+        rows.map((e) => ({
+          key: e.key,
+          cn: e.cn,
+          en: e.en,
+          url: e.url,
+          sectionTitle: e.sectionTitle,
+          lexiconCategory: e.lexiconCategory,
+          mapsToMove: e.mapsToMove,
+          mapsToSize: e.mapsToSize,
+        })),
+        LIST_BUDGET,
+      )
       return {
         ok: true,
-        entries: boundJson(
-          rows.map((e) => ({
-            key: e.key,
-            cn: e.cn,
-            en: e.en,
-            url: e.url,
-            sectionTitle: e.sectionTitle,
-            lexiconCategory: e.lexiconCategory,
-            mapsToMove: e.mapsToMove,
-            mapsToSize: e.mapsToSize,
-          })),
-        ),
-        total: rows.length,
+        entries: packed.items,
+        ...packFields(packed),
         attribution: 'hong hou zi',
       }
     },
@@ -338,7 +599,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       if (taxonomy) list = list.filter((r) => r.taxonomy === taxonomy)
       if (q?.trim()) list = searchTransitionRecipes(q.trim())
       if (limit) list = list.slice(0, limit)
-      return { ok: true, recipes: boundJson(list), total: list.length }
+      const packed = packRecords(list, LIST_BUDGET)
+      const note = truncationNote(packed)
+      return {
+        ok: true,
+        recipes: packed.items,
+        ...packFields(packed),
+        ...(note ? { note: `${note}；可用 taxonomy / q / limit 收窄` } : {}),
+      }
     },
   })
 
@@ -353,7 +621,73 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       const ep = d.episodes.find((x) => Number(asRecord(x).no) === Number(episode))
       if (!ep) return { ok: false, error: `没有第 ${episode} 集` }
       const shots = (await shotsData()).filter((s) => Number(s.episode) === Number(episode))
-      return { ok: true, episode: boundJson(ep), shots: boundJson(shots.slice(0, 40)), shotTotal: shots.length }
+      // 摘要是「看个大概」，所以按整条装填一小批；要完整提示词请用 read_shot_detail / read_shot_video_prompt
+      const packed = packRecords(shots, LIST_BUDGET)
+      const note = truncationNote(packed)
+      return {
+        ok: true,
+        episode: ep,
+        shots: packed.items,
+        shotTotal: shots.length,
+        shotReturned: packed.returned,
+        ...(packed.truncated ? { truncated: true } : {}),
+        ...(note ? { note: `${note}；单镜完整数据用 read_shot_detail` } : {}),
+      }
+    },
+  })
+
+  const readShotDetail = defineTool({
+    name: 'read_shot_detail',
+    description:
+      '只读：按 shotId 或镜号取单镜完整记录，不受列表预算影响。' +
+      '返回该镜全部已存字段：keyframe_prompt、video_prompt、video_prompt_override（手改正文）、' +
+      'video_prompt_rendered 与 video_prompt_render_meta（模板渲染正文与元数据）、motionNote、' +
+      'transition_out、refIds、refExtras、handEdited、visual_brief 等。',
+    schema: z.object({
+      shotId: z.string().optional().describe('定稿 shot.id（如 E01-S03）；与 no 同时给时以 shotId 为准'),
+      no: z.string().optional().describe('镜号，如 S03；多集同名镜号需同时给 episode'),
+      episode: z.number().int().min(1).optional().describe('第 N 集，用于消歧'),
+    }),
+    run: async ({ shotId, no, episode }) => {
+      const found = await locateShot(shotsData, { shotId, no, episode })
+      if (!found.ok) return found
+      const shot = found.shot
+      return {
+        ok: true,
+        shotId: shotIdOf(shot),
+        no: shotNoOf(shot),
+        episode: Number(shot.episode) || 0,
+        chars: recordSize(shot),
+        shot,
+      }
+    },
+  })
+
+  const readShotVideoPrompt = defineTool({
+    name: 'read_shot_video_prompt',
+    description:
+      '只读：读取某镜最终会提交给视频模型的出片正文，并标出来源（override 手改 / video_prompt 语义层 / ' +
+      'keyframe_prompt 首帧兜底）。顺序与画布出片预览一致；只能由画布脚本拼装时返回 text:null 与 requiresCanvas:true，' +
+      '不给近似拼接结果。',
+    schema: z.object({
+      shotId: z.string().optional().describe('定稿 shot.id（如 E01-S03）；与 no 同时给时以 shotId 为准'),
+      no: z.string().optional().describe('镜号，如 S03；多集同名镜号需同时给 episode'),
+      episode: z.number().int().min(1).optional().describe('第 N 集，用于消歧'),
+    }),
+    run: async ({ shotId, no, episode }) => {
+      const found = await locateShot(shotsData, { shotId, no, episode })
+      if (!found.ok) return found
+      const shot = found.shot
+      return {
+        ok: true,
+        shotId: shotIdOf(shot),
+        no: shotNoOf(shot),
+        episode: Number(shot.episode) || 0,
+        ...resolveShotVideoPrompt(shot),
+        ...(typeof shot.video_prompt_rendered === 'string' && shot.video_prompt_rendered.trim()
+          ? { templateRenderedChars: shot.video_prompt_rendered.length }
+          : {}),
+      }
     },
   })
 
@@ -484,7 +818,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
           return String(o.id || o.name || '').trim() === wanted
         })
         if (!hit) return { ok: false, error: `角色「${wanted}」读取失败` }
-        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+        return { ok: true, category, key: wanted, ...singleRecord(hit) }
       }
 
       if (category === 'scenes' || category === 'props') {
@@ -495,14 +829,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
             String(asRecord(raw).kind || '') === want && String(asRecord(raw).id || '') === wanted,
         )
         if (!hit) return { ok: false, error: `设定卡「${wanted}」读取失败` }
-        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+        return { ok: true, category, key: wanted, ...singleRecord(hit) }
       }
 
       if (category === 'assets') {
         const list = Array.isArray(project.assets) ? project.assets : []
         const hit = list.find((raw) => String(asRecord(raw).url || '').trim() === wanted)
         if (!hit) return { ok: false, error: `素材卡「${wanted}」读取失败` }
-        return { ok: true, category, key: wanted, record: boundJson(hit, 12_000) }
+        return { ok: true, category, key: wanted, ...singleRecord(hit) }
       }
 
       // whitebox：代码必须显式请求
@@ -523,7 +857,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         updatedAt: String(o.updatedAt || ''),
         codeChars: code.length,
       }
-      if (Object.keys(codeHead).length) base.sceneCode = boundJson(codeHead, 6000)
+      if (Object.keys(codeHead).length) base.sceneCode = codeHead
       if (!includeCode) {
         return {
           ok: true,
@@ -565,6 +899,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     [readCharacters.name, readCharacters],
     [readDesigns.name, readDesigns],
     [readShots.name, readShots],
+    [readShotDetail.name, readShotDetail],
+    [readShotVideoPrompt.name, readShotVideoPrompt],
     [readTransitionRecipes.name, readTransitionRecipes],
     [listCameraLexicon.name, listCameraLexicon],
     [getCameraLexicon.name, getCameraLexicon],
@@ -828,16 +1164,34 @@ export function createPiNativeToolSet(): StageToolSet {
   return { read: byName, byName }
 }
 
-export function bindSkillTools(
+/** 技能声明了、但本次绑定拿不到的工具；用于装载期可见提示与检查器如实展示 */
+export type SkippedSkillTool = {
+  skillId: string
+  name: string
+  reason: string
+}
+
+/**
+ * 绑定技能声明的工具，并回报被跳过的名字。
+ *
+ * 跳过本身是合法行为（只读技能不能提交、技能可能声明别的场景的作业工具），
+ * 但不能静默：调用方要能拿到「声明了却没绑定」的清单，检查器据此只展示真实可用的工具。
+ */
+export function bindSkillToolsDetailed(
   set: StageToolSet,
   loaded: LoadedSkill[],
-): ToolDef[] {
+): { tools: ToolDef[]; skipped: SkippedSkillTool[] } {
   const byName = new Map<string, ToolDef>()
+  const skipped: SkippedSkillTool[] = []
   for (const { skill, mode } of loaded) {
     for (const name of skill.manifest.tools) {
-      if (mode === 'readonly' && name.startsWith('submit_')) continue
+      if (mode === 'readonly' && name.startsWith('submit_')) {
+        skipped.push({ skillId: skill.id, name, reason: '只读技能不能使用写回工具' })
+        continue
+      }
       const tool = set.byName.get(name)
       if (tool) byName.set(name, tool)
+      else skipped.push({ skillId: skill.id, name, reason: '运行时没有注册该工具' })
     }
   }
   const readSkillTool = set.byName.get('read_skill')
@@ -848,5 +1202,15 @@ export function bindSkillTools(
   if (listSkillsTool) byName.set('list_installed_skills', listSkillsTool)
   const listExpertsTool = set.byName.get('list_experts')
   if (listExpertsTool) byName.set('list_experts', listExpertsTool)
-  return [...byName.values()]
+  return { tools: [...byName.values()], skipped }
+}
+
+export function bindSkillTools(
+  set: StageToolSet,
+  loaded: LoadedSkill[],
+  opts?: { onSkipped?: (skipped: SkippedSkillTool[]) => void },
+): ToolDef[] {
+  const { tools, skipped } = bindSkillToolsDetailed(set, loaded)
+  if (skipped.length) opts?.onSkipped?.(skipped)
+  return tools
 }

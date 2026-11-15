@@ -5,6 +5,10 @@
  * 因为这些事一旦静默发生，用户就分不出「我写的」和「系统编的」。
  */
 import type { ProjectShot } from '../api'
+import type { DialogueDelivery, PerformanceEntry } from '../types'
+
+/** 台词行：可能带内联表演标注，导出与导入共用同一组字段名 */
+export type IntakeDialogueLine = { speaker: string; text: string } & DialogueDelivery
 
 export type IntakeDiff = {
   /** 文件里出现、库里没有的镜号 */
@@ -25,6 +29,8 @@ export type IntakeDiff = {
   defaultsFilled: Record<string, number>
   /** 表头里没有对应字段、被忽略的列名 */
   ignoredColumns: string[]
+  /** 参考与运镜参照解析不到时，需要人判断的条目 */
+  unresolved: string[]
   /** 需要人判断的逐条说明 */
   notices: string[]
 }
@@ -34,11 +40,27 @@ export type ImportShotRow = {
   row: number
   no: string
   episode?: number
+  /** 所属场次：只在能对上该集已知场次时给值，否则留空由下游回退第一场 */
+  scene_no?: number
   seconds?: number
   size?: string
   move?: string
   desc?: string
-  dialogue?: { speaker: string; text: string }[]
+  dialogue?: IntakeDialogueLine[]
+  /** 台词表演：与 dialogue 下标平行；有台词列时总是整组给出，避免下标错位 */
+  dialogue_delivery?: DialogueDelivery[]
+  /** 镜级出场角色 */
+  cast?: string[]
+  /** 表演条目；缺情绪/强度时已补默认值并计入 filled */
+  performance?: PerformanceEntry[]
+  /** 已按镜头语言库解析出的条目标识；解析不到则不给 */
+  lexicon_ref_key?: string
+  /** 参考列里的可读名字，尚未解析成节点 id */
+  reference?: { characters: string[]; assets: string[] }
+  /** 已解析出的参考 id token（`char-*` / `asset-*`） */
+  refIds?: string[]
+  /** 参考或运镜参照没解析成功时的逐条说明，进预览 */
+  unresolvedRefs?: string[]
   keyframe_prompt?: string
   video_prompt?: string
   /** 解析过程中发现的问题；有值表示这行会被跳过 */
@@ -65,6 +87,8 @@ export function diffShots(
   let skipped = 0
   const defaultsFilled: Record<string, number> = {}
   const notices: string[] = []
+  // 参考解析失败必须逐条点名：静默丢弃会让用户以为导进来了却没连上
+  const unresolved: string[] = []
   const seen = new Set<string>()
 
   for (const r of rows) {
@@ -88,6 +112,7 @@ export function diffShots(
     if (existing.has(no)) updated++
     else added++
     for (const f of r.filled ?? []) defaultsFilled[f] = (defaultsFilled[f] ?? 0) + 1
+    for (const u of r.unresolvedRefs ?? []) unresolved.push(`${no}：${u}`)
   }
 
   const involved = added + updated
@@ -105,6 +130,9 @@ export function diffShots(
   if (ignored.length) {
     notices.push(`忽略了无法识别为镜头字段的列：${ignored.join('、')}`)
   }
+  if (unresolved.length) {
+    notices.push(`参考未能解析（这些字段会被跳过）：${unresolved.join('；')}`)
+  }
 
   return {
     added,
@@ -116,6 +144,7 @@ export function diffShots(
     scenesFallback: opts.scenesFallback ?? 0,
     defaultsFilled,
     ignoredColumns: ignored,
+    unresolved,
     notices,
   }
 }

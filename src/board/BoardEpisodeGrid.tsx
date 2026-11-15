@@ -5,6 +5,7 @@ import { useVideoFirstFrame } from '../videoFirstFrame'
 import { listBoardEpisodes } from './episodeCover'
 import { BoardListToolbar } from '../BoardListToolbar'
 import { BOARD_LIST_PAGE_SIZE, boardEpisodeMatch, useBoardListFilter } from '../boardListFilter'
+import { downloadStoryboardZip, type RefIndex } from '../storyboardMarkdown'
 
 type Props = {
   projectReady: boolean
@@ -14,6 +15,12 @@ type Props = {
   onAddEpisode: () => void
   onImportScript: () => void
   addBusy?: boolean
+  /** 项目标题：用于「导出全部」的 zip 文件名 */
+  projectTitle?: string
+  /** 轻提示：下载本身没有界面反馈，重复点击需要一句话说明 */
+  onNotice?: (msg: string) => void
+  /** 参考名字索引：素材标题只在画布节点上，导出侧只做查表 */
+  refIndex?: RefIndex
 }
 
 function EpisodeCardCover({ kind, src }: { kind: 'keyframe' | 'clip' | 'none'; src: string | null }) {
@@ -41,7 +48,14 @@ function EpisodeDirToolbar({
   onAddEpisode,
   onImportScript,
   addBusy,
-}: Pick<Props, 'onAddEpisode' | 'onImportScript' | 'addBusy'>) {
+  canExport,
+  exportTitle,
+  onExportAll,
+}: Pick<Props, 'onAddEpisode' | 'onImportScript' | 'addBusy'> & {
+  canExport: boolean
+  exportTitle: string
+  onExportAll: () => void
+}) {
   return (
     <div className="board-ep-actions">
       <button type="button" className="btn" data-board-add-ep disabled={addBusy} onClick={onAddEpisode}>
@@ -49,6 +63,16 @@ function EpisodeDirToolbar({
       </button>
       <button type="button" className="btn" data-board-import-script onClick={onImportScript}>
         导入分集剧本
+      </button>
+      <button
+        type="button"
+        className="btn"
+        data-board-export-all
+        disabled={!canExport}
+        title={exportTitle}
+        onClick={onExportAll}
+      >
+        导出全部
       </button>
     </div>
   )
@@ -62,9 +86,24 @@ export default function BoardEpisodeGrid({
   onAddEpisode,
   onImportScript,
   addBusy,
+  projectTitle,
+  onNotice,
+  refIndex,
 }: Props) {
   const rows = useMemo(() => listBoardEpisodes(episodes, shots), [episodes, shots])
   const list = useBoardListFilter(rows, boardEpisodeMatch)
+
+  // 有镜头但没登记分集时也算有内容：导出按镜头的集号补齐，缺集不发空文件
+  const canExport = projectReady && rows.length > 0
+  const exportTitle = !projectReady
+    ? '项目加载中'
+    : rows.length === 0
+      ? '还没有分集，没有可分镜表可导出'
+      : `把 ${rows.length} 集各导出一份 Markdown，打包成 zip 下载`
+  const handleExportAll = () => {
+    const zip = downloadStoryboardZip({ projectName: projectTitle, episodes, shots, refIndex })
+    onNotice?.(`已导出 ${zip.entries.length} 集：${zip.fileName}`)
+  }
 
   if (!projectReady) {
     return (
@@ -87,6 +126,9 @@ export default function BoardEpisodeGrid({
               onAddEpisode={onAddEpisode}
               onImportScript={onImportScript}
               addBusy={addBusy}
+              canExport={canExport}
+              exportTitle={exportTitle}
+              onExportAll={handleExportAll}
             />
           </div>
         </header>
@@ -102,7 +144,14 @@ export default function BoardEpisodeGrid({
             <h1>分集目录</h1>
             <p>选一集进入分镜画布。封面取自该集按镜号排序后的第一条镜头。</p>
           </div>
-          <EpisodeDirToolbar onAddEpisode={onAddEpisode} onImportScript={onImportScript} addBusy={addBusy} />
+          <EpisodeDirToolbar
+            onAddEpisode={onAddEpisode}
+            onImportScript={onImportScript}
+            addBusy={addBusy}
+            canExport={canExport}
+            exportTitle={exportTitle}
+            onExportAll={handleExportAll}
+          />
         </div>
       </header>
       <BoardListToolbar

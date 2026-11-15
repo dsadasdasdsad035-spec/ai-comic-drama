@@ -5,7 +5,10 @@ export const KNOWN_TOOL_IDS = new Set([
   'read_characters',
   'read_episode',
   'read_shots',
+  'read_shot_detail',
+  'read_shot_video_prompt',
   'read_designs',
+  'submit_episodes',
   'submit_characters',
   'submit_designs',
   'submit_shots',
@@ -35,6 +38,21 @@ export const KNOWN_TOOL_IDS = new Set([
   'list_installed_skills',
   'list_experts',
   'validate_contract',
+  // 项目与分镜管理（需用户确认）：新建项目、改项目设定、删分镜
+  'create_project',
+  'update_project_meta',
+  'delete_shots',
+  // 生成（有成本，需成本确认）：首帧 / 出片 / 配音 / 角色三视图 / 表情总图
+  'generate_keyframe',
+  'generate_clip',
+  'generate_voice',
+  'generate_character_views',
+  'generate_expression_sheet',
+  // 画布动作（按名字寻址，不用画布节点 id）：连参考 / 指定运镜参照 / 采纳角色外观 / 素材卡
+  'link_shot_refs',
+  'set_shot_camera_lexicon',
+  'set_character_visual',
+  'submit_assets',
   // 创意会话：会话读、媒体摄取/分析、产物与生成
   'read_creative_session',
   'read_creative_source',

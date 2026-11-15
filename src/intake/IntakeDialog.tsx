@@ -18,7 +18,9 @@ import { describeDiff, diffShots, type IntakeDiff } from './diff'
 import { detectFormat, isTabular, type IntakeFormat } from './format'
 import { validateContract } from '../skills/contracts'
 import { INTAKE_LABEL, runIntake, type IntakeTarget } from './intakeSkill'
-import { rowsFromTable, shotIdOf } from './rows'
+import { rowsFromTable, rowsToShotInputs, shotIdOf } from './rows'
+import { intakeNotices } from './notices'
+import { resolveRowRefs, type RefIndex } from '../shotRefIndex'
 import BundleDialog from './BundleDialog'
 
 type Props = {
@@ -32,6 +34,8 @@ type Props = {
   chars: Pick<CharacterSheet, 'name' | 'lookEn'>[]
   /** 完整角色卡（资料包分派角色档案时需要合并进现有角色） */
   characterSheets?: CharacterSheet[]
+  /** 参考名字索引：参考列按名字解析成节点 id 时要用 */
+  refIndex?: RefIndex
   toast: (m: string) => void
   onClose: () => void
   /** 应用结果：调用方负责落库与水合，返回 Promise 时失败会保留对话框 */
@@ -65,6 +69,7 @@ export default function IntakeDialog({
   episodes,
   chars,
   characterSheets,
+  refIndex,
   toast,
   onClose,
   onApply,
@@ -92,8 +97,10 @@ export default function IntakeDialog({
   /** 零模型路径：表格直接映射成导入行 */
   const tableResult = useMemo(() => {
     if (target !== 'shots' || !isTabular(format.kind)) return null
-    return rowsFromTable(raw, format.kind as IntakeFormat, { epNo, episodes })
-  }, [target, format, raw, epNo, episodes])
+    const parsed = rowsFromTable(raw, format.kind as IntakeFormat, { epNo, episodes })
+    // 参考列给的是名字，节点 id 只能在画布层解析，所以在这一步补上
+    return { ...parsed, rows: resolveRowRefs(parsed.rows, refIndex) }
+  }, [target, format, raw, epNo, episodes, refIndex])
 
   /** 由表格/契约 JSON 得到最终要写入的镜头与差异统计 */
   const plan = useMemo((): {
@@ -147,47 +154,33 @@ export default function IntakeDialog({
             sceneFallback: built.sceneFallback,
             filledPerformance: built.filledPerformance,
           },
-          notices: [
-            ...(built.filledPerformance
-              ? [`系统为 ${built.filledPerformance} 个说话角色补了默认表演（平静/3 度/说话中），可在画布单镜里改`]
-              : []),
-            ...(built.sceneFallback ? [`${built.sceneFallback} 镜的场次号对不上，已归入第一场`] : []),
-          ],
+          notices: intakeNotices({
+            filledPerformance: built.filledPerformance,
+            filledPerformanceDetail: built.filledPerformanceDetail,
+            ...(built.sceneFallback ? { notices: [`${built.sceneFallback} 镜的场次号对不上，已归入第一场`] } : {}),
+          }),
         }
       }
       if (tableResult) {
         if (tableResult.error) return { summary: '', counts: {}, notices: [], blocked: tableResult.error }
         if (!tableResult.rows.length) return null
-        const built = buildShotsFromImport(
-          tableResult.rows.map((r) => ({
-            no: r.no,
-            seconds: r.seconds,
-            size: r.size,
-            move: r.move,
-            desc: r.desc,
-            dialogue: r.dialogue,
-            keyframe_prompt: r.keyframe_prompt,
-            video_prompt: r.video_prompt,
-          })),
-          episodes,
-          epNo,
-        )
+        const built = buildShotsFromImport(rowsToShotInputs(tableResult.rows), episodes, epNo)
         const merged = mergeShotsDraft(shots, built.shots, epNo, replaceEpisode ? 'replace' : 'merge')
         const diff = diffShots(shots, tableResult.rows, epNo, {
           ignoredColumns: tableResult.diff.ignoredColumns,
           scenesFallback: tableResult.diff.scenesFallback,
         })
-        const filled: Record<string, number> = {}
-        for (const r of tableResult.rows) for (const f of r.filled ?? []) filled[f] = (filled[f] ?? 0) + 1
         return {
           shots: merged.shots,
           diff,
           summary: `E${String(epNo).padStart(2, '0')}：${describeDiff(diff)}`,
           counts: { added: merged.added, updated: merged.updated, kept: merged.kept, skipped: diff.skipped, involved: diff.involved },
-          notices: [
-            ...diff.notices,
-            ...Object.entries(filled).map(([f, n]) => `${f === 'move' ? '运镜' : f} 缺列，系统补了默认值 ${n} 镜`),
-          ],
+          notices: intakeNotices({
+            notices: diff.notices,
+            defaultsFilled: diff.defaultsFilled,
+            filledPerformance: built.filledPerformance,
+            filledPerformanceDetail: built.filledPerformanceDetail,
+          }),
         }
       }
       return null
@@ -296,6 +289,7 @@ export default function IntakeDialog({
         shots={shots}
         episodes={episodes}
         characters={characterSheets ?? []}
+        refIndex={refIndex}
         toast={toast}
         onClose={() => {
           setBundleOpen(false)

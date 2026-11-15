@@ -56,6 +56,41 @@ export type CharacterExpressionSheet = {
   createdAt?: string
 }
 
+/** 转盘总图固定 4 列 × 2 行；八格按顺时针水平视角排列，坐标同样用 0..1 归一化。 */
+export const ORBIT_SHEET_COLUMNS = 4 as const
+export const ORBIT_SHEET_ROWS = 2 as const
+/** 顺时针视角：0° 正面，315° 回到正面左侧一档；360° 与 0° 同帧。 */
+export const ORBIT_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315] as const
+
+export type OrbitSheetCell = {
+  /** 该格对应的水平视角（度）；预览按角度在这些格之间插值 */
+  angle: number
+  x: number
+  y: number
+  w: number
+  h: number
+  /** 裁出的单帧；预览只读它，总图本身不进入分镜参考 */
+  cropUrl?: string
+  cropFingerprint?: string
+}
+
+/**
+ * 八角度转盘总图：让角色卡能在纯 CSS 里"转起来"，
+ * 不引入真正的三维网格，也不占用分镜参考预算。
+ */
+export type CharacterOrbitSheet = {
+  image: string
+  columns: typeof ORBIT_SHEET_COLUMNS
+  rows: typeof ORBIT_SHEET_ROWS
+  cells: OrbitSheetCell[]
+  source: 'generated' | 'uploaded'
+  /** 生成时的转盘身份指纹；锚点 / 配色 / 关键词 / 三视图变化后标 stale */
+  fingerprint: string
+  stale?: boolean
+  modelKey?: string
+  createdAt?: string
+}
+
 export type VoiceSample = {
   /** 项目媒体路径 /project-assets/... */
   url: string
@@ -130,6 +165,8 @@ export type CharacterSheet = {
   expressions?: Partial<Record<PerformanceEmotion, CharacterExpression>>
   /** 一张 4×2 表情总图；优先于旧 expressions，单格裁剪后才进分镜 */
   expressionSheet?: CharacterExpressionSheet
+  /** 八角度转盘总图；只服务预览页，不进入分镜参考预算 */
+  orbitSheet?: CharacterOrbitSheet
   /** 可选角色音色样本；用于 Seedance 原生音频的参考，不改变 voiceId */
   voiceSample?: VoiceSample
   /**
@@ -179,6 +216,52 @@ export function markExpressionSheetStale(
   sheet: CharacterSheet['expressionSheet'],
 ): CharacterSheet['expressionSheet'] {
   return sheet ? { ...sheet, stale: true } : sheet
+}
+
+/**
+ * 转盘身份指纹：外观锚点 + 配色 + 关键词 + 当前三视图。
+ * 参考图不参与——它只是生成输入，换一张图不该让预览全部变红。
+ */
+export function orbitIdentityFingerprint(
+  c: Pick<CharacterSheet, 'lookEn' | 'palette' | 'keywords' | 'image'>,
+): string {
+  return shortHash(
+    JSON.stringify({
+      lookEn: (c.lookEn || '').trim(),
+      palette: (c.palette || '').trim(),
+      keywords: [...(c.keywords ?? [])],
+      image: c.image || '',
+    }),
+  )
+}
+
+export function markOrbitSheetStale(
+  sheet: CharacterSheet['orbitSheet'],
+): CharacterSheet['orbitSheet'] {
+  return sheet ? { ...sheet, stale: true } : sheet
+}
+
+/**
+ * 转盘可用性：图在、没失效、栅格与角度齐全、几何合法。
+ * 与表情总图同一套判断口径，避免两套"能用吗"的标准。
+ */
+export function isOrbitSheetUsable(
+  sheet: CharacterOrbitSheet | undefined,
+  currentIdentity?: string,
+): sheet is CharacterOrbitSheet {
+  if (!sheet?.image || sheet.stale) return false
+  if (sheet.columns !== ORBIT_SHEET_COLUMNS || sheet.rows !== ORBIT_SHEET_ROWS) return false
+  if (!Array.isArray(sheet.cells) || sheet.cells.length !== ORBIT_ANGLES.length) return false
+  if (currentIdentity && sheet.fingerprint !== currentIdentity) return false
+  const seen = new Set<number>()
+  for (const cell of sheet.cells) {
+    if (!ORBIT_ANGLES.includes(cell.angle as (typeof ORBIT_ANGLES)[number])) return false
+    if (seen.has(cell.angle)) return false
+    seen.add(cell.angle)
+    if (![cell.x, cell.y, cell.w, cell.h].every((n) => Number.isFinite(n) && n >= 0)) return false
+    if (cell.w <= 0 || cell.h <= 0) return false
+  }
+  return seen.size === ORBIT_ANGLES.length
 }
 
 /**

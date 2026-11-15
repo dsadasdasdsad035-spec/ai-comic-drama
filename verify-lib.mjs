@@ -91,3 +91,49 @@ export async function openCharacterTab(page) {
   await page.getByRole('button', { name: '素材', exact: true }).click()
   await page.locator('[data-asset-character-tab]').click()
 }
+
+/**
+ * 在顶栏切换项目。
+ *
+ * 旧顶栏是 `<select class="topbar-project">`，新壳换成项目菜单（`[data-project-menu]`
+ * + `[data-project-menu-panel]` + `[data-project-recent="<name>"]`），点击后由
+ * `onOpenProject` 保持当前视图切项目，语义与旧版 selectOption 一致。
+ *
+ * 项目不在「最近 5 个」时菜单里没有条目，退回改 hash；此时视图按当前 hash 推断，
+ * 也可用 opts.view 指定。
+ *
+ * @param {import('playwright-core').Page} page
+ * @param {string} name 项目目录名
+ * @param {{ view?: string, timeout?: number }} [opts]
+ */
+export async function selectProject(page, name, opts = {}) {
+  if (!name) throw new Error('selectProject 需要项目名')
+  const timeout = opts.timeout ?? 15000
+  const trigger = page.locator('[data-project-menu]').first()
+  if (await trigger.count()) {
+    await trigger.click()
+    const panel = page.locator('[data-project-menu-panel]')
+    try {
+      await panel.waitFor({ state: 'visible', timeout: Math.min(timeout, 8000) })
+      const item = page.locator(`[data-project-recent="${String(name).replace(/"/g, '\\"')}"]`).first()
+      if (await item.count()) {
+        await item.click()
+        await panel.waitFor({ state: 'detached', timeout: 8000 }).catch(() => {})
+        return
+      }
+      await page.keyboard.press('Escape')
+    } catch {
+      /* 菜单没开出来就走下面的 hash 兜底 */
+    }
+  }
+  const view =
+    opts.view ||
+    (() => {
+      const m = /^#\/p\/[^/]+\/([^/?#]+)/.exec(new URL(page.url()).hash || '')
+      return m ? m[1] : 'overview'
+    })()
+  await page.evaluate((hash) => {
+    window.location.hash = hash
+  }, `#/p/${encodeURIComponent(name)}/${view}`)
+  await page.waitForTimeout(400)
+}

@@ -57,6 +57,7 @@ export default function CharacterBoard({
   onImageMissing,
   charsOn,
   onToggleChars,
+  price,
   embedded,
 }: CharacterBoardProps) {
   const [tipOpen, setTipOpen] = useState(true)
@@ -108,6 +109,7 @@ export default function CharacterBoard({
             selectedBudget={selectedShotBudget}
             missing={missing}
             onImageMissing={onImageMissing}
+            price={price}
           />
         ))}
         {characters.length === 0 && (

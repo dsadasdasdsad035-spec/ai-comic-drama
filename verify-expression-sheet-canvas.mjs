@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5354
@@ -91,8 +92,7 @@ await page.route('**/project-assets/**', (route) => route.fulfill({ status: 200,
 
 try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(800)
@@ -108,8 +108,7 @@ try {
   check('资产落库带角色名', project.assets.some((a) => a.kind === 'expression-sheet' && a.characterName === '林岚'), JSON.stringify(project.assets))
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.waitForTimeout(700)
   check('刷新后表情卡仍在', (await page.locator('.asset-node').count()) === 1, String(await page.locator('.asset-node').count()))

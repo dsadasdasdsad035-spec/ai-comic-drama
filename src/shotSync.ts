@@ -43,6 +43,90 @@ export function clearHandEdited(s: ProjectShot, fields: string[]): ProjectShot {
 export type ShotMergeMode = 'merge' | 'replace'
 
 /**
+ * 写回字段策略。
+ *
+ * - `import`：文件导入。只写文件里真给值的标量字段——文件不含媒体路径，
+ *   放开会让一次导入抹掉已出图/已出片。
+ * - `agent`：模型写回。业务字段全集（选角、表演、参考连线、转场、时长等），
+ *   但产线产物（图/片/配音/口型/生成态/候选）一个都不许由模型凭想象写。
+ */
+export type ShotFieldPolicy = 'import' | 'agent'
+
+/**
+ * import：文件导入能写的字段。
+ *
+ * 为什么选角、表演、台词表演、参考连线、运镜参照能进白名单：
+ * 它们是分镜的业务内容，导出的分镜表本来就该能原路灌回来。
+ * 产线产物（图/片/配音/候选）仍然只能由生成工具写，见 SHOT_PIPELINE_FIELDS。
+ */
+export const SHOT_IMPORT_FIELDS = [
+  'no',
+  'seconds',
+  'size',
+  'move',
+  'desc',
+  'dialogue',
+  'keyframe_prompt',
+  'video_prompt',
+  'scene_no',
+  'scene_slug',
+  'cast',
+  'performance',
+  'dialogue_delivery',
+  'refIds',
+  'lexicon_ref_key',
+] as const satisfies readonly (keyof ProjectShot)[]
+
+/** agent 在 import 之上额外能写的业务字段 */
+export const SHOT_AGENT_EXTRA_FIELDS = [
+  'cast',
+  'performance',
+  'dialogue_delivery',
+  'refIds',
+  'refExtras',
+  'transition_out',
+  'prod_kind',
+  'motion_note',
+  'video_prompt_override',
+  'video_prompt_rendered',
+  'handEdited',
+] as const satisfies readonly (keyof ProjectShot)[]
+
+/**
+ * 产线产物字段：只能由生成工具或画布 UI 写。
+ * 导出是为了让测试能断言「两套策略都不含这些字段」，而不是靠人记。
+ */
+export const SHOT_PIPELINE_FIELDS = [
+  'id',
+  'episode',
+  'keyframe',
+  'clip',
+  'audio_ref',
+  'audio_meta',
+  'voice_meta',
+  'lip_sync',
+  'video_meta',
+  'video_prompt_render_meta',
+  'candidates',
+  'genState',
+] as const satisfies readonly string[]
+
+/** 参考连线并集：保持旧顺序，新项追加在末尾，重复项只留一份 */
+function mergeRefIds(old: string[] | undefined, add: string[] | undefined): string[] {
+  const out = [...(old ?? [])]
+  for (const t of add ?? []) {
+    const token = String(t ?? '').trim()
+    if (token && !out.includes(token)) out.push(token)
+  }
+  return out
+}
+
+export const SHOT_FIELD_POLICY: Record<ShotFieldPolicy, readonly (keyof ProjectShot)[]> = {
+  import: SHOT_IMPORT_FIELDS,
+  agent: [...SHOT_IMPORT_FIELDS, ...SHOT_AGENT_EXTRA_FIELDS],
+}
+
+/**
  * 导入用的镜头合并。
  *
  * 为什么不能直接用 mergeGenerated：它按 generated.map 返回，
@@ -57,6 +141,7 @@ export function mergeShotsDraft(
   generated: ProjectShot[],
   epNo: number,
   mode: ShotMergeMode = 'merge',
+  fieldPolicy: ShotFieldPolicy = 'import',
 ): { shots: ProjectShot[]; added: number; updated: number; kept: number } {
   const visibleNow = current.filter((s) => (Number(s.episode) || 1) === epNo)
   const others = current.filter((s) => (Number(s.episode) || 1) !== epNo)
@@ -91,10 +176,12 @@ export function mergeShotsDraft(
     // 文件里同镜号出现两次：后一条不覆盖前一条，交给预览去报重复
     if (done.has(old.id)) continue
     done.add(old.id)
-    // 只写导入行里真正给了值的字段；镜像数据（生成时是全新对象）不覆盖
+    // 只写策略允许、且导入行里真正给了值的字段；镜像数据（生成时是全新对象）不覆盖
     const next: ProjectShot = { ...old }
+    const writable = SHOT_FIELD_POLICY[fieldPolicy]
     const setIf = <K extends keyof ProjectShot>(k: K, v: ProjectShot[K] | undefined) => {
       if (v === undefined) return
+      if (!writable.includes(k)) return
       next[k] = v
     }
     setIf('no', g.no)
@@ -107,6 +194,26 @@ export function mergeShotsDraft(
     setIf('video_prompt', g.video_prompt)
     setIf('scene_no', g.scene_no)
     setIf('scene_slug', g.scene_slug)
+    // agent 策略下的业务字段：选角、表演、参考连线、转场、时长提示、生成方式
+    setIf('cast', g.cast)
+    setIf('performance', g.performance)
+    setIf('dialogue_delivery', g.dialogue_delivery)
+    // 参考连线：导入是「增补」——文件没提到的既有连线不能被抹掉；
+    // 模型写回是替换，因为它拿到了完整的镜头状态
+    if (g.refIds !== undefined && writable.includes('refIds')) {
+      next.refIds = fieldPolicy === 'import' ? mergeRefIds(old.refIds, g.refIds) : g.refIds
+    }
+    setIf('refExtras', g.refExtras)
+    setIf('transition_out', g.transition_out)
+    setIf('prod_kind', g.prod_kind)
+    setIf('motion_note', g.motion_note)
+    setIf('lexicon_ref_key', g.lexicon_ref_key)
+    setIf('video_prompt_override', g.video_prompt_override)
+    setIf('video_prompt_rendered', g.video_prompt_rendered)
+    // 模型不能自行声明「这些字段是人改的」：handEdited 记录的是人的操作
+    if (fieldPolicy === 'agent') {
+      if (Array.isArray(g.handEdited) && g.handEdited.length) next.handEdited = g.handEdited
+    }
     // 手改保护：被锁定的字段回填旧值
     for (const k of old.handEdited ?? []) {
       ;(next as Record<string, unknown>)[k] = (old as Record<string, unknown>)[k]
@@ -162,6 +269,10 @@ export function bizSignature(d: ShotData): string {
     visualBrief: d.visualBrief ?? null,
     visualBriefMeta: d.visualBriefMeta ?? null,
     motionNote: d.motionNote ?? '',
+    // 绑定与解绑都要触发写回：解绑写空串，落库后读回按未绑定处理
+    lexiconRefKey: d.lexiconRefKey ?? '',
+    lexiconRefUrl: d.lexiconRefUrl ?? '',
+    motionLexiconAsRef: Boolean(d.motionLexiconAsRef),
     useExpressionRef: d.useExpressionRef ? 1 : 0,
   })
 }
@@ -202,6 +313,10 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     visual_brief: d.visualBrief,
     visual_brief_meta: d.visualBriefMeta,
     motion_note: d.motionNote ?? '',
+    // null 是明确清除：服务端字段级合并会跳过 undefined，写 undefined 会让解绑后旧参照复活
+    lexicon_ref_key: d.lexiconRefKey ?? null,
+    lexicon_ref_url: d.lexiconRefUrl ?? null,
+    motion_lexicon_as_ref: Boolean(d.motionLexiconAsRef),
     use_expression_ref: Boolean(d.useExpressionRef),
     prod_kind: d.prodKind,
     ...(d.handEdited?.length ? { handEdited: d.handEdited } : {}),
@@ -245,6 +360,11 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     visualBrief: s.visual_brief ?? fallback.visualBrief,
     visualBriefMeta: s.visual_brief_meta ?? fallback.visualBriefMeta,
     motionNote: s.motion_note ?? fallback.motionNote,
+    // 字段缺失（旧项目）才沿用画布上的值；显式空串表示已解绑
+    lexiconRefKey: s.lexicon_ref_key === undefined ? fallback.lexiconRefKey : s.lexicon_ref_key || undefined,
+    lexiconRefUrl: s.lexicon_ref_url === undefined ? fallback.lexiconRefUrl : s.lexicon_ref_url || undefined,
+    motionLexiconAsRef:
+      s.motion_lexicon_as_ref === undefined ? fallback.motionLexiconAsRef : Boolean(s.motion_lexicon_as_ref),
     useExpressionRef: Boolean(s.use_expression_ref ?? fallback.useExpressionRef),
     refIds: s.refIds,
     shotId: s.id,

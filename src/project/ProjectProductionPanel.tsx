@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getProject, patchProject } from '../api'
+import { ASPECT_OPTIONS } from './aspect'
 
 type Props = {
   projectName: string
   onSaved?: () => void
 }
-
-const ASPECT_OPTIONS = ['16:9', '9:16', '4:3', '3:4', '1:1'] as const
 
 /**
  * 当前项目的制作参数：画风与画幅。全站 Agent 与生图只读此处写入的值。

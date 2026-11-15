@@ -1,6 +1,8 @@
+import { ORBIT_SHEET_COLUMNS, ORBIT_SHEET_ROWS } from './characters'
 import type {
   CharacterExpression,
   CharacterExpressionSheet,
+  CharacterOrbitSheet,
   CharacterSheet,
   VoiceSample,
 } from './characters'
@@ -26,6 +28,8 @@ export type ProjectChar = {
   expressions?: Partial<Record<PerformanceEmotion, CharacterExpression>>
   /** 一张 4×2 表情总图；优先于旧 expressions */
   expression_sheet?: CharacterExpressionSheet
+  /** 八角度转盘总图；只服务预览页，不进分镜参考 */
+  orbit_sheet?: CharacterOrbitSheet
   /** 可选角色音色样本；不改变 voiceId */
   voice_sample?: VoiceSample
   /** 参考图：生成三视图/表情总图的身份输入；不进入分镜参考 */
@@ -54,6 +58,7 @@ export function toSheet(c: ProjectChar): CharacterSheet {
     activeIdx: typeof c.activeIdx === 'number' ? c.activeIdx : undefined,
     expressions: c.expressions,
     expressionSheet: c.expression_sheet,
+    orbitSheet: c.orbit_sheet,
     voiceSample: c.voice_sample,
     referenceImages: Array.isArray(c.reference_images) ? c.reference_images.filter(Boolean) : undefined,
   }
@@ -117,6 +122,30 @@ export function toProject(s: CharacterSheet): ProjectChar {
         ...(s.expressionSheet.stale ? { stale: true } : {}),
         ...(s.expressionSheet.modelKey ? { modelKey: s.expressionSheet.modelKey } : {}),
         ...(s.expressionSheet.createdAt ? { createdAt: s.expressionSheet.createdAt } : {}),
+      }
+    }
+  }
+  if (s.orbitSheet) {
+    const orbitImage = local(s.orbitSheet.image)
+    if (orbitImage) {
+      out.orbit_sheet = {
+        image: orbitImage,
+        columns: ORBIT_SHEET_COLUMNS,
+        rows: ORBIT_SHEET_ROWS,
+        cells: (s.orbitSheet.cells ?? []).map((cell) => ({
+          angle: Number(cell.angle) || 0,
+          x: Number(cell.x) || 0,
+          y: Number(cell.y) || 0,
+          w: Number(cell.w) || 0,
+          h: Number(cell.h) || 0,
+          ...(local(cell.cropUrl) ? { cropUrl: local(cell.cropUrl) } : {}),
+          ...(cell.cropFingerprint ? { cropFingerprint: cell.cropFingerprint } : {}),
+        })),
+        source: s.orbitSheet.source,
+        fingerprint: String(s.orbitSheet.fingerprint || ''),
+        ...(s.orbitSheet.stale ? { stale: true } : {}),
+        ...(s.orbitSheet.modelKey ? { modelKey: s.orbitSheet.modelKey } : {}),
+        ...(s.orbitSheet.createdAt ? { createdAt: s.orbitSheet.createdAt } : {}),
       }
     }
   }

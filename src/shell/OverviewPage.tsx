@@ -91,7 +91,7 @@ export default function OverviewPage({
     }
     return {
       title: '画面齐了，可以出片',
-      detail: '到画布预览成片，或导出 JSON 交给外部流程。',
+      detail: '到画布预览成片，或导出分镜表 Markdown 交给外部流程。',
       label: '打开画布',
       run: () => onNavigate('board'),
     }

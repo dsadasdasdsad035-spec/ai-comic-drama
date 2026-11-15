@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5326
@@ -118,8 +119,7 @@ try {
   const openShot = async (reload) => {
     if (reload) {
       await page.goto(APP, { waitUntil: 'domcontentloaded' })
-      await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-      await page.locator('.topbar-project select').selectOption(NAME)
+      await selectProject(page, NAME)
       await page.getByRole('button', { name: '镜头表', exact: true }).click()
       await page.waitForTimeout(600)
       await page.getByRole('button', { name: '生成到画布' }).click()

@@ -3,6 +3,7 @@
  * 跑法：APP_URL=http://127.0.0.1:5280 node verify-image-lifecycle.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const NAME = `vimgcancel-${Date.now()}`
@@ -79,7 +80,7 @@ const clickNode = async (id, shift = false) => {
 }
 
 await p.goto(URL, { waitUntil: 'networkidle' })
-await p.locator('.topbar-project select').selectOption(NAME)
+await selectProject(p, NAME)
 await p.waitForTimeout(900)
 await p.getByRole('button', { name: '镜头表', exact: true }).click()
 await p.waitForTimeout(700)
@@ -176,7 +177,7 @@ await p.evaluate(({ key, nid }) => {
 }, { key: canvasKey, nid: s1 })
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(900)
-await p.locator('.topbar-project select').selectOption(NAME)
+await selectProject(p, NAME)
 await p.waitForTimeout(700)
 check('刷新后不再转圈', (await p.locator('.gen-overlay').count()) === 0)
 check('刷新后中断状态可读', (await p.locator('.gen-error-badge').count()) >= 1)

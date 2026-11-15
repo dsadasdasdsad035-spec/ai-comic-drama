@@ -5,6 +5,7 @@
  */
 import { chromium } from 'playwright-core'
 import crypto from 'node:crypto'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5274'
 const NAME = `verify-code-wb-${Date.now()}`
@@ -204,7 +205,7 @@ await page.route('**/api/vision', (route) =>
 )
 
 await page.goto(URL, { waitUntil: 'networkidle' })
-await page.locator('.topbar-project select').selectOption(NAME)
+await selectProject(page, NAME)
 await page.waitForTimeout(900)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(700)

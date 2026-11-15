@@ -16,6 +16,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5321
@@ -180,7 +181,7 @@ try {
 
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)
-  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await selectProject(page, PROJECT)
   await page.waitForTimeout(1200)
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(1500)
@@ -270,7 +271,7 @@ try {
   check('上下文卡写明超限占位', shown.includes('单张超过 4MB'), shown.slice(0, 240))
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(1200)
-  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await selectProject(page, PROJECT)
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(1200)
@@ -395,7 +396,7 @@ try {
   try {
     await page.reload({ waitUntil: 'networkidle' })
     await page.waitForTimeout(1600)
-    await page.locator('.topbar-project select').selectOption(PROJECT)
+    await selectProject(page, PROJECT)
     await page.waitForTimeout(1200)
     await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
     await page.waitForTimeout(1400)

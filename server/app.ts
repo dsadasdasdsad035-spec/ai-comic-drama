@@ -4311,6 +4311,14 @@ export function createAppHandler({ root }: { root: string }) {
                 if (typeof body[k] !== 'string') throw new Error(`${k} 必须是字符串`)
                 patch[k] = body[k]
               }
+              // 项目标题：库里的 title 列由 data.name 写入（见 writeProject 的列映射），
+              // 这里显式接住 body.title，避免调用方得知道这个历史映射。
+              if (body.title !== undefined) {
+                if (typeof body.title !== 'string' || !body.title.trim()) {
+                  throw new Error('title 必须是非空字符串')
+                }
+                patch.name = body.title.trim()
+              }
               if (Object.keys(patch).length === 0) {
                 throw new Error('POST 需要 shots / characters / designs / sceneLayouts / episodes / source 等字段之一')
               }

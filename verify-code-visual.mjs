@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const OUT = path.join(process.cwd(), 'openspec/changes/code-first-3d-chat/evidence/visual')
@@ -134,7 +135,7 @@ await page.route('**/api/text', (route) => route.fulfill({
   body: JSON.stringify({ ok: true, json: { reply: '已按聊天改用更明显的推镜', code: CHAT_CODE, motionNote: '更明显的推近' }, text: '', model: 'mock-code', modelKey: 'code', modelLabel: 'Mock Code' }),
 }))
 await page.goto(URL, { waitUntil: 'networkidle' })
-await page.locator('.topbar-project select').selectOption(NAME)
+await selectProject(page, NAME)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(650)
@@ -201,7 +202,7 @@ await page.locator('.cw-head').getByRole('button', { name: '关闭', exact: true
 await page.waitForTimeout(300)
 if (await page.locator('.cw-close-ask').count()) await page.getByRole('button', { name: '放弃修改', exact: true }).click()
 
-await page.locator('.topbar-project select').selectOption(LEGACY)
+await selectProject(page, LEGACY)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(650)

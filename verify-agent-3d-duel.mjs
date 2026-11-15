@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const REAL = process.env.AGENT_REAL === '1'
@@ -161,8 +162,7 @@ let videoUrl = ''
 let evidenceWritten = false
 try {
   await page.goto(URL, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(NAME)
+  await selectProject(page, NAME)
   await page.waitForTimeout(800)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(600)

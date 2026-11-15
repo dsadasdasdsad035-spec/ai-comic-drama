@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5326
@@ -185,8 +186,7 @@ try {
 
   const open = async (nav, surface) => {
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
-    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-    await page.locator('.topbar-project select').selectOption(NAME)
+    await selectProject(page, NAME)
     await page.getByRole('button', { name: nav, exact: true }).click()
     await page.locator(`[data-${surface}-chat]`).waitFor({ timeout: 15000 })
   }

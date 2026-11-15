@@ -8,11 +8,13 @@ import type { RulePack } from '../src/api'
 import type { Skill } from '../src/skills/types'
 
 const root = process.cwd()
+/** 工作台技能正文不再随仓库发布，逐字比对用的正文放在 tests/fixtures/skills */
+const FIXTURE_SKILLS = path.join(root, 'tests', 'fixtures', 'skills')
+const fixtureText = (id: string) => fs.readFileSync(path.join(FIXTURE_SKILLS, id, 'SKILL.md'), 'utf8')
 const skillIds = ['script', 'character', 'asset', 'shotlist', 'prompt', 'scene3d']
 const skills = new Map<string, Skill>(
   skillIds.map((id) => {
-    const text = fs.readFileSync(path.join(root, 'skills', id, 'SKILL.md'), 'utf8')
-    return [id, parseSkillText(id, text, 'builtin')]
+    return [id, parseSkillText(id, fixtureText(id), 'builtin')]
   }),
 )
 
@@ -36,30 +38,10 @@ check('默认规则包不生成覆盖', () => {
   assert.deepEqual(planLegacySkillOverrides(DEFAULT_RULES, skills), [])
 })
 
-check('自定义剧本规则生成 script 覆盖', () => {
-  const rules = customRules('script', { text: DEFAULT_RULES.script.text + '\n自定义剧本规则' })
-  const list = planLegacySkillOverrides(rules, skills)
-  assert.equal(list.length, 1)
-  assert.equal(list[0].skillId, 'script')
-  assert.ok(list[0].body.includes('自定义剧本规则'))
-})
-
-check('迁移覆盖的角色层逐字等于旧 SYS', () => {
-  const rules = customRules('script', { text: DEFAULT_RULES.script.text + '\n自定义剧本规则' })
-  const body = planLegacySkillOverrides(rules, skills)[0].body
-  const text = fs.readFileSync(path.join(root, 'skills', 'script', 'SKILL.md'), 'utf8')
-  const full = text.replace(/## 角色与约束[\s\S]*$/, body)
-  const again = parseSkillText('script', full, 'override')
-  assert.equal(again.role, scriptSys(rules))
-  assert.equal(again.task, skills.get('script')!.task)
-})
-
-check('停用规则包只保留 BASE', () => {
-  const rules = customRules('script', { enabled: false })
-  const body = planLegacySkillOverrides(rules, skills)[0].body
-  assert.ok(body.includes(SCRIPT_BASE))
-  assert.ok(!body.includes('【场景要素提取'))
-  assert.equal(scriptSys(rules), SCRIPT_BASE)
+// 剧本规则包已从 DEFAULT_RULES 移除（剧本层并入技能正文）：只剩角色/素材/拆镜/提示词四包
+check('DEFAULT_RULES 不再含剧本规则包，scriptSys 退化为 BASE', () => {
+  assert.ok(!('script' in DEFAULT_RULES))
+  assert.equal(scriptSys(DEFAULT_RULES), SCRIPT_BASE)
 })
 
 check('自定义拆镜规则生成 shotlist 覆盖', () => {
@@ -67,8 +49,7 @@ check('自定义拆镜规则生成 shotlist 覆盖', () => {
   const list = planLegacySkillOverrides(rules, skills)
   assert.equal(list.length, 1)
   assert.equal(list[0].skillId, 'shotlist')
-  assert.equal(scriptSys(rules), scriptSys(DEFAULT_RULES))
-  const text = fs.readFileSync(path.join(root, 'skills', 'shotlist', 'SKILL.md'), 'utf8')
+  const text = fixtureText('shotlist')
   const full = text.replace(/## 角色与约束[\s\S]*$/, list[0].body)
   const again = parseSkillText('shotlist', full, 'override')
   assert.equal(again.role, storyboardSys(rules))

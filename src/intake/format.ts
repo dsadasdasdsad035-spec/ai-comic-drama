@@ -37,6 +37,14 @@ export function looksLikeMarkdownTable(lines: string[]): boolean {
   return /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(sep)
 }
 
+/** 表头首列是不是镜号：分镜表的唯一硬特征，与 classify.ts 的 hasShotTable 同义 */
+const SHOT_HEAD = /^(镜头|镜号|shot)$/i
+
+/** 文档里有没有一块以镜号开头的表格（表头不必在第一行） */
+function hasShotTableBlock(text: string): boolean {
+  return markdownTableBlocks(text).some((block) => SHOT_HEAD.test(String(block[0]?.[0] ?? '').trim()))
+}
+
 /**
  * 识别格式。只看前若干行做判断——整篇文本扫一遍没必要，
  * 而且剧本很长时全量扫描只会拖慢导入对话框。
@@ -62,7 +70,9 @@ export function detectFormat(text: string): FormatResult {
   const lines = trimmed.split(/\r?\n/).slice(0, 40)
 
   // 2) Markdown 表格
-  if (looksLikeMarkdownTable(lines)) {
+  // 真实分镜表是「文档 + 表格」：导出文件前面还有标题、集信息与场次小节，
+  // 表头不在第一行。表头在第一行时行为不变；否则按块找带镜号表头的那块。
+  if (looksLikeMarkdownTable(lines) || hasShotTableBlock(trimmed)) {
     return { kind: 'markdown-table', reason: '内容是 Markdown 表格' }
   }
 
@@ -133,7 +143,8 @@ export function parseTable(text: string, kind: IntakeFormat): string[][] {
   if (kind === 'markdown-table') {
     const blocks = markdownTableBlocks(text)
     if (!blocks.length) return []
-    const block = blocks[0]
+    // 有多张表时优先取带镜号表头的那块：文档里可能还有角色表、道具表
+    const block = blocks.find((b) => SHOT_HEAD.test(String(b[0]?.[0] ?? '').trim())) ?? blocks[0]
     return block.filter((cells) => !cells.every((c) => /^:?-{2,}:?$/.test(c.trim())))
   }
 

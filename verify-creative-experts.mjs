@@ -53,14 +53,23 @@ if (!up) {
 const expertsRes = await (await fetch(`${APP}/api/experts`)).json()
 check('GET /api/experts', expertsRes.ok === true, String(expertsRes.experts?.length ?? 0))
 const builtins = (expertsRes.experts || []).filter((e) => e.source === 'builtin')
-check('内置仅 1 个专家', builtins.length === 1, builtins.map((e) => e.id).join(','))
+// 仓库 experts/ 下可以有多个内置专家（用户可能在设置页另存过全流程专家），
+// 所以这里只要求「全能专家在内」，不再写死数量。
+check('内置专家含全能专家', builtins.some((e) => e.id === 'expert-omni'), builtins.map((e) => e.id).join(','))
 
 const omni = expertsRes.experts?.find((e) => e.id === 'expert-omni')
 check('全能专家 manifest', Boolean(omni), omni?.name || '')
 check('全能专家名称', omni?.name === '全能专家', omni?.name || '')
 check(
-  '内置专家含图标地址',
-  expertsRes.experts?.every((e) => e.source !== 'builtin' || String(e.iconUrl || '').includes('/icon')),
+  '有图标文件的专家给出 /icon 地址',
+  String(omni?.iconUrl || '').includes('/icon'),
+  String(omni?.iconUrl || ''),
+)
+check(
+  '无图标文件的专家不伪造图标地址',
+  expertsRes.experts
+    ?.filter((e) => e.source === 'builtin' && e.id !== 'expert-omni')
+    .every((e) => !String(e.iconUrl || '').trim()),
 )
 check(
   '全能专家图像描述',
@@ -122,6 +131,20 @@ check('载荷含 list_experts', payload.toolNames.includes('list_experts'))
 check('全能专家含 list_installed_skills', payload.toolNames.includes('list_installed_skills'))
 check('载荷含 read_shots', payload.toolNames.includes('read_shots'))
 check('载荷含 submit_characters', payload.toolNames.includes('submit_characters'))
+// 新增能力必须真挂到内置专家：manifest 漏写时这里会红，而不是用户用到才发现
+for (const name of [
+  'read_shot_detail',
+  'read_shot_video_prompt',
+  'submit_episodes',
+  'create_project',
+  'update_project_meta',
+  'delete_shots',
+  'generate_keyframe',
+  'generate_clip',
+  'generate_voice',
+]) {
+  check(`全能专家载荷含 ${name}`, payload.toolNames.includes(name))
+}
 
 const PI = lib.createPiNativeToolSet()
 const listExperts = PI.byName.get('list_experts')

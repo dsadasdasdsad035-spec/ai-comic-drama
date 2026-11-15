@@ -33,12 +33,25 @@ fs.writeFileSync(
   seed,
   `import { createProject, writeProject } from ${JSON.stringify(path.join(ROOT, 'server', 'db.mjs'))}
 const root = ${JSON.stringify(TMP)}
-const shot = { id: 'E01-S01', episode: 1, no: 'S01', seconds: 3, size: '中景', desc: '街口', keyframe_prompt: 'rain', video_prompt: 'push' }
+// 31 镜、每镜带长视频提示词：一集序列化后超过读预算，逼出游标续读
+const shots = Array.from({ length: 31 }, (_, i) => {
+  const no = 'S' + String(i + 1).padStart(2, '0')
+  return {
+    id: 'E01-' + no,
+    episode: 1,
+    no,
+    seconds: 3,
+    size: '中景',
+    desc: '街口 ' + no,
+    keyframe_prompt: 'rain ' + no,
+    video_prompt: i === 0 ? 'push' : 'push ' + no + ' ' + '运镜描述'.repeat(400),
+  }
+})
 createProject(root, ${JSON.stringify(proj)}, { title: 'tool验收' })
 writeProject(root, ${JSON.stringify(proj)}, {
   source: '验收原著',
   episodes: [{ no: 1, title: '第一集', targetSeconds: 60 }],
-  shots: [shot],
+  shots,
   characters: [{ id: 'c1', name: '主角', lookEn: 'a person in coat' }],
   designs: [{ kind: 'scene', name: '街口', promptEn: 'street at night' }],
 })
@@ -154,6 +167,8 @@ const staticArgs = {
   read_characters: {},
   read_designs: {},
   read_shots: { episode: 1, limit: 5 },
+  read_shot_detail: { episode: 1, no: 'S01' },
+  read_shot_video_prompt: { episode: 1, no: 'S01' },
   read_asset_inventory: {},
   read_transition_recipes: { limit: 3 },
   list_camera_lexicon: { limit: 2 },
@@ -194,6 +209,32 @@ const staticArgs = {
   submit_joins: {
     joins: [{ after_no: 'S01', to_no: 'S99', relation: 'cut' }],
   },
+  submit_episodes: {
+    episodes: [
+      {
+        no: 1,
+        title: '验收集',
+        scenes: [{ slug: '街口', place: '街口', time: '夜', beats: '验收场次' }],
+      },
+    ],
+  },
+  // 需要确认通道的工具：本脚本的 ctx 没有 confirm / askCost，
+  // 因此这些调用必须走 fail-closed 分支（返回可读失败、不落库、不发请求）。
+  create_project: { name: 'verify-created-project' },
+  update_project_meta: { style: '验收画风' },
+  delete_shots: { nos: ['S01'] },
+  generate_keyframe: { no: 'S01' },
+  generate_clip: { no: 'S01' },
+  generate_voice: { no: 'S01' },
+  // 素材/画布动作工具：本脚本 ctx 没有画布、角色落库与成本确认通道，
+  // 这些调用必须走 fail-closed 分支（给出可读原因），而不是抛出未注册。
+  link_shot_refs: { no: 'S01', kind: 'character', names: ['验收'] },
+  set_character_visual: { character: '验收', target: 'image', url: '/project-assets/none.png' },
+  generate_character_views: { character: '验收' },
+  generate_expression_sheet: { character: '验收' },
+  submit_assets: {
+    assets: [{ title: '验收素材', kind: 'image', url: '/project-assets/none.png' }],
+  },
 }
 
 let lexiconKey = '推'
@@ -205,6 +246,7 @@ try {
   /* 下面 get 用默认 key */
 }
 staticArgs.get_camera_lexicon = { key: lexiconKey }
+staticArgs.set_shot_camera_lexicon = { no: 'S01', entry: lexiconKey }
 
 // read_asset_detail 的 key 必须来自 inventory 返回的行，不能写死
 let assetDetailArgs = { category: 'characters', key: '__none__' }
@@ -261,6 +303,43 @@ for (const tool of tools.sort((a, b) => a.name.localeCompare(b.name))) {
 const missingInPayload = payload.toolNames.filter((n) => !byName.has(n))
 if (missingInPayload.length) {
   check('载荷列出的工具均已绑定', false, missingInPayload.join(', '))
+}
+
+// --- 分镜续读：同一集连续两次读到不同镜头，nextCursor 最终消失 ---
+{
+  const readShotsTool = byName.get('read_shots')
+  if (!readShotsTool) {
+    check('read_shots 可续读', false, '工具缺失')
+  } else {
+    try {
+      const round1 = await readShotsTool.invoke({ episode: 1 })
+      const ids1 = (round1?.shots || []).map((s) => String(s.id || ''))
+      check(
+        '首次读取按整条截断并给出 nextCursor',
+        round1?.truncated === true && Boolean(round1?.nextCursor) && ids1.length > 0,
+        `returned=${ids1.length} total=${round1?.total}`,
+      )
+      const round2 = await readShotsTool.invoke({ episode: 1, cursor: round1?.nextCursor })
+      const ids2 = (round2?.shots || []).map((s) => String(s.id || ''))
+      const overlap = ids2.filter((id) => ids1.includes(id))
+      check('续读拿到的是另一批镜头（不重复）', ids2.length > 0 && overlap.length === 0, `round2=${ids2.length}`)
+
+      const seen = new Set([...ids1, ...ids2])
+      let cursor = round2?.nextCursor
+      let rounds = 2
+      while (cursor && rounds < 20) {
+        const next = await readShotsTool.invoke({ episode: 1, cursor })
+        for (const s of next?.shots || []) seen.add(String(s.id || ''))
+        cursor = next?.nextCursor
+        rounds++
+      }
+      check('续读到尾不再给游标且覆盖全部镜头', !cursor && seen.size === 31, `covered=${seen.size}/${round1?.total}`)
+      const detailed = await byName.get('read_shot_detail').invoke({ shotId: [...seen][30] })
+      check('钻取工具能按 shotId 取到全集里的最后一镜', detailed?.ok === true, String(detailed?.shotId || detailed?.error || ''))
+    } catch (e) {
+      check('read_shots 可续读', false, (e && e.message) || String(e))
+    }
+  }
 }
 
 console.log('\n--- 汇总 ---')

@@ -1,20 +1,22 @@
-import { useEffect, useState } from 'react'
-import type { CostPrompt } from './CreativeMessageParts'
+import { useEffect } from 'react'
+import type { BuiltinCostRequest } from '../agent/builtinPlatformTools'
 
-const CAP_LABEL: Record<string, string> = {
-  image: '生图',
-  video: '生视频',
-  audio: '配音',
-  vision: '视觉理解',
-  videoVision: '视频理解',
+export type CostPrompt = BuiltinCostRequest & {
+  resolve: (ok: boolean) => void
 }
 
 /**
- * 成本确认：模型只能「请求」，花钱由人决定。
- * 不屏蔽 Esc 与取消，两个按钮都返回明确结果给工具层。
+ * 生成类工具（出图 / 出片 / 配音）的成本确认卡。
+ *
+ * 只有在这里点「确认生成」，工具才会真的发请求；取消、Esc、关掉都按拒绝处理。
  */
-export function CostConfirmDialog({ prompt, onResolve }: { prompt: CostPrompt; onResolve: (ok: boolean, remember?: boolean) => void }) {
-  const [remember, setRemember] = useState(false)
+export function CostConfirmDialog({
+  prompt,
+  onResolve,
+}: {
+  prompt: CostPrompt
+  onResolve: (ok: boolean) => void
+}) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onResolve(false)
@@ -24,49 +26,25 @@ export function CostConfirmDialog({ prompt, onResolve }: { prompt: CostPrompt; o
   }, [onResolve])
 
   return (
-    <div data-cost-dialog className="creative-dialog-scrim" role="dialog" aria-modal="true" aria-label="确认费用">
+    <div
+      data-cost-dialog
+      className="creative-dialog-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-label="确认生成成本"
+    >
       <div className="creative-dialog">
-        <h3>确认{CAP_LABEL[prompt.capability] || prompt.capability}调用</h3>
-        <dl className="creative-dialog-rows">
-          <div>
-            <dt>模型</dt>
-            <dd>{prompt.modelLabel}</dd>
-          </div>
-          <div>
-            <dt>调用次数</dt>
-            <dd>{prompt.calls}</dd>
-          </div>
-          {prompt.note ? (
-            <div>
-              <dt>说明</dt>
-              <dd>{prompt.note}</dd>
-            </div>
-          ) : null}
-        </dl>
-        <label className="creative-dialog-check">
-          <input
-            type="checkbox"
-            data-cost-remember
-            checked={remember && !prompt.alwaysConfirm}
-            disabled={prompt.alwaysConfirm}
-            onChange={(e) => setRemember(e.target.checked)}
-          />
-          {prompt.alwaysConfirm ? '真实视频生成每次都必须确认' : '本会话内不再询问同类调用'}
-        </label>
-        <p className="creative-dialog-note">
-          费用以渠道实际计费为准；真实视频生成不适用「不再询问」。
+        <h3>{prompt.title}</h3>
+        <p className="creative-dialog-note" data-cost-detail>
+          {prompt.detail}
         </p>
+        <p className="creative-dialog-note">这会调用付费生成渠道并产生费用，取消则不发起请求。</p>
         <div className="creative-dialog-actions">
-          <button type="button" className="btn" onClick={() => onResolve(false)}>
+          <button type="button" className="btn" onClick={() => onResolve(false)} data-cost-cancel>
             取消
           </button>
-          <button
-            type="button"
-            data-cost-confirm
-            className="btn primary"
-            onClick={() => onResolve(true, remember && !prompt.alwaysConfirm)}
-          >
-            确认调用
+          <button type="button" className="btn primary" onClick={() => onResolve(true)} data-cost-confirm>
+            确认生成
           </button>
         </div>
       </div>

@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-video-expression-'))
@@ -180,8 +181,7 @@ await page.route('**/generated/**', (route) => route.fulfill({ status: 200, cont
 
 try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(uiProject.name)
+  await selectProject(page, uiProject.name)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.getByRole('button', { name: '生成到画布' }).click()
   await page.waitForTimeout(800)
@@ -201,8 +201,7 @@ try {
   check('槽位为 3/4', (await page.locator('.vp-summary').innerText()).includes('参考图 3/4'), (await page.locator('.vp-summary').innerText()).slice(0, 120))
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(uiProject.name)
+  await selectProject(page, uiProject.name)
   await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.react-flow__node').first().waitFor({ timeout: 15000 })
   await page.locator('.react-flow__node').first().click()

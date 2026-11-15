@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 import { chromium } from 'playwright-core'
 
 const ROOT = process.cwd()
@@ -141,12 +142,12 @@ try {
 
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1600)
-  const sel = page.locator('.topbar-project select')
-  check('顶栏项目选择器存在', (await sel.count()) === 1)
-  check('初始项目为 A', (await sel.inputValue()) === 'A', await sel.inputValue())
+  const railName = () => page.locator('.rail-project-name').first()
+  check('顶栏项目菜单存在', (await page.locator('[data-project-menu]').count()) >= 1)
+  check('初始项目为 A', (await railName().innerText()).includes('A'), await railName().innerText())
   check('初始画布 2 镜', (await page.locator('.react-flow__node').count()) === 2)
 
-  await sel.selectOption('B')
+  await selectProject(page, 'B')
   await page.waitForTimeout(1400)
   check('切到 B 后画布 3 镜', (await page.locator('.react-flow__node').count()) === 3)
   const stB = await storage()

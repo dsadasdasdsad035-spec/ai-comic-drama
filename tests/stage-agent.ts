@@ -19,8 +19,10 @@ function check(name: string, fn: () => void | Promise<void>) {
 }
 
 const root = process.cwd()
+/** 工作台技能正文不再随仓库发布，宿主技能正文放在 tests/fixtures/skills */
+const FIXTURE_SKILLS = path.join(root, 'tests', 'fixtures', 'skills')
 const readSkill = (id: string) =>
-  parseSkillText(id, fs.readFileSync(path.join(root, 'skills', id, 'SKILL.md'), 'utf8'), 'builtin')
+  parseSkillText(id, fs.readFileSync(path.join(FIXTURE_SKILLS, id, 'SKILL.md'), 'utf8'), 'builtin')
 const shotlistSkill = readSkill('shotlist')
 const characterSkill = readSkill('character')
 
@@ -53,7 +55,11 @@ const adapter: WorkbenchChatAdapter = {
   inputs: () => ({ style: 'S', aspect: '16:9', brief: 'B', target: 60 }),
   ownDraft: () => ownShots,
   projectSnapshot: async () => ({
+    name: '演示项目',
     source: 'SAVED_SOURCE',
+    logline: 'LOGLINE_X',
+    style: 'STYLE_X',
+    aspect: '9:16',
     shots: [{ id: 'E01-S02', episode: 1, no: 'S02' }],
     characters: [{ name: 'A' }],
   }),
@@ -92,6 +98,15 @@ await check('read_source 读已保存项目梗概', async () => {
   const tool = set.byName.get('read_source')
   const r = (await tool!.invoke({})) as { source: string }
   assert.equal(r.source, 'SAVED_SOURCE')
+})
+
+await check('read_source 带出项目设定（标题/梗概/画风/画幅）', async () => {
+  const tool = set.byName.get('read_source')
+  const r = (await tool!.invoke({})) as Record<string, unknown>
+  assert.equal(r.title, '演示项目')
+  assert.equal(r.logline, 'LOGLINE_X')
+  assert.equal(r.style, 'STYLE_X')
+  assert.equal(r.aspect, '9:16')
 })
 
 await check('read_shots 在读活草稿', async () => {

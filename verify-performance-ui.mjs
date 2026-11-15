@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5341
@@ -165,8 +166,7 @@ await page.route('**/api/lipsync**', async (route) => {
 
 const openShots = async () => {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.locator('table.wb-table').waitFor({ timeout: 15000 })
 }
@@ -237,7 +237,6 @@ try {
   // 没有项目时不渲染可写表格、不产生项目写入
   noProjects = true
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
   await page.getByRole('button', { name: '镜头表', exact: true }).click()
   await page.waitForTimeout(700)
   const beforeNoProjectPosts = projectPosts

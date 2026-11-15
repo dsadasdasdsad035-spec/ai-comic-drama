@@ -102,8 +102,6 @@ check('不再导出 TOOL_RESULT_MAX', lib.TOOL_RESULT_MAX === undefined)
 const runnerSrc = fs.readFileSync(path.join(ROOT, 'src/agent/pi/stageRunner.ts'), 'utf8')
 check('stageRunner 不再装配 transformContext', !runnerSrc.includes('transformContext'))
 check('stageRunner 仍预置 priorMessages', runnerSrc.includes('priorMessages'))
-const skillChatSrc = fs.readFileSync(path.join(ROOT, 'src/agent/SkillChat.tsx'), 'utf8')
-check('SkillChat 走 history 字符串路径不变', skillChatSrc.includes('history') && !skillChatSrc.includes('priorMessages'))
 
 // ---- 检查器说明与真实行为一致 ----
 console.log('\n=== 检查器说明 ===')

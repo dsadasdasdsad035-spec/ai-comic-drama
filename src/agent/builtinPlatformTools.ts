@@ -1,5 +1,17 @@
 import { z } from 'zod'
-import { getProject, type ProjectData } from '../api'
+import {
+  createProject,
+  generateImage,
+  generateVoice,
+  getProject,
+  listMedia,
+  mergeProjectShots,
+  patchProject,
+  startVideo,
+  type ProjectAsset,
+  type ProjectData,
+  type ProjectShot,
+} from '../api'
 import {
   contractWriteHint,
   getContractToolSchema,
@@ -8,8 +20,28 @@ import {
 } from '../skills/contracts'
 import type { DraftApplyResult, WorkbenchChatAdapter, WriteTool } from './workbenchChat'
 import { applyProjectDraft, PLATFORM_WRITE_TOOLS, type ProjectDraftCtx } from '../platform/projectDraft'
+import { DEFAULT_EXPERT_PLATFORM_TOOLS } from '../creative/expertToolGroups'
+import { ASPECT_OPTIONS, isAspectOption } from '../project/aspect'
+import { resolveProdKind } from '../shotProdKind'
+import { dialogueToText, parseDialogue } from '../prompts'
+import { voiceFingerprint } from '../performance'
 import { createStageToolSet, createPiNativeToolSet, type StageToolSet } from './stageTools'
+import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
+import { createMaterialTools } from './materialTools'
 import { defineTool, type ToolDef } from './tool'
+
+/** 新建项目目录名规则，与新建项目对话框一致 */
+const PROJECT_NAME_RE = /^[a-zA-Z0-9_-]{1,40}$/
+
+/** 破坏性动作的确认请求；宿主决定怎么问，工具只管要不要 */
+export type BuiltinConfirmRequest = {
+  action: 'create_project' | 'update_project_meta' | 'delete_shots'
+  title: string
+  detail: string
+  payload?: Record<string, unknown>
+}
+
+export type BuiltinConfirm = (req: BuiltinConfirmRequest) => Promise<boolean>
 
 export type BuiltinPlatformCtx = {
   projectName: string
@@ -19,6 +51,35 @@ export type BuiltinPlatformCtx = {
   getSnapshot?: () => ProjectData | null
   setSnapshot?: (p: ProjectData) => void
   onProjectDataChanged?: () => void
+  /**
+   * 破坏性动作的确认通道。未提供时创建项目/改项目元信息/删镜头一律 fail-closed：
+   * 没有用户见过的确认，就不该落库。
+   */
+  confirm?: BuiltinConfirm
+  /**
+   * 生成类动作的成本确认通道。未提供时出图/出片/配音一律 fail-closed：
+   * 没有确认过的成本，就不该花钱。
+   */
+  askCost?: (req: BuiltinCostRequest) => Promise<boolean>
+  /** 新建项目成功后由宿主决定是否切换上下文；工具自己不切 */
+  onProjectCreated?: (name: string) => void | Promise<void>
+  /**
+   * 画布素材卡（节点 id + 标题）。按标题连素材参考时必须它：
+   * 素材卡节点 id 是随机 uid，`project.assets` 里没有，靠猜会写出指不到任何卡片的 refIds。
+   */
+  getCanvasAssets?: () => { id: string; title: string; url: string }[]
+  /**
+   * 角色图片类变更：立即落库并同步界面状态。
+   * 不走角色整表草稿的防抖合并——`mergeCharacters` 有意保留旧图片，用它写图会被静默丢弃。
+   */
+  commitCharacters?: (next: CharacterSheet[]) => void | Promise<void>
+  /** 表情总图八格裁剪；默认走浏览器 canvas 实现，测试可注入桩 */
+  cropSheet?: (sheet: CharacterExpressionSheet, project: string) => Promise<{ sheet: CharacterExpressionSheet; errors: string[] }>
+  /**
+   * 素材卡写回后同步画布节点。
+   * 只写 project.assets 不行：画布已有节点时不会再从 assets 重建，用户会看到「提交成功但画布上没有卡」。
+   */
+  onAssetsWritten?: (assets: ProjectAsset[]) => void | Promise<void>
 }
 
 let projectCache: { name: string; data: ProjectData } | null = null
@@ -44,6 +105,7 @@ function draftCtx(input: BuiltinPlatformCtx): ProjectDraftCtx {
       input.setSnapshot?.(p)
     },
     onProjectDataChanged: input.onProjectDataChanged,
+    onAssetsWritten: input.onAssetsWritten,
   }
 }
 
@@ -131,6 +193,516 @@ const validateContractTool = defineTool({
 
 const SUBMIT_TOOL_NAMES = new Set(PLATFORM_WRITE_TOOLS.map((x) => x.tool))
 
+/**
+ * 平台动作工具名：写「对某个具体对象做一件事」，而不是整表草稿。
+ * 是否要确认由各工具自己决定（删镜头/建项目要确认，连参考不要），
+ * 名单只负责登记「这些是动作工具」，避免与 `submit_*` 混淆。
+ */
+export const PLATFORM_ACTION_TOOL_NAMES = [
+  'create_project',
+  'update_project_meta',
+  'delete_shots',
+  'generate_keyframe',
+  'generate_clip',
+  'generate_voice',
+  'link_shot_refs',
+  'set_shot_camera_lexicon',
+  'set_character_visual',
+  'generate_character_views',
+  'generate_expression_sheet',
+] as const
+
+/** 确认通道缺失或用户取消时统一的失败形状 */
+async function requireConfirm(
+  input: BuiltinPlatformCtx,
+  req: BuiltinConfirmRequest,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!input.confirm) {
+    return { ok: false, error: `${req.title}需要用户确认，当前会话没有确认通道，已拒绝执行` }
+  }
+  let yes = false
+  try {
+    yes = await input.confirm(req)
+  } catch (e) {
+    return { ok: false, error: `确认失败：${(e as Error)?.message || String(e)}` }
+  }
+  if (!yes) return { ok: false, error: '用户取消了操作' }
+  return { ok: true }
+}
+
+/** 新建项目：与界面入口同一套目录名规则；不切换当前项目 */
+function createCreateProjectTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'create_project',
+    description:
+      '【平台内置】新建项目。目录名只接受字母/数字/下划线/短横且不超过 40 字符；同名已存在时报错。' +
+      '写前必须取得用户确认。本工具不会切换当前选中的项目，由界面决定是否切过去。',
+    schema: z.object({
+      name: z.string().min(1).describe('目录名（同时是项目文件夹名）'),
+      title: z.string().optional().describe('显示标题；省略则同目录名'),
+      style: z.string().optional().describe('全片画风'),
+      aspect: z
+        .enum(ASPECT_OPTIONS)
+        .optional()
+        .describe(`画幅，可选 ${ASPECT_OPTIONS.join(' / ')}；省略为 16:9`),
+    }),
+    run: async (args) => {
+      const name = String(args.name || '').trim()
+      if (!PROJECT_NAME_RE.test(name)) {
+        return { ok: false, error: '目录名只能用字母/数字/下划线/短横，最长 40 字符' }
+      }
+      const aspect = args.aspect
+      if (aspect !== undefined && !isAspectOption(aspect)) {
+        return { ok: false, error: `画幅只能是 ${ASPECT_OPTIONS.join(' / ')}` }
+      }
+      const title = String(args.title || '').trim()
+      const style = String(args.style || '').trim()
+      const gate = await requireConfirm(input, {
+        action: 'create_project',
+        title: '新建项目',
+        detail: `项目「${name}」${title ? `（标题：${title}）` : ''}${style ? `，画风：${style}` : ''}${aspect ? `，画幅：${aspect}` : ''}`,
+        payload: { name, ...(title ? { title } : {}), ...(style ? { style } : {}), ...(aspect ? { aspect } : {}) },
+      })
+      if (!gate.ok) return gate
+      try {
+        await createProject(name, {
+          ...(title ? { title } : {}),
+          ...(style ? { style } : {}),
+          ...(aspect ? { aspect } : {}),
+        })
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      void input.onProjectCreated?.(name)
+      return {
+        ok: true,
+        summary: `已创建项目「${name}」；未切换当前项目`,
+        name,
+        projectSwitched: false,
+      }
+    },
+  })
+}
+
+/** 项目元信息：只写传入字段 */
+function createUpdateProjectMetaTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'update_project_meta',
+    description:
+      '【平台内置】修改当前项目的标题、梗概、画风或画幅。只写传入的字段，其余保持原值；' +
+      '写前必须取得用户确认。画风/画幅是出首帧与出片提示词的基准，改前先说明影响。',
+    schema: z.object({
+      title: z.string().optional().describe('项目显示标题'),
+      logline: z.string().optional().describe('一句话梗概'),
+      style: z.string().optional().describe('全片画风'),
+      aspect: z
+        .enum(ASPECT_OPTIONS)
+        .optional()
+        .describe(`画幅，可选 ${ASPECT_OPTIONS.join(' / ')}`),
+    }),
+    run: async (args) => {
+      const title = args.title === undefined ? undefined : String(args.title).trim()
+      const logline = args.logline === undefined ? undefined : String(args.logline).trim()
+      const style = args.style === undefined ? undefined : String(args.style).trim()
+      const aspect = args.aspect
+      if (title !== undefined && !title) return { ok: false, error: '标题不能为空' }
+      if (aspect !== undefined && !isAspectOption(aspect)) {
+        return { ok: false, error: `画幅只能是 ${ASPECT_OPTIONS.join(' / ')}` }
+      }
+      const fields = [
+        title !== undefined ? `标题 → ${title}` : '',
+        logline !== undefined ? `梗概 → ${logline}` : '',
+        style !== undefined ? `画风 → ${style}` : '',
+        aspect !== undefined ? `画幅 → ${aspect}` : '',
+      ].filter(Boolean)
+      if (!fields.length) return { ok: false, error: '至少提交一个字段（title / logline / style / aspect）' }
+      const checked = validateContract('project-meta-v1', {
+        ...(title !== undefined ? { title } : {}),
+        ...(logline !== undefined ? { logline } : {}),
+        ...(style !== undefined ? { style } : {}),
+        ...(aspect !== undefined ? { aspect } : {}),
+      })
+      if (!checked.ok) return { ok: false, error: `项目设定不合规：${checked.errors.join('；')}` }
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      const gate = await requireConfirm(input, {
+        action: 'update_project_meta',
+        title: '修改项目设定',
+        detail: `项目「${name}」：${fields.join('；')}`,
+        payload: {
+          ...(title !== undefined ? { title } : {}),
+          ...(logline !== undefined ? { logline } : {}),
+          ...(style !== undefined ? { style } : {}),
+          ...(aspect !== undefined ? { aspect } : {}),
+        },
+      })
+      if (!gate.ok) return gate
+      const patch = {
+        ...(title !== undefined ? { title } : {}),
+        ...(logline !== undefined ? { logline } : {}),
+        ...(style !== undefined ? { style } : {}),
+        ...(aspect !== undefined ? { aspect } : {}),
+      }
+      try {
+        await patchProject(name, patch)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      // 本地快照同步：title 在 ProjectData 里就是 name
+      const snap = draftCtx(input).getSnapshot()
+      if (snap) {
+        draftCtx(input).setSnapshot({
+          ...snap,
+          ...(title !== undefined ? { name: title } : {}),
+          ...(logline !== undefined ? { logline } : {}),
+          ...(style !== undefined ? { style } : {}),
+          ...(aspect !== undefined ? { aspect } : {}),
+        })
+      }
+      input.onProjectDataChanged?.()
+      return { ok: true, summary: `项目设定已更新：${fields.join('；')}` }
+    },
+  })
+}
+
+/** 删除镜头：按当前集镜号解析 id，走既有的显式删除通道 */
+function createDeleteShotsTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'delete_shots',
+    description:
+      '【平台内置】删除当前项目当前集的分镜（按镜号）。写前必须取得用户确认。' +
+      '不存在的镜号会在回执里列出，不影响其余镜号被删除。',
+    schema: z.object({
+      nos: z.array(z.string()).min(1).describe('要删除的镜号，例如 ["S03","S04"]'),
+      episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+    }),
+    run: async ({ nos, episode }) => {
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      let project: ProjectData
+      try {
+        project = await ensureProjectLoaded(input)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
+      const wanted = [...new Set(nos.map((x) => String(x ?? '').trim()).filter(Boolean))]
+      if (!wanted.length) return { ok: false, error: '镜号列表为空' }
+      const byNo = new Map<string, string>()
+      for (const s of project.shots || []) {
+        if ((Number(s.episode) || 1) !== ep) continue
+        const no = String(s.no ?? '').trim()
+        if (no && s.id) byNo.set(no, String(s.id))
+      }
+      const ids: string[] = []
+      const missing: string[] = []
+      for (const no of wanted) {
+        const id = byNo.get(no)
+        if (id) ids.push(id)
+        else missing.push(no)
+      }
+      if (!ids.length) {
+        return { ok: false, error: `第 ${ep} 集找不到镜号：${missing.join('、')}` }
+      }
+      const gate = await requireConfirm(input, {
+        action: 'delete_shots',
+        title: '删除分镜',
+        detail: `第 ${ep} 集：${wanted.filter((n) => byNo.has(n)).join('、')}（共 ${ids.length} 镜）${
+          missing.length ? `；找不到：${missing.join('、')}` : ''
+        }`,
+        payload: { episode: ep, nos: wanted },
+      })
+      if (!gate.ok) return gate
+      const drop = new Set(ids)
+      const remaining = (project.shots || []).filter((s) => !drop.has(String(s.id)))
+      try {
+        await mergeProjectShots(name, remaining, ids)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      draftCtx(input).setSnapshot({ ...project, shots: remaining })
+      input.onProjectDataChanged?.()
+      return {
+        ok: true,
+        summary: `已删除 ${ids.length} 镜${missing.length ? `；${missing.length} 个镜号不存在` : ''}`,
+        counts: { deleted: ids.length, missing: missing.length },
+        ...(missing.length ? { missingNos: missing } : {}),
+      }
+    },
+  })
+}
+
+/** 成本确认请求：出图/出片/配音都要先让用户看见钱 */
+export type BuiltinCostRequest = {
+  action: 'generate_keyframe' | 'generate_clip' | 'generate_voice' | 'generate_character_views' | 'generate_expression_sheet'
+  title: string
+  detail: string
+  payload?: Record<string, unknown>
+}
+
+/** 成本确认通道：未提供时生成类工具一律 fail-closed */
+async function requireCost(
+  input: BuiltinPlatformCtx,
+  req: BuiltinCostRequest,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!input.askCost) {
+    return { ok: false, error: `${req.title}需要成本确认，当前会话没有确认通道，已拒绝执行` }
+  }
+  let yes = false
+  try {
+    yes = await input.askCost(req)
+  } catch (e) {
+    return { ok: false, error: `成本确认失败：${(e as Error)?.message || String(e)}` }
+  }
+  if (!yes) return { ok: false, error: '用户取消了本次生成（未发起请求）' }
+  return { ok: true }
+}
+
+function findShot(project: ProjectData, ep: number, no: string): ProjectShot | undefined {
+  const want = String(no ?? '').trim()
+  return (project.shots || []).find((s) => (Number(s.episode) || 1) === ep && String(s.no ?? '').trim() === want)
+}
+
+/** 把单镜改动写回项目：只发这一镜，服务端按 id 字段级合并 */
+async function writeShotBack(
+  input: BuiltinPlatformCtx,
+  project: ProjectData,
+  next: ProjectShot,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const name = input.projectName.trim()
+  try {
+    await patchProject(name, { shots: [next] })
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || String(e) }
+  }
+  const shots = (project.shots || []).map((s) => (s.id === next.id ? next : s))
+  draftCtx(input).setSnapshot({ ...project, shots })
+  input.onProjectDataChanged?.()
+  return { ok: true }
+}
+
+/** 出首帧：只对生图镜开放；成功写 keyframe 并追加候选，不碰参考连线 */
+function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'generate_keyframe',
+    description:
+      '【平台内置】给一个生图镜生成首帧。只对工位为「生图」的镜开放；出片镜请先切回生图。' +
+      '生成前必须取得成本确认。成功写回该镜 keyframe 并追加候选；不创建素材卡、不改参考连线。',
+    schema: z.object({
+      no: z.string().min(1).describe('镜号，例如 S03'),
+      prompt: z.string().optional().describe('首帧提示词；省略用该镜已存的首帧提示词'),
+      episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+    }),
+    run: async ({ no, prompt, episode }) => {
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      let project: ProjectData
+      try {
+        project = await ensureProjectLoaded(input)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const kind = resolveProdKind(shot)
+      if (kind !== 'image') {
+        return {
+          ok: false,
+          error: `镜 ${shot.no} 的工位是出片，不能直接出首帧。下一步：在画布把该镜切回生图，或改用 generate_clip。`,
+          prodKind: kind,
+        }
+      }
+      const text = String(prompt ?? '').trim() || String(shot.keyframe_prompt ?? '').trim() || String(shot.desc ?? '').trim()
+      if (!text) {
+        return {
+          ok: false,
+          error: `镜 ${shot.no} 还没有首帧提示词。下一步：先用 submit_shots 写入 keyframe_prompt 或 desc，再出图。`,
+        }
+      }
+      const ratio = String(project.aspect || '').trim() || '16:9'
+      const gate = await requireCost(input, {
+        action: 'generate_keyframe',
+        title: '生成首帧',
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}，画幅 ${ratio}（单张）`,
+        payload: { project: name, episode: ep, no: shot.no, ratio },
+      })
+      if (!gate.ok) return gate
+      let urls: string[] = []
+      try {
+        const res = await generateImage({ prompt: text, ratio, n: 1, project: name })
+        urls = (res.urls?.length ? res.urls : [res.url]).filter(Boolean)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const primary = urls[0]
+      if (!primary) return { ok: false, error: '生图渠道没有返回图片地址' }
+      // 本次结果放候选首位：画布按 activeIdx（默认 0）取当前图，重开就能看到新图
+      const candidates = [primary, ...(shot.candidates || []).filter((u) => u && u !== primary)]
+      const next: ProjectShot = { ...shot, keyframe: primary, candidates }
+      const written = await writeShotBack(input, project, next)
+      if (!written.ok) return written
+      return {
+        ok: true,
+        summary: `镜 ${shot.no} 已出首帧并写回`,
+        no: shot.no,
+        keyframe: primary,
+        candidates,
+      }
+    },
+  })
+}
+
+/**
+ * 出片：只提交任务，立即返回 jobId。
+ *
+ * 视频经常超过一轮对话的时长预算，等下去会把整轮拖死；结果由既有任务中心轮询落库。
+ */
+function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'generate_clip',
+    description:
+      '【平台内置】为一个分镜提交出片任务，提交成功立刻返回 jobId，不等成片。' +
+      '生成前必须取得成本确认。成片由任务中心轮询落库，这里不会写 clip 字段。',
+    schema: z.object({
+      no: z.string().min(1).describe('镜号，例如 S03'),
+      prompt: z.string().optional().describe('出片提示词；省略用该镜已存的视频提示词'),
+      episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+    }),
+    run: async ({ no, prompt, episode }) => {
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      let project: ProjectData
+      try {
+        project = await ensureProjectLoaded(input)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const text =
+        String(prompt ?? '').trim() ||
+        String(shot.video_prompt_rendered ?? '').trim() ||
+        String(shot.video_prompt ?? '').trim() ||
+        String(shot.keyframe_prompt ?? '').trim() ||
+        String(shot.desc ?? '').trim()
+      if (!text) {
+        return {
+          ok: false,
+          error: `镜 ${shot.no} 还没有出片提示词。下一步：先用 submit_prompts 或 submit_shots 写入视频提示词。`,
+        }
+      }
+      const ratio = String(project.aspect || '').trim() || '16:9'
+      const seconds = Math.max(1, Number(shot.seconds) || 5)
+      const image = String(shot.keyframe ?? '').trim()
+      const gate = await requireCost(input, {
+        action: 'generate_clip',
+        title: '提交出片任务',
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}，${seconds}s，画幅 ${ratio}${image ? '' : '（无首帧，按参考图模式提交）'}`,
+        payload: { project: name, episode: ep, no: shot.no, seconds, ratio },
+      })
+      if (!gate.ok) return gate
+      try {
+        const submitted = await startVideo({
+          prompt: text,
+          seconds,
+          ratio,
+          ...(image ? { image } : {}),
+        })
+        return {
+          ok: true,
+          summary: `镜 ${shot.no} 出片任务已受理，成片由任务中心轮询落库`,
+          no: shot.no,
+          jobId: submitted.id,
+          ...(submitted.mode ? { mode: submitted.mode } : {}),
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+    },
+  })
+}
+
+/** 配音：成功写 audio_ref + voice_meta；失败不动原引用 */
+function createGenerateVoiceTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'generate_voice',
+    description:
+      '【平台内置】为一个分镜生成台词配音。文本省略时用该镜已有台词。' +
+      '生成前必须取得成本确认；成功写回该镜声音引用与配音元数据，失败不改原值。',
+    schema: z.object({
+      no: z.string().min(1).describe('镜号，例如 S03'),
+      text: z.string().optional().describe('要合成的台词；省略用该镜已有台词'),
+      episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+    }),
+    run: async ({ no, text, episode }) => {
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      let project: ProjectData
+      try {
+        project = await ensureProjectLoaded(input)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const spoken = String(text ?? '').trim() || dialogueToText(shot.dialogue).trim()
+      if (!spoken) {
+        return { ok: false, error: `镜 ${shot.no} 没有台词。下一步：写入台词，或用 text 参数直接给要合成的文本。` }
+      }
+      const lines = parseDialogue(spoken)
+      const speaker = String(lines[0]?.speaker ?? '').trim()
+      const char = speaker
+        ? (project.characters || []).find(
+            (c) => String((c as { name?: unknown }).name ?? '') === speaker,
+          )
+        : undefined
+      const voiceId = String((char as { voiceId?: string } | undefined)?.voiceId ?? '').trim()
+      const gate = await requireCost(input, {
+        action: 'generate_voice',
+        title: '生成台词配音',
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}：${spoken.slice(0, 60)}${spoken.length > 60 ? '…' : ''}`,
+        payload: { project: name, episode: ep, no: shot.no, speaker },
+      })
+      if (!gate.ok) return gate
+      let voice
+      try {
+        voice = await generateVoice({
+          text: spoken,
+          project: name,
+          ...(voiceId ? { voice: voiceId } : {}),
+        })
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      if (!voice.url) return { ok: false, error: '配音渠道没有返回音频地址' }
+      const next: ProjectShot = {
+        ...shot,
+        audio_ref: { character: speaker || '旁白', url: voice.url },
+        voice_meta: {
+          engine: voice.engine,
+          ...(voiceId ? { voice: voiceId } : {}),
+          applied: voice.applied ?? [],
+          unsupported: voice.unsupported ?? [],
+          fingerprint: voiceFingerprint(spoken),
+          createdAt: new Date().toISOString(),
+        },
+      }
+      const written = await writeShotBack(input, project, next)
+      if (!written.ok) return written
+      return {
+        ok: true,
+        summary: `镜 ${shot.no} 已配音并写回`,
+        no: shot.no,
+        audio: voice.url,
+        seconds: voice.seconds,
+      }
+    },
+  })
+}
+
 /** 仅读 + 校验（与工作台 adapter 的 submit 草稿并存时用，避免重复 submit 名） */
 export function createBuiltinPlatformReadTools(input: BuiltinPlatformCtx): ToolDef[] {
   return createBuiltinPlatformTools(input).filter((t) => !SUBMIT_TOOL_NAMES.has(t.name))
@@ -147,30 +719,113 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
     byName.set(tool, createSubmitTool(input, tool as WriteTool, contract))
   }
   byName.set(validateContractTool.name, validateContractTool)
-  return [...byName.values()]
+  byName.set('create_project', createCreateProjectTool(input))
+  byName.set('update_project_meta', createUpdateProjectMetaTool(input))
+  byName.set('delete_shots', createDeleteShotsTool(input))
+  byName.set('generate_keyframe', createGenerateKeyframeTool(input))
+  byName.set('generate_clip', createGenerateClipTool(input))
+  byName.set('generate_voice', createGenerateVoiceTool(input))
+  for (const t of createMaterialTools({
+    projectName: () => input.projectName,
+    epNo: () => resolveEpNo(input),
+    load: () => ensureProjectLoaded(input),
+    setSnapshot: (p) => draftCtx(input).setSnapshot(p),
+    onChanged: () => input.onProjectDataChanged?.(),
+    writeShot: (project, next) => writeShotBack(input, project, next),
+    askCost: input.askCost
+      ? async (req) => {
+          try {
+            const yes = await input.askCost!(req as BuiltinCostRequest)
+            return yes ? ({ ok: true } as const) : ({ ok: false, error: '用户取消了本次生成（未发起请求）' } as const)
+          } catch (e) {
+            return { ok: false, error: `成本确认失败：${(e as Error)?.message || String(e)}` } as const
+          }
+        }
+      : undefined,
+    getCanvasAssets: input.getCanvasAssets,
+    commitCharacters: input.commitCharacters,
+    cropSheet: input.cropSheet,
+  })) {
+    byName.set(t.name, t)
+  }
+  const tools = [...byName.values()]
+  // 每次构造都校验：幽灵工具（名单有、注册无）必须当场暴露，不能带病启动
+  assertPlatformToolConsistency(tools.map((t) => t.name))
+  return tools
 }
 
+/** 平台内置工具名清单：技能 manifest、专家白名单与检查器都从这里取名字 */
+const PLATFORM_READ_TOOL_NAMES = [
+  'read_source',
+  'read_episodes',
+  'read_episode',
+  'read_characters',
+  'read_designs',
+  'read_shots',
+  'read_shot_detail',
+  'read_shot_video_prompt',
+  'read_transition_recipes',
+  'read_asset_inventory',
+  'read_asset_detail',
+  'list_camera_lexicon',
+  'get_camera_lexicon',
+  'read_skill',
+  'read_skill_text',
+  'list_installed_skills',
+  'list_experts',
+]
+
 export function builtinPlatformToolNames(): string[] {
-  const readNames = [
-    'read_source',
-    'read_episodes',
-    'read_episode',
-    'read_characters',
-    'read_designs',
-    'read_shots',
-    'read_transition_recipes',
-    'read_asset_inventory',
-    'read_asset_detail',
-    'list_camera_lexicon',
-    'get_camera_lexicon',
-    'read_skill',
-    'read_skill_text',
-    'list_installed_skills',
-    'list_experts',
+  return [
+    ...PLATFORM_READ_TOOL_NAMES,
     'validate_contract',
     ...PLATFORM_WRITE_TOOLS.map((x) => x.tool),
+    ...PLATFORM_ACTION_TOOL_NAMES,
   ]
-  return readNames
+}
+
+export type PlatformToolNameDiff = {
+  /** 名单里有、运行时没注册 */
+  declaredNotRegistered: string[]
+  /** 运行时注册了、名单里没有 */
+  registeredNotDeclared: string[]
+  /** 默认专家白名单里有、名单里没有 */
+  expertNotDeclared: string[]
+}
+
+/**
+ * 比较名字清单与运行时注册。
+ *
+ * 留成纯函数是为了能直接测「少一个名字」的失败路径：真实工具集不容易造出幽灵工具，
+ * 但清单与注册脱节恰恰是本变更要堵的那类事故。
+ */
+export function platformToolNameDiff(registered: Iterable<string>): PlatformToolNameDiff {
+  const declared = new Set(builtinPlatformToolNames())
+  const actual = new Set(registered)
+  const expert = new Set(DEFAULT_EXPERT_PLATFORM_TOOLS)
+  return {
+    declaredNotRegistered: [...declared].filter((n) => !actual.has(n)),
+    registeredNotDeclared: [...actual].filter((n) => !declared.has(n)),
+    expertNotDeclared: [...expert].filter((n) => !declared.has(n)),
+  }
+}
+
+/** 名字清单、运行时注册、默认专家白名单三者不一致时抛错并列出差异 */
+export function assertPlatformToolConsistency(registered: Iterable<string>): void {
+  const diff = platformToolNameDiff(registered)
+  const problems: string[] = []
+  if (diff.declaredNotRegistered.length) {
+    problems.push(`清单有但未注册：${diff.declaredNotRegistered.join('、')}`)
+  }
+  if (diff.registeredNotDeclared.length) {
+    problems.push(`已注册但未列入清单：${diff.registeredNotDeclared.join('、')}`)
+  }
+  if (diff.expertNotDeclared.length) {
+    problems.push(`默认专家白名单不在清单里：${diff.expertNotDeclared.join('、')}`)
+  }
+  if (problems.length) {
+    throw new Error(`平台工具清单不一致：${problems.join('；')}`)
+  }
 }
 
 export function mergeBuiltinWithSkillTools(

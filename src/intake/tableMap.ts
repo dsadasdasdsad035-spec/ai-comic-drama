@@ -9,6 +9,7 @@
 /** 内部字段名；order 用于给「未识别列」排错时的展示顺序 */
 export type ShotColumn =
   | 'no'
+  | 'scene_no'
   | 'seconds'
   | 'size'
   | 'move'
@@ -16,10 +17,16 @@ export type ShotColumn =
   | 'dialogue'
   | 'keyframe_prompt'
   | 'video_prompt'
+  | 'cast'
+  | 'performance'
+  | 'lexicon_ref_key'
+  | 'reference'
 
 /** 表头别名：键是归一化后的表头文本 */
 const ALIASES: Record<ShotColumn, string[]> = {
   no: ['镜头', '镜号', '镜头号', '编号', '序号', 'no', 'shot', 'shotno', 'shotnumber', 'number'],
+  // 场次不是镜头的文字字段，但它是把镜头放回正确场次的唯一线索，必须认出来
+  scene_no: ['场次', '场次号', '场景', '场景号', '第几场', 'scene', 'scene no', 'scene number', 'sceneno'],
   seconds: ['秒', '时间', '时长', '秒数', 'duration', 'seconds', 'time', 'length'],
   size: ['景别', '景别机位', '景别与机位', '景别镜头', 'shot size', 'size', 'framing'],
   move: ['运镜', '运动', '镜头运动', 'camera', 'movement', 'move', 'camera move'],
@@ -49,6 +56,13 @@ const ALIASES: Record<ShotColumn, string[]> = {
   ],
   keyframe_prompt: ['首帧', '首帧提示词', '画面提示词', '图像提示词', 'keyframe', 'keyframe prompt', 'image prompt', 'prompt'],
   video_prompt: ['视频', '视频提示词', '视频指令', '运动提示词', 'video', 'video prompt', 'motion prompt'],
+  // 选角：出场角色名单。不收「人物」这类泛称，避免把角色档案表当成分镜表
+  cast: ['选角', '出场角色', '出场人物', '本镜角色', 'cast', 'characters'],
+  performance: ['表演', '表演设计', '表演描述', '表演与情绪', 'performance', 'acting'],
+  // 运镜参照：只认绑定条目，不从「运镜」列反推
+  lexicon_ref_key: ['运镜参照', '镜头语言', '镜头语言参照', '运镜条目', 'lexicon', 'camera lexicon', 'lexicon ref'],
+  // 参考：角色与素材的可读名字，导入时再解析成节点 id
+  reference: ['参考', '参考素材', '素材参考', '角色参考', '参考资料', '关联素材', 'reference', 'references', 'refs'],
 }
 
 /** 归一化表头：去空白、去 `#`/`*`/反引号、转小写、全角斜杠统一 */

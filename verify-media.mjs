@@ -7,6 +7,7 @@
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = 'http://localhost:5273'
 let bad = 0
@@ -72,7 +73,7 @@ await p.route('**/api/text', (route) =>
 await p.goto(URL, { waitUntil: 'networkidle' })
 await p.waitForTimeout(1500)
 // 显式选 recycle：默认项目不是它，不选会操作到别的项目，选择器里也看不到刚种的素材
-await p.locator('.topbar-project select').selectOption('recycle')
+await selectProject(p, 'recycle')
 await p.waitForTimeout(2200)
 
 // ---- 素材卡：下拉选图 ----

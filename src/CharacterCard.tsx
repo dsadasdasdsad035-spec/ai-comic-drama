@@ -3,11 +3,15 @@ import { generateImage, generateVoice, listVoicesCached, type AppSettings, type 
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import {
   DEFAULT_VOICE_SAMPLE_TEXT,
+  ORBIT_SHEET_COLUMNS,
+  ORBIT_SHEET_ROWS,
   TURNAROUND_SUFFIX,
   identityFingerprint,
   isVoiceSampleUsable,
+  orbitIdentityFingerprint,
   voiceSampleFingerprint,
   REFERENCE_LIMIT,
+  type CharacterOrbitSheet,
   type CharacterExpressionSheet,
   type CharacterSheet,
   type VoiceSample,
@@ -43,6 +47,15 @@ import {
   voiceSummaryLine,
   type VoiceUiInput,
 } from './voiceUiState'
+import { buildPreviewSnapshot } from './characterPreview/snapshot'
+import { buildPreviewHtml } from './characterPreview/viewer'
+import { PREVIEW_EXPORT_SOFT_LIMIT, buildPreviewExport, downloadHtml, humanSize } from './characterPreview/export'
+import {
+  buildOrbitSheetCells,
+  canGenerateOrbitSheet,
+  cropOrbitSheet,
+  orbitSheetPrompt,
+} from './characterPreview/orbitSheet'
 
 type CropPending = {
   plan: MaterialCropPlan
@@ -71,7 +84,7 @@ type Props = {
   onImageMissing: (ref: string) => void
 }
 
-type Tab = 'turnaround' | 'sheet' | 'voice'
+type Tab = 'turnaround' | 'sheet' | 'voice' | 'preview'
 
 
 function splitKeywords(value: string): string[] {
@@ -129,9 +142,18 @@ export default function CharacterCard({
   const [sheetError, setSheetError] = useState('')
   const [sheetErrors, setSheetErrors] = useState<string[]>([])
   const [previewEmotion, setPreviewEmotion] = useState<PerformanceEmotion>('neutral')
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewError, setPreviewError] = useState('')
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportError, setExportError] = useState('')
+  const [orbitBusy, setOrbitBusy] = useState(false)
+  const [orbitError, setOrbitError] = useState('')
+  const previewKeyRef = useRef('')
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [engineSwitchHint, setEngineSwitchHint] = useState(false)
   const characterAudioModelKey = resolveCharacterAudioModelKey(c, settings)
+  /** 转盘记录的外观已经不是当前外观：预览与页签都要明说，不能拿旧脸当新脸 */
+  const orbitStale = Boolean(c.orbitSheet && c.orbitSheet.fingerprint !== orbitIdentityFingerprint(c))
 
   useEffect(() => {
     setSampleText(c.voiceSample?.text || DEFAULT_VOICE_SAMPLE_TEXT)
@@ -147,6 +169,34 @@ export default function CharacterCard({
       alive = false
     }
   }, [characterAudioModelKey])
+
+  /**
+   * 预览页签：只在打开时派生一次快照，纯展示，不发任何生成请求。
+   * 用内容签名去重，避免父组件重渲染时把 srcdoc 反复重建（iframe 会被重置）。
+   */
+  useEffect(() => {
+    if (tab !== 'preview') return
+    const key = JSON.stringify(c)
+    if (previewKeyRef.current === key) return
+    previewKeyRef.current = key
+    let alive = true
+    void (async () => {
+      try {
+        const snapshot = buildPreviewSnapshot(c)
+        const html = await buildPreviewHtml(snapshot)
+        if (!alive) return
+        setPreviewHtml(html)
+        setPreviewError('')
+      } catch (e) {
+        if (!alive) return
+        setPreviewHtml('')
+        setPreviewError((e as Error).message || '预览渲染失败')
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [tab, c])
 
   const candidates = c.candidates ?? []
   const activeIdx = c.activeIdx ?? 0
@@ -1084,6 +1134,137 @@ export default function CharacterCard({
     </div>
   )
 
+  /** 转盘总图：必须显式点击（界面已显示价格）才提交，页签本身不会自动生成 */
+  const generateOrbit = async () => {
+    if (orbitBusy) return
+    if (!projectName) {
+      setOrbitError('先选择项目再生成转盘')
+      return
+    }
+    if (!canGenerateOrbitSheet(c, { imageMissing })) {
+      setOrbitError('先填英文外观锚点（lookEn），或上传/生成三视图及参考图后再生成转盘')
+      return
+    }
+    setOrbitError('')
+    setOrbitBusy(true)
+    const tid = startTask('image', `转盘总图 ${c.name}`, {
+      cost: price ? imageCost(price, 1) : undefined,
+    })
+    try {
+      const refs = c.referenceImages ?? []
+      const res = await generateImage({
+        prompt: orbitSheetPrompt(c.lookEn),
+        ratio: '16:9',
+        n: 1,
+        cap: 'view',
+        modelKey: viewModel,
+        project: projectName,
+        ...(c.image ? { refImage: c.image } : {}),
+        ...(refs.length ? { refImages: refs } : {}),
+      })
+      const image = res.urls?.[0] || res.url
+      const base: CharacterOrbitSheet = {
+        image,
+        columns: ORBIT_SHEET_COLUMNS,
+        rows: ORBIT_SHEET_ROWS,
+        cells: buildOrbitSheetCells(),
+        source: 'generated',
+        fingerprint: orbitIdentityFingerprint(c),
+        ...(viewModel ? { modelKey: viewModel } : {}),
+        createdAt: new Date().toISOString(),
+      }
+      let nextSheet = base
+      let errors: string[] = []
+      try {
+        const cropped = await cropOrbitSheet(base, projectName)
+        nextSheet = cropped.sheet
+        errors = cropped.errors
+      } catch (e) {
+        errors = [(e as Error).message]
+      }
+      onPersist(patch(c.id, { orbitSheet: nextSheet }))
+      if (errors.length) {
+        setOrbitError(`转盘已生成，${errors.length} 帧裁剪失败；预览会回退静态卡`)
+      }
+      endTask(tid)
+    } catch (e) {
+      const msg = (e as Error).message || '转盘生成失败'
+      setOrbitError(msg)
+      endTask(tid, msg)
+    } finally {
+      setOrbitBusy(false)
+    }
+  }
+
+  /** 导出：同一份 viewer 的内联产物，写文件之前先报体积 */  const exportPreview = async () => {
+    if (exportBusy) return
+    setExportBusy(true)
+    setExportError('')
+    try {
+      const result = await buildPreviewExport(buildPreviewSnapshot(c))
+      if (result.overLimit) {
+        const ok = window.confirm(
+          `导出的单文件约 ${humanSize(result.bytes)}，超过 ${humanSize(
+            PREVIEW_EXPORT_SOFT_LIMIT,
+          )} 软上限；图片已压到 512px，仍偏大。继续导出？`,
+        )
+        if (!ok) return
+      }
+      downloadHtml(result.html, result.fileName)
+    } catch (e) {
+      setExportError((e as Error).message || '导出失败')
+    } finally {
+      setExportBusy(false)
+    }
+  }
+
+  const renderPreview = () => (
+    <div className="char-preview-pane" data-char-preview>
+      <div className="char-preview-bar">
+        <button
+          type="button"
+          className="btn-mini"
+          data-char-orbit-generate
+          disabled={orbitBusy || !canGenerateOrbitSheet(c, { imageMissing })}
+          onClick={() => void generateOrbit()}
+          title="一次生成 4×2 八角度总图，用于预览拖动旋转"
+        >
+          {orbitBusy ? '生成中…' : c.orbitSheet ? '重新生成转盘' : '生成八角度转盘'}
+          {price && !orbitBusy ? ` · ¥${money(imageCost(price, 1))}` : ''}
+        </button>
+        <button
+          type="button"
+          className="btn-mini ghost"
+          data-char-export
+          disabled={exportBusy}
+          onClick={() => void exportPreview()}
+        >
+          {exportBusy ? '导出中…' : '导出单文件 HTML'}
+        </button>
+        <span className="char-preview-hint">导出后断网也能打开；文件含造型、表情与试音</span>
+      </div>
+      {orbitStale && (
+        <p className="st-hint" data-char-orbit-stale>
+          转盘对应的是改动前的外观，需重新生成后再看
+        </p>
+      )}
+      {orbitError && <div className="gen-error">{orbitError}</div>}
+      {exportError && <div className="gen-error">{exportError}</div>}
+      {previewError ? (
+        <p className="st-hint">{previewError}</p>
+      ) : previewHtml ? (
+        <iframe
+          className="char-preview-frame"
+          title={`${c.name} 角色预览`}
+          sandbox="allow-scripts"
+          srcDoc={previewHtml}
+        />
+      ) : (
+        <p className="st-hint">正在生成预览…</p>
+      )}
+    </div>
+  )
+
   return (
     <div className={`char-card char-card-v2 ${editing ? 'editing' : ''}`} data-char-card={c.id}>
       <div className="char-head">
@@ -1136,10 +1317,25 @@ export default function CharacterCard({
         >
           声音
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'preview'}
+          className={tab === 'preview' ? 'on' : ''}
+          data-char-tab="preview"
+          onClick={() => setTab('preview')}
+        >
+          预览
+        </button>
       </div>
 
       <div className="char-main" role="tabpanel">
-        {tab === 'turnaround' ? renderTurnaround() : tab === 'sheet' ? renderSheet() : renderVoice()}
+        {tab === 'turnaround'
+          ? renderTurnaround()
+          : tab === 'sheet'
+            ? renderSheet()
+            : tab === 'voice'
+              ? renderVoice()
+              : renderPreview()}
       </div>
 
       <div className="char-summary">

@@ -16,6 +16,7 @@ import path from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const outDir = fs.mkdtempSync(path.join(root, '.verify-canvas-bar-'))
@@ -156,8 +157,7 @@ try {
   page.on('dialog', (d) => void d.accept())
 
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(NAME)
+  await selectProject(page, NAME)
   await page.locator('.wb-bar').waitFor({ timeout: 15000 })
   await page.waitForTimeout(1200)
 

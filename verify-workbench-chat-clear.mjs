@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5361
@@ -207,16 +208,7 @@ try {
 
   const openView = async (nav, attr) => {
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
-    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-    await page.locator('.topbar-project select').selectOption(NAME)
-    await page.waitForFunction(
-      (n) => {
-        const sel = document.querySelector('.topbar-project select')
-        return sel && sel.value === n
-      },
-      NAME,
-      { timeout: 15000 },
-    )
+    await selectProject(page, NAME)
     const epTrigger = page.locator('.epbar-trigger')
     if (await epTrigger.count()) {
       await epTrigger.click()

@@ -7,6 +7,7 @@
  * 跑法：node verify-charboard.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.VERIFY_URL || 'http://localhost:5273'
 const CANVAS_KEY = `storyboard-canvas-v1:${encodeURIComponent('recycle')}`
@@ -38,7 +39,7 @@ p.on('pageerror', (e) => errors.push(e.stack || e.message))
 await p.goto(URL, { waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
 // 项目列表按名字排序，默认打开的不一定是 recycle；不显式选择会把角色建到别的项目里
-await p.locator('.topbar-project select').selectOption('recycle')
+await selectProject(p, 'recycle')
 await p.waitForTimeout(1400)
 
 const before = await getChars()

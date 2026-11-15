@@ -60,8 +60,10 @@ function deliveryOf(item: Record<string, unknown>): DialogueDelivery {
 function splitDialogue(raw: unknown): {
   dialogue: { speaker: string; text: string }[]
   delivery?: DialogueDelivery[]
+  /** 文件/模型是否提到过台词列；没提过时不能写空数组，否则会把既有台词清掉 */
+  given: boolean
 } {
-  if (!Array.isArray(raw)) return { dialogue: [] }
+  if (!Array.isArray(raw)) return { dialogue: [], given: raw !== undefined && raw !== null }
   const dialogue: { speaker: string; text: string }[] = []
   const delivery: DialogueDelivery[] = []
   let hasDelivery = false
@@ -72,7 +74,7 @@ function splitDialogue(raw: unknown): {
     if (Object.keys(d).length) hasDelivery = true
     delivery.push(d)
   }
-  return { dialogue, delivery: hasDelivery ? delivery : undefined }
+  return { dialogue, delivery: hasDelivery ? delivery : undefined, given: true }
 }
 
 /**
@@ -104,7 +106,14 @@ export function buildShotsFromModel(
       (sceneOk ? known.get(sceneNo) : fallbackSceneSlug) ||
       String(s.scene_slug ?? s.sceneSlug ?? '').trim()
     const dialogue = splitDialogue(s.dialogue)
+    // 表格导入会显式给出整组表演：它比从台词行里推导的更权威，
+    // 因为「文件没写标注」也要落成空表演数组，否则下标会错位
+    const explicitDelivery = Array.isArray(s.dialogue_delivery)
+      ? (s.dialogue_delivery as unknown[]).map((x) => deliveryOf((x || {}) as Record<string, unknown>))
+      : undefined
     const performance = performanceOf(s.performance)
+    const refIds = Array.isArray(s.refIds) ? (s.refIds as unknown[]).map(String).filter(Boolean) : undefined
+    const lexiconRefKey = text(s.lexicon_ref_key ?? s.lexiconRefKey)
     return {
       id: `E${pad(epNo)}-${no}`,
       episode: epNo,
@@ -115,10 +124,16 @@ export function buildShotsFromModel(
       size: String(s.size || '中景'),
       move: String(s.move || '固定'),
       desc: String(s.desc || ''),
-      dialogue: dialogue.dialogue,
-      ...(dialogue.delivery ? { dialogue_delivery: dialogue.delivery } : {}),
+      ...(dialogue.given ? { dialogue: dialogue.dialogue } : {}),
+      ...(explicitDelivery
+        ? { dialogue_delivery: explicitDelivery }
+        : dialogue.delivery
+          ? { dialogue_delivery: dialogue.delivery }
+          : {}),
       ...(performance ? { performance } : {}),
       cast: Array.isArray(s.cast) ? (s.cast as unknown[]).map(String) : undefined,
+      ...(refIds && refIds.length ? { refIds } : {}),
+      ...(lexiconRefKey ? { lexicon_ref_key: lexiconRefKey } : {}),
       ...(String(s.keyframe_prompt ?? '').trim()
         ? { keyframe_prompt: String(s.keyframe_prompt).trim() }
         : {}),
@@ -157,8 +172,17 @@ export function buildShotsFromImport(
   got: unknown[],
   episodes: ProjectEpisode[],
   epNo: number,
-): { shots: ProjectShot[]; sceneFallback: number; fallbackSceneNo: number; filledPerformance: number } {
+): {
+  shots: ProjectShot[]
+  sceneFallback: number
+  fallbackSceneNo: number
+  /** 补了默认表演的镜数（按镜计，与「运镜默认补全 N 镜」同一口径） */
+  filledPerformance: number
+  /** 逐镜明细：`S03 陈默、林小雨`，供预览列出具体补了谁 */
+  filledPerformanceDetail: string[]
+} {
   let filledPerformance = 0
+  const filledPerformanceDetail: string[] = []
   const patched = got.map((raw) => {
     const s = (raw || {}) as Record<string, unknown>
     const existing = Array.isArray(s.performance)
@@ -185,7 +209,8 @@ export function buildShotsFromImport(
       }
       return raw
     }
-    filledPerformance += missing.length
+    filledPerformance++
+    filledPerformanceDetail.push(`${String(s.no ?? '').trim() || '未编号'} ${missing.join('、')}`)
     return {
       ...s,
       performance: [
@@ -195,5 +220,5 @@ export function buildShotsFromImport(
     }
   })
 
-  return { ...buildShotsFromModel(patched, episodes, epNo), filledPerformance }
+  return { ...buildShotsFromModel(patched, episodes, epNo), filledPerformance, filledPerformanceDetail }
 }

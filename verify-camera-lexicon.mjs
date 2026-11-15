@@ -80,7 +80,10 @@ const TMP = fs.mkdtempSync(path.join(ROOT, '.verify-lexicon-'))
 const entry = path.join(TMP, 'entry.ts')
 fs.writeFileSync(
   entry,
-  `export * from ${JSON.stringify(path.join(ROOT, 'src/cameraLexicon.ts'))}\n`,
+  [
+    `export * from ${JSON.stringify(path.join(ROOT, 'src/cameraLexicon.ts'))}`,
+    `export * from ${JSON.stringify(path.join(ROOT, 'src/shotSync.ts'))}`,
+  ].join('\n') + '\n',
 )
 const bundle = path.join(TMP, 'bundle.mjs')
 execFileSync(path.join(ROOT, 'node_modules', '.bin', 'esbuild'), [
@@ -106,6 +109,42 @@ const motionRef = lib.resolveMotionLexiconVideoRef({
 })
 check('勾选运镜库可解析附件 URL（无需已导入副本）', motionRef?.url === sample.url, motionRef?.url)
 check('运镜库附件标签含中文名', motionRef?.label?.includes(sample.cn), motionRef?.label)
+
+// ---- 镜头语言绑定随镜头落库：节点数据 → 项目镜头 → 回到画布，一轮不丢 ----
+const shotData = {
+  no: 'S03',
+  episode: 1,
+  seconds: 3,
+  size: '中景',
+  move: '推',
+  dialogue: [],
+  lexiconRefKey: sample.key,
+  lexiconRefUrl: '/api/media/p/lexicon/01.mp4',
+  motionLexiconAsRef: true,
+}
+const asShot = lib.nodeToShot(shotData, 'E01-S03')
+check('落库带条目 key', asShot.lexicon_ref_key === sample.key, asShot.lexicon_ref_key)
+check('落库带项目内地址', asShot.lexicon_ref_url === '/api/media/p/lexicon/01.mp4')
+check('落库带运镜参考开关', asShot.motion_lexicon_as_ref === true)
+
+const back = lib.shotToData(asShot, { ...shotData, lexiconRefKey: undefined, lexiconRefUrl: undefined, motionLexiconAsRef: undefined })
+check('重开项目后条目仍在', back.lexiconRefKey === sample.key && back.lexiconRefUrl === '/api/media/p/lexicon/01.mp4')
+check('重开项目后开关仍在', back.motionLexiconAsRef === true)
+
+// 旧项目没有这三个字段：要沿用画布上的值，而不是被清空
+const legacy = lib.shotToData({ id: 'X', no: 'S01', episode: 1 }, { no: 'S01', episode: 1, seconds: 2, size: '中景', move: '推', dialogue: [], lexiconRefKey: sample.key })
+check('旧项目沿用画布绑定', legacy.lexiconRefKey === sample.key, legacy.lexiconRefKey)
+
+// 解绑：显式空串必须能盖掉旧值，否则解绑后刷新又回来
+const unboundShot = lib.shotToData({ id: 'X', no: 'S01', episode: 1, lexicon_ref_key: '', lexicon_ref_url: '', motion_lexicon_as_ref: false }, { no: 'S01', episode: 1, seconds: 2, size: '中景', move: '推', dialogue: [], lexiconRefKey: sample.key, motionLexiconAsRef: true })
+check('解绑能盖掉旧绑定', unboundShot.lexiconRefKey === undefined && unboundShot.motionLexiconAsRef === false)
+
+// 签名必须感知绑定变化，否则改了不触发写回
+const sigA = JSON.stringify(lib.bizSignature({ ...shotData, lexiconRefKey: undefined }))
+const sigB = JSON.stringify(lib.bizSignature(shotData))
+const sigC = JSON.stringify(lib.bizSignature({ ...shotData, motionLexiconAsRef: false }))
+check('签名感知绑定', sigA !== sigB)
+check('签名感知解绑', sigB !== sigC)
 
 fs.rmSync(TMP, { recursive: true, force: true })
 

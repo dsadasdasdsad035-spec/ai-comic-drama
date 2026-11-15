@@ -6,6 +6,7 @@
 import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const NAME = `chat-first-3d-${Date.now()}`
@@ -149,7 +150,7 @@ await page.route('**/api/vision', (route) =>
 )
 
 await page.goto(URL, { waitUntil: 'networkidle' })
-await page.locator('.topbar-project select').selectOption(NAME)
+await selectProject(page, NAME)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '镜头表', exact: true }).click()
 await page.waitForTimeout(600)

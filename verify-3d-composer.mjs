@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5341
@@ -164,7 +165,7 @@ try {
 
   await page.goto(APP, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)
-  await page.locator('.topbar-project select').selectOption(PROJECT)
+  await selectProject(page, PROJECT)
   await page.waitForTimeout(1200)
   await page.getByRole('button', { name: '3D 调度', exact: true }).click()
   await page.waitForTimeout(1200)

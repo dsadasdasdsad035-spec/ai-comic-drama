@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5330
@@ -123,8 +124,7 @@ try {
 
   const openView = async (nav, attr) => {
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
-    await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-    await page.locator('.topbar-project select').selectOption(NAME)
+    await selectProject(page, NAME)
     await page.getByRole('button', { name: nav, exact: true }).click()
     await page.locator(`[data-${attr}-chat]`).waitFor({ timeout: 15000 })
     await page.getByLabel(`${attr} 技能聊天输入`).waitFor({ timeout: 15000 })
@@ -133,7 +133,7 @@ try {
     page.locator(`[data-${attr}-chat] [data-chat-tool="builtin_action"]`).allInnerTexts()
 
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').selectOption(NAME)
+  await selectProject(page, NAME)
   await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('[data-canvas-shots]').waitFor({ timeout: 15000 })
   check('画布无拆镜助手', (await page.getByRole('button', { name: '拆镜助手', exact: true }).count()) === 0)

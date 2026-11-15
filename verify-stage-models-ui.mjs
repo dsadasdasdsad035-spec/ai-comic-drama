@@ -11,6 +11,7 @@
  *   APP_URL=http://127.0.0.1:5280 node verify-stage-models-ui.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const APP_URL = process.env.APP_URL || 'http://127.0.0.1:5273'
 let bad = 0
@@ -157,18 +158,8 @@ const nav = (name) => page.locator('header').getByRole('button', { name, exact: 
 const stageSelect = (stage) => page.locator(`[data-stage-model-select="${stage}"] select`)
 const optionValues = (sel) =>
   sel.locator('option').evaluateAll((os) => os.map((o) => ({ value: o.value, text: o.textContent || '' })))
-const selectProject = async () => {
-  const sel = page.locator('.topbar-project select')
-  await sel.waitFor({ timeout: 15000 })
-  await page.waitForFunction(
-    (name) => {
-      const el = document.querySelector('.topbar-project select')
-      return el && Array.from(el.options).some((o) => o.value === name)
-    },
-    PROJECT,
-    { timeout: 15000 },
-  )
-  await sel.selectOption(PROJECT)
+const selectSeedProject = async () => {
+  await selectProject(page, PROJECT)
 }
 const runScriptGenerate = async () => {
   const agent = page.locator('button.agent-btn').first()
@@ -196,7 +187,7 @@ const runScriptGenerate = async () => {
 try {
   await page.goto(APP_URL, { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  await selectProject()
+  await selectSeedProject()
 
   // ---- 剧本 ----
   await nav('剧本')
@@ -213,7 +204,7 @@ try {
 
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
-  await selectProject()
+  await selectSeedProject()
   await nav('剧本')
   await page.waitForSelector('.sb-right')
   check('刷新后剧本手选保持', (await stageSelect('script').inputValue()) === proKey, await stageSelect('script').inputValue())
@@ -328,7 +319,7 @@ try {
   )
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
-  await selectProject()
+  await selectSeedProject()
   await nav('剧本')
   await page.waitForSelector('.sb-right')
   const defaultOption = (await optionValues(stageSelect('script')))[0]?.text || ''
@@ -348,7 +339,7 @@ try {
   await page.evaluate(() => localStorage.removeItem('storyboard-stage-model-pick'))
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForTimeout(700)
-  await selectProject()
+  await selectSeedProject()
   await nav('剧本')
   await page.waitForSelector('.sb-right')
   const invalidOptions = await optionValues(stageSelect('script'))

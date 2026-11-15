@@ -10,7 +10,9 @@ import type { CharacterSheet } from '../characters'
 import type { StagePick } from '../ModelSelect'
 import { buildShotsFromImport } from '../agent/shotDraft'
 import { mergeShotsDraft } from '../shotSync'
-import { rowsFromTable } from './rows'
+import { rowsFromTable, rowsToShotInputs } from './rows'
+import { intakeNotices } from './notices'
+import { resolveRowRefs, type RefIndex } from '../shotRefIndex'
 import { mergeImportedCharacters, parseCharacterDrafts } from './characters'
 import {
   classifyFile,
@@ -41,6 +43,8 @@ type Props = {
   shots: ProjectShot[]
   episodes: ProjectEpisode[]
   characters: CharacterSheet[]
+  /** 参考名字索引：参考列按名字解析成节点 id 时要用 */
+  refIndex?: RefIndex
   toast: (m: string) => void
   onClose: () => void
   /** 应用结果：调用方负责写草稿/落库。图片已由本组件落盘后随结果返回 */
@@ -65,6 +69,7 @@ export default function BundleDialog({
   shots,
   episodes,
   characters,
+  refIndex,
   toast,
   onClose,
   onApply,
@@ -185,34 +190,26 @@ export default function BundleDialog({
       }
       const preview = previewsRef.current[f.id] || ''
       const parsed = rowsFromTable(preview, 'markdown-table', { epNo: f.episodeNo || epNo, episodes })
+      // 参考列给的是名字，节点 id 只能在画布层解析
+      const rows = resolveRowRefs(parsed.rows, refIndex)
       if (parsed.error || !parsed.rows.length) {
         shotNotes.push(`${f.name}：${parsed.error || '没有可用行'}`)
         continue
       }
-      const built = buildShotsFromImport(
-        parsed.rows.map((r) => ({
-          no: r.no,
-          seconds: r.seconds,
-          size: r.size,
-          move: r.move,
-          desc: r.desc,
-          dialogue: r.dialogue,
-          keyframe_prompt: r.keyframe_prompt,
-          video_prompt: r.video_prompt,
-        })),
-        episodes,
-        f.episodeNo || epNo,
-      )
+      const built = buildShotsFromImport(rowsToShotInputs(rows), episodes, f.episodeNo || epNo)
       const merged = mergeShotsDraft(nextShots, built.shots, f.episodeNo || epNo, 'merge')
       nextShots = merged.shots
       shotAdded += merged.added
       shotUpdated += merged.updated
-      if (built.filledPerformance) {
-        shotNotes.push(`${f.name}：系统为 ${built.filledPerformance} 个说话角色补了默认表演`)
-      }
-      if (parsed.diff.ignoredColumns.length) {
-        shotNotes.push(`${f.name}：忽略列 ${parsed.diff.ignoredColumns.join('、')}`)
-      }
+      shotNotes.push(
+        ...intakeNotices({
+          prefix: f.name,
+          notices: parsed.diff.notices,
+          defaultsFilled: parsed.diff.defaultsFilled,
+          filledPerformance: built.filledPerformance,
+          filledPerformanceDetail: built.filledPerformanceDetail,
+        }),
+      )
     }
 
     const nextEpisodes = episodes

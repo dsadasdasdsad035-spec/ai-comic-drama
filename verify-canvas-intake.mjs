@@ -16,6 +16,7 @@ import path from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
+import { openProject } from './verify-lib.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const outDir = fs.mkdtempSync(path.join(root, '.verify-canvas-intake-'))
@@ -188,9 +189,10 @@ try {
       timeout: 20000,
     })
 
-  await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(NAME)
+  await openProject(page, NAME, 'board', { base: APP, waitUntil: 'networkidle' })
+  // 画布现在先出「分集目录」，点一集才进 Flow（board-episode-picker）
+  const cards = page.locator('.board-ep-card')
+  if (await cards.count()) await page.locator('.board-ep-card[data-board-ep="1"]').click()
   await waitNodes(2)
   check('画布先水合项目原有镜头', (await nodeCount()) === 2, String(await nodeCount()))
 
@@ -212,6 +214,8 @@ try {
   await page.locator('[data-intake-apply]').click()
   await waitNodes(3)
   await page.locator('.intake-dialog').waitFor({ state: 'detached', timeout: 15000 })
+  // 对话框关闭会触发一次重新水合：等状态稳定再数节点，避免读到中间帧
+  await page.waitForTimeout(600)
   const afterFirst = await readShots()
   check('画布导入：写入项目（3 镜）', afterFirst.length === 3, String(afterFirst.length))
   check('画布导入：画布出现卡片（3 镜）', (await nodeCount()) === 3, String(await nodeCount()))

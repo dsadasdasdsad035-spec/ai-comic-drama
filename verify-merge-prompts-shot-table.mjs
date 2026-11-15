@@ -3,6 +3,7 @@
  * 跑法：APP_URL=http://127.0.0.1:5273 node verify-merge-prompts-shot-table.mjs
  */
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 let bad = 0
@@ -45,7 +46,7 @@ await api(`/api/project?name=${encodeURIComponent(NAME)}`, {
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1500, height: 900 } })
 await p.goto(URL, { waitUntil: 'networkidle' })
-await p.locator('.topbar-project select').selectOption(NAME)
+await selectProject(p, NAME)
 await p.getByRole('button', { name: '镜头表', exact: true }).click()
 await p.waitForTimeout(800)
 check('无提示词顶栏', (await p.getByRole('button', { name: '提示词', exact: true }).count()) === 0)

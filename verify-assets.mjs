@@ -15,6 +15,21 @@ const check = (name, cond, extra = '') => {
   if (!cond) bad++
 }
 
+/** 进入分镜画布：画布视图先出分集目录，点一集才进分镜画布（工具条与素材带都在画布里） */
+async function enterCanvas(page, { force = false } = {}) {
+  const tools = page.locator('.canvas-tools')
+  if (!force && (await tools.count())) return
+  await page.getByRole('button', { name: '画布', exact: true }).click()
+  await page.waitForTimeout(800)
+  const card = page.locator('.board-ep-card').first()
+  if (await card.count()) {
+    await card.click()
+    await tools.waitFor({ state: 'visible', timeout: 20000 })
+  }
+  await page.locator('.wb-bar-detail').waitFor({ state: 'visible', timeout: 20000 })
+  await page.waitForTimeout(1000)
+}
+
 // 清空素材库：否则新会话会从 assets 表恢复卡片，干扰布局断言
 await fetch('http://localhost:5273/api/project?name=recycle&create=1', {
   method: 'POST',
@@ -59,9 +74,12 @@ p.on('pageerror', (e) => errors.push(e.stack || e.message))
 // 预清理：摘掉历史跑残留的 asset- 参考（画布素材是本浏览器实例的，跨跑会累积），必须在页面加载前做
 {
   const j = await fetch('http://localhost:5273/api/project?name=recycle').then((r) => r.json())
+  // 清掉所有参考连线与出场名单：本脚本从零拖线，
+  // 残留的 char-* 或 cast 会让别的验收脚本互相污染（参考图集合断言会跟着变）。
   const shots = j.project.shots.map((x) => ({
     ...x,
-    refIds: (x.refIds ?? []).filter((r) => !r.startsWith('asset-')),
+    refIds: (x.refIds ?? []).filter((r) => !r.startsWith('asset-') && !r.startsWith('char-')),
+    cast: [],
   }))
   await fetch('http://localhost:5273/api/project?name=recycle', {
     method: 'POST',
@@ -86,6 +104,8 @@ await p.locator('.rail').waitFor({ timeout: 20000 })
 await p.waitForTimeout(2500)
 const hashNow = await p.evaluate(() => window.location.hash)
 check('已切到 recycle 项目', hashNow === '#/p/recycle/board', hashNow)
+
+await enterCanvas(p, { force: true })
 
 // ---- 1. 加素材卡 ----
 await p.locator('.canvas-tools').getByRole('button', { name: '+ 素材', exact: true }).click()
@@ -135,8 +155,8 @@ check('场景徽标', afterPick.badge === '场景', JSON.stringify(afterPick))
 check('卡片预览图', (await assetNode.locator('img.asset-media').count()) === 1)
 
 // ---- 项目镜头在进入画布时自动水合（原「镜头表 → 生成到画布」已随表格下线） ----
-await p.getByRole('button', { name: '画布', exact: true }).click()
-await p.waitForTimeout(1800)
+await enterCanvas(p, { force: true })
+await p.waitForTimeout(1200)
 // 画布只显示当前集；先确认集号与镜头所在集一致，否则分镜卡不可见
 const epNow = await p.evaluate(() => document.querySelector('.ep-chip')?.textContent || '')
 
@@ -146,7 +166,12 @@ const shotId = await p.evaluate(() => {
   // 画布键带项目后缀（storyboard-canvas-v1:<项目>），取当前页面的那一个
   // 精确用 recycle 的键：`.pop()` 会取到默认项目 a 的画布（历史残留节点）
   const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1:recycle') || '{}')
-  const n = (s.nodes || []).find((x) => x.type !== 'asset' && x.data?.shotId)
+  // 必须是出图镜（视频镜不参与批量出图），且优先挑没有参考连线的干净镜：
+  // 有连线的镜出图时会带上别的参考图，断言「只剩这张场景图」就说不清了。
+  const list = (s.nodes || []).filter(
+    (x) => x.type !== 'asset' && x.data?.shotId && x.data?.prodKind === 'image',
+  )
+  const n = list.find((x) => (x.data?.refIds ?? []).length === 0) || list[0]
   return n?.id
 })
 check('找到分镜卡', !!shotId, shotId)
@@ -181,7 +206,9 @@ await p.screenshot({ path: '/tmp/assets-ref.png' })
 
 // refIds 落库（防抖 1.5s）。画布同步只在 view==='board' 时执行，
 // 上面的适配视图截图可能已切走，这里先回画布再等防抖
-await p.getByRole('button', { name: '画布', exact: true }).click()
+// 画布同步只在 board 视图执行；脚本全程留在画布，这里只等防抖落库。
+// 注意不要重复点「画布」导航：会退回分集目录，重进画布后素材卡会按新 id 水合，
+// 之前拖出来的参考连线就对不上节点了。
 await p.waitForTimeout(3000)
 // 节点 id → shotId（shotId 是节点 id，不是项目里的镜头 id），再从项目读该镜头的 refIds
 const savedShotNo = await p.evaluate((nid) => {
@@ -211,10 +238,15 @@ await p.route('**/api/seedream', async (route) => {
 await p.locator('.bm .tm-btn').click()
 await p.waitForTimeout(300)
 await p.locator('.bm-item', { hasText: '批量生成画面' }).click()
-await p.waitForTimeout(1800)
+// 批量逐镜出图（每镜之间有间隔）。断言不能只看第一次请求：
+// 批量按画布顺序跑，连线的那一镜未必排在最前，所以等「带这张场景图」的请求出现。
+for (let i = 0; i < 60; i++) {
+  if (captured.some((c) => (c.refImages ?? []).includes(pickedUrl))) break
+  await p.waitForTimeout(500)
+}
 check('拦截到生成请求', captured.length >= 1, String(captured.length))
 if (captured.length) {
-  const withRefs = captured.find((c) => (c.refImages ?? []).length) || captured[0]
+  const withRefs = captured.find((c) => (c.refImages ?? []).includes(pickedUrl)) || captured[0]
   check(
     'refImages 含连线场景图',
     (withRefs.refImages ?? []).includes(pickedUrl),

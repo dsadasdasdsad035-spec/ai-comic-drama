@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5353
@@ -87,8 +88,7 @@ await page.route('**/api/seedream', async (route) => {
 
 try {
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(project.name)
+  await selectProject(page, project.name)
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-card').first().waitFor({ timeout: 15000 })
   check('角色卡出现', (await page.locator('.char-card').count()) === 1)

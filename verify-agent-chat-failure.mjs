@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const URL = process.env.APP_URL || 'http://127.0.0.1:5280'
 const NAME = `agent-fail-${Date.now()}`
@@ -68,8 +69,7 @@ await page.route('**/api/text', async (route) => {
 })
 
 await page.goto(URL, { waitUntil: 'domcontentloaded' })
-await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-await page.locator('.topbar-project select').selectOption(NAME)
+await selectProject(page, NAME)
 await page.waitForTimeout(800)
 await page.getByRole('button', { name: '3D 调度', exact: true }).click()
 await page.waitForTimeout(900)

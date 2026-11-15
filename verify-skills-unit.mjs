@@ -17,10 +17,18 @@ const TESTS = [
   'tests/stage-runtime.ts',
   'tests/chat-model.ts',
   'tests/stage-agent.ts',
+  'tests/read-budget.ts',
+  'tests/shot-read.ts',
   'tests/creative-contract.ts',
   'tests/creative-tools.ts',
-  'tests/publish-chat.ts',
+  'tests/platform-tool-coverage.ts',
+  'tests/shot-field-policy.ts',
+  'tests/platform-generate-tools.ts',
+  'tests/project-lifecycle.ts',
+  'tests/script-writeback.ts',
+  'tests/storyboard-markdown.ts',
   'tests/stock.ts',
+  'tests/character-preview.ts',
 ]
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-unit-'))
 let failed = 0

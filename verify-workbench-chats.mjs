@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { selectProject } from './verify-lib.mjs'
 
 const ROOT = process.cwd()
 const PORT = 5325
@@ -58,8 +59,7 @@ const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 try {
   const page = await browser.newPage()
   await page.goto(APP, { waitUntil: 'domcontentloaded' })
-  await page.locator('.topbar-project select').waitFor({ timeout: 15000 })
-  await page.locator('.topbar-project select').selectOption(NAME)
+  await selectProject(page, NAME)
   await page.locator('[data-canvas-shots]').waitFor({ timeout: 15000 })
 
   check('画布无「拆镜助手」按钮', (await page.getByRole('button', { name: '拆镜助手', exact: true }).count()) === 0)

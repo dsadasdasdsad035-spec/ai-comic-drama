@@ -5,7 +5,7 @@ import { isRunnableModel, modelHasCap } from '../modelCaps'
 import { getContractSchema, validateContract } from '../skills/contracts'
 import type { Skill } from '../skills/types'
 import { bindSkillTools, createStageToolSet, type StageToolSet } from '../agent/stageTools'
-import { boundJson } from '../agent/workbenchChat'
+import { packFields, packRecords } from '../agent/readBudget'
 import { getSkill } from '../skills/registry'
 import type { CreativeArtifact, CreativeSessionSummary, CreativeShot, CreativeSource } from './sessionStore'
 import {
@@ -241,18 +241,22 @@ export function createCreativeToolSet(deps: CreativeToolDeps) {
       let shots = snap.shots[src.id] || []
       if (only === 'unframed') shots = shots.filter((s) => !s.frames.length)
       if (only === 'unanalyzed') shots = shots.filter((s) => s.status !== 'analyzed')
+      // 按整条装填：切半个镜头会让 frames 之类的字段消失，且无法判断还差多少条
+      const packed = packRecords(
+        shots.map((s) => ({
+          index: s.index,
+          start: s.start,
+          end: s.end,
+          status: s.status,
+          frames: s.frames,
+        })),
+        8000,
+      )
       return {
         ok: true,
         sourceId: src.id,
-        shots: boundJson(
-          shots.map((s) => ({
-            index: s.index,
-            start: s.start,
-            end: s.end,
-            status: s.status,
-            frames: s.frames,
-          })),
-        ),
+        shots: packed.items,
+        ...packFields(packed),
         total: (snap.shots[src.id] || []).length,
       }
     },

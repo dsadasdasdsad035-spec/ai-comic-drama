@@ -4,10 +4,14 @@
  * 这里不做任何写入：只产出行 + 需要人判断的提示，交给对话框预览。
  */
 import type { ProjectEpisode } from '../api'
+import type { DialogueDelivery } from '../types'
+import type { IntakeDialogueLine } from './diff'
 import { isTabular, markdownTableBlocks, parseTable, type IntakeFormat } from './format'
 import { diffShots, type ImportShotRow, type IntakeDiff } from './diff'
 import { normalizeMove, normalizeSize, parseDuration, splitDialogueCell } from './normalize'
 import { mapHeaders, type ShotColumn } from './tableMap'
+import { resolveCameraLexiconByName } from '../cameraLexicon'
+import { parseCastCell, parsePerformanceCell, parseRefCell } from '../shotCellSyntax'
 
 export type ParseTableResult = {
   rows: ImportShotRow[]
@@ -53,6 +57,7 @@ export function rowsFromTable(
     scenesFallback: 0,
     defaultsFilled: {},
     ignoredColumns: [],
+    unresolved: [],
     notices: [],
   }
 
@@ -144,26 +149,74 @@ export function rowsFromTable(
       if (!rawMove) filled.push('move')
     }
 
-    // 台词：拆成台词 / 旁白 / 声音说明
+    // 台词：拆成台词 / 旁白 / 声音说明；标注随台词一起带出
     const rawDialogue = get('dialogue')
     const cell = rawDialogue ? splitDialogueCell(rawDialogue) : null
     const dialogue = cell && cell.lines.length ? cell.lines : undefined
+    // 台词被写入时表演必须整组重建：下标已变，沿用旧数组会把 A 的语速挂到 B 的台词上
+    const dialogueDelivery = rawDialogue ? (cell?.lines ?? []).map((l) => deliveryOfLine(l)) : undefined
+
+    // 选角：只写文件真给了的名字
+    const rawCast = get('cast')
+    const cast = rawCast ? parseCastCell(rawCast) : undefined
+
+    // 表演：文件给了才写；缺情绪/强度由解析器补默认值并计数
+    const rawPerformance = get('performance')
+    const perf = rawPerformance ? parsePerformanceCell(rawPerformance) : null
+
+    // 运镜参照：只认精确匹配，解析不到就跳过并在预览点名
+    const unresolvedRefs: string[] = []
+    const rawLexicon = get('lexicon_ref_key')
+    let lexiconRefKey: string | undefined
+    if (rawLexicon) {
+      const hit = resolveCameraLexiconByName(rawLexicon)
+      if (hit.entry) lexiconRefKey = hit.entry.key
+      else if (hit.candidates?.length) {
+        unresolvedRefs.push(
+          `运镜参照「${rawLexicon}」匹配到多个条目（${hit.candidates.map((c) => c.key).join('、')}），已跳过`,
+        )
+      } else {
+        unresolvedRefs.push(`运镜参照「${rawLexicon}」在镜头语言库里不存在，已跳过`)
+      }
+    }
+
+    // 参考：先留名字，节点 id 由调用方查画布解析
+    const rawReference = get('reference')
+    const reference = rawReference ? parseRefCell(rawReference) : undefined
 
     const descParts = [get('desc'), sizeNote].filter(Boolean)
     const desc = descParts.join('，').trim()
+
+    // 场次：能对上已知场次才写值；对不上计入回退，由预览说明
+    let sceneNo: number | undefined
+    const rawScene = get('scene_no')
+    if (rawScene) {
+      const v = Number(rawScene)
+      if (Number.isFinite(v) && v > 0) {
+        if (scenes.has(v)) sceneNo = v
+        else scenesFallback++
+      }
+    }
 
     rows.push({
       row: rowNo,
       no,
       episode: ctx.epNo,
+      ...(sceneNo ? { scene_no: sceneNo } : {}),
       seconds,
       size,
       move,
       desc,
       dialogue,
+      ...(dialogueDelivery ? { dialogue_delivery: dialogueDelivery } : {}),
+      ...(cast && cast.length ? { cast } : {}),
+      ...(perf && perf.entries.length ? { performance: perf.entries } : {}),
+      ...(perf && perf.filled ? { filled: [...filled, 'performance'] } : filled.length ? { filled } : {}),
+      ...(lexiconRefKey ? { lexicon_ref_key: lexiconRefKey } : {}),
+      ...(reference && (reference.characters.length || reference.assets.length) ? { reference } : {}),
+      ...(unresolvedRefs.length ? { unresolvedRefs } : {}),
       keyframe_prompt: get('keyframe_prompt') || undefined,
       video_prompt: get('video_prompt') || undefined,
-      ...(filled.length ? { filled } : {}),
     })
 
     // 声音说明与旁白不适合塞进 dialogue，但也不能丢：提示一次总数
@@ -178,21 +231,49 @@ export function rowsFromTable(
     }
   }
 
-  // 场次号：表格里若带场次列且对不上，计入回退（场次不是镜头字段，单独看表头）
-  const sceneIdx = headerRow.findIndex((h) => /场次|场景.?号|^scene/i.test(String(h ?? '').trim()))
-  if (sceneIdx >= 0) {
-    for (let r = 1; r < table.length; r++) {
-      const v = Number(String(table[r][sceneIdx] ?? '').trim())
-      if (Number.isFinite(v) && v > 0 && !scenes.has(v)) scenesFallback++
-    }
-  }
-
   const diff = diffShots([], rows, ctx.epNo, {
     ignoredColumns: mapped.ignored,
     scenesFallback,
   })
 
   return { rows, diff, headers }
+}
+
+/** 台词行 → 台词表演对象：只保留真正设置了的字段，空槽不写 */
+function deliveryOfLine(line: IntakeDialogueLine): DialogueDelivery {
+  const out: DialogueDelivery = {}
+  if (line.emotion) out.emotion = line.emotion
+  if (line.intensity !== undefined) out.intensity = line.intensity
+  if (line.pace) out.pace = line.pace
+  if (line.volume) out.volume = line.volume
+  if (line.emphasis) out.emphasis = line.emphasis
+  return out
+}
+
+/**
+ * 导入行 → `buildShotsFromImport` 的入参形状。
+ *
+ * 两个对话框原本各抄一份字段清单，新增列时必然漏一边；
+ * 收成一处的代价只有一个函数，收益是「少写一个字段」这类事故不再可能。
+ * 只映射文件真给了值的字段：`undefined` 在合并语义里代表「文件没提」。
+ */
+export function rowsToShotInputs(rows: ImportShotRow[]): Record<string, unknown>[] {
+  return rows.map((r) => ({
+    no: r.no,
+    scene_no: r.scene_no,
+    seconds: r.seconds,
+    size: r.size,
+    move: r.move,
+    desc: r.desc,
+    dialogue: r.dialogue,
+    dialogue_delivery: r.dialogue_delivery,
+    cast: r.cast,
+    performance: r.performance,
+    refIds: r.refIds,
+    lexicon_ref_key: r.lexicon_ref_key,
+    keyframe_prompt: r.keyframe_prompt,
+    video_prompt: r.video_prompt,
+  }))
 }
 
 /** 供 UI 展示：镜号 → 稳定的 shot id 规则与 buildShotsFromModel 保持一致 */
