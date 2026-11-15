@@ -58,7 +58,12 @@ import {
   saveChatThread,
   deleteChatThread,
 } from './db.mjs'
-import { deleteProjects, previewProjectDelete, previewProjectDeletes } from './project-lifecycle.mjs'
+import {
+  deleteProjects,
+  previewProjectDelete,
+  previewProjectDeletes,
+  writeShotsSnapshot,
+} from './project-lifecycle.mjs'
 import {
   MAX_SKILL_BYTES,
   listSkillFiles,
@@ -4292,6 +4297,16 @@ export function createAppHandler({ root }: { root: string }) {
                 if (ids.some((x: string) => !x)) throw new Error('deleteShotIds 不能含空值')
                 const base = Array.isArray(patch.shots) ? (patch.shots as any[]) : cur.shots
                 const after = deleteShots(base, ids)
+                // 删除不可撤销：先把真正会被删掉的镜头写进快照，写不进去就不删。
+                // 用 after.removed 反查实际命中的镜头——传进来但不存在的 id 不该进快照。
+                const doomed = (base as any[]).filter((s) => s?.id && ids.includes(String(s.id)))
+                if (doomed.length) {
+                  try {
+                    writeShotsSnapshot(rootDir, name, doomed)
+                  } catch (e) {
+                    throw new Error(`镜头快照写入失败，已取消删除：${(e as Error)?.message || String(e)}`)
+                  }
+                }
                 const pruned = pruneDanglingTransitions(after.shots)
                 patch.shots = pruned.shots
                 ;(patch as Record<string, unknown>).__removedShots = after.removed

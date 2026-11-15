@@ -118,6 +118,41 @@ function writeSnapshot(root, name, projectRow, tables) {
 }
 
 /**
+ * 镜头级删除快照：清空画布这类「一次删掉整集镜头」的动作在删除前落一份。
+ *
+ * 与项目快照共用 `.deleted` 目录 —— 它不随项目目录一起删，所以项目删了快照还在。
+ * 文件名带 `shots-` 前缀，和项目快照（`<项目名>-<时间>.json`）区分开。
+ * 写失败直接抛错：调用方据此拒绝删除，不能一边报成功一边没有兜底。
+ */
+export function writeShotsSnapshot(root, name, shots) {
+  const dir = path.join(root, DELETED_DIR)
+  fs.mkdirSync(dir, { recursive: true })
+  const safe = safeProjectName(name)
+  const file = path.join(dir, `shots-${safe}-${snapshotStamp()}.json`)
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+  const payload = {
+    version: 1,
+    kind: 'shots',
+    projectsRoot: root,
+    project: safe,
+    deletedAt: new Date().toISOString(),
+    shots: Array.isArray(shots) ? shots : [],
+  }
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8')
+    fs.renameSync(tmp, file)
+  } catch (e) {
+    try {
+      fs.rmSync(tmp, { force: true })
+    } catch {
+      /* 临时文件清理失败不掩盖原始错误 */
+    }
+    throw e
+  }
+  return file
+}
+
+/**
  * 删除影响预览：只读。项目不存在时返回 exists=false，不抛错。
  */
 export function previewProjectDelete(root, name) {

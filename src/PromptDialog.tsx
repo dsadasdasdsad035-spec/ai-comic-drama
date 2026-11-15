@@ -8,6 +8,11 @@ type Props = {
   placeholder?: string
   defaultValue?: string
   confirmText?: string
+  /**
+   * 输入校验：返回 false 时确认按钮禁用、回车也不提交。
+   * 危险动作（例如清空整集镜头）靠它要求手打集号，避免误点生效。
+   */
+  validate?: (value: string) => boolean
   onCancel: () => void
   onConfirm: (value: string) => void
 }
@@ -27,6 +32,7 @@ export default function PromptDialog({
   placeholder,
   defaultValue = '',
   confirmText = '确定',
+  validate,
   onCancel,
   onConfirm,
 }: Props) {
@@ -54,7 +60,11 @@ export default function PromptDialog({
 
   if (!open) return null
 
-  const submit = () => onConfirm(value)
+  const ok = validate ? validate(value) : true
+  const submit = () => {
+    if (!ok) return
+    onConfirm(value)
+  }
 
   return (
     <div className="st-modal-backdrop" role="presentation" onMouseDown={onCancel}>
@@ -101,7 +111,7 @@ export default function PromptDialog({
           <button className="btn" onClick={onCancel}>
             取消
           </button>
-          <button className="btn primary" data-prompt-submit onClick={submit}>
+          <button className="btn primary" data-prompt-submit onClick={submit} disabled={!ok}>
             {confirmText}
           </button>
         </footer>

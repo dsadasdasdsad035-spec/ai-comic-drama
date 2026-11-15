@@ -134,17 +134,15 @@ export function repairTransitionEdges(nodes: ShotNodeType[], edges: ShotEdgeType
 
 /**
  * 合成画布节点：保留素材卡与其他手搓卡，按 shotId 复用分镜节点，新镜头按集栅格排。
- * `emptyShots` 用于「用户主动清空过画布」的存档，避免重新灌回镜头。
+ *
+ * 画布是项目镜头的投影 —— 项目里没有的镜头，画布上也就不该有。
+ * 清空画布因此不再需要「别再灌回来」的开关，它是真删镜头。
  */
-export function composeShotCanvasNodes(
-  prev: ShotNodeType[],
-  shots: ProjectShot[],
-  opts: { emptyShots?: boolean } = {},
-): ShotNodeType[] {
+export function composeShotCanvasNodes(prev: ShotNodeType[], shots: ProjectShot[]): ShotNodeType[] {
   const assets = prev.filter(isAssetNode)
   const extras = prev.filter((n) => !isAssetNode(n) && !n.data?.shotId && !isDemoCard(n))
   const keepDemo = shots.length === 0 ? prev.filter(isDemoCard) : []
-  const shotNodes = opts.emptyShots ? [] : buildShotNodes(prev, shots)
+  const shotNodes = buildShotNodes(prev, shots)
   return [...assets, ...extras, ...keepDemo, ...shotNodes]
 }
 

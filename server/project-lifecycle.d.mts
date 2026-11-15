@@ -70,3 +70,13 @@ export declare function deleteProjects(
   names: string | string[],
   opts?: { appRoot?: string },
 ): ProjectDeleteBatchResult
+
+/**
+ * 镜头级删除快照：清空画布这类「一次删掉整集镜头」的动作在删除前落一份。
+ * 返回快照文件绝对路径；写失败抛错（调用方据此拒绝删除）。
+ */
+export declare function writeShotsSnapshot(
+  root: string,
+  name: string,
+  shots: Array<Record<string, unknown>>,
+): string

@@ -1,9 +1,11 @@
 import { chromium } from 'playwright-core'
+import { openBoardEpisode } from './verify-lib.mjs'
 const b = await chromium.launch({ headless: true, channel: 'chrome' })
 const p = await b.newPage({ viewport: { width: 1600, height: 1000 } })
 p.on('dialog', (d) => d.accept())
 p.on('pageerror', (e) => console.log('PAGEERROR:', e.message))
-await p.goto('http://localhost:5273', { waitUntil: 'networkidle' })
+// 大厅是唯一启动页：直接 goto 首页会停在项目大厅，拿不到画布右上角的操作菜单
+await openBoardEpisode(p)
 await p.waitForTimeout(1500)
 
 // 顶栏按钮数量（画布视图）

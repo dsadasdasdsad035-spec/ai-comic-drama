@@ -207,8 +207,6 @@ type Saved = {
   nodes: ShotNodeType[]
   edges: ShotEdgeType[]
   characters: CharacterSheet[]
-  /** 用户主动清空过画布 —— 没有这个标记，空节点会被当成「首次打开」重置成示例卡 */
-  cleared?: boolean
   /** 当前集也要记住，否则刷新后一律回到第 1 集，看起来像「别的集的卡片和视频丢了」 */
   epNo?: number
 }
@@ -221,7 +219,8 @@ function readSavedKey(key: string): Saved | null {
     if (!Array.isArray(p?.nodes)) return null
     const savedEp = Number(p.epNo)
     const hasSavedEp = Number.isFinite(savedEp) && savedEp > 0
-    if (p.nodes.length === 0 && p.cleared !== true && !hasSavedEp) return null
+    // 空存档只有在记住了集号时才是有效存档（清空后的画布可以正好是空的）
+    if (p.nodes.length === 0 && !hasSavedEp) return null
     return {
       nodes: p.nodes.map((n: ShotNodeType) => {
         const data = { ...n.data, marks: migrateMarks(n.data?.marks ?? []) }
@@ -253,7 +252,6 @@ function readSavedKey(key: string): Saved | null {
       }),
       edges: p.edges ?? [],
       characters: Array.isArray(p.characters) ? p.characters : defaultCharacters,
-      cleared: p.cleared === true,
       epNo: Number.isFinite(Number(p.epNo)) && Number(p.epNo) > 0 ? Number(p.epNo) : 1,
     }
   } catch {
@@ -358,6 +356,8 @@ function Shell() {
   const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
   const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
   const [addEpisodePromptOpen, setAddEpisodePromptOpen] = useState(false)
+  /** 清空画布的二次确认：要求手打当前集号 */
+  const [clearPromptOpen, setClearPromptOpen] = useState(false)
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -572,9 +572,9 @@ function Shell() {
    * - 水合后重置 syncedRef，避免防抖写回把旧值或已删镜头写回去。
    */
   const hydrateCanvasShots = useCallback(
-    (shots: ProjectShot[], opts: { episode?: number; fit?: boolean; emptyShots?: boolean } = {}) => {
+    (shots: ProjectShot[], opts: { episode?: number; fit?: boolean } = {}) => {
       const prevNodes = nodesRef.current
-      const nextNodes = composeShotCanvasNodes(prevNodes, shots, { emptyShots: opts.emptyShots })
+      const nextNodes = composeShotCanvasNodes(prevNodes, shots)
       const shotNodes = nextNodes.filter(isShotCanvasNode)
       const nextEdges = composeShotCanvasEdges(edgesRef.current, shotNodes)
       nodesRef.current = nextNodes
@@ -845,9 +845,8 @@ function Shell() {
         const wantedEp = Number(stored?.epNo) || 1
 
         // 与导入/Agent 写回共用同一条水合路径：项目是唯一真源，画布只是它的投影
-        const loadedNodes = composeShotCanvasNodes(assetCards, shots, {
-          emptyShots: stored?.cleared === true,
-        })
+        // 清空已经是真删：画布只反映项目里现存镜头，不再有「存档说清空过」这层状态
+        const loadedNodes = composeShotCanvasNodes(assetCards, shots)
         const shotNodes = loadedNodes.filter(isShotCanvasNode)
         setNodes(loadedNodes)
         setEdges(composeShotCanvasEdges(stored?.edges?.length ? stored.edges : [], shotNodes))
@@ -2143,20 +2142,44 @@ function Shell() {
   const [diagOn, setDiagOn] = useState(false)
   const issues = useMemo(() => (diagOn ? diagnose(shownNodes) : []), [diagOn, shownNodes])
 
+  /**
+   * 其他集的镜数：真相取 project.json 的镜头，不看画布节点。
+   * 画布是投影，清空后节点全没了；用节点统计会让「其他集还有 …」一起消失。
+   */
   const otherEpCounts = useMemo(() => {
     const m = new Map<number, number>()
-    for (const n of nodes) {
-      if (!n.data.shotId) continue
-      const e = Number(n.data.episode) || 1
+    for (const s of projectShots) {
+      const e = Number(s.episode) || 1
       m.set(e, (m.get(e) ?? 0) + 1)
     }
     return [...m.entries()].filter(([e]) => e !== epNo).sort((a, b) => a[0] - b[0])
-  }, [nodes, epNo])
+  }, [projectShots, epNo])
 
   /** 当前集的项目镜头（真相在 project.json，不是画布节点） */
   const epProjectShots = useMemo(
     () => projectShots.filter((s) => (Number(s.episode) || 1) === epNo),
     [projectShots, epNo],
+  )
+  /** 当前集画布上的分镜卡片数：用来判断「项目里有、画布上没有」需要引导重建 */
+  const epCanvasCards = useMemo(
+    () => nodes.filter((n) => n.data.shotId && (Number(n.data.episode) || 1) === epNo).length,
+    [nodes, epNo],
+  )
+  /**
+   * 切集：只在该集画布上确实没有卡片时才水合。
+   * 已有卡片的集不重建，避免覆盖用户手工调整过的位置。
+   */
+  const focusEpisode = useCallback(
+    (no: number) => {
+      setEpNo(no)
+      const hasCards = nodesRef.current.some(
+        (n) => n.data.shotId && (Number(n.data.episode) || 1) === no,
+      )
+      if (hasCards) return
+      if (!projectShots.some((s) => (Number(s.episode) || 1) === no)) return
+      hydrateCanvasShots(projectShots, { episode: no, fit: true })
+    },
+    [projectShots, hydrateCanvasShots],
   )
   const charsForAudit = characters
   /** 集摘要口径与画布一致：空首帧只用于提示，不拦水合 */
@@ -3345,19 +3368,48 @@ function Shell() {
     })
   }
 
-  /** 清空画布：只动画布，不碰 project.json */
+  /**
+   * 清空画布 = 删除当前集全部镜头（真删，不可撤销）。
+   *
+   * 走与「删除选中」同一条写回通道（planDeleteShots → persistProjectShots），
+   * 服务端会先落镜头快照再删，并清掉所有指向被删镜头的转场（含跨集边界）。
+   * 确定性由数据层保证：刷新、重启、换浏览器都回不来，不再依赖浏览器存档标记。
+   *
+   * 入口只做前置校验并开确认框：手打当前集号才生效（见 clearPromptExpected）。
+   */
   const clearCanvas = () => {
-    if (nodesRef.current.length === 0 && edges.length === 0) {
-      setToast('画布已经是空的')
-      window.setTimeout(() => setToast(''), 2000)
+    if (!readyProject) {
+      setToast('先在顶栏选择项目')
+      window.setTimeout(() => setToast(''), 2400)
       return
     }
-    if (!window.confirm('清空画布上的所有卡片和连线？project.json 里的镜头不受影响，可以再推一次。')) return
-    setNodes((ns) => ns.filter((n) => (n as unknown as AssetNodeType).type === 'asset')) // 素材卡保留
-    setEdges([])
-    setSelId(null)
-    setToast('画布已清空（素材卡保留，project.json 未改动）')
-    window.setTimeout(() => setToast(''), 2600)
+    if (epProjectShots.length === 0) {
+      setToast(`${formatEpisodeLabel(epNo)} 在项目里没有镜头，无需清空`)
+      window.setTimeout(() => setToast(''), 2400)
+      return
+    }
+    setClearPromptOpen(true)
+  }
+
+  /** 清空确认真正执行的部分：手打集号通过后才会到这里 */
+  const confirmClearCanvas = () => {
+    setClearPromptOpen(false)
+    if (!readyProject || epProjectShots.length === 0) return
+    const ids = epProjectShots.map((s) => String(s.id))
+    const plan = planDeleteShots(projectShots, ids)
+    void persistProjectShots(plan.next, plan.deletes, { fit: false })
+      .then(() => {
+        // 素材卡不在项目里，按节点类型单独保留
+        setNodes((ns) => ns.filter((n) => (n as unknown as AssetNodeType).type === 'asset'))
+        setEdges([])
+        setSelId(null)
+        setToast(`已删除 ${formatEpisodeLabel(epNo)} 的 ${ids.length} 镜（其他集与素材卡保留）`)
+        window.setTimeout(() => setToast(''), 3600)
+      })
+      .catch((e: Error) => {
+        setToast(e.message || '清空失败')
+        window.setTimeout(() => setToast(''), 3600)
+      })
   }
 
   const resetAll = () => {
@@ -3407,7 +3459,6 @@ function Shell() {
             nodes,
             edges,
             characters,
-            cleared: !nodes.some((n) => n.data?.shotId),
             epNo,
           }),
         )
@@ -3824,6 +3875,12 @@ function Shell() {
                 onToggleChars={toggleChars}
                 onToggleDiag={() => setDiagOn((v) => !v)}
                 onClear={clearCanvas}
+                clear={{
+                  available: Boolean(readyProject) && epProjectShots.length > 0,
+                  episodeLabel: formatEpisodeLabel(epNo),
+                  count: epProjectShots.length,
+                  reason: readyProject ? '' : '先在顶栏选择项目',
+                }}
               />
               <button
                 className="btn-mini"
@@ -3841,15 +3898,31 @@ function Shell() {
               </button>
             </div>
             {/* 只数真正的分镜卡：无 shotId 的示例卡始终显示，不能用 shownNodes.length 判空 */}
-            {shownNodes.filter((n) => n.data.shotId).length === 0 && otherEpCounts.length > 0 && (
+            {epCanvasCards === 0 && (readyProject || otherEpCounts.length > 0) && (
               <div className="canvas-hint">
-                <b>E{String(epNo).padStart(2, '0')} 这一集画布上没有卡片</b>
-                <span>其他集还有：</span>
-                {otherEpCounts.map(([e, c]) => (
-                  <button key={e} className="btn-mini" onClick={() => setEpNo(e)}>
-                    E{String(e).padStart(2, '0')} · {c} 张
-                  </button>
-                ))}
+                <b>{formatEpisodeLabel(epNo)} 还没有镜头</b>
+                <span>项目里这一集确实没有镜头：导入分镜表或新建镜头后卡片会自动出现。</span>
+                <button className="btn-mini" onClick={() => void addShot('image')}>
+                  新建生图镜
+                </button>
+                <button className="btn-mini" onClick={() => void addShot('video')}>
+                  新建出片镜
+                </button>
+                {otherEpCounts.length > 0 && (
+                  <>
+                    <span>其他集还有：</span>
+                    {otherEpCounts.map(([e, c]) => (
+                      <button
+                        key={e}
+                        className="btn-mini"
+                        onClick={() => focusEpisode(e)}
+                        title={`切到 ${formatEpisodeLabel(e)}`}
+                      >
+                        {formatEpisodeLabel(e)} · {c} 镜
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             )}
             {selectedNodes.length > 0 && (
@@ -4202,6 +4275,22 @@ function Shell() {
           confirmText="创建"
           onCancel={() => setAddEpisodePromptOpen(false)}
           onConfirm={(value) => void submitAddEpisode(value)}
+        />
+
+        {/*
+          清空画布不可撤销（服务端只留快照，界面没有恢复入口），
+          所以要求手打当前集号：既拦误点，也避免清错集。
+        */}
+        <PromptDialog
+          open={clearPromptOpen}
+          title={`清空 ${formatEpisodeLabel(epNo)} 的分镜`}
+          label={`输入 ${formatEpisodeLabel(epNo)} 确认`}
+          hint={`将删除本集 ${epProjectShots.length} 镜，不可撤销；素材卡与其他集保留，指向本集的转场会被清空。服务端会先留一份镜头快照。`}
+          placeholder={formatEpisodeLabel(epNo)}
+          confirmText={`删除 ${epProjectShots.length} 镜`}
+          validate={(v) => v.trim().toUpperCase() === formatEpisodeLabel(epNo)}
+          onCancel={() => setClearPromptOpen(false)}
+          onConfirm={confirmClearCanvas}
         />
     </CanvasCtx.Provider>
   )

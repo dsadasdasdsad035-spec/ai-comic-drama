@@ -15,7 +15,10 @@ type Props = {
   onFit: () => void
   onToggleChars: () => void
   onToggleDiag: () => void
+  /** 清空画布 = 删除当前集全部镜头（真删，需二次确认） */
   onClear: () => void
+  /** 清空的范围提示；无项目或无镜头时给出原因 */
+  clear: { available: boolean; episodeLabel: string; count: number; reason?: string }
 }
 
 /**
@@ -36,6 +39,7 @@ export default function BoardMenu({
   onToggleChars,
   onToggleDiag,
   onClear,
+  clear,
 }: Props) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement | null>(null)
@@ -118,8 +122,20 @@ export default function BoardMenu({
           </button>
 
           <div className="bm-sec">危险</div>
-          <button className="bm-item danger" onClick={act(onClear)} title="清空画布（不动 project.json）">
-            清空画布<span className="bm-hint">不可撤销</span>
+          <button
+            className="bm-item danger"
+            onClick={act(onClear)}
+            disabled={!clear.available}
+            title={
+              clear.available
+                ? `删除 ${clear.episodeLabel} 在项目里的全部 ${clear.count} 镜，不可撤销；需要手打集号确认`
+                : clear.reason || '当前集在项目里没有镜头'
+            }
+          >
+            清空画布
+            <span className="bm-hint">
+              {clear.available ? `删本集 ${clear.count} 镜` : '无镜头'}
+            </span>
           </button>
         </div>
       )}
