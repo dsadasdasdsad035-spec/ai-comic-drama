@@ -36,32 +36,75 @@ export type ProjectChar = {
   reference_images?: string[]
 }
 
+type CharFields = Record<string, unknown>
+
+/**
+ * 双形状取值：接口形状（蛇形）优先，缺失或空串时回退界面模型（驼峰）。
+ *
+ * 项目快照来自 `GET /api/project`，是蛇形；界面里流转的是驼峰。两条路径都会经过
+ * `toSheet`，所以这里必须两种都认，否则已经把形状弄混的存量对象会被读成空锚点。
+ */
+function pick<T>(o: CharFields, snake: string, camel: string): T | undefined {
+  const blank = (v: unknown) => v === undefined || v === null || v === ''
+  const a = o[snake]
+  if (!blank(a)) return a as T
+  const b = o[camel]
+  if (!blank(b)) return b as T
+  // 两种都缺失时保留蛇形的原始值（可能是 ''），保证 toProject 能写回空串而不是 undefined
+  return (a === undefined || a === null ? b : a) as T | undefined
+}
+
 /**
  * project.json → 角色卡。
  * id 直接用角色名：中文名当 React key 没问题，且跨会话稳定（随机 uuid 会每次重建都对不上）。
+ *
+ * 入参同时接受蛇形（接口/存储形状）与驼峰（界面模型），字段缺失一律按空值处理，不抛错。
  */
-export function toSheet(c: ProjectChar): CharacterSheet {
-  return {
-    id: String(c.name || '').trim() || 'char',
-    name: c.name || '',
-    role: c.role || '',
-    age: c.age,
-    lookCn: c.look_cn || '',
-    lookEn: c.look_en || '',
-    palette: c.palette || '',
-    keywords: Array.isArray(c.keywords) ? c.keywords : [],
-    voiceId: c.voice || undefined,
-    voiceProvider: c.voice_provider || undefined,
-    voiceModelKey: c.voice_model_key || undefined,
-    image: c.image,
-    candidates: Array.isArray(c.candidates) ? c.candidates.filter(Boolean) : undefined,
-    activeIdx: typeof c.activeIdx === 'number' ? c.activeIdx : undefined,
-    expressions: c.expressions,
-    expressionSheet: c.expression_sheet,
-    orbitSheet: c.orbit_sheet,
-    voiceSample: c.voice_sample,
-    referenceImages: Array.isArray(c.reference_images) ? c.reference_images.filter(Boolean) : undefined,
+export function toSheet(c: unknown): CharacterSheet {
+  const raw = (c && typeof c === 'object' ? c : {}) as CharFields
+  const name = String(pick<string>(raw, 'name', 'name') || '')
+  const str = (snake: string, camel: string) => String(pick<string>(raw, snake, camel) || '')
+  const list = (snake: string, camel: string) => {
+    const v = pick<unknown>(raw, snake, camel)
+    return Array.isArray(v) ? (v.filter(Boolean) as string[]) : undefined
   }
+  const strList = (snake: string, camel: string) => {
+    const v = pick<unknown>(raw, snake, camel)
+    return Array.isArray(v) ? (v.filter((x) => typeof x === 'string') as string[]) : []
+  }
+  const activeIdx = pick<number>(raw, 'activeIdx', 'activeIdx')
+  return {
+    id: name.trim() || 'char',
+    name,
+    role: str('role', 'role'),
+    age: pick<string>(raw, 'age', 'age'),
+    lookCn: str('look_cn', 'lookCn'),
+    lookEn: str('look_en', 'lookEn'),
+    palette: str('palette', 'palette'),
+    keywords: strList('keywords', 'keywords'),
+    voiceId: pick<string>(raw, 'voice', 'voiceId') || undefined,
+    voiceProvider: pick<string>(raw, 'voice_provider', 'voiceProvider') || undefined,
+    voiceModelKey: pick<string>(raw, 'voice_model_key', 'voiceModelKey') || undefined,
+    image: pick<string>(raw, 'image', 'image'),
+    candidates: list('candidates', 'candidates'),
+    activeIdx: typeof activeIdx === 'number' ? activeIdx : undefined,
+    expressions: pick<CharacterSheet['expressions']>(raw, 'expressions', 'expressions'),
+    expressionSheet: pick<CharacterSheet['expressionSheet']>(raw, 'expression_sheet', 'expressionSheet'),
+    orbitSheet: pick<CharacterSheet['orbitSheet']>(raw, 'orbit_sheet', 'orbitSheet'),
+    voiceSample: pick<CharacterSheet['voiceSample']>(raw, 'voice_sample', 'voiceSample'),
+    referenceImages: list('reference_images', 'referenceImages'),
+  }
+}
+
+/**
+ * 项目角色数组的唯一读入口：不论入参是快照里的蛇形对象还是界面里的驼峰对象，
+ * 都转成 `CharacterSheet`。新代码要读角色就用手这个函数，不要直接遍历裸数组。
+ */
+export function readCharacters(list: unknown): CharacterSheet[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((c): c is ProjectChar => Boolean(c) && typeof c === 'object')
+    .map((c) => toSheet(c))
 }
 
 /** 角色卡 → project.json，蛇形字段名保持一致 */
@@ -175,4 +218,46 @@ export function characterBible(chars: CharacterSheet[]): string {
     .filter((c) => c.name && c.lookEn)
     .map((c) => `${c.name}：${c.lookEn}`)
     .join('\n')
+}
+
+/** 界面模型专有的驼峰字段：带着它们写库会被服务端忽略，锚点会静默丢失 */
+const CAMEL_ONLY_KEYS = [
+  'lookCn',
+  'lookEn',
+  'expressionSheet',
+  'orbitSheet',
+  'voiceSample',
+  'voiceId',
+  'voiceProvider',
+  'voiceModelKey',
+  'referenceImages',
+] as const
+
+/**
+ * 角色落库前的本地契约自检：拦住「写出去的东西根本不是服务端认的形状」。
+ *
+ * 服务端 `saveProject` 对 characters 是整表重建，字段名不对不会报错，只会把值写成空串。
+ * 所以这里必须在提交前发现，而不是提交后再读回——那时事务已经提交，无法回滚。
+ *
+ * 返回 null 表示可以写；返回字符串是给用户看的失败原因。
+ */
+export function checkCharacterWriteback(payload: unknown, merged: CharacterSheet[]): string | null {
+  if (!Array.isArray(payload)) return '角色写回失败：待写角色不是数组'
+  if (payload.length !== merged.length) {
+    return `角色写回失败：待写 ${payload.length} 条与合并结果 ${merged.length} 条不一致，锚点可能未保存`
+  }
+  for (const [i, raw] of payload.entries()) {
+    const o = (raw ?? {}) as Record<string, unknown>
+    const name = String(o.name ?? '').trim()
+    if (!name) return `角色写回失败：第 ${i + 1} 条没有角色名，服务端无法保存该角色的锚点`
+    const camel = CAMEL_ONLY_KEYS.find((k) => k in o)
+    if (camel) {
+      return `角色写回失败：角色「${name}」带着界面字段 ${camel}；服务端只认蛇形字段，写进去锚点会变成空串`
+    }
+    const want = merged[i]
+    if (String(o.look_cn ?? '') !== want.lookCn || String(o.look_en ?? '') !== want.lookEn) {
+      return `角色写回失败：角色「${name}」的外观锚点未保存，写入内容与合并结果不一致`
+    }
+  }
+  return null
 }

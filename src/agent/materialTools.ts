@@ -19,6 +19,7 @@ import { buildExpressionSheetCells, canGenerateExpressionSheet, expressionSheetP
 import { cropExpressionSheet } from '../expressionCrop'
 import { resolveCameraLexiconByName } from '../cameraLexicon'
 import { isProjectMediaUrl } from '../assetCards'
+import { readCharacters, toProject, type ProjectChar } from '../charMap'
 import { applyRefTokens, resolveRefTargets } from './refResolve'
 
 /**
@@ -53,8 +54,8 @@ export type MaterialToolDeps = {
   askCost?: (req: MaterialCostRequest) => Promise<{ ok: true } | { ok: false; error: string }>
   /** 画布素材卡：id / 标题 / 地址。按标题寻址与画布同步都靠它 */
   getCanvasAssets?: () => { id: string; title: string; url: string }[]
-  /** 角色图片类变更立即落库并同步界面 */
-  commitCharacters?: (next: CharacterSheet[]) => void | Promise<void>
+  /** 角色图片类变更立即落库并同步界面；通道收接口形状（蛇形），由宿主转成界面模型 */
+  commitCharacters?: (next: ProjectChar[]) => void | Promise<void>
   /** 八格裁剪；默认浏览器 canvas 实现 */
   cropSheet?: (sheet: CharacterExpressionSheet, project: string) => Promise<{ sheet: CharacterExpressionSheet; errors: string[] }>
   /**
@@ -77,7 +78,8 @@ export type MaterialToolDeps = {
 }
 
 function characterRoster(project: ProjectData): CharacterSheet[] {
-  return (project.characters || []).filter((c): c is CharacterSheet => Boolean(c && typeof c === 'object'))
+  // 项目快照是接口形状（蛇形），统一走读入口转成界面模型，否则 lookEn / referenceImages 永远读不到
+  return readCharacters(project.characters)
 }
 
 function findCharacter(project: ProjectData, want: string): CharacterSheet | undefined {
@@ -116,12 +118,15 @@ async function commitCharacterWrite(
     return { ok: false, error: '当前会话没有角色落库通道，已拒绝写入（否则刷新后图会丢）' }
   }
   const characters = characterRoster(project).map((c) => (c.id === next.id ? next : c))
+  // 写端统一转回接口形状：服务端只认 look_cn / look_en，驼峰写进去会被清空
+  const payload = characters.map(toProject)
   try {
-    await deps.commitCharacters(characters)
+    await deps.commitCharacters(payload)
   } catch (e) {
     return { ok: false, error: `角色落库失败：${(e as Error)?.message || String(e)}` }
   }
-  deps.setSnapshot({ ...project, characters })
+  // 快照与落库同形状，避免同一会话里出现混合形状
+  deps.setSnapshot({ ...project, characters: payload })
   deps.onChanged?.()
   return { ok: true }
 }

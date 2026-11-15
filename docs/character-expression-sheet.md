@@ -54,6 +54,24 @@
 - 8 个表情格至少 44×44，点击只预览，不静默改镜头 `performance`；
 - 成本 chip 和选中镜头的参考占用（如 `参考 3/4 · 表情开`）。
 
+## 锚点写回与形状边界
+
+角色的中英文外观锚点（`look_cn` / `look_en`）以**接口形状**（蛇形）存库，界面里用驼峰模型 `CharacterSheet`（`lookCn` / `lookEn`）。两个形状之间只允许在边界转换：
+
+- 读：项目快照的角色数组必须经 `readCharacters()` 转成界面模型后再用；
+- 写：合并结果必须经 `toProject()` 转回蛇形后再落库，内存快照也保存蛇形；
+- 提交前由 `checkCharacterWriteback()` 自检：带驼峰字段、缺角色名、锚点与合并结果不一致都直接判失败，不回「成功」。
+
+**历史数据说明**：`submit_characters` 曾存在形状错位缺陷——同名角色命中时读取 `old.lookEn.trim()` 抛 `Cannot read properties of undefined (reading 'trim')`，提交成功的那一支又把驼峰对象写回服务端，服务端只认蛇形字段，于是新增角色的锚点被静默清空。项目 `a` 中的 `幼年白猫`、`成年白猫`、`新角色4` 就是这种状态（`look_cn` / `look_en` / `palette` 全为空，但三视图、表情总图、音色有值）。库内不存在对应的提交记录，**锚点无法自动回填**，需要重新提交一次这三名角色的外观锚点；修复后重新提交不会再丢。
+
+回归入口：
+
+```bash
+node verify-skills-unit.mjs          # 含 tests/character-shape.ts
+node verify-creative-builtin-tools.mjs  # 提交后读回锚点一致 + 同名重复提交
+node verify-material-tools.mjs       # 角色图片落库走蛇形，不动其它角色锚点
+```
+
 ## 已知边界
 
 - 不做单格局部重绘；单格不满意时重生成整张或上传替换。

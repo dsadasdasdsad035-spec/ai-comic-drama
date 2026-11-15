@@ -357,11 +357,12 @@ check('不同卡各自新增', mergedDistinct.added.length === 2, String(mergedD
     url: '/project-assets/assets/room.png',
   })
   check('采纳项目图片为三视图', r.ok === true && r.image === '/project-assets/assets/room.png', JSON.stringify(r))
-  const committed = state.committed.at(-1).find((c) => c.id === '陈默')
+  const committed = state.committed.at(-1).find((c) => c.name === '陈默')
+  check('落库通道收蛇形字段', Boolean(committed) && 'look_en' in committed && !('lookEn' in committed), Object.keys(committed || {}).join(','))
   check('三视图写入角色当前图', committed.image === '/project-assets/assets/room.png')
   check('新图放到候选首位', committed.candidates[0] === '/project-assets/assets/room.png', JSON.stringify(committed.candidates))
   check('采纳记为上传来源', r.source === 'uploaded')
-  const reread = (await d.load()).characters.find((c) => c.id === '陈默')
+  const reread = (await d.load()).characters.find((c) => c.name === '陈默')
   check('写入后重读项目就能看到新图', reread?.image === '/project-assets/assets/room.png', String(reread?.image))
 
   const byTitle = await call(ts, 'set_character_visual', {
@@ -394,7 +395,7 @@ check('不同卡各自新增', mergedDistinct.added.length === 2, String(mergedD
     url: '/project-assets/assets/room.png',
   })
   check('采纳表情总图成功', sheetRes.ok === true, JSON.stringify(sheetRes))
-  const sheet = state.committed.at(-1).find((c) => c.id === '陈默').expressionSheet
+  const sheet = state.committed.at(-1).find((c) => c.name === '陈默').expression_sheet
   check('总图固定四列两行', sheet.columns === 4 && sheet.rows === 2, JSON.stringify([sheet.columns, sheet.rows]))
   check('八格按固定布局生成', sheet.cells.length === 8, String(sheet.cells.length))
   check('指纹取当前外观锚点', sheet.fingerprint === lib.identityFingerprint(CHAR), sheet.fingerprint)
@@ -409,10 +410,10 @@ check('不同卡各自新增', mergedDistinct.added.length === 2, String(mergedD
   const r = await call(ts, 'generate_character_views', { character: '陈默' })
   check('生成三视图成功', r.ok === true, JSON.stringify(r))
   check('生成前请求了成本确认', state.asked.length === 1 && state.asked[0].action === 'generate_character_views', JSON.stringify(state.asked[0]))
-  const committed = state.committed.at(-1).find((c) => c.id === '陈默')
+  const committed = state.committed.at(-1).find((c) => c.name === '陈默')
   check('新图写入当前图', /\/project-assets\/gen\/new1\.png$/.test(committed.image), String(committed.image))
   check('新图在候选首位', committed.candidates[0] === committed.image, JSON.stringify(committed.candidates))
-  check('重出三视图不标表情总图失效', committed.expressionSheet === undefined)
+  check('重出三视图不标表情总图失效', committed.expression_sheet === undefined)
 
   // 先有可用的表情总图，再重出三视图：总图必须原样保留
   const withSheet = {
@@ -429,9 +430,9 @@ check('不同卡各自新增', mergedDistinct.added.length === 2, String(mergedD
   const { deps: d2, state: s2 } = makeDeps()
   d2.load = async () => ({ ...s2.project, characters: [withSheet] })
   const r2 = await call(lib.createMaterialTools(d2), 'generate_character_views', { character: '陈默' })
-  const kept = s2.committed.at(-1).find((c) => c.id === '陈默')
-  check('已有表情总图仍可用', r2.ok === true && kept.expressionSheet?.stale !== true, JSON.stringify(kept.expressionSheet?.stale))
-  check('表情总图内容未变', kept.expressionSheet?.image === '/project-assets/sheet/old.png')
+  const kept = s2.committed.at(-1).find((c) => c.name === '陈默')
+  check('已有表情总图仍可用', r2.ok === true && kept.expression_sheet?.stale !== true, JSON.stringify(kept.expression_sheet?.stale))
+  check('表情总图内容未变', kept.expression_sheet?.image === '/project-assets/sheet/old.png')
 }
 
 // 未确认成本时一律不生成
@@ -463,7 +464,7 @@ check('不同卡各自新增', mergedDistinct.added.length === 2, String(mergedD
   check('生成表情总图成功', r.ok === true, JSON.stringify(r))
   check('提示词带四列两行的版式', /exactly 4 columns by 2 rows/.test(state.generated.at(-1).prompt), state.generated.at(-1).prompt.slice(0, 60))
   check('提示词带外观锚点', state.generated.at(-1).prompt.startsWith('chinese man, buzz cut'), state.generated.at(-1).prompt.slice(0, 40))
-  const sheet = state.committed.at(-1).find((c) => c.id === '陈默').expressionSheet
+  const sheet = state.committed.at(-1).find((c) => c.name === '陈默').expression_sheet
   check('生成的总图记为 generated', sheet.source === 'generated')
   check('生成的总图八格齐全', sheet.cells.length === 8 && sheet.fingerprint === lib.identityFingerprint(CHAR))
   check('失败格在结果里点名', /fearful/.test(r.summary), r.summary)

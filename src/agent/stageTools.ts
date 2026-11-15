@@ -221,6 +221,7 @@ export type MaterialRow = {
 /** 按分类把项目里的物料摊平成一维列表；素材卡无 id，用 url 作 key */
 function materialRowsOf(project: ProjectData, category: MaterialCategory): MaterialRow[] {
   if (category === 'characters') {
+    // 透传原始形状：快照里的角色是蛇形，这里只读 id/name/image，两种形状字段名一致
     const list = Array.isArray(project.characters) ? project.characters : []
     return list
       .map((raw) => {
@@ -327,6 +328,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       return Array.isArray(own) ? own : []
     }
     const p = await snapshot()
+    // 透传原始形状：这些数据原样回给模型，不需要转成界面模型
     return Array.isArray(p.characters) ? p.characters : []
   }
 
@@ -812,6 +814,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       }
 
       if (category === 'characters') {
+        // 透传原始形状：只按 id/name 找卡，蛇形与驼峰字段名一致
         const list = Array.isArray(project.characters) ? project.characters : []
         const hit = list.find((raw) => {
           const o = asRecord(raw)

@@ -15,7 +15,7 @@ import { mergeDesignDraft } from '../designExtract'
 import { mergeShotsDraft } from '../shotSync'
 import { blankShot } from '../shotRows'
 import { applyJoinsToShots, type JoinDraft } from '../shotJoins'
-import type { CharacterSheet } from '../characters'
+import { checkCharacterWriteback, readCharacters, toProject } from '../charMap'
 import { mergeScriptDraft } from '../agent/drafts'
 import { isProjectMediaUrl, mergeAssetCards } from '../assetCards'
 import type { ProjectEpisode } from '../api'
@@ -120,15 +120,26 @@ export async function applyProjectDraft(
       : Array.isArray(payload)
         ? (payload as ExtractedChar[])
         : []
-    const merged = mergeCharacters((p.characters || []) as CharacterSheet[], incoming)
-    const failed = await commit(() => writePatch(ctx.projectName, { characters: merged.next }))
+    // 快照里的角色是接口形状（蛇形），必须先转成界面模型再合并，否则同名角色命中时读不到锚点
+    const current = readCharacters(p.characters)
+    const merged = mergeCharacters(current, incoming)
+    // 合并结果是界面模型，写库前必须转回接口形状：服务端只认 look_cn / look_en
+    const payloadForDb = merged.next.map(toProject)
+    const rejected = checkCharacterWriteback(payloadForDb, merged.next)
+    if (rejected) return { ok: false, summary: '', error: rejected }
+    const failed = await commit(() => writePatch(ctx.projectName, { characters: payloadForDb }))
     if (failed) return failed
-    ctx.setSnapshot({ ...p, characters: merged.next })
+    // 快照统一保存接口形状，与服务端读回的一致，避免同一会话里出现混合形状
+    ctx.setSnapshot({ ...p, characters: payloadForDb })
     ctx.onProjectDataChanged?.()
     const subjects = [...merged.added, ...merged.updated]
+    const parts = [`新增 ${merged.added.length}`, `更新 ${merged.updated.length}`]
+    if (merged.filled.length) parts.push(`补锚点 ${merged.filled.length}`)
+    if (merged.skipped.length) parts.push(`跳过 ${merged.skipped.length}`)
+    const written = [...merged.added, ...merged.filled, ...merged.updated]
     return {
       ok: true,
-      summary: `角色表：新增 ${merged.added.length}，更新 ${merged.updated.length}`,
+      summary: `角色表：${parts.join('，')}${written.length ? `｜${written.join('、')}` : ''}`,
       counts: { total: incoming.length, added: merged.added.length, updated: merged.updated.length },
       ...(subjects.length ? { subjects } : {}),
     }
@@ -142,7 +153,8 @@ export async function applyProjectDraft(
       p.shots || [],
       items,
       epNo,
-      (p.characters || []) as CharacterSheet[],
+      // 锚点展开读的是驼峰字段 lookEn，必须先转成界面模型，否则蛇形角色永远解析不出锚点
+      readCharacters(p.characters),
     )
     const failed = await commit(() => writeShots(ctx.projectName, shots))
     if (failed) return failed

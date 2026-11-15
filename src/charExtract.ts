@@ -101,7 +101,9 @@ export function mergeCharacters(
       updated.push(sheet.name)
       continue
     }
-    if (old.lookEn.trim()) {
+    // 字段缺失等价于「没有锚点」：存量库里存在锚点为空、字段不全的角色，
+    // 直接读 .trim() 会让整次提交崩在这一个角色上。
+    if (String(old.lookEn || '').trim()) {
       skipped.push(sheet.name)
       continue
     }
