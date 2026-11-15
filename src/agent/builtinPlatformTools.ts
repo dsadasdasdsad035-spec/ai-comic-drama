@@ -82,26 +82,31 @@ export type BuiltinPlatformCtx = {
   onAssetsWritten?: (assets: ProjectAsset[]) => void | Promise<void>
 }
 
-let projectCache: { name: string; data: ProjectData } | null = null
-
 function resolveEpNo(input: BuiltinPlatformCtx): number {
   const raw = typeof input.epNo === 'function' ? input.epNo() : input.epNo
   const n = Number(raw)
   return Number.isFinite(n) && n > 0 ? n : 1
 }
 
-function draftCtx(input: BuiltinPlatformCtx): ProjectDraftCtx {
+/**
+ * 项目快照上下文。
+ *
+ * 这里刻意**不再做模块级缓存**：缓存只按项目名 key，宿主的写入（画布改镜头、
+ * 角色落库、导入分镜）都不会让它失效，于是同一页面会话里第二轮及以后的工具
+ * 会读到第一轮的旧数据；写工具还会把整条旧镜头写回，覆盖用户刚改的字段。
+ * 读取一律走 ensureProjectLoaded 现取，同一轮内的读取由 stageTools 的快照
+ * promise 兜住，不会重复请求。
+ */
+function draftCtx(input: BuiltinPlatformCtx, snapshot?: ProjectData | null): ProjectDraftCtx {
   return {
     projectName: input.projectName,
     epNo: typeof input.epNo === 'function' ? input.epNo : resolveEpNo(input),
     getSnapshot: () => {
+      if (snapshot) return snapshot
       if (input.getSnapshot) return input.getSnapshot()
-      if (!input.projectName.trim()) return null
-      if (projectCache?.name === input.projectName) return projectCache.data
       return null
     },
     setSnapshot: (p) => {
-      projectCache = { name: input.projectName, data: p }
       input.setSnapshot?.(p)
     },
     onProjectDataChanged: input.onProjectDataChanged,
@@ -110,12 +115,13 @@ function draftCtx(input: BuiltinPlatformCtx): ProjectDraftCtx {
 }
 
 async function ensureProjectLoaded(input: BuiltinPlatformCtx): Promise<ProjectData> {
-  const cached = draftCtx(input).getSnapshot()
-  if (cached) return cached
+  if (input.getSnapshot) {
+    const snap = input.getSnapshot()
+    if (snap) return snap
+  }
   const name = input.projectName.trim()
   if (!name) throw new Error('请先在顶栏选择项目，平台读/写工具需要项目上下文')
   const data = await getProject(name)
-  projectCache = { name, data }
   input.setSnapshot?.(data)
   return data
 }
@@ -152,8 +158,9 @@ function createSubmitTool(input: BuiltinPlatformCtx, writeTool: WriteTool, contr
       (hint ? `\n${hint}` : ''),
     schema,
     run: async (payload) => {
+      let project: ProjectData
       try {
-        await ensureProjectLoaded(input)
+        project = await ensureProjectLoaded(input)
       } catch (e) {
         return { ok: false, error: (e as Error).message || String(e) }
       }
@@ -161,7 +168,12 @@ function createSubmitTool(input: BuiltinPlatformCtx, writeTool: WriteTool, contr
         contractId === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
       const checked = validateContract(contractId, normalized)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
-      const applied: DraftApplyResult = await applyProjectDraft(contractId, checked.value, draftCtx(input))
+      // 用刚取到的快照做合并基准：旧缓存在这里会把其它字段按过期值写回
+      const applied: DraftApplyResult = await applyProjectDraft(
+        contractId,
+        checked.value,
+        draftCtx(input, project),
+      )
       if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
       return {
         ok: true,
