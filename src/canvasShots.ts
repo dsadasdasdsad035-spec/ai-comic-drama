@@ -4,15 +4,17 @@
  * 为什么单独一层：加载项目、导入分镜、Agent 写回、增删镜头必须走同一条路径，
  * 否则会出现「加载后」与「导入后」两种栅格和两套连线，布局反复漂移。
  */
-import type { ProjectShot } from './api'
+import type { ProjectAsset, ProjectShot } from './api'
 import {
   SHOT_COLS,
   SHOT_GAP,
   SHOT_ROW_H,
+  assetSlotPosition,
   compareShotNo,
   measureNode,
   shotEpisodeOrigins,
 } from './canvasLayout'
+import { assetNodeId } from './canvasLayoutStore'
 import type { ShotEdgeType, ShotNodeType } from './data'
 import { shotToData } from './shotSync'
 import { uid, type ShotData } from './types'
@@ -24,6 +26,35 @@ export const isShotCanvasNode = (n: ShotNodeType) => {
 }
 
 const isAssetNode = (n: ShotNodeType) => (n as unknown as { type?: string }).type === 'asset'
+
+/**
+ * `project.assets` → 画布素材卡节点。
+ * 唯一派生点：节点 id 必须是 `asset-<canvasId>`，`shot.refIds` 里的 token 也是它，
+ * 所以缺 canvasId 的卡进不了画布（由 `ensureAssetCanvasIds` 先补齐）。
+ *
+ * 放在这一层而不是 `App.tsx`：工具层（无画布上下文时）也要用它重建素材卡节点，
+ * 否则 `refIds` 里的 `asset-<canvasId>` 解析不到，参考会被静默少送。
+ */
+export function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
+  const out: ShotNodeType[] = []
+  assets.forEach((a, i) => {
+    if (!String(a.canvasId ?? '').trim()) return
+    out.push({
+      id: assetNodeId(a.canvasId),
+      type: 'asset',
+      // 缺存量位置的卡先按素材带落位；之后 applyLayout 用项目里的位置覆盖
+      position: assetSlotPosition(i),
+      data: {
+        title: a.title,
+        kind: a.kind,
+        url: a.url,
+        ...(a.designId ? { designId: a.designId } : {}),
+        ...(a.characterName ? { characterName: a.characterName } : {}),
+      },
+    } as unknown as ShotNodeType)
+  })
+  return out
+}
 
 /** 示例卡（无业务 ID 的演示镜头）：出现真实镜头后退场 */
 const isDemoCard = (n: ShotNodeType) => !n.data?.shotId && /^S\d+$/.test(n.id)

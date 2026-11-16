@@ -53,7 +53,7 @@ function makeEpisodes(count: number) {
   }))
 }
 
-function makeSet(opts: { shots?: Shot[]; episodes?: unknown[]; characters?: unknown[]; designs?: unknown[] } = {}) {
+function makeSet(opts: { shots?: Shot[]; episodes?: unknown[]; characters?: unknown[]; designs?: unknown[]; assets?: unknown[]; shotVideoContext?: WorkbenchChatAdapter['shotVideoContext'] } = {}) {
   const shots = opts.shots ?? makeShots()
   const project = {
     source: '原著正文',
@@ -67,6 +67,7 @@ function makeSet(opts: { shots?: Shot[]; episodes?: unknown[]; characters?: unkn
       { id: 'scene-1', kind: 'scene', name: '雨夜街口', note: '霓虹反光' },
       { id: 'prop-1', kind: 'prop', name: '黑伞', note: '伞骨断了一根' },
     ],
+    ...(opts.assets ? { assets: opts.assets } : {}),
   } as unknown as ProjectData
 
   const adapter: WorkbenchChatAdapter = {
@@ -81,6 +82,7 @@ function makeSet(opts: { shots?: Shot[]; episodes?: unknown[]; characters?: unkn
     ownDraft: () => shots,
     projectSnapshot: async () => project,
     applyDraft: () => ({ ok: true, summary: 'ok' }),
+    ...(opts.shotVideoContext ? { shotVideoContext: opts.shotVideoContext } : {}),
   }
   return { set: createStageToolSet(adapter), project, shots }
 }
@@ -390,8 +392,8 @@ async function main() {
     assert.deepEqual(ambiguous.candidates.map((c) => c.episode), [1, 2])
   })
 
-  // ---- 3.2 read_shot_video_prompt 四态 ----
-  await check('read_shot_video_prompt 四态各命中一次', async () => {
+  // ---- 3.2 read_shot_video_prompt 三态 ----
+  await check('read_shot_video_prompt 三态各命中一次', async () => {
     const base = makeShots()
     const shots: Shot[] = [
       { id: 'E01-S01', episode: 1, no: 'S01', video_prompt_override: { text: '手改正文', fingerprint: 'f1', createdAt: 't' } },
@@ -409,19 +411,16 @@ async function main() {
     const two = (await tool.invoke({ no: 'S02' })) as { text: string; source: string }
     assert.deepEqual([two.text, two.source], ['语义层正文', 'video_prompt'])
 
-    const three = (await tool.invoke({ no: 'S03' })) as { text: string; source: string }
-    assert.deepEqual([three.text, three.source], ['只有首帧正文', 'keyframe_prompt'])
+    // 首帧正文不再作为出片正文的回落：只有 keyframe_prompt 也算空正文
+    const three = (await tool.invoke({ no: 'S03' })) as { text: null; source: string; note: string }
+    assert.equal(three.text, null, '首帧正文不能顶替出片正文')
+    assert.equal(three.source, 'blocked')
+    assert.match(three.note, /阻断/)
 
-    const four = (await tool.invoke({ no: 'S04' })) as {
-      text: null
-      source: string
-      requiresCanvas: boolean
-      note: string
-    }
+    const four = (await tool.invoke({ no: 'S04' })) as { text: null; source: string; note: string }
     assert.equal(four.text, null, '拼不出来就给 null，不给近似结果')
-    assert.equal(four.source, 'script_assembled')
-    assert.equal(four.requiresCanvas, true)
-    assert.match(four.note, /画布/)
+    assert.equal(four.source, 'blocked')
+    assert.match(four.note, /submit_prompts|运动提示词/, '要给出补写入口')
   })
 
   await check('read_shot_video_prompt 手改正文逐字返回，指纹不一致标 stale', async () => {
@@ -454,10 +453,212 @@ async function main() {
     assert.equal(fresh.stale, false)
   })
 
+  // ---- 3.4 read_shot_video_inputs ----
+  await check('read_shot_video_inputs 按提交顺序给出参考槽位与出片模式', async () => {
+    const shots: Shot[] = [
+      {
+        id: 'E01-S01',
+        episode: 1,
+        no: 'S01',
+        seconds: 3,
+        size: '中景',
+        move: '推',
+        video_prompt: '雨夜追车，镜头推进',
+        refIds: ['char-林小满', 'char-陈默'],
+      },
+    ]
+    const { set } = makeSet({
+      shots,
+      characters: [
+        { name: '陈默', image: '/generated/chen.png', look_cn: '黑色风衣' },
+        { name: '林小满', image: '/generated/lin.png', look_cn: '白裙' },
+      ],
+    })
+    const tool = set.byName.get('read_shot_video_inputs')!
+    const res = (await tool.invoke({ no: 'S01', episode: 1 })) as {
+      ok: boolean
+      mode: string
+      seconds: number
+      shotSeconds: number
+      refs: { index: number; label: string; purpose: string }[]
+      refTotal: number
+      omitted: unknown[]
+      omittedVideos: unknown[]
+      blocking: { code: string }[]
+      promptEmpty: boolean
+    }
+    assert.equal(res.ok, true)
+    assert.equal(res.mode, 'ref')
+    assert.equal(res.shotSeconds, 3)
+    assert.equal(res.seconds, 3)
+    assert.deepEqual(res.refs.map((r) => r.index), [1, 2], '槽位从 1 连续递增')
+    assert.deepEqual(
+      res.refs.map((r) => r.label),
+      ['角色「林小满」外观', '角色「陈默」外观'],
+      '顺序与 refIds 一致，不按角色表重排',
+    )
+    for (const r of res.refs) assert.equal(r.purpose, '人物外观')
+    // 客户端上限当前是「不限」：没有项目被静默丢弃
+    assert.equal(res.omitted.length, 0)
+    assert.equal(res.refTotal, 2)
+    assert.equal(res.omittedVideos.length, 0)
+    assert.equal(res.promptEmpty, false)
+    assert.equal(res.blocking.length, 0)
+  })
+
+  await check('read_shot_video_inputs 参考视频只取第一条，其余列出原因', async () => {
+    const shots: Shot[] = [
+      {
+        id: 'E01-S01',
+        episode: 1,
+        no: 'S01',
+        seconds: 3,
+        size: '中景',
+        move: '推',
+        video_prompt: '雨夜追车',
+        refIds: ['asset-v1', 'asset-v2'],
+      },
+    ]
+    const { set } = makeSet({
+      shots,
+      shotVideoContext: () => ({
+        nodes: [
+          { id: 'n1', type: 'shot', position: { x: 0, y: 0 }, data: { ...shots[0], shotId: 'E01-S01' } } as never,
+          { id: 'asset-v1', type: 'asset', position: { x: 0, y: 0 }, data: { kind: 'video', url: '/generated/v1.mp4', title: '推镜参照' } } as never,
+          { id: 'asset-v2', type: 'asset', position: { x: 0, y: 0 }, data: { kind: 'video', url: '/generated/v2.mp4', title: '环绕参照' } } as never,
+        ],
+        characters: [],
+        missingMedia: new Set<string>(),
+      }),
+    })
+    const tool = set.byName.get('read_shot_video_inputs')!
+    const res = (await tool.invoke({ shotId: 'E01-S01' })) as {
+      mode: string
+      video: { label: string } | null
+      omittedVideos: { label: string; reason: string }[]
+    }
+    assert.equal(res.mode, 'video')
+    assert.equal(res.video?.label, '视频素材「推镜参照」')
+    assert.equal(res.omittedVideos.length, 1, '第二条视频要列出，不能静默丢弃')
+    assert.equal(res.omittedVideos[0].label, '视频素材「环绕参照」')
+    assert.match(res.omittedVideos[0].reason, /第一条/)
+  })
+
+  await check('read_shot_video_inputs 无参考时给出空列表与 first 模式', async () => {
+    const shots: Shot[] = [
+      { id: 'E01-S01', episode: 1, no: 'S01', seconds: 3, size: '中景', move: '固定', video_prompt: '空镜' },
+    ]
+    const { set } = makeSet({ shots })
+    const tool = set.byName.get('read_shot_video_inputs')!
+    const res = (await tool.invoke({ no: 'S01', episode: 1 })) as {
+      mode: string
+      refs: unknown[]
+      video: unknown
+      blocking: { code: string }[]
+    }
+    assert.equal(res.mode, 'first')
+    assert.deepEqual(res.refs, [])
+    assert.equal(res.video, null)
+    assert.equal(res.blocking[0]?.code, 'no-image', '没有参考时给出阻断原因')
+  })
+
+  await check('read_shot_video_inputs 正文为空时提示补写', async () => {
+    const shots: Shot[] = [
+      { id: 'E01-S01', episode: 1, no: 'S01', seconds: 3, size: '中景', move: '固定', video_prompt: '', refIds: ['char-陈默'] },
+    ]
+    const { set } = makeSet({ shots, characters: [{ name: '陈默', image: '/generated/chen.png' }] })
+    const tool = set.byName.get('read_shot_video_inputs')!
+    const res = (await tool.invoke({ no: 'S01', episode: 1 })) as {
+      promptEmpty: boolean
+      blocking: { code: string; message: string }[]
+    }
+    assert.equal(res.promptEmpty, true)
+    const empty = res.blocking.find((b) => b.code === 'shot-prompt-empty')
+    assert.ok(empty, '空正文必须给阻断项')
+    assert.match(empty.message, /正文/)
+  })
+
+  // ---- 3.5 无宿主上下文：素材卡参考不能静默丢 ----
+  await check('read_shot_video_inputs 无画布上下文时仍解析 asset-<canvasId> 参考', async () => {
+    const shots: Shot[] = [
+      {
+        id: 'E01-S01',
+        episode: 1,
+        no: 'S01',
+        seconds: 3,
+        size: '中景',
+        move: '推',
+        video_prompt: '雨夜推进',
+        refIds: ['char-陈默', 'asset-cv1'],
+      },
+    ]
+    // 刻意不给 shotVideoContext：这是 Pi 创意会话的真实形态
+    const { set } = makeSet({
+      shots,
+      characters: [{ name: '陈默', image: '/generated/chen.png', look_cn: '黑色风衣' }],
+      assets: [{ canvasId: 'cv1', url: '/generated/prop.png', title: '黑伞', kind: 'prop' }],
+    })
+    const tool = set.byName.get('read_shot_video_inputs')!
+    const res = (await tool.invoke({ no: 'S01', episode: 1 })) as {
+      refs: { index: number; label: string; source: string }[]
+      refTotal: number
+    }
+    assert.equal(res.refTotal, 2, '素材卡参考不能被丢：少了它工具报的顺序就与出片不一致')
+    assert.deepEqual(res.refs.map((r) => r.index), [1, 2])
+    assert.equal(res.refs[1].label, '道具「黑伞」')
+    assert.equal(res.refs[1].source, 'asset')
+  })
+
+  // ---- 3.6 素材卡反查 ----
+  await check('read_asset_inventory 暴露 canvasId，read_asset_detail 三种 key 等价', async () => {
+    const { set } = makeSet({
+      assets: [
+        { canvasId: 'cv1', url: '/generated/prop.png', title: '黑伞', kind: 'prop' },
+        { canvasId: 'cv2', url: '/generated/rain.mp4', title: '雨幕', kind: 'video' },
+      ],
+    })
+    const inv = set.byName.get('read_asset_inventory')!
+    const listed = (await inv.invoke({ category: 'assets', includeRows: true })) as {
+      rows: { key: string; canvasId?: string; title: string }[]
+    }
+    const umbrella = listed.rows.find((r) => r.title === '黑伞')
+    assert.ok(umbrella, '素材卡应出现在行里')
+    assert.equal(umbrella.canvasId, 'cv1', '行里要带 canvasId，否则 refIds 反查不到')
+
+    const detail = set.byName.get('read_asset_detail')!
+    for (const key of ['/generated/prop.png', 'cv1', 'asset-cv1']) {
+      const res = (await detail.invoke({ category: 'assets', key })) as {
+        ok: boolean
+        record?: { title?: string }
+      }
+      assert.equal(res.ok, true, `key「${key}」应能命中`)
+      assert.equal(res.record?.title, '黑伞', `key「${key}」应命中同一张卡`)
+    }
+  })
+
+  await check('read_asset_detail 未命中时提示先取 inventory 的行', async () => {
+    const { set } = makeSet({
+      assets: [{ canvasId: 'cv1', url: '/generated/prop.png', title: '黑伞', kind: 'prop' }],
+    })
+    const res = (await set.byName.get('read_asset_detail')!.invoke({ category: 'assets', key: 'asset-nope' })) as {
+      ok: boolean
+      error: string
+      hint: string
+    }
+    assert.equal(res.ok, false)
+    assert.match(res.error, /找不到/)
+    assert.match(res.hint, /read_asset_inventory/)
+  })
+
   // ---- 3.3 只读注册 ----
-  await check('两个新工具已注册且是只读', async () => {
+  await check('三个新工具已注册且是只读', async () => {
     const { set } = makeSet()
-    for (const name of ['read_shot_detail', 'read_shot_video_prompt']) {
+    for (const name of [
+      'read_shot_detail',
+      'read_shot_video_prompt',
+      'read_shot_video_inputs',
+      'read_transition_video_inputs',
+    ]) {
       assert.ok(set.read.has(name), `${name} 应该在 readByName`)
       assert.ok(set.byName.has(name), `${name} 应该在 byName`)
       assert.ok(!name.startsWith('submit_'))
@@ -465,14 +666,19 @@ async function main() {
   })
 
   // ---- 4.1 三处清单同步 ----
-  await check('两个新工具进入平台清单、技能白名单与专家默认工具集', async () => {
+  await check('三个新工具进入平台清单、技能白名单与专家默认工具集', async () => {
     const { builtinPlatformToolNames } = await import('../src/agent/builtinPlatformTools')
     const { KNOWN_TOOL_IDS } = await import('../src/skills/tools')
     const { classifyExpertTool, DEFAULT_EXPERT_PLATFORM_TOOLS, groupExpertPlatformTools } = await import(
       '../src/creative/expertToolGroups'
     )
     const names = builtinPlatformToolNames()
-    for (const name of ['read_shot_detail', 'read_shot_video_prompt']) {
+    for (const name of [
+      'read_shot_detail',
+      'read_shot_video_prompt',
+      'read_shot_video_inputs',
+      'read_transition_video_inputs',
+    ]) {
       assert.ok(names.includes(name), `${name} 应出现在 builtinPlatformToolNames()`)
       assert.ok(KNOWN_TOOL_IDS.has(name), `${name} 应出现在 KNOWN_TOOL_IDS`)
       assert.ok(DEFAULT_EXPERT_PLATFORM_TOOLS.includes(name), `${name} 应进入默认专家工具集`)

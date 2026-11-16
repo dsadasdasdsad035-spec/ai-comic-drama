@@ -37,7 +37,7 @@ import {
   videoOmitToastMessages,
   type VideoModelInput,
 } from '../videoPrompt'
-import { buildShotNodes } from '../canvasShots'
+import { assetNodesFromAssets, buildShotNodes } from '../canvasShots'
 import type { ShotNodeType } from '../data'
 
 /** 新建项目目录名规则，与新建项目对话框一致 */
@@ -154,17 +154,18 @@ async function ensureProjectLoaded(input: BuiltinPlatformCtx): Promise<ProjectDa
 }
 
 /**
- * 参考解析上下文：优先宿主当前画布，否则用项目快照重建镜头节点。
+ * 参考解析上下文：优先宿主当前画布，否则用项目快照重建镜头节点与素材卡节点。
  *
- * 重建只覆盖镜头；素材卡节点 id 是运行时生成的，快照里没有，所以无画布时
- * `asset-` token 必然解析不到——交给 strict 报错，而不是静默少送一张图。
+ * 素材卡必须一起重建：节点 id 是 `asset-<canvasId>`，与 `shot.refIds` 的 token 同源，
+ * 快照里也有 `canvasId`。只重建镜头会让 `asset-` token 解析不到，参考被静默少送一张图。
  */
 function generationContext(
   input: BuiltinPlatformCtx,
   project: ProjectData,
 ): { nodes: ShotNodeType[]; characters: CharacterSheet[]; missingMedia: Set<string> } {
   const host = input.getCanvasContext?.()
-  const base = host?.nodes ?? []
+  const base =
+    host?.nodes ?? assetNodesFromAssets(Array.isArray(project.assets) ? (project.assets as ProjectAsset[]) : [])
   // buildShotNodes 会复用已有节点（保留位置与手改数据），并为缺画面的镜头补一张，
   // 这样 Agent 处理非当前集的镜头时也能拿到邻居关系。
   const shotNodes = buildShotNodes(base, project.shots ?? [])
@@ -195,6 +196,18 @@ function createReadAdapter(input: BuiltinPlatformCtx): WorkbenchChatAdapter {
     inputs: () => ({}),
     ownDraft: () => undefined,
     projectSnapshot: () => ensureProjectLoaded(input),
+    // 出片输入读取（分镜与转场）与画布内聊天同源：宿主有实时画布就用实时的，
+    // 否则由工具层按项目快照重建。不接这条会让 Pi 会话报出的参考与画布出片不一致。
+    shotVideoContext: () => {
+      const host = input.getCanvasContext?.()
+      return {
+        ...(host?.nodes ? { nodes: host.nodes } : {}),
+        ...(host?.characters ? { characters: host.characters } : {}),
+        ...(host?.missingMedia ? { missingMedia: host.missingMedia } : {}),
+        model: input.getSelectedVideoModel?.() ?? null,
+        resolution: input.getVideoResolution?.() ?? '',
+      }
+    },
     applyDraft: () => ({ ok: false, summary: '', error: '请使用 submit_* 平台工具写回' }),
   }
 }
@@ -920,6 +933,8 @@ const PLATFORM_READ_TOOL_NAMES = [
   'read_shots',
   'read_shot_detail',
   'read_shot_video_prompt',
+  'read_shot_video_inputs',
+  'read_transition_video_inputs',
   'read_transition_recipes',
   'read_asset_inventory',
   'read_asset_detail',

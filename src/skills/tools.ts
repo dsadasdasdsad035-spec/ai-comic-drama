@@ -7,6 +7,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'read_shots',
   'read_shot_detail',
   'read_shot_video_prompt',
+  'read_shot_video_inputs',
+  'read_transition_video_inputs',
   'read_designs',
   'submit_episodes',
   'submit_characters',

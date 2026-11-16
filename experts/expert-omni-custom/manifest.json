@@ -26,6 +26,8 @@
     "read_shots",
     "read_shot_detail",
     "read_shot_video_prompt",
+    "read_shot_video_inputs",
+    "read_transition_video_inputs",
     "read_transition_recipes",
     "read_asset_inventory",
     "read_asset_detail",

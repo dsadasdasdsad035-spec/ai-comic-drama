@@ -43,9 +43,18 @@ const shots = Array.from({ length: 31 }, (_, i) => {
     seconds: 3,
     size: '中景',
     desc: '街口 ' + no,
-    keyframe_prompt: 'rain ' + no,
-    video_prompt: i === 0 ? 'push' : 'push ' + no + ' ' + '运镜描述'.repeat(400),
-  }
+      keyframe_prompt: 'rain ' + no,
+      video_prompt: i === 0 ? 'push' : 'push ' + no + ' ' + '运镜描述'.repeat(400),
+      ...(i === 0
+        ? {
+            transition_out: {
+              to: 'E01-S02',
+              mode: 'generated',
+              generated: { prompt: '雨里推近到下一镜', targetSeconds: 2, inheritRefs: true },
+            },
+          }
+        : {}),
+    }
 })
 createProject(root, ${JSON.stringify(proj)}, { title: 'tool验收' })
 writeProject(root, ${JSON.stringify(proj)}, {
@@ -177,6 +186,9 @@ const toolSpecs = {
   read_shots: { args: { episode: 1, limit: 5 }, expect: 'ok' },
   read_shot_detail: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
   read_shot_video_prompt: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
+  read_shot_video_inputs: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
+  // 夹具里 S01 → S02 配了一条 generated 转场，走真实投影而不是错误路径
+  read_transition_video_inputs: { args: { episode: 1, after_no: 'S01' }, expect: 'ok' },
   read_asset_inventory: { args: {}, expect: 'ok' },
   read_transition_recipes: { args: { limit: 3 }, expect: 'ok' },
   list_camera_lexicon: { args: { limit: 2 }, expect: 'ok' },

@@ -1,5 +1,11 @@
 import { z } from 'zod'
-import type { ProjectData, Stage } from '../api'
+import type { ProjectAsset, ProjectData, ProjectShot, Stage } from '../api'
+import type { CharacterSheet } from '../characters'
+import { readCharacters } from '../charMap'
+import { assetNodesFromAssets, composeShotCanvasNodes } from '../canvasShots'
+import type { ShotNodeType } from '../data'
+import { buildShotVideoRequest, type VideoModelInput } from '../videoPrompt'
+import { buildTransitionVideoPreview } from '../transitionGen'
 import {
   contractWriteHint,
   getContractToolSchema,
@@ -66,24 +72,62 @@ function shotNoOf(shot: Record<string, unknown>): string {
 
 export type ShotLocator = { shotId?: string; no?: string; episode?: number }
 
-export type ShotVideoPromptRead = {
-  text: string | null
-  /** 与画布出片预览同序：手改快照 → 语义层 video_prompt → 首帧 keyframe_prompt → 画布脚本拼装 */
-  source: 'override' | 'video_prompt' | 'keyframe_prompt' | 'script_assembled'
-  /** 手改快照指纹与最近一次模板渲染指纹不一致；只提示，不阻止出片 */
-  stale: boolean
-  /** 正文只能由画布脚本拼装：读工具不给近似结果 */
-  requiresCanvas?: boolean
-  note?: string
+/**
+ * 出片输入解析用的画布上下文。
+ * 宿主给了实时上下文就用实时的；没给就按项目快照重建分镜节点**与素材卡节点**——
+ * 没有素材卡节点时，`refIds` 里的 `asset-<canvasId>` 解析不到会被静默少送一张图，
+ * 于是工具报的参考顺序与真实出片请求不一致。
+ */
+function shotVideoInputsContext(
+  project: ProjectData,
+  host?: ReturnType<NonNullable<WorkbenchChatAdapter['shotVideoContext']>>,
+): {
+  nodes: ShotNodeType[]
+  characters: CharacterSheet[]
+  missingMedia: Set<string>
+  model: VideoModelInput | null
+  resolution: string
+} {
+  const shots = Array.isArray(project.shots) ? (project.shots as ProjectShot[]) : []
+  const assets = Array.isArray(project.assets) ? (project.assets as ProjectAsset[]) : []
+  return {
+    nodes: host?.nodes ?? composeShotCanvasNodes(assetNodesFromAssets(assets), shots),
+    characters: host?.characters ?? readCharacters(project.characters),
+    missingMedia: host?.missingMedia ?? new Set<string>(),
+    model: host?.model ?? null,
+    resolution: host?.resolution ?? '',
+  }
 }
 
 /**
+ * 转场预览要的模型形状：`label` 用于回显，`features.lastFrame` 决定是否真提交尾帧。
+ * 只传 `model` 名不够——尾帧能力判错会让「参考图与尾帧互斥」的判断反掉。
+ */
+function transitionModelOf(
+  model: VideoModelInput | null,
+): { label?: string; model?: string; providerKind?: string; features?: { lastFrame?: boolean; textToVideo?: boolean; audioOut?: boolean } } | null {
+  if (!model) return null
+  const features = model.features ?? (model.audioOut != null ? { audioOut: model.audioOut } : undefined)
+  return {
+    ...(model.label ? { label: model.label } : {}),
+    ...(model.model ? { model: model.model } : {}),
+    ...(model.providerKind ? { providerKind: model.providerKind } : {}),
+    ...(features ? { features } : {}),
+  }
+}
+
+export type ShotVideoPromptRead = {  text: string | null
+  /** 与画布出片预览同序：手改快照 → 语义层 video_prompt；都没有即阻断 */
+  source: 'override' | 'video_prompt' | 'blocked'
+  /** 手改快照指纹与最近一次模板渲染指纹不一致；只提示，不阻止出片 */
+  stale: boolean
+  note?: string
+}/**
  * 该镜最终会发给视频模型的正文。
  *
  * 顺序对齐画布 `buildShotVideoRequest` + `effectiveVideoPrompt`：手改快照整段逐字发送；
- * 否则 `video_prompt`，再否则 `keyframe_prompt`（画布的 prompt_fallback），
- * 三者都没有时画布走 `shotAutoScriptPrompt` 按画布上下文拼装——读工具没有节点/角色上下文，
- * 这里如实返回 `text: null`，不猜。
+ * 否则 `video_prompt`；两者都没有时画布直接阻断出片——所以这里也返回 `blocked`，
+ * 不给首帧正文或脚本拼装的近似结果。
  */
 export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideoPromptRead {
   const override = asRecord(shot.video_prompt_override)
@@ -103,21 +147,11 @@ export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideo
   }
   const vp = typeof shot.video_prompt === 'string' ? shot.video_prompt : ''
   if (vp.trim()) return { text: vp, source: 'video_prompt', stale: false }
-  const kp = typeof shot.keyframe_prompt === 'string' ? shot.keyframe_prompt : ''
-  if (kp.trim()) {
-    return {
-      text: kp,
-      source: 'keyframe_prompt',
-      stale: false,
-      note: '该镜没有语义层出片提示词，画布会退回首帧正文兜底',
-    }
-  }
   return {
     text: null,
-    source: 'script_assembled',
+    source: 'blocked',
     stale: false,
-    requiresCanvas: true,
-    note: '该镜正文只能由画布按运镜/角色/参考图脚本拼装；读工具没有画布上下文，不返回近似结果。请在画布出片预览查看',
+    note: '该镜没有出片正文：画布会阻断出片。下一步：用 submit_prompts / submit_shots 写入 video_prompt，或让用户在「运动提示词」里填写',
   }
 }
 
@@ -196,6 +230,12 @@ const MATERIAL_CODE_MAX = 20_000
 const MATERIAL_ROW_LIMIT = 200
 
 /**
+ * 素材卡在 `shot.refIds` 里的 token 前缀，与画布节点 id 同形（`asset-<canvasId>`）。
+ * 读工具据此把 Agent 手里的 token 反查成素材卡记录。
+ */
+const ASSET_TOKEN_PREFIX = 'asset-'
+
+/**
  * 读工具的字符预算，按「装整条」生效（见 readBudget.ts）。
  * 分镜最占地方：16 镜左右约 2.4 万字符，一集 31 镜分两次游标续读即可读完。
  */
@@ -211,6 +251,8 @@ export type MaterialRow = {
   title: string
   kind?: string
   url?: string
+  /** 素材卡的画布身份：`shot.refIds` 里写作 `asset-<canvasId>` */
+  canvasId?: string
   characterName?: string
   designId?: string
   hasImage?: boolean
@@ -271,6 +313,8 @@ function materialRowsOf(project: ProjectData, category: MaterialCategory): Mater
         title: String(o.title || url),
         kind: String(o.kind || 'image'),
         url,
+        // 有了 canvasId，Agent 才能把 refIds 里的 `asset-<canvasId>` 对上这张卡
+        ...(o.canvasId ? { canvasId: String(o.canvasId) } : {}),
         ...(o.characterName ? { characterName: String(o.characterName) } : {}),
         ...(o.designId ? { designId: String(o.designId) } : {}),
       })
@@ -668,9 +712,9 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   const readShotVideoPrompt = defineTool({
     name: 'read_shot_video_prompt',
     description:
-      '只读：读取某镜最终会提交给视频模型的出片正文，并标出来源（override 手改 / video_prompt 语义层 / ' +
-      'keyframe_prompt 首帧兜底）。顺序与画布出片预览一致；只能由画布脚本拼装时返回 text:null 与 requiresCanvas:true，' +
-      '不给近似拼接结果。',
+      '只读：读取某镜最终会提交给视频模型的出片正文，并标出来源（override 手改 / video_prompt 运动提示词）。' +
+      '顺序与画布出片预览一致；两个来源都为空时返回 text:null 与 source:blocked（画布会阻断出片），不给近似结果。' +
+      '要写正文请先用 read_shot_video_inputs 拿到参考槽位顺序。',
     schema: z.object({
       shotId: z.string().optional().describe('定稿 shot.id（如 E01-S03）；与 no 同时给时以 shotId 为准'),
       no: z.string().optional().describe('镜号，如 S03；多集同名镜号需同时给 episode'),
@@ -693,6 +737,207 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
               templateRenderedChars: shot.video_prompt_rendered.length,
             }
           : {}),
+      }
+    },
+  })
+
+  /**
+   * 出片输入读取：把「实际会提交的参考顺序与请求参数」交给 Agent。
+   * 正文不在这里给出（用 read_shot_video_prompt）；这里只给写正文需要的材料。
+   */
+  const readShotVideoInputs = defineTool({
+    name: 'read_shot_video_inputs',
+    description:
+      '只读：读取某镜出片请求的实际输入——模式、镜头秒数与请求秒数、按提交顺序排列的参考图槽位（index 从 1 起）、' +
+      '被省略的参考与原因、参考视频与音色参考。用它来写分镜出片正文：参考图按这里的 index 对应 [图N]，' +
+      '不要凭字段臆测顺序。数值按项目快照计算，画布上未保存的改动不在其中。',
+    schema: z.object({
+      shotId: z.string().optional().describe('定稿 shot.id（如 E01-S03）；与 no 同时给时以 shotId 为准'),
+      no: z.string().optional().describe('镜号，如 S03；多集同名镜号需同时给 episode'),
+      episode: z.number().int().min(1).optional().describe('第 N 集，用于消歧'),
+    }),
+    run: async ({ shotId, no, episode }) => {
+      const found = await locateShot(shotsData, { shotId, no, episode })
+      if (!found.ok) return found
+      const shot = found.shot
+      const project = await snapshot()
+      const ctx = shotVideoInputsContext(project, adapter.shotVideoContext?.())
+      const wantId = shotIdOf(shot)
+      const node = ctx.nodes.find((n) => String(n.data?.shotId ?? '') === wantId)
+      if (!node) {
+        return {
+          ok: false,
+          error: `镜 ${shotNoOf(shot)} 不在画布上，无法解析参考连线。下一步：刷新画布或重新导入分镜后重试`,
+        }
+      }
+      const request = buildShotVideoRequest({
+        data: node.data,
+        nodeId: node.id,
+        nodes: ctx.nodes,
+        characters: ctx.characters,
+        missingMedia: ctx.missingMedia,
+        model: ctx.model,
+        resolution: ctx.resolution,
+      })
+      return {
+        ok: true,
+        shotId: wantId,
+        no: shotNoOf(shot),
+        episode: Number(shot.episode) || 0,
+        mode: request.mode,
+        seconds: request.seconds,
+        shotSeconds: request.shotSeconds,
+        resolution: request.resolution,
+        refs: request.refs.map((r) => ({
+          index: r.index,
+          label: r.label,
+          purpose: r.purpose,
+          source: r.source ?? '',
+        })),
+        refTotal: request.refs.length,
+        omitted: request.omitted,
+        omittedVideos: request.omittedVideos,
+        video: request.video
+          ? { label: request.video.label, purpose: request.video.purpose }
+          : null,
+        audio: request.audio
+          ? { label: request.audio.label, purpose: request.audio.purpose, character: request.audio.character ?? '' }
+          : null,
+        // 有 blocking 时这份输入还发不出去：先按提示补正文或补连线
+        blocking: request.blocking.map((b) => ({ code: b.code, message: b.message })),
+        warnings: request.warnings.map((w) => ({ code: w.code, message: w.message })),
+        promptEmpty: !request.prompt.trim(),
+        note: '正文由人或 Agent 写入（video_prompt / submit_prompts），运行时不再追加任何段落。',
+      }
+    },
+  })
+
+  /**
+   * 转场出片输入读取：与分镜的 `read_shot_video_inputs` 对等。
+   * 有序参考、省略项、互斥原因与请求时长全部取自出片同一处的预览计算，
+   * 不给正文（正文用 read_shot_detail 的 transition_out.generated.prompt）。
+   */
+  const readTransitionVideoInputs = defineTool({
+    name: 'read_transition_video_inputs',
+    description:
+      '只读：读取某个镜间转场（接缝）出片请求的实际输入——输入模式、桥接方式、是否提交尾帧、镜头秒数与请求秒数、' +
+      '按提交顺序排列的参考图槽位（index 从 1 起）、被互斥或截断的参考与原因、参考视频与音轨。' +
+      '用它来写转场正文：参考图按这里的 index 对应 [图N]，不要凭 refIds 臆测顺序。' +
+      '本工具不返回正文；正文用 read_shot_detail 读 transition_out.generated.prompt，写入用 submit_joins。',
+    schema: z.object({
+      after_no: z.string().describe('接缝前镜（源镜）的镜号，如 S03'),
+      to_no: z
+        .string()
+        .optional()
+        .describe('接缝后镜（目标镜）的镜号；省略时取源镜 transition_out.to 指向的镜头'),
+      episode: z.number().int().min(1).optional().describe('第 N 集，用于消歧'),
+    }),
+    run: async ({ after_no, to_no, episode }) => {
+      const found = await locateShot(shotsData, { no: after_no, episode })
+      if (!found.ok) return found
+      const sourceShot = found.shot
+      const project = await snapshot()
+      const ctx = shotVideoInputsContext(project, adapter.shotVideoContext?.())
+      const sourceId = shotIdOf(sourceShot)
+      const sourceNode = ctx.nodes.find((n) => String(n.data?.shotId ?? '') === sourceId)
+      if (!sourceNode) {
+        return {
+          ok: false,
+          error: `镜 ${shotNoOf(sourceShot)} 不在画布上，无法解析转场参考。下一步：刷新画布或重新导入分镜后重试`,
+        }
+      }
+      const out = sourceNode.data.transitionOut
+      if (!out) {
+        return {
+          ok: false,
+          error: `镜 ${shotNoOf(sourceShot)} 未配置转场（transition_out 为空）。下一步：先用 submit_joins 建立接缝，或在画布上连线后重试`,
+        }
+      }
+      // 目标镜：显式镜号优先；否则按 transition_out.to 的稳定键（shotId 或节点 id）找回
+      let targetNode: ShotNodeType | undefined
+      if (to_no) {
+        const target = await locateShot(shotsData, { no: to_no, episode })
+        if (!target.ok) return target
+        const targetId = shotIdOf(target.shot)
+        targetNode = ctx.nodes.find((n) => String(n.data?.shotId ?? '') === targetId)
+        if (!targetNode) {
+          return {
+            ok: false,
+            error: `镜 ${shotNoOf(target.shot)} 不在画布上，无法解析转场参考。下一步：刷新画布或重新导入分镜后重试`,
+          }
+        }
+      } else {
+        const wanted = String(out.to ?? '')
+        targetNode =
+          ctx.nodes.find((n) => String(n.data?.shotId ?? '') === wanted) ??
+          ctx.nodes.find((n) => n.id === wanted)
+        if (!targetNode) {
+          return {
+            ok: false,
+            error: `转场目标「${wanted || '(空)'}」找不到对应镜头。下一步：用 read_shots 确认镜号，或用 submit_joins 重设接缝`,
+          }
+        }
+      }
+
+      const preview = buildTransitionVideoPreview({
+        source: sourceNode,
+        target: targetNode,
+        generated: out.generated,
+        model: transitionModelOf(ctx.model),
+        nodes: ctx.nodes,
+        characters: ctx.characters,
+        missingMedia: ctx.missingMedia,
+      })
+      const recordedTo = String(out.to ?? '')
+      return {
+        ok: true,
+        seam: {
+          after_no: shotNoOf(sourceShot),
+          after_shot_id: sourceId,
+          to_no: String(targetNode.data?.no ?? ''),
+          recorded_to: recordedTo,
+          mode: out.mode,
+          overridden: Boolean(to_no) && recordedTo !== String(targetNode.data?.shotId ?? ''),
+        },
+        inputMode: preview.inputMode,
+        bridging: preview.bridging,
+        submitsLastFrame: preview.submitsLastFrame,
+        supportsLastFrame: preview.supportsLastFrame,
+        seconds: preview.seconds,
+        requestSeconds: preview.requestSeconds,
+        ...(preview.trimTo ? { trimTo: preview.trimTo } : {}),
+        modelLabel: preview.modelLabel ?? '',
+        refs: preview.refs.map((r) => ({
+          index: r.index,
+          label: r.label,
+          purpose: r.purpose,
+          source: r.source ?? '',
+        })),
+        refTotal: preview.refs.length,
+        submittedStyleCount: preview.submittedStyleCount,
+        styleRefs: preview.styleRefs.map((r) => ({
+          token: r.token,
+          label: r.label,
+          kind: r.kind,
+          submitted: r.submitted,
+          ...(r.omittedReason ? { omittedReason: r.omittedReason } : {}),
+        })),
+        styleOmitted: preview.styleOmitted.map((r) => ({ token: r.token, label: r.label, reason: r.reason })),
+        omitted: preview.omitted,
+        omittedVideos: preview.omittedVideos,
+        video: preview.video ? { label: preview.video.label, purpose: preview.video.purpose } : null,
+        audio: {
+          mode: preview.audio.mode,
+          label: preview.audio.label,
+          detail: preview.audio.detail,
+          ...(preview.audio.character ? { character: preview.audio.character } : {}),
+        },
+        blocking: preview.blocking.map((b) => ({ code: b.code, message: b.message })),
+        warnings: preview.warnings.map((w) => ({ code: w.code, message: w.message })),
+        promptSource: preview.promptSource,
+        promptStale: preview.promptStale,
+        promptEmpty: !preview.prompt.trim(),
+        note: '正文由人或 Agent 写入（submit_joins 的 generated.prompt），运行时不再追加任何段落。',
       }
     },
   })
@@ -808,12 +1053,23 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       }
       const wanted = String(key).trim()
       const rows = materialRowsOf(project, category)
-      if (!rows.some((r) => r.key === wanted)) {
+      // 素材卡有三种等价写法：inventory 的 key（url）、裸 canvasId、`asset-<canvasId>`
+      const wantedCanvasId =
+        category === 'assets' ? (wanted.startsWith(ASSET_TOKEN_PREFIX) ? wanted.slice(ASSET_TOKEN_PREFIX.length) : wanted) : ''
+      const matched = rows.some(
+        (r) =>
+          r.key === wanted ||
+          (category === 'assets' &&
+            Boolean(r.canvasId) &&
+            (r.canvasId === wanted || r.canvasId === wantedCanvasId)),
+      )
+      if (!matched) {
         return {
           ok: false,
           error: `在 ${category} 里找不到 key「${wanted}」`,
           availableKeys: rows.slice(0, 10).map((r) => r.key),
-          hint: `可用分类：${MATERIAL_CATEGORIES.join(' / ')}；先用 read_asset_inventory 取 key`,
+          hint: `可用分类：${MATERIAL_CATEGORIES.join(' / ')}；先用 read_asset_inventory 取 key` +
+            (category === 'assets' ? '（素材卡也接受 canvasId 或 asset-<canvasId>）' : ''),
         }
       }
 
@@ -841,7 +1097,13 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
 
       if (category === 'assets') {
         const list = Array.isArray(project.assets) ? project.assets : []
-        const hit = list.find((raw) => String(asRecord(raw).url || '').trim() === wanted)
+        const hit = list.find((raw) => {
+          const o = asRecord(raw)
+          const url = String(o.url || '').trim()
+          if (url && url === wanted) return true
+          const cid = String(o.canvasId || '').trim()
+          return Boolean(cid) && (cid === wanted || cid === wantedCanvasId)
+        })
         if (!hit) return { ok: false, error: `素材卡「${wanted}」读取失败` }
         return { ok: true, category, key: wanted, ...singleRecord(hit) }
       }
@@ -908,6 +1170,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     [readShots.name, readShots],
     [readShotDetail.name, readShotDetail],
     [readShotVideoPrompt.name, readShotVideoPrompt],
+    [readShotVideoInputs.name, readShotVideoInputs],
+    [readTransitionVideoInputs.name, readTransitionVideoInputs],
     [readTransitionRecipes.name, readTransitionRecipes],
     [listCameraLexicon.name, listCameraLexicon],
     [getCameraLexicon.name, getCameraLexicon],

@@ -138,6 +138,7 @@ import { bizSignature, nodeToShot, shotToData } from './shotSync'
 import { downloadEpisodeMarkdown } from './storyboardMarkdown'
 import { buildShotRefIndex } from './shotRefIndex'
 import {
+  assetNodesFromAssets,
   buildShotNodes,
   composeShotCanvasEdges,
   composeShotCanvasNodes,
@@ -146,7 +147,6 @@ import {
 } from './canvasShots'
 import {
   arrangeAll,
-  assetSlotPosition,
   charSlotPosition,
   nodeRect,
   placeNewNode,
@@ -360,32 +360,6 @@ const assetRectsOf = (list: ShotNodeType[]): PlacedRect[] =>
     .map((n) => nodeRect('asset', n.position))
 
 const isAssetCanvasNode = (n: ShotNodeType) => (n as unknown as { type?: string }).type === 'asset'
-
-/**
- * `project.assets` → 画布素材卡节点。
- * 唯一派生点：节点 id 必须是 `asset-<canvasId>`，`shot.refIds` 里的 token 也是它，
- * 所以缺 canvasId 的卡进不了画布（由 `ensureAssetCanvasIds` 先补齐）。
- */
-function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
-  const out: ShotNodeType[] = []
-  assets.forEach((a, i) => {
-    if (!String(a.canvasId ?? '').trim()) return
-    out.push({
-      id: assetNodeId(a.canvasId),
-      type: 'asset',
-      // 缺存量位置的卡先按素材带落位；之后 applyLayout 用项目里的位置覆盖
-      position: assetSlotPosition(i),
-      data: {
-        title: a.title,
-        kind: a.kind,
-        url: a.url,
-        ...(a.designId ? { designId: a.designId } : {}),
-        ...(a.characterName ? { characterName: a.characterName } : {}),
-      },
-    } as unknown as ShotNodeType)
-  })
-  return out
-}
 
 /**
  * 造一张新素材卡：id 由新 canvasId 派生（与 `shot.refIds` 同源），位置在素材带避让。
@@ -1565,10 +1539,12 @@ function Shell() {
     const provider = appSettings?.providers.find((p) => p.id === entry.provider)
     return {
       key,
+      label: entry.label,
       model: entry.model,
       providerKind: provider?.kind,
       audioOut: entry.features?.audioOut,
       supportsVideoRef: entry.supportsVideoRef,
+      features: entry.features,
     }
   }, [modelPick.video, appSettings])
   const reloadSettings = useCallback(() => {

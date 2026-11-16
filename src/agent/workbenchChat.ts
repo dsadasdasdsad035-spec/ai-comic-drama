@@ -289,6 +289,18 @@ export type WorkbenchChatAdapter = {
     | { kind: 'join'; afterNo: string; toNo: string }
   /** 检查器展示：设置页生效的 role/task */
   promptRenderSkillPreview?: () => Promise<{ role: string; task: string; source: import('../skills/types').SkillSource }>
+  /**
+   * 出片预览上下文：参考顺序、模式与秒数必须与画布一致。
+   * 缺省时读工具用项目快照重建分镜节点与素材卡节点（`asset-<canvasId>` 仍可解析，
+   * 画布上未保存的改动不在其中）。
+   */
+  shotVideoContext?: () => {
+    nodes?: import('../data').ShotNodeType[]
+    characters?: import('../characters').CharacterSheet[]
+    missingMedia?: Set<string>
+    model?: import('../videoPrompt').VideoModelInput | null
+    resolution?: string
+  }
 }
 
 /** 读工具结果上限：超出的返回摘要，避免把整份产物塞进下一轮上下文。 */
