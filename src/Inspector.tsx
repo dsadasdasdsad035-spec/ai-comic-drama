@@ -513,14 +513,7 @@ function ShotVideoPromptPanel({
 }) {
   const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
   const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
-  const sourceLabel =
-    request.textSource === 'script_assembled'
-      ? '脚本拼装'
-      : request.textSource === 'video_prompt'
-        ? '运动提示词'
-        : request.textSource === 'prompt_fallback'
-          ? '画面提示词回退'
-          : '默认运动描述'
+  const sourceLabel = request.prompt.trim() ? '运动提示词' : '正文未填写'
 
   return (
     <OutgoingVideoPromptPanel
@@ -1300,6 +1293,9 @@ function InspectorBody({
           open={!prefs.collapsed.motionPrompt}
           onToggle={() => toggleSection('motionPrompt')}
         >
+          <p className="gen-note">
+            景别、运镜与镜头语言只作数据：不会自动并入出片正文。需要出现在正文里时，由创意会话读取后写进「运动提示词」。
+          </p>
           <label className="field">
             <span>镜号</span>
             <input value={d.no} onChange={(e) => set({ no: e.target.value })} />
@@ -1392,7 +1388,9 @@ function InspectorBody({
       >
         <span>台词 / 音效</span>
         <textarea rows={3} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
-        <em className="st-hint">供字幕与出片提示词使用；原生音频见下方。</em>
+        <em className="st-hint">
+          只作数据与字幕：不会自动并入出片正文，需要时由创意会话读取后写进运动提示词；原生音频见下方。
+        </em>
       </label>
 
       <InspectorSection
@@ -1406,6 +1404,9 @@ function InspectorBody({
         open={!prefs.collapsed.performance}
         onToggle={() => toggleSection('performance')}
       >
+        <p className="gen-note">
+          表演强度、动作与台词表演只作数据：不会自动并入出片正文，需要时由创意会话读取后写进运动提示词。
+        </p>
         <div className="field perf-inspector">
           <PerformanceEditor
             cast={d.cast}
@@ -1450,6 +1451,9 @@ function InspectorBody({
             视频自带声音
           </i>
         </span>
+        <p className="gen-note">
+          音轨模式与音色参考只影响提交参数：台词不会自动拼进正文，需要时由创意会话读取后写进运动提示词。
+        </p>
         <NativeAudioPanel
           data={d}
           onPatch={set}

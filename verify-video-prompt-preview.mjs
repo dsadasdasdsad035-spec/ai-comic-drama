@@ -176,6 +176,7 @@ const unit = await p.evaluate(async () => {
         move: '推',
         dialogue: '陈默：你来了。',
         prompt: '画面',
+        videoPrompt: '雨夜追车，镜头推进',
         marks: [],
         refImage: '/generated/a.jpg',
         refIds: ['char-陈默'],
@@ -328,24 +329,35 @@ const dry = await fetch(`${BASE}/api/seedance`, {
 check('后端 dryRun 仍走多参考图模式', dry.ok === true && dry.mode === 'ref', JSON.stringify({ mode: dry.mode, skipped: dry.skipped }))
 const dryRefs = (dry.request?.content ?? []).filter((c) => c.type === 'image_url')
 check('后端参考图仍用 reference_image', dryRefs.length === 2 && dryRefs.every((c) => c.role === 'reference_image'), JSON.stringify(dryRefs.map((c) => c.role)))
+const dryText = (dry.request?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('')
+check('服务端零改写：回显正文与提交值逐字相同', dryText === '[图1]和[图2]', dryText)
 
-check('正文自动写参考图槽位', basic.prompt.includes('[图1]=角色「陈默」外观'), basic.prompt.slice(0, 200))
+const dryEmpty = await fetch(`${BASE}/api/seedance`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ dryRun: true, refImages: [pngPixel], prompt: '   ', seconds: 5, ratio: '16:9', resolution: '720p' }),
+})
+const dryEmptyBody = await dryEmpty.json()
+check('服务端不兜底空正文：4xx 且提示词为空', dryEmpty.status >= 400 && dryEmpty.status < 500 && String(dryEmptyBody.message || '').includes('提示词为空'), `${dryEmpty.status} ${JSON.stringify(dryEmptyBody)}`)
+
+check('正文逐字等于 video_prompt', basic.prompt === '雨夜追车，镜头推进', basic.prompt.slice(0, 200))
+check('正文不含指令段', !/【运镜】|【台词】|【表演方向】|声音：|参考图：|@视频1|【约束】/.test(basic.prompt), basic.prompt)
 check('参考顺序：不含镜上静帧', basic.refs.every((r) => !r.label.includes('当前画面构图')), JSON.stringify(basic.refs[0]))
 check('角色参考带身份标签', basic.refs.some((r) => r.label === '角色「陈默」外观'), basic.refs.map((r) => r.label).join(','))
 check('连线参考图全部送出', basic.refs.length === 6, String(basic.refs.length))
 check('默认不省略参考', basic.omitted.length === 0, JSON.stringify(basic.omitted.map((x) => x.label)))
-check('正文自动写图注', /\[图1\]=/.test(basic.prompt))
+check('参考图槽位不写进正文', !basic.prompt.includes('[图1]'), basic.prompt)
 check('调度帧不再进入参考图', !frames.refs.some((r) => r.url === '/s1.jpg'), frames.prompt)
 check('旧 3D 视频开关不再产生视频参考', video.mode !== 'video' && video.video === null && !video.prompt.includes('@视频1'), video.prompt)
 check('旧 3D 视频开关不再警告视频参考', !video.warnings.some((w) => w.code === 'video-ref-unsupported'), JSON.stringify(video.warnings))
 check('原生音频模式返回音色槽位', native.mode === 'native' && native.audio?.character === '陈默', JSON.stringify(native.audio))
-check('原生音频正文带声音段', native.prompt.includes('音色参考音频1'), native.prompt)
+check('原生音频不改写正文', native.prompt === '雨夜追车，镜头推进', native.prompt)
 check('相邻镜缺图阻止出片', neighbor.blocking.some((x) => x.code === 'neighbor-missing'), JSON.stringify(neighbor.blocking))
 check('参考变化会改变指纹', fpA.fingerprint !== fpB.fingerprint)
 check('无手改时使用自动正文', unit.noOverride.source === 'auto' && unit.noOverride.text === basic.prompt)
 check('手改指纹不匹配标记旧快照', unit.stale.source === 'override' && unit.stale.stale === true)
 check('手改指纹匹配不算过期', unit.same.stale === false)
-check('有表演时正文自动拼表演段', unit.withPerf.prompt.includes('【表演方向】'), unit.withPerf.prompt.slice(0, 120))
+check('有表演时正文仍逐字', unit.withPerf.prompt === '雨夜追车，镜头推进', unit.withPerf.prompt.slice(0, 120))
 check('表演变更使旧手改指纹过期', unit.perfStale.stale === true)
 
 // ---------------------------------------------------------------- UI 路径
@@ -354,10 +366,10 @@ await p.waitForTimeout(600)
 const panel = p.locator('[data-video-prompt-panel]')
 check('面板在生成按钮上方可见', (await panel.count()) === 1)
 const autoText = await p.locator('[data-video-prompt-text]').innerText()
-check('面板正文带参考图槽位', autoText.includes('[图1]='), autoText.slice(0, 160))
+check('面板正文逐字等于 video_prompt', autoText === shot.video_prompt, autoText.slice(0, 160))
 check('面板列出参考图数量', (await panel.innerText()).includes('参考图 2 张'))
 check('面板摘要含表演人数', (await panel.innerText()).includes('表演 1 人'))
-check('面板自动正文带表演段', autoText.includes('【表演方向】'))
+check('面板正文不含指令段', !autoText.includes('【表演方向】') && !autoText.includes('[图1]='))
 check('面板显示提交目标', (await panel.innerText()).includes('提交给'))
 check('面板标明逐字提交', (await p.locator('[data-vp-verbatim]').count()) === 1)
 
@@ -419,7 +431,24 @@ check('新增参考后全部列出', panelText.includes('参考图 5') && !panel
 await p.locator('[data-video-prompt-panel] button', { hasText: '重新拼装' }).click()
 await p.waitForTimeout(500)
 check('重新拼装回到自动拼装', (await p.locator('[data-video-prompt-panel]').innerText()).includes('语义层'))
-check('重新拼装正文包含新增参考', (await p.locator('[data-video-prompt-text]').innerText()).includes('[图4]='), await p.locator('[data-video-prompt-text]').innerText())
+check('重新拼装回到 video_prompt 逐字内容', (await p.locator('[data-video-prompt-text]').innerText()) === shot.video_prompt, await p.locator('[data-video-prompt-text]').innerText())
+
+// 空正文阻断：清空运动提示词后给出补写入口并禁用出片
+await p.locator('#si-tab-outgoing').click({ force: true })
+await p.waitForTimeout(300)
+const motionSection = p.locator('[data-section="motionPrompt"]')
+if ((await motionSection.getAttribute('data-open')) === 'false') {
+  await motionSection.locator('.fold-head').click()
+  await p.waitForTimeout(250)
+}
+const motionField = p.locator('textarea[placeholder^="只写动作与运镜"]')
+await motionField.fill('')
+await p.waitForTimeout(500)
+const blockBox = p.locator('[data-vp-blocking]')
+check('空正文显示阻断', (await blockBox.count()) === 1 && (await blockBox.innerText()).includes('正文未填写'), await blockBox.innerText().catch(() => ''))
+check('空正文无残留拼装正文', (await p.locator('[data-video-prompt-text]').innerText()) === '', await p.locator('[data-video-prompt-text]').innerText())
+check('空正文时出片按钮禁用', await p.locator('button', { hasText: /生成视频|重出视频/ }).first().isDisabled())
+check('空正文时给出手改入口', (await p.locator('[data-video-prompt-panel] button', { hasText: '手改编辑' }).count()) === 1)
 
 check('无 pageerror', errors.length === 0, errors[0]?.split('\n')[0] ?? '')
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })

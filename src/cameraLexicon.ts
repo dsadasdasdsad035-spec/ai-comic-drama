@@ -132,23 +132,3 @@ export function resolveMotionLexiconVideoRef(
   const label = entry ? `运镜参照（内置库）· ${entry.cn}` : '运镜参照（内置库）'
   return { url, label, key: entry?.key ?? data.lexiconRefKey }
 }
-
-export function lexiconMoveLine(data: {
-  move?: string
-  lexiconRefKey?: string
-  videoPrompt?: string
-  prompt?: string
-}): string {
-  const own = (data.videoPrompt || data.prompt || '').trim()
-  if (own) return own
-  const ref = resolveShotLexiconRef(data)
-  if (ref?.en) {
-    const move = String(data.move || '').trim()
-    if (move === '固定') return `${ref.en}; static hold, subtle environmental motion only`
-    return `${ref.en}; camera movement reference for ${move || 'this shot'}`
-  }
-  const move = String(data.move || '').trim()
-  return move === '固定'
-    ? '机位固定不动，仅人物与环境的细微动态'
-    : `镜头${move}，24fps，画面无过曝无噪点`
-}

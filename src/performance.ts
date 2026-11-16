@@ -115,7 +115,8 @@ export function performanceVideoEntryCount(performance: PerformanceEntry[] | und
 
 /**
  * 表演方向正文（不含小标题）：角色情绪、强度、动作、视线、是否说话，
- * 以及逐行台词的情绪/语速/音量/重音。语义层与脚本拼装共用同一份文字。
+ * 以及逐行台词的情绪/语速/音量/重音。这是给 Agent 与模板渲染读取的数据，
+ * 不会自动并入出片正文。
  */
 export function performanceDirectionText(
   performance: PerformanceEntry[] | undefined,

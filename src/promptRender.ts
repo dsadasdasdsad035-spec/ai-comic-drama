@@ -1,17 +1,13 @@
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import { parseDialogue } from './prompts'
-import type { DialogueDelivery, PerformanceEntry, ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
+import type { ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
 import { transitionDialogueText, transitionRecipePromptBlock, type TransitionInputMode } from './transitionGen'
 import { getTransitionRecipe } from './transitionRecipes'
 import { resolveShotLexiconRef } from './cameraLexicon'
-import { nativeAudioPrompt } from './nativeAudio'
-import { performanceDirectionText } from './performance'
 import { shortHash } from './hash'
 import {
-  buildReferenceImagesPromptHint,
   buildShotVideoRequest,
-  buildVideoReferencePromptHint,
   type ShotVideoRequest,
   type VideoAttachment,
   type VideoModelInput,
@@ -271,72 +267,6 @@ function assetInheritLabel(inherit: PromptRenderAssetInherit): string {
   return '外观与场景一致'
 }
 
-/** 双空提示词时确定性拼装出片正文（不调用 LLM） */
-export function assembleShotPromptScript(bundle: PromptRenderBundle): string {
-  if (bundle.kind !== 'shot') return ''
-  const sections: string[] = []
-  const { scene, creative, assets, continuity, video } = bundle
-
-  const sceneBits: string[] = []
-  if (scene.subjects?.length) sceneBits.push(`主体：${scene.subjects.join('、')}`)
-  if (scene.location) sceneBits.push(`场景：${scene.location}`)
-  if (scene.environment?.trim()) sceneBits.push(scene.environment.trim())
-  if (sceneBits.length) sections.push(`【画面】\n${sceneBits.join('。')}`)
-
-  const moveBits = [creative.size, creative.move].filter(Boolean)
-  if (moveBits.length || creative.motionNote?.trim()) {
-    const head = moveBits.join('，')
-    const note = creative.motionNote?.trim()
-    sections.push(`【运镜】\n${[head, note].filter(Boolean).join('。')}`)
-  }
-
-  if (creative.dialogue?.trim()) sections.push(`【台词】\n${creative.dialogue.trim()}`)
-
-  // 原生音频：台词 + 音色参考说明
-  const nativeChar = creative.nativeAudio?.mode === 'native' ? creative.nativeAudio.character || '' : ''
-  const audioSubmitted = assets.some((a) => a.submitted && a.slot === 'audio')
-  if (nativeChar) {
-    const sound = nativeAudioPrompt(nativeChar, parseDialogue(creative.dialogue ?? ''), audioSubmitted)
-    if (sound) sections.push(sound)
-  }
-
-  // 表演方向：情绪/强度/动作/视线/说话 + 逐行语速/音量/重音
-  const perf = performanceDirectionText(
-    creative.performance as PerformanceEntry[] | undefined,
-    parseDialogue(creative.dialogue ?? ''),
-    creative.dialogueDelivery as DialogueDelivery[] | undefined,
-  )
-  if (perf) sections.push(`【表演方向】\n${perf}`)
-
-  // 参考：图片槽位映射 + 视频运动范围 + 音频音色
-  const submitted = assets.filter((a) => a.submitted)
-  const submittedImages = submitted.filter((a) => a.slot === 'image')
-  const submittedVideo = submitted.find((a) => a.slot === 'video')
-  const submittedAudio = submitted.find((a) => a.slot === 'audio')
-  const refParts: string[] = []
-  const imageHint = buildReferenceImagesPromptHint(submittedImages, Boolean(submittedVideo))
-  if (imageHint) refParts.push(imageHint)
-  const videoHint = buildVideoReferencePromptHint(submittedVideo)
-  if (videoHint) refParts.push(videoHint)
-  if (submittedAudio) refParts.push(`音频${submittedAudio.index || 1}：${submittedAudio.label}（只继承音色与说话风格）`)
-  if (refParts.length) sections.push(`【参考】\n${refParts.join('\n')}`)
-
-  const ruleBits = [...(continuity.identityLocks ?? []), ...(continuity.forbidden ?? [])].filter(Boolean)
-  if (ruleBits.length) sections.push(`【约束】\n${ruleBits.join('；')}`)
-
-  if (video.durationSec) {
-    sections.push(`【成片】\n${video.durationSec}秒${video.aspectRatio ? `，画幅 ${video.aspectRatio}` : ''}`)
-  }
-
-  const body = sections.join('\n\n').trim()
-  if (body) return body
-  return [creative.size, creative.move, creative.desc].filter(Boolean).join('，') || '中景，固定机位，24fps'
-}
-
-/** 从当前镜头与出片请求生成脚本正文 */
-export function shotAutoScriptPrompt(input: Parameters<typeof buildShotPromptRenderBundle>[0]): string {
-  return assembleShotPromptScript(buildShotPromptRenderBundle(input))
-}
 
 export function buildTransitionPromptRenderBundle(input: {
   source: TNode

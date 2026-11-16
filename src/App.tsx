@@ -3110,7 +3110,7 @@ function Shell() {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
           window.setTimeout(() => setToast(''), 3000)
         }
-        // 服务端会回报它实际使用的正文（含范围约束等改写），优先记录它
+        // 服务端不再改写正文；仍优先记录它回报的 prompt（与提交值逐字相同），便于核对
         const submittedPrompt = String(res.prompt || effective.text)
         const taskId = res.id
         const done = await waitVideo(taskId, (elapsed) =>

@@ -5,10 +5,8 @@ import {
   nativeAudioRef,
 } from './nativeAudio'
 import { parseDialogue } from './prompts'
-import { performanceDirectionText, performanceFingerprintPayload } from './performance'
-import { nativeAudioPrompt } from './nativeAudio'
+import { performanceFingerprintPayload } from './performance'
 import { shortHash } from './hash'
-import { resolveShotLexiconRef, lexiconMoveLine } from './cameraLexicon'
 import {
   collectShotReferences,
   collectVideoReferences,
@@ -17,8 +15,7 @@ import {
   type ResolvedShotReference,
   type ResolvedVideoReference,
 } from './shotReferences'
-import { shotAutoScriptPrompt } from './promptRender'
-import type { DialogueDelivery, PerformanceEntry, ShotData, VideoPromptOverride } from './types'
+import type { ShotData, VideoPromptOverride } from './types'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
 import { secondsFloorReason, shotRequestSeconds, videoMaxSeconds, type SecondsFloor } from './videoSeconds'
 
@@ -54,7 +51,7 @@ export type ShotVideoRequest = {
   omitted: { label: string; reason: string }[]
   /** 首期只使用第一条视频素材，其余在这里说明 */
   omittedVideos: { label: string; reason: string }[]
-  textSource: 'video_prompt' | 'prompt_fallback' | 'fallback' | 'script_assembled' | 'template_render'
+  textSource: 'video_prompt'
   /** 实际提交给视频接口的秒数；界面与成本只看这个值 */
   seconds: number
   /** 镜头时长原值，用于展示「镜头 Xs → 请求 Ys」 */
@@ -69,10 +66,21 @@ export type ShotVideoRequest = {
 
 export type VideoModelInput = {
   key?: string
+  /** 模型可读名；出片预览与请求记录用 */
+  label?: string
   model?: string
   providerKind?: string
   audioOut?: boolean
   supportsVideoRef?: boolean
+  /**
+   * 能力细节。转场出片预览要据此判断尾帧、纯文本与音频输出，
+   * 缺这段会让 Agent 读到的提交模式与实际出片不一致。
+   */
+  features?: {
+    lastFrame?: boolean
+    textToVideo?: boolean
+    audioOut?: boolean
+  }
 }
 
 type ComposerRef = {
@@ -143,124 +151,6 @@ export function collectShotComposerRefs(input: {
     })
   }
   return { refs, missing: collected.missing, ...(expressionNote ? { expressionNote } : {}) }
-}
-
-/** 参考图槽位注记：@图像N=标签，供模型对齐 reference_image 槽位 */
-export function buildReferenceImagesPromptHint(
-  refs: { label: string; purpose?: string }[],
-  hasVideo: boolean,
-): string {
-  if (refs.length === 0) return ''
-  const all = refs
-    .map((r, i) => {
-      const tag = `${hasVideo ? `@图像${i + 1}` : `[图${i + 1}]`}`
-      const label = r.purpose === '表情参考' ? `${r.label}（表情参考）` : r.label
-      return `${tag}=${label}`
-    })
-    .join('，')
-  const tail = refs.some((r) => r.purpose === '表情参考')
-    ? '主体外观、场景与道具必须与参考图一致；表情参考只对齐该角色的表情，不改变身份与服装。'
-    : '主体外观、场景与道具必须与参考图一致。'
-  return `参考图：${all}。${tail}`
-}
-
-/** 参考视频只继承运动关系；白模/几何体材质不得照搬 */
-export function buildVideoReferencePromptHint(video: { label: string } | undefined): string {
-  if (!video) return ''
-  return `参考 @视频1（${video.label}）的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。`
-}
-
-/** 出片正文的统一指令块：同一段文字只出现一次 */
-export type ShotDirective = {
-  key: 'move' | 'dialogue' | 'performance' | 'sound' | 'reference' | 'video' | 'constraints'
-  text: string
-}
-
-const DIRECTIVE_PRESENT: Record<ShotDirective['key'], (base: string) => boolean> = {
-  move: (b) => b.includes('【运镜】'),
-  dialogue: (b) => b.includes('【台词】') || b.includes('声音：'),
-  performance: (b) => b.includes('【表演方向】') || b.includes('【表演】'),
-  sound: (b) => b.includes('声音：'),
-  reference: (b) => b.includes('参考图：') || /@图像\d+/.test(b) || /\[图\d+\]/.test(b),
-  video: (b) => b.includes('@视频1'),
-  constraints: (b) => b.includes('无字幕'),
-}
-
-/**
- * 把方向性指令块追加到正文末尾；正文里已经有的块跳过。
- * 顺序固定为：运镜 → 台词 → 表演 → 声音 → 参考图 → 参考视频 → 约束。
- */
-export function appendShotDirectives(base: string, directives: (ShotDirective | null | undefined)[]): string {
-  const head = String(base || '').trim()
-  const blocks = [head]
-  for (const d of directives) {
-    if (!d?.text?.trim()) continue
-    if (DIRECTIVE_PRESENT[d.key](head)) continue
-    if (blocks.some((b) => b.includes(d.text))) continue
-    blocks.push(d.text.trim())
-  }
-  return blocks.filter(Boolean).join('\n\n')
-}
-
-/** 景别、运镜与镜头语言条目：让右侧「运镜与语义」的字面值一定进入正文 */
-export function shotMoveDirective(
-  data: Pick<ShotData, 'size' | 'move' | 'motionNote' | 'lexiconRefKey'>,
-): ShotDirective | null {
-  const bits: string[] = []
-  if (data.size) bits.push(`景别：${data.size}`)
-  if (data.move) bits.push(`运镜：${data.move}`)
-  const ref = resolveShotLexiconRef(data)
-  if (ref?.en) bits.push(`镜头语言：${ref.en}`)
-  if (data.motionNote?.trim()) bits.push(data.motionNote.trim())
-  return bits.length ? { key: 'move', text: `【运镜】\n${bits.join('；')}` } : null
-}
-
-/** 台词本体：只在没有声音段时补，避免和原生音频重复 */
-export function shotDialogueDirective(
-  dialogue: { speaker: string; text: string }[],
-): ShotDirective | null {
-  const lines = dialogue
-    .filter((l) => String(l.text || '').trim())
-    .map((l) => `${l.speaker ? `${l.speaker}：` : ''}“${String(l.text).trim()}”`)
-  return lines.length ? { key: 'dialogue', text: `【台词】\n${lines.join('\n')}` } : null
-}
-
-/** 角色表演与台词表演：强度、动作、视线、说话标记、语速/音量/重音全部进正文 */
-export function shotPerformanceDirective(
-  data: Pick<ShotData, 'performance' | 'dialogueDelivery'>,
-  dialogue: { speaker: string; text: string }[],
-): ShotDirective | null {
-  const body = performanceDirectionText(data.performance as PerformanceEntry[] | undefined, dialogue, data.dialogueDelivery as DialogueDelivery[] | undefined)
-  return body ? { key: 'performance', text: `【表演方向】\n${body}` } : null
-}
-
-/** 原生音频：台词与音色参考说明 */
-export function shotSoundDirective(
-  character: string,
-  dialogue: { speaker: string; text: string }[],
-  hasReference: boolean,
-): ShotDirective | null {
-  if (!character) return null
-  const text = nativeAudioPrompt(character, dialogue, hasReference)
-  return text ? { key: 'sound', text } : null
-}
-
-export function shotReferenceDirectives(
-  refs: { label: string; purpose?: string }[],
-  video: { label: string } | null | undefined,
-): ShotDirective[] {
-  const out: ShotDirective[] = []
-  const imageHint = buildReferenceImagesPromptHint(refs, Boolean(video))
-  if (imageHint) out.push({ key: 'reference', text: imageHint })
-  const videoHint = buildVideoReferencePromptHint(video ?? undefined)
-  if (videoHint) out.push({ key: 'video', text: videoHint })
-  return out
-}
-
-/** 全局约束：Seedance 出片固定带上的负向约束 */
-export const SHOT_CONSTRAINTS_DIRECTIVE: ShotDirective = {
-  key: 'constraints',
-  text: '【约束】\n无字幕、无水印、无文字 UI；保持角色身份与服装连续，禁止身份漂移。',
 }
 
 function fingerprintOf(input: {
@@ -365,15 +255,9 @@ export function buildShotVideoRequest(input: {
         : `超过参考图上限（${videoRefLimitLabel(cap)}）`,
   }))
 
+  /** 正文只由人/Agent 写入：逐字取运动提示词，运行时不再拼装任何段落 */
   const vpTrim = (d.videoPrompt || '').trim()
-  const pTrim = (d.prompt || '').trim()
-  const motionForFingerprint = vpTrim || pTrim
-  const textSource: ShotVideoRequest['textSource'] = vpTrim
-    ? 'video_prompt'
-    : pTrim
-      ? 'prompt_fallback'
-      : 'script_assembled'
-  const fallback = `${d.size}，${lexiconMoveLine(d)}，24fps，雨丝与光尘缓慢飘动，画面无过曝无噪点`
+  const textSource: ShotVideoRequest['textSource'] = 'video_prompt'
   /** 运镜文案只来自条目自身的 motion_note，不再从几何数据推导 */
   const liveMotionNote = d.motionNote || ''
 
@@ -421,7 +305,7 @@ export function buildShotVideoRequest(input: {
     candidates,
     refs: limited,
     mode,
-    motion: motionForFingerprint || fallback,
+    motion: vpTrim,
     textSource,
     motionNote: liveMotionNote,
     seconds,
@@ -519,59 +403,15 @@ export function buildShotVideoRequest(input: {
     })
   }
 
-  /** 自动正文底座：语义层（运动/画面提示词）优先，双空才脚本拼装 */
-  let basePrompt: string
-  if (vpTrim) {
-    basePrompt = vpTrim
-  } else if (pTrim) {
-    basePrompt = pTrim
-  } else {
-    basePrompt = shotAutoScriptPrompt({
-      data: d,
-      nodeId: input.nodeId,
-      nodes: input.nodes,
-      characters: input.characters,
-      missingMedia: input.missingMedia,
-      model: input.model,
-      resolution: input.resolution,
-      style: '',
-      aspect: '16:9',
-      request: {
-        prompt: '',
-        mode,
-        refs,
-        firstFrame,
-        video,
-        audio,
-        omitted,
-        omittedVideos,
-        textSource: 'script_assembled',
-        seconds,
-        shotSeconds,
-        secondsFloor,
-        resolution,
-        warnings,
-        blocking,
-        fingerprint,
-      },
-    }).trim()
-    if (!basePrompt) basePrompt = fallback
+  // 正文只来自人/Agent：运动提示词为空即阻断，不用脚本拼装或硬编码文案顶替
+  if (!vpTrim) {
+    blocking.push({
+      code: 'shot-prompt-empty',
+      level: 'error',
+      message: '正文未填写：请在「运动提示词」写一段出片描述，或保存手改正文后再出片',
+    })
   }
-
-  /**
-   * 右侧能编辑、但以前不进正文的字段统一在这里补进正文：
-   * 景别/运镜、台词、表演（强度/动作/视线/说话）、台词表演、原生音频、参考图槽位、约束。
-   * 手改正文不经过这里，仍然逐字发送。
-   */
-  const dialogueLines = dialogue
-  const prompt = appendShotDirectives(basePrompt, [
-    shotMoveDirective(d),
-    nativeMode ? null : shotDialogueDirective(dialogueLines),
-    shotPerformanceDirective(d, dialogueLines),
-    nativeMode && nativeRef?.ok ? shotSoundDirective(nativeRef.character, dialogueLines, true) : null,
-    ...shotReferenceDirectives(refs, primaryVideo),
-    SHOT_CONSTRAINTS_DIRECTIVE,
-  ])
+  const prompt = vpTrim
 
   return {
     prompt,
@@ -596,7 +436,7 @@ export function buildShotVideoRequest(input: {
 export type EffectiveVideoPrompt = {
   text: string
   source: 'auto' | 'override'
-  autoKind?: 'semantic' | 'script' | 'template'
+  autoKind?: 'semantic' | 'template'
   stale: boolean
 }
 
@@ -615,7 +455,7 @@ export function effectiveVideoPrompt(
   return {
     text: request.prompt,
     source: 'auto',
-    autoKind: request.textSource === 'script_assembled' ? 'script' : 'semantic',
+    autoKind: 'semantic',
     stale: false,
   }
 }

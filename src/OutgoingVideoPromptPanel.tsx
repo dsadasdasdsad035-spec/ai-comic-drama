@@ -104,22 +104,18 @@ export default function OutgoingVideoPromptPanel({
       ? effective.stale
         ? 'warn'
         : 'manual'
-      : effective.autoKind === 'script'
-        ? 'script'
-        : effective.autoKind === 'template'
-          ? 'template'
-          : 'semantic'
+      : effective.autoKind === 'template'
+        ? 'template'
+        : 'semantic'
 
   const badgeLabel =
     effective.source === 'override'
       ? effective.stale
         ? '旧快照'
         : '已手改'
-      : effective.autoKind === 'script'
-        ? '脚本拼装'
-        : effective.autoKind === 'template'
-          ? '模板渲染'
-          : '语义层'
+      : effective.autoKind === 'template'
+        ? '模板渲染'
+        : '语义层'
 
   const needsAttention =
     Boolean(effective.stale || renderStale || templateStale) || blocking.length > 0
@@ -173,9 +169,7 @@ export default function OutgoingVideoPromptPanel({
               title={
                 effective.source === 'override'
                   ? '手改全文优先于自动拼装'
-                  : effective.autoKind === 'script'
-                    ? '当前正文由参考与镜表字段脚本拼装'
-                    : '当前正文来自镜表语义层'
+                  : '当前正文来自镜表语义层'
               }
             >
               {badgeLabel}

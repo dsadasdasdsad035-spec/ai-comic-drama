@@ -85,31 +85,15 @@ const bundleJson = lib.buildShotPromptRenderBundle({
 check('bundle kind=shot', bundleJson.kind === 'shot')
 check('bundle 含风格', bundleJson.video.visualStyle === '赛博')
 
-// ---- 语义层：运动提示词仍是正文首段，其余右侧字段补齐 ----
+// ---- 语义层：正文逐字等于 video_prompt，右侧字段一律不进正文 ----
 check('有运动提示词用语义层', req.textSource === 'video_prompt', req.textSource)
-check('正文以运动提示词开头', req.prompt.startsWith('镜头缓慢前推'), req.prompt.slice(0, 60))
-check('语义层补运镜段', req.prompt.includes('【运镜】') && req.prompt.includes('景别：中景'))
-check('语义层补镜头语言术语', /镜头语言：/.test(req.prompt), req.prompt)
-check('语义层补台词', req.prompt.includes('【台词】') && req.prompt.includes('别过来'))
-check(
-  '表演强度/动作/视线/说话进正文',
-  req.prompt.includes('【表演方向】') &&
-    req.prompt.includes('强度 4') &&
-    req.prompt.includes('后退半步') &&
-    req.prompt.includes('视线门口') &&
-    req.prompt.includes('本镜说话'),
-  req.prompt,
-)
-check(
-  '台词表演进正文',
-  req.prompt.includes('语速慢') && req.prompt.includes('压低') && req.prompt.includes('重音「走」'),
-  req.prompt,
-)
-check('参考图槽位注记', req.prompt.includes('[图1]=角色「陈默」外观'), req.prompt)
-check('正文带全局约束', req.prompt.includes('【约束】') && req.prompt.includes('无字幕'))
-check('每段只出现一次', count(req.prompt, '【运镜】') === 1 && count(req.prompt, '【参考】') === 0)
+check('正文逐字等于 video_prompt', req.prompt === '镜头缓慢前推', req.prompt)
+for (const mark of ['【运镜】', '【台词】', '【表演方向】', '声音：', '参考图：', '@视频1', '【约束】']) {
+  check(`正文不含 ${mark}`, !req.prompt.includes(mark), req.prompt)
+}
+check('参考图仍按连线提交', req.refs.length === 1 && req.refs[0].purpose === '人物外观', String(req.refs.length))
 
-// ---- 脚本层：双空时结构化拼装，且携带同样的字段 ----
+// ---- 空正文：阻断而非脚本拼装 ----
 const emptyPrompt = {
   ...shotData,
   videoPrompt: '',
@@ -128,33 +112,12 @@ const reqScript = lib.buildShotVideoRequest({
   nodes: scriptNodes,
   characters: [chen],
 })
-check('双空走脚本拼装', reqScript.textSource === 'script_assembled')
+check('空正文被 shot-prompt-empty 阻断', reqScript.blocking.some((b) => b.code === 'shot-prompt-empty'), JSON.stringify(reqScript.blocking.map((b) => b.code)))
+check('空正文请求正文为空', reqScript.prompt === '')
 check('忽略 video_prompt_rendered', !reqScript.prompt.includes('旧九段'))
-check('脚本含运镜段', reqScript.prompt.includes('【运镜】'))
-check(
-  '脚本含表演强度/视线/说话',
-  reqScript.prompt.includes('强度 4') && reqScript.prompt.includes('视线门口') && reqScript.prompt.includes('本镜说话'),
-  reqScript.prompt,
-)
-check('脚本含台词表演', reqScript.prompt.includes('语速慢') && reqScript.prompt.includes('重音「走」'))
-check('脚本含参考图槽位', reqScript.prompt.includes('[图1]=角色「陈默」外观'))
-check(
-  '请求与拼装一致',
-  reqScript.prompt ===
-    lib.shotAutoScriptPrompt({
-      data: emptyPrompt,
-      nodeId: 'n1',
-      nodes: scriptNodes,
-      characters: [chen],
-      style: '',
-      aspect: '16:9',
-      request: reqScript,
-    }),
-  reqScript.prompt.slice(0, 120),
-)
-check('面板 autoKind=script', lib.effectiveVideoPrompt(reqScript, undefined).autoKind === 'script')
+check('面板 autoKind=semantic', lib.effectiveVideoPrompt(reqScript, undefined).autoKind === 'semantic')
 
-// ---- 手改正文逐字发送，不追加任何自动段落 ----
+
 const manual = lib.effectiveVideoPrompt(reqScript, {
   text: '手写正文，不追加',
   fingerprint: reqScript.fingerprint,
@@ -162,9 +125,10 @@ const manual = lib.effectiveVideoPrompt(reqScript, {
 })
 check('手改逐字发送', manual.text === '手写正文，不追加' && manual.source === 'override')
 
-// ---- 参考视频：@视频1 与 @图像N 同时出现 ----
+// ---- 参考视频：只进槽位，不进正文 ----
 const videoData = {
   ...shotData,
+  videoPrompt: '雨夜追车，镜头推进',
   refIds: ['char-陈默', 'asset-v'],
 }
 const videoNodes = [
@@ -177,11 +141,12 @@ const reqVideo = lib.buildShotVideoRequest({
   nodes: videoNodes,
   characters: [chen],
 })
-check('参考视频进入正文', reqVideo.mode === 'video' && reqVideo.prompt.includes('@视频1'), reqVideo.prompt)
-check('有视频时图片用 @图像N', reqVideo.prompt.includes('@图像1=角色「陈默」外观'), reqVideo.prompt)
-check('视频范围约束只出现一次', count(reqVideo.prompt, '@视频1') === 1, String(count(reqVideo.prompt, '@视频1')))
+check('参考视频进入槽位', reqVideo.mode === 'video' && reqVideo.video?.label === '视频素材「运镜参照」')
+check('参考视频正文零改写', reqVideo.prompt === '雨夜追车，镜头推进', reqVideo.prompt)
+check('正文不出现 @视频1', !reqVideo.prompt.includes('@视频1'), reqVideo.prompt)
+check('参考图槽位仍是 1 起连续', reqVideo.refs.map((r) => r.index).join(',') === '1', String(reqVideo.refs.length))
 
-// ---- 原生音频：台词转成声音段，带音色参考 ----
+// ---- 原生音频：只影响槽位与模式，不写声音段 ----
 const nativeData = { ...shotData, audioMode: 'native' }
 const nativeNodes = [{ id: 'n1', data: nativeData }]
 const reqNative = lib.buildShotVideoRequest({
@@ -192,13 +157,8 @@ const reqNative = lib.buildShotVideoRequest({
   model: { key: 'v', model: 'seedance-2.5', providerKind: 'apimart', audioOut: true },
 })
 check('原生音频槽位', reqNative.mode === 'native' && reqNative.audio?.character === '陈默')
-check('原生音频声音段进正文', reqNative.prompt.includes('声音：') && reqNative.prompt.includes('陈默说：“别过来。”'), reqNative.prompt)
-check('原生音频不重复台词段', !reqNative.prompt.includes('【台词】'), reqNative.prompt)
-
-// ---- assembleShotPromptScript 结构 ----
-const scriptDirect = lib.assembleShotPromptScript(bundleJson)
-check('assembleShotPromptScript 非空', scriptDirect.length > 20)
-check('脚本含结构化段落', scriptDirect.includes('【画面】') || scriptDirect.includes('【运镜】'))
+check('原生音频不进正文', reqNative.prompt === '镜头缓慢前推', reqNative.prompt)
+check('正文不含声音段', !reqNative.prompt.includes('声音：'), reqNative.prompt)
 
 if (bad) {
   console.error(`\n${bad} 项失败`)

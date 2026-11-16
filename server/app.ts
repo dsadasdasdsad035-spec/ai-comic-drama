@@ -6204,13 +6204,14 @@ export function createAppHandler({ root }: { root: string }) {
               ? String(body.ratio)
               : '16:9'
             const resolution = body.resolution === '720p' ? '720p' : '480p'
-            const prompt = String(body.prompt || '').trim() || '镜头缓慢推进，环境细节自然流动，人物保持姿态'
+            // 正文由前端逐字提交：服务端不追加、不兜底，空正文直接拒绝
+            const prompt = String(body.prompt || '').trim()
+            if (!prompt) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, kind: 'bad-request', message: '提示词为空' }))
+              return
+            }
             const cameraFixed = Boolean(body.cameraFixed)
-            /** 直接调 API 的调用方可能没写 @视频1；补一句范围约束，避免白模风格被整段照搬 */
-            const videoRefScopeSuffix =
-              '参考 @视频1 的机位运动、人物走位与相对位置；只参考这些运动关系，不要照搬视频里的白模、网格、视锥、几何体材质与文字标签。'
-            const withVideoRefScope = (text: string, on: boolean) =>
-              on && !text.includes('@视频1') ? `${text}\n\n${videoRefScopeSuffix}` : text
 
             // 视频族解析：显式 key 在 video / videoRef 两族精确命中；视频参考必须由条目声明能力
             const wantKey = String(body.modelKey || '').trim()
@@ -6409,7 +6410,7 @@ export function createAppHandler({ root }: { root: string }) {
 
               let payload: Record<string, unknown>
               let nativeAudioUrl = ''
-              const finalPrompt = withVideoRefScope(prompt, effVideoRefMode)
+              const finalPrompt = prompt
               try {
                 if (generateAudio) nativeAudioUrl = await resolveApimartAudioRef(root, audioRefInput)
                 payload = buildApimartVideoPayload({
@@ -6594,8 +6595,7 @@ export function createAppHandler({ root }: { root: string }) {
               }
             }
 
-            // 直接调 API 的调用方可能没写 @视频1；服务端补一句范围约束，避免白模风格被整段照搬
-            const finalPrompt = withVideoRefScope(prompt, videoRefMode)
+            const finalPrompt = prompt
 
             let payload: Record<string, unknown>
             try {

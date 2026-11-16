@@ -40,7 +40,7 @@ check('多角色表演含强度/视线/说话与台词表演', () => {
   assert.ok(text.includes('重音「测试」'))
 })
 
-check('拼装顺序：表演在参考图之前', () => {
+check('正文逐字等于 video_prompt，不追加运镜/台词/表演/参考/约束段', () => {
   const char = {
     id: 'A',
     name: 'A',
@@ -55,9 +55,11 @@ check('拼装顺序：表演在参考图之前', () => {
     no: 'S01',
     seconds: 5,
     size: '中景',
-    move: '固定',
+    move: '推',
     dialogue: 'A：走。',
-    prompt: '运动描述',
+    prompt: '画面描述',
+    videoPrompt: '雨夜追车，镜头推进',
+    motionNote: '缓慢推近',
     marks: [],
     refImage: '/a.jpg',
     refIds: ['char-A'],
@@ -69,9 +71,36 @@ check('拼装顺序：表演在参考图之前', () => {
     nodes: [{ id: 'n1', type: 'shot', data, position: { x: 0, y: 0 } } as never],
     characters: [char as never],
   })
-  const perfIdx = req.prompt.indexOf('【表演方向】')
-  const refIdx = req.prompt.indexOf('参考图：')
-  assert.ok(perfIdx >= 0 && refIdx > perfIdx, req.prompt)
+  assert.equal(req.prompt, '雨夜追车，镜头推进', '必须逐字，不做 trim 之外的处理')
+  for (const mark of ['【运镜】', '【台词】', '【表演方向】', '声音：', '参考图：', '@视频1', '【约束】']) {
+    assert.ok(!req.prompt.includes(mark), `正文不应含 ${mark}：\n${req.prompt}`)
+  }
+  assert.equal(req.refs.length, 1, '参考图仍按连线提交，只是不再写进正文')
+})
+
+check('video_prompt 为空时阻断，不用首帧正文或硬编码顶替', () => {
+  const data = {
+    no: 'S01',
+    seconds: 5,
+    size: '中景',
+    move: '固定',
+    dialogue: '',
+    prompt: '首帧画面描述',
+    videoPrompt: '',
+    marks: [],
+    refImage: '/a.jpg',
+    refIds: [],
+  }
+  const req = buildShotVideoRequest({
+    data: data as never,
+    nodeId: 'n1',
+    nodes: [{ id: 'n1', type: 'shot', data, position: { x: 0, y: 0 } } as never],
+    characters: [],
+  })
+  assert.equal(req.prompt, '')
+  const empty = req.blocking.find((b) => b.code === 'shot-prompt-empty')
+  assert.ok(empty, '空正文必须有阻断项')
+  assert.equal(empty.level, 'error')
 })
 
 check('表演变更使手改快照过期', () => {

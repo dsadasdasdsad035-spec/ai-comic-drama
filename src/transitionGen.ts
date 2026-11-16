@@ -2,7 +2,6 @@ import { extractFrames, type ModelEntry } from './api'
 import { parseDialogue } from './prompts'
 import {
   audioRefCapabilitiesFor,
-  nativeAudioPrompt,
   nativeAudioRef,
 } from './nativeAudio'
 import type { CharacterSheet } from './characters'
@@ -22,8 +21,6 @@ import {
 import {
   type VideoAttachment,
   type VideoRequestIssue,
-  buildReferenceImagesPromptHint,
-  buildVideoReferencePromptHint,
   purposeOfShotReference,
 } from './videoPrompt'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT } from './videoRefLimits'
@@ -486,15 +483,6 @@ export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeTy
     (a ? `上一镜：${a}。` : '') +
     (b ? `下一镜：${b}。` : '')
   )
-}
-
-export function transitionSoundBlock(soundPrompt: string | undefined, nativeAudio?: boolean): string {
-  const t = String(soundPrompt || '').trim()
-  if (!t) return ''
-  const foot = nativeAudio
-    ? '（环境声可写在上述描述；对白音色由 Seedance 原生音频参考。）'
-    : '（未开启原生声音时环境声仅靠上述描述，成片旁白请用「效果」叠化保留。）'
-  return `\n\n声音：\n${t}\n${foot}`
 }
 
 /** 合并相邻两镜台词，供转场原生音频解析说话人 */
