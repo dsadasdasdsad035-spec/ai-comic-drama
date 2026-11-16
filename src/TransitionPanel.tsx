@@ -766,7 +766,7 @@ export default function TransitionPanel({
                         className="vp-toggle tr-continuity-toggle"
                         onClick={() => setContinuityOpen((v) => !v)}
                       >
-                        {continuityOpen ? '▾' : '▸'} 自动衔接约束（只读，已写入自动正文）
+                        {continuityOpen ? '▾' : '▸'} 自动衔接约束（只读，不参与发送）
                       </button>
                       {continuityOpen ? (
                         <pre className="vp-text tr-continuity-text">{preview.continuityPreview.trim()}</pre>

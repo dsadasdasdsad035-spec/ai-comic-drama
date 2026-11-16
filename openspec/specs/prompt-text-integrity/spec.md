@@ -1,19 +1,18 @@
-# Spec Delta
+# prompt-text-integrity Specification
 
 ## Purpose
-
 规定凡是会进入模型请求、落库提示词或工具回执的文本必须原样传递，任何字符截断都必须显式、可追溯，且不改变持久化内容，从而使「看到的正文」与「实际发送的正文」始终一致。
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: 提示词正文原样传递
 
-系统 MUST 把用户或 Agent 写入的提示词正文原样传入模型请求与落库字段，MUST NOT 施加固定字符数截断。派生正文（由镜头字段拼装、模板渲染或兜底生成）同样 MUST 使用来源字段的完整文本。
+系统 MUST 把用户或 Agent 写入的提示词正文原样传入模型请求与落库字段，MUST NOT 施加固定字符数截断。派生正文（由镜头字段拼装、模板渲染或预填建议）同样 MUST 使用来源字段的完整文本。
 
-#### Scenario: 兜底正文使用完整邻镜提示词
+#### Scenario: 预填建议使用完整邻镜提示词
 
-- **WHEN** 转场 `generated.prompt` 为空且相邻两镜的视频提示词各超过 90 字符
-- **THEN** 兜底正文包含两镜提示词的完整文本，MUST NOT 出现 `…` 省略号，MUST NOT 在字符中途截断
+- **WHEN** 用户点「用上下镜正文预填」且相邻两镜的视频提示词各超过 90 字符
+- **THEN** 预填正文包含两镜提示词的完整文本，MUST NOT 出现 `…` 省略号，MUST NOT 在字符中途截断
 
 #### Scenario: 模板渲染不切场景字段
 

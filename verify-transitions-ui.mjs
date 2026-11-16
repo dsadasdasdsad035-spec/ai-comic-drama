@@ -274,6 +274,15 @@ await page.locator('.tr-prompt-empty button', { hasText: '用上下镜正文预�
 await page.waitForTimeout(400)
 const prefilled = await page.locator('.tr-panel textarea.tr-prompt').first().inputValue()
 check('预填按钮写入可编辑正文', prefilled.trim().length > 20, prefilled.slice(0, 120))
+check(
+  '预填正文不含自动衔接段与结构锚点',
+  !prefilled.includes('衔接：') && !prefilled.includes('结构锚点'),
+  prefilled.slice(0, 200),
+)
+const contToggle = page.locator('.tr-continuity-toggle')
+if ((await contToggle.count()) > 0) {
+  check('衔接只读区标注「不参与发送」', (await contToggle.innerText()).includes('不参与发送'))
+}
 check('预填后空正文状态消失', (await page.locator('.tr-prompt-empty').count()) === 0)
 check('首尾帧默认未选', panel2.includes('首帧未选 · 尾帧未选'))
 check(

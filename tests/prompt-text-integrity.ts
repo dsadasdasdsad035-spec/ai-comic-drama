@@ -153,7 +153,7 @@ check('正文为空时语义层返回空串，不再静默兜底', () => {
   assert.equal(semanticTransitionVideoPrompt(a, b, undefined), '')
 })
 
-check('自动路径正文并入衔接块，手改正文逐字发送', () => {
+check('自动路径正文逐字等于手填正文，手改正文逐字发送', () => {
   const a = shot('S01', { videoPrompt: LONG_A, size: '特写', move: '推进' })
   const b = shot('S02', { videoPrompt: LONG_B, size: '近景', move: '横摇' })
   const continuity = transitionContinuityBlock(a, b)
@@ -166,9 +166,11 @@ check('自动路径正文并入衔接块，手改正文逐字发送', () => {
     model: { label: 'Seedance 2.5', model: 'seedance-2.5', providerKind: 'apimart' },
   })
   assert.equal(auto.promptSource, 'auto')
-  assert.ok(auto.prompt.includes('衔接：'), '自动路径正文应含衔接段')
-  assert.ok(auto.prompt.includes(LONG_A) && auto.prompt.includes(LONG_B))
-  assert.equal(auto.prompt.startsWith('桥接正文。'), true, '衔接段应在正文之后、结构锚点之前')
+  assert.equal(auto.prompt, '桥接正文。', '自动路径正文必须逐字等于手填正文')
+  assert.ok(!auto.prompt.includes('衔接：'), '正文不得含自动衔接段')
+  assert.ok(!auto.prompt.includes('结构锚点'), '正文不得含结构锚点段')
+  // 衔接信息只保留为只读参考
+  assert.equal(auto.continuityPreview.trim(), continuity.trim(), '衔接信息仍应作为只读参考提供')
 
   const overrideText = '手改：镜头缓慢下摇，水面反光平滑过渡到下一镜。'
   const override = buildTransitionVideoPreview({

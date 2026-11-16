@@ -476,7 +476,7 @@ export function transitionContinuityBlock(source: ShotNodeType, target: ShotNode
   return `\n\n衔接：\n${lines.join('\n')}`
 }
 
-/** 空正文时的预填建议：用两镜完整正文拼一段可继续编辑的中文过渡描述 */
+/** 预填建议：用两镜完整正文拼一段可继续编辑的中文过渡描述，仅在用户点「用上下镜正文预填」时写入 */
 export function defaultTransitionPrompt(source: ShotNodeType, target: ShotNodeType): string {
   const a = String(source.data.videoPrompt || source.data.prompt || '').trim()
   const b = String(target.data.videoPrompt || target.data.prompt || '').trim()
@@ -508,7 +508,7 @@ export function transitionDialogueText(source: ShotNodeType, target: ShotNodeTyp
 /**
  * 语义层桥接正文：只回 Agent/面板写入的正文。
  * 正文为空时返回空串——由调用方作为「未填写」状态处理，不再静默用兜底正文顶替。
- * 需要一段可继续编辑的建议文本时用 `defaultTransitionPrompt`（仅用于预填，不参与出片拼装）。
+ * 需要一段可继续编辑的建议文本时用 `defaultTransitionPrompt`（仅服务预填按钮）。
  */
 export function semanticTransitionVideoPrompt(
   _source: ShotNodeType,
@@ -708,36 +708,6 @@ const transitionWarn = (code: string, message: string): VideoRequestIssue => ({
   message,
   level: 'warn',
 })
-
-/** 首尾帧 / 关键帧在正文中的槽位说明（与分镜参考图 hint 同构） */
-function buildTransitionStructurePromptHint(attachments: TransitionVideoPreviewAttachment[]): string {
-  const parts: string[] = []
-  for (const a of attachments) {
-    if (!a.url) continue
-    const slot = a.role === 'first_frame' ? '首帧' : a.role === 'last_frame' ? '尾帧' : '关键帧'
-    parts.push(`[${slot}]=${a.label}`)
-  }
-  if (!parts.length) return ''
-  return `\n\n结构锚点：${parts.join('，')}。过渡片段须与首尾画面对齐。`
-}
-
-/** 自动拼装正文追加参考描述；手改正文不篡改（与分镜 effectiveVideoPrompt 一致） */
-function finalizeTransitionPromptText(
-  base: string,
-  source: 'auto' | 'override',
-  attachments: TransitionVideoPreviewAttachment[],
-  refs: VideoAttachment[],
-  video: VideoAttachment | null,
-  submitRefs: boolean,
-  continuity = '',
-): string {
-  if (source === 'override') return base
-  // 仅保留衔接块与结构锚点（首尾帧槽位）；参考图/视频映射交给模板渲染或语义正文，不再运行时拼接
-  void submitRefs
-  void refs
-  void video
-  return base + continuity + buildTransitionStructurePromptHint(attachments)
-}
 
 export type TransitionPromptPanelRefPrefix = {
   key: string
@@ -1092,17 +1062,8 @@ export function buildTransitionVideoPreview(input: {
 
   const continuityPreview = transitionContinuityBlock(input.source, input.target)
   const submittedStyleCount = styleRefs.filter((r) => r.submitted).length
-  const promptBody = effectivePrompt.text
-  const prompt = finalizeTransitionPromptText(
-    promptBody,
-    effectivePrompt.source,
-    attachments,
-    refs,
-    video,
-    submitStyle,
-    // 自动路径把衔接约束并入正文；手改正文整段逐字发送，不掺入任何自动段落
-    continuityPreview,
-  )
+  // 正文只来自人/Agent：逐字使用有效正文，运行时不再追加衔接约束或结构锚点
+  const prompt = effectivePrompt.text
 
   if (nativeMode) {
     if (!nativeRef?.ok) {
@@ -1187,19 +1148,19 @@ export function transitionRequestSeconds(
   return submitsLastFrame ? { seconds } : { seconds, trimTo: target }
 }
 
-/** 关键帧提示词：面板留空时用上一镜/下一镜的提示词兜底；边界帧由文案描述，不拼进参考图 */
+/**
+ * 关键帧提示词：只回手填/Agent 写入的正文。
+ * 当前无调用方（保留导出以免打断仓库外引用），后续可作为独立清理删除。
+ */
 export function keyframePrompt(
   source: ShotNodeType,
   target: ShotNodeType,
   generated: TransitionGenerated | undefined,
 ): string {
+  void source
+  void target
   const g = normalizeGenerated(generated)
-  const custom = g.prompt.trim()
-  if (custom) return custom
-  const base = defaultTransitionPrompt(source, target)
-  return (
-    `${base}\n单幅过渡画面，不要分屏或左右拼接；从上一镜结束态自然衔接到下一镜开始态。`
-  )
+  return g.prompt.trim()
 }
 
 /** 关键帧参考上限（Seedream 多图参考 10 张） */
