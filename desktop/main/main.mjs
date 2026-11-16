@@ -19,20 +19,16 @@ const APP_ROOT = app.isPackaged
 const RENDERER_DIR = path.join(import.meta.dirname, '..', 'renderer')
 
 /**
- * 打包版默认共用的线上账号服务。
+ * 「账号 + 钱包」的去向。
  *
- * 桌面端自带的那套账本（`<state>/data/billing.sqlite`）是单机的，用户在网页上充的
- * 积分在桌面端看不到。打包版因此默认把「账号 + 钱包」接口转给公网部署，做到同一账号
- * 同一份积分；开发态仍然用本地账本，避免 `npm run desktop:dev` 把本地调试数据写到线上。
+ * 桌面版默认一律使用自带的本机账本（`<state>/data/billing.sqlite`），构建产物不依赖
+ * 任何线上地址：即便离线、或公网服务下线，本地账号与积分也能正常工作。
  *
- * 覆盖方式：启动前设 `SB_BILLING_BASE=https://其他域名`，或设 `local` 强制回本地账本。
+ * 需要共用线上账号时才显式覆盖：启动前设 `SB_BILLING_BASE=https://域名`
+ * （`local` / 留空均表示继续用本地账本）。
  */
-const DEFAULT_BILLING_BASE = 'https://rechargeai.cn'
-
 function resolveBillingBase() {
-  const raw = String(process.env.SB_BILLING_BASE || '').trim()
-  if (raw) return raw
-  return app.isPackaged ? DEFAULT_BILLING_BASE : ''
+  return String(process.env.SB_BILLING_BASE || '').trim()
 }
 
 /**
@@ -300,7 +296,7 @@ async function ensureService() {
       env: {
         ...roots.env,
         ...bundledRuntimeEnv(APP_ROOT),
-        // 账号与钱包的去向：打包版默认线上共用，开发态默认本地账本
+        // 账号与钱包的去向：默认本地账本，只有显式设置环境变量才转线上
         SB_BILLING_BASE: resolveBillingBase(),
       },
       onExit: ({ code, signal }) => {

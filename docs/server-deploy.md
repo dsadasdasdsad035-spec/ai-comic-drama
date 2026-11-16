@@ -115,14 +115,15 @@ settings.creative.ingest = {
 
 分镜用户入口：`https://rechargeai.cn/`（Basic Auth，`PROXY_CONF=nginx.conf`，`PUBLIC_PORT=80` / `PUBLIC_TLS_PORT=443`）。虎皮椒回调同域 `/api/billing/xunhupay/notify`（免 Basic Auth）。
 
-## 桌面端共用线上账号
+## 桌面端共用线上账号（可选）
 
-桌面端默认自带一套单机账本（`<userData>/state/data/billing.sqlite`），和这里部署的账号体系互不相通。
-打包版通过 `SB_BILLING_BASE` 把「账号 + 钱包」转发到线上，做到同一账号、同一份积分：
+桌面端默认自带一套单机账本（`<userData>/state/data/billing.sqlite`），与这里部署的账号体系互不相通。
+**桌面版默认只走本地账本，构建产物不含任何线上地址**；需要同一账号、同一份积分时，才在启动前显式
+设置 `SB_BILLING_BASE`，由桌面端把「账号 + 钱包」转发到线上：
 
 | 变量 | 作用 |
 | --- | --- |
-| `SB_BILLING_BASE` | 线上地址，如 `https://rechargeai.cn`；留空或 `local` 表示用本机账本 |
+| `SB_BILLING_BASE` | 线上地址，如 `https://rechargeai.cn`；留空或 `local` 表示用本机账本（默认） |
 | `SB_BILLING_AUTH` | 可选 `user:pass`，转发时附带 Basic Auth（线上若已放开口令就不用填） |
 
 - 转发范围：`/api/auth/*`、`/api/billing/*`、计费模型接口（`/api/text`、`/api/seedream`、`/api/seedance`，含 `/recover` 子路径）；
@@ -131,8 +132,8 @@ settings.creative.ingest = {
   由本机进程回源下载并落盘，之后与本地产物完全一致（可导出、可保存到项目）。因此线上这三个目录
   的 nginx 段改成「口令或会话 Cookie 二选一」放行（`auth_request` → `/api/auth/session-check`），
   匿名请求仍是 401，页面依旧必须过口令。
-- `desktop/main/main.mjs`：打包版（`app.isPackaged`）默认 `SB_BILLING_BASE=https://rechargeai.cn`，
-  开发态默认留空，避免 `desktop:dev` 把调试数据写进线上账号；`SB_BILLING_BASE=local` 可强制回本地。
+- `desktop/main/main.mjs`：打包版与开发态一律默认本地账本（`SB_BILLING_BASE` 留空），
+  只有启动前显式设置 `SB_BILLING_BASE=https://域名` 才转线上；设 `local` 同样回到本地。
 - 线上 nginx 对 `/api/auth/`、`/api/billing/`、`/api/text`、`/api/seedream`、`/api/seedance` 免 Basic Auth
   （它们自身有会话校验）。`/api/settings` 仍必须过口令，否则会明文泄露渠道 Key。校验：
 
