@@ -80,6 +80,9 @@ async function main() {
       'generate_voice',
       'read_shot_detail',
       'read_shot_video_prompt',
+      // 出片输入读取：分镜与转场各一个，Agent 写正文靠它们拿有序参考
+      'read_shot_video_inputs',
+      'read_transition_video_inputs',
     ]) {
       assert.ok(have.has(name), `全能专家缺 ${name}`)
     }
