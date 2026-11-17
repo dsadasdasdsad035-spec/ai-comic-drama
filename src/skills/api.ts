@@ -28,6 +28,18 @@ export async function listSkillTexts(): Promise<SkillTextRecord[]> {
   return j.skills
 }
 
+/** 读技能包内单个文件；路径相对技能目录，由服务端做越界与大小校验 */
+export async function readSkillFile(
+  id: string,
+  path: string,
+): Promise<{ path: string; bytes: number; source: 'installed' | 'builtin'; text: string }> {
+  const q = new URLSearchParams({ path })
+  const res = await fetch(`/api/skills/${encodeURIComponent(id)}/files?${q.toString()}`)
+  const j = await readJson<{ path?: string; bytes?: number; source?: 'installed' | 'builtin'; text?: string }>(res)
+  if (typeof j.text !== 'string') throw new Error('文件响应缺少 text')
+  return { path: j.path || path, bytes: Number(j.bytes || 0), source: j.source || 'builtin', text: j.text }
+}
+
 export async function saveSkillOverride(id: string, body: string, baseVersion: number): Promise<SkillTextRecord> {
   const res = await fetch(`/api/skills/${encodeURIComponent(id)}`, {
     method: 'PUT',

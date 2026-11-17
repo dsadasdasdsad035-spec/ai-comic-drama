@@ -8,6 +8,7 @@ import { isMarketInstalledSkill } from './creativeSkillHost'
 import { isAgentPackSkill } from '../skills/agentPack'
 import type { Skill } from '../skills/types'
 import { expertHasAllSkills, type CreativeExpert } from './expertTypes'
+import { SKILL_READ_TOOL_NAMES } from '../skills/tools'
 import { expertToolNames } from './expertTools'
 import { expertUsesShotEpisodeTools } from './creativeToolParamGate'
 
@@ -26,9 +27,14 @@ export const CREATIVE_INSPECT_PROFILE: WorkbenchProfile = {
 export const CREATIVE_MATERIAL_HINT =
   '不确定项目里有哪些角色、场景、道具、素材卡或自定义白模时，先调用 read_asset_inventory 取得各分类计数与 key，再按需用 read_asset_detail 取单条；不要凭猜测的 id 引用物料。'
 
+/** 附件读取姿势：技能正文只讲规则，references 等文件必须按路径逐个读，不能猜内容 */
+export const CREATIVE_SKILL_FILE_HINT =
+  '技能正文里提到的 references/ / scripts/ / assets/ 文件不在 SKILL.md 里：list_installed_skills 返回的 files 是该包附件清单，按需用 read_skill_file(id, path) 逐个读取，不要假设文件内容，也不要把整个包一次性读完。'
+
 const CREATIVE_PLATFORM_LINES = [
-  '平台内置工具（read_* / submit_* / validate_contract / list_installed_skills / read_skill_text）始终可用；写项目前须已选顶栏项目。',
+  '平台内置工具（read_* / submit_* / validate_contract / list_installed_skills / read_skill_text / read_skill_file）始终可用；写项目前须已选顶栏项目。',
   CREATIVE_MATERIAL_HINT,
+  CREATIVE_SKILL_FILE_HINT,
   '扩展能力：设置 → MCP 勾选的 HTTP 工具。',
 ]
 
@@ -202,9 +208,7 @@ export function listCreativeToolNames(
       names.add(name)
     }
   }
-  names.add('read_skill')
-  names.add('read_skill_text')
-  names.add('list_installed_skills')
+  for (const n of SKILL_READ_TOOL_NAMES) names.add(n)
   names.add('list_experts')
   for (const n of builtinPlatformToolNames()) names.add(n)
   return [...names].sort()
@@ -241,11 +245,13 @@ export function buildExpertSystem(
   }
   // 专家未启用盘点工具时不提示，避免让它调用白名单外的工具
   const materialHint = expert.toolIds.includes('read_asset_inventory') ? CREATIVE_MATERIAL_HINT : ''
+  // 同理：没开 read_skill_file 的专家不提示读附件，否则等于教它调一个会被拒的工具
+  const skillFileHint = expert.toolIds.includes('read_skill_file') ? CREATIVE_SKILL_FILE_HINT : ''
   // 历史被卸载时说明重取入口，避免模型凭印象编造早期内容
   const compactHint = historyState?.historyCompacted
     ? '【历史提示】本会话早期读过的技能正文与项目数据已被卸载（只保留一行指针）。需要时用 read_skill_text / 对应 read_* 工具重新读取，不要凭印象作答。'
     : ''
-  const body = [soul, materialHint, compactHint].filter(Boolean).join('\n\n')
+  const body = [soul, materialHint, skillFileHint, compactHint].filter(Boolean).join('\n\n')
   return withWorkspaceContext(body, { projectName: ctx.projectName, epNo: ctx.epNo }, workspaceOpts)
 }
 

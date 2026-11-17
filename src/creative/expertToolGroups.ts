@@ -1,4 +1,5 @@
 /** 专家设置：平台工具分组（不含 list_experts） */
+import { SKILL_READ_TOOL_NAMES } from '../skills/tools'
 
 export const EXPERT_TOOL_GROUP_LABEL: Record<string, string> = {
   read: '读项目',
@@ -27,7 +28,7 @@ const READ = new Set([
   'get_camera_lexicon',
 ])
 
-const SKILL = new Set(['read_skill', 'read_skill_text', 'list_installed_skills'])
+const SKILL = new Set<string>(SKILL_READ_TOOL_NAMES)
 
 const WRITE = new Set([
   'validate_contract',
@@ -95,6 +96,7 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'get_camera_lexicon',
   'read_skill',
   'read_skill_text',
+  'read_skill_file',
   'list_installed_skills',
   'validate_contract',
   'submit_episodes',

@@ -40,6 +40,7 @@ const TESTS = [
   'tests/asset-cards.ts',
   'tests/canvas-layout-store.ts',
   'tests/prompt-text-integrity.ts',
+  'tests/skill-package-files.ts',
 ]
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-unit-'))
 let failed = 0

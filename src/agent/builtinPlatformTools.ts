@@ -975,6 +975,7 @@ const PLATFORM_READ_TOOL_NAMES = [
   'get_camera_lexicon',
   'read_skill',
   'read_skill_text',
+  'read_skill_file',
   'list_installed_skills',
   'list_experts',
 ]

@@ -16,6 +16,15 @@ import {
 
 export type SkillCatalogRow = { record: SkillTextRecord; skill?: Skill; error?: string }
 
+/** 附件大小展示：超过 10KB 用 KB，避免详情页出现长串字节数 */
+function formatBytes(bytes: number): string {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return '0 B'
+  if (n < 1024) return `${n} B`
+  if (n < 10 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${Math.round(n / 1024)} KB`
+}
+
 type Props = {
   row: SkillCatalogRow
   sourceLabel: string
@@ -45,8 +54,10 @@ export function SkillInstalledDetailDialog({
 }: Props) {
   const skill = row.skill
   const agentPack = skill && isAgentPackSkill(skill)
+  // Agent 包的详情没有可编辑分区（只有 SKILL.md 只读视图），保存按钮不能出现，
+  // 否则点下去提交的是用户看不到的 role/task 草稿
   const canSave =
-    Boolean(skill && edit) && row.record.source !== 'skillhub' && row.record.source !== 'upload'
+    Boolean(skill && edit) && !agentPack && row.record.source !== 'skillhub' && row.record.source !== 'upload'
   const canUninstall = row.record.source === 'skillhub' || row.record.source === 'upload'
   const canReset = row.record.source === 'override'
   const readOnly = row.record.source === 'skillhub' || row.record.source === 'upload'
@@ -74,6 +85,8 @@ export function SkillInstalledDetailDialog({
 
   const tools = skill?.manifest.tools?.length ?? 0
   const contracts = skill?.manifest.contracts?.length ?? 0
+  const attachments = row.record.attachments ?? []
+  const fileCount = row.record.fileCount ?? attachments.length
 
   return (
     <SkillDetailModal ariaLabel={`技能 ${row.record.id}`} onClose={onClose} dismissOnBackdrop={!busy}>
@@ -97,7 +110,7 @@ export function SkillInstalledDetailDialog({
               <SkillDetailStat label="运行时" value={skill.manifest.runtime} />
               <SkillDetailStat label="工具" value={tools} />
               <SkillDetailStat label="契约" value={contracts} />
-            </>
+              <SkillDetailStat label="包内文件" value={fileCount} />            </>
           ) : null
         }
       />
@@ -134,6 +147,26 @@ export function SkillInstalledDetailDialog({
             ) : (
               <p className="st-hint skill-detail-callout">保存后会写入用户覆盖层，不影响仓库内置副本。</p>
             )}
+
+            <SkillDetailPanel
+              title="包内文件"
+              hint={fileCount ? `${fileCount} 个附加文件 · Pi 用 read_skill_file 按需读取` : '无附加文件'}
+            >
+              {attachments.length ? (
+                <ul className="skill-detail-files" data-skill-attachments>
+                  {attachments.map((f) => (
+                    <li key={f.path}>
+                      <code>{f.path}</code>
+                      <span className="st-hint">{formatBytes(f.bytes)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="st-hint" data-skill-no-attachments>
+                  本包只有 SKILL.md，没有 references / scripts / assets。模型读到的正文若引用包内文件，会指向不存在的路径。
+                </p>
+              )}
+            </SkillDetailPanel>
           </>
         ) : null}
 

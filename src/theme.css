@@ -7228,6 +7228,39 @@ button:not(:disabled),
   gap: 8px;
 }
 
+/* 包内文件清单：路径可长，只换行不撑破弹窗 */
+.skill-detail-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skill-detail-files li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.skill-detail-files li:last-child {
+  border-bottom: none;
+}
+
+.skill-detail-files code {
+  font-size: var(--fs-sm);
+  word-break: break-all;
+}
+
+.skill-detail-files .st-hint {
+  flex: none;
+  white-space: nowrap;
+}
+
 .skill-detail-code,
 .skill-detail-editor {
   width: 100%;

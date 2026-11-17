@@ -1,3 +1,15 @@
+/**
+ * 技能读工具的唯一登记点：新增技能读工具只改这里。
+ *
+ * `SKILL_ID_READ_TOOLS` 按技能 id 读内容，受专家白名单约束；
+ * `SKILL_DIRECTORY_TOOLS` 只列目录，没有 id 可约束。
+ * 四处消费方（已知工具表 / 专家分组 / 白名单包装 / 会话工具名单）都引用这两个常量，
+ * 避免「注册了但专家模式用不了」这类漏改。
+ */
+export const SKILL_ID_READ_TOOLS = ['read_skill', 'read_skill_text', 'read_skill_file'] as const
+export const SKILL_DIRECTORY_TOOLS = ['list_installed_skills'] as const
+export const SKILL_READ_TOOL_NAMES = [...SKILL_ID_READ_TOOLS, ...SKILL_DIRECTORY_TOOLS]
+
 /** 技能文件可以引用的工具 id；真正的工具实现在阶段 2 注册。 */
 export const KNOWN_TOOL_IDS = new Set([
   'read_source',
@@ -37,6 +49,7 @@ export const KNOWN_TOOL_IDS = new Set([
   'list_dir',
   'read_skill',
   'read_skill_text',
+  'read_skill_file',
   'list_installed_skills',
   'list_experts',
   'validate_contract',

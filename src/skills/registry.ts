@@ -1,6 +1,6 @@
 import { listSkillTexts } from './api'
 import { buildSkillPrompt } from './render'
-import type { Skill, SkillInputs, SkillPrompt, SkillRenderMode, SkillTextRecord } from './types'
+import type { Skill, SkillAttachment, SkillInputs, SkillPrompt, SkillRenderMode, SkillTextRecord } from './types'
 import { parseSkillRecords, type SkillLoadIssue, type SkillLoadResult } from './validate'
 
 /** 仓库不再内置技能正文；一律从 /api/skills（磁盘安装 + SkillHub + 覆盖）加载。 */
@@ -60,8 +60,12 @@ export async function getSkill(id: string): Promise<Skill> {
   return skill
 }
 
-/** 任意已安装技能原文（含 Agent 包）；不要求 workbench 解析成功 */
-export async function getSkillTextRecord(id: string): Promise<SkillTextRecord> {
+/** 某技能的附件清单（来自 /api/skills，装载时已随 records 缓存）；未知 id 返回空数组 */
+export function skillAttachmentList(id: string): SkillAttachment[] {
+  return textById.get(id)?.attachments || []
+}
+
+/** 任意已安装技能原文（含 Agent 包）；不要求 workbench 解析成功 */export async function getSkillTextRecord(id: string): Promise<SkillTextRecord> {
   await loadSkills()
   const record = textById.get(id)
   if (!record) throw new Error(`技能「${id}」不存在`)

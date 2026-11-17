@@ -9,6 +9,12 @@ public/videos/
 public/voices/
 public/exports/
 
+# 市场安装 / 上传的技能包（可写状态根；dev 模式下回退仓库根）
+installed-skills/
+
+# 一次性数据迁移的备份（skill-package-files 变更，回滚用）
+skill-installs-backup-*.json
+
 # 密钥与本地配置
 .env
 .env.*

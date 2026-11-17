@@ -55,7 +55,14 @@ export type SkillTextRecord = {
   skillhub?: SkillHubMeta
   /** 安装时写入；旧记录可缺省并由装载期推断 */
   profile?: SkillProfile
+  /** 包内附加文件（不含 SKILL.md）；缺省视为无附件 */
+  attachments?: SkillAttachment[]
+  /** 附加文件数量，与 attachments 等长 */
+  fileCount?: number
 }
+
+/** 包内附加文件：相对路径 + 字节数 */
+export type SkillAttachment = { path: string; bytes: number }
 
 export type SkillParseIssue = {
   field: string

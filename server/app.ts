@@ -67,13 +67,17 @@ import {
 } from './project-lifecycle.mjs'
 import {
   MAX_SKILL_BYTES,
+  ensureInstalledSkillsDir,
+  listSkillAttachments,
   listSkillFiles,
   mergeSkillCatalog,
   readSkillFile,
+  readSkillSubFile,
   safeSkillId,
   splitSkillText,
   withBuiltinFrontmatter,
 } from './skills.mjs'
+import { removeInstalledSkill, writeInstalledSkill } from './skillStore.mjs'
 import { skillhubCategories, skillhubDetail, skillhubDownloadZip, skillhubHomepage, skillhubList } from './skillhub.mjs'
 import {
   creativeMcpServers,
@@ -85,7 +89,7 @@ import {
   getMcpServerWithSecret,
 } from './mcpStore.mjs'
 import { callMcpTool, listCreativeMcpToolDescriptors, parseMcpToolExternalName } from './mcpHttp.mjs'
-import { extractSkillMdFromZip, manifestNameFromSkillText } from './skillZip.mjs'
+import { manifestNameFromSkillText, parseSkillPackage } from './skillZip.mjs'
 import { classifySkillProfile } from '../src/skills/agentPack'
 import { parseSkillText } from '../src/skills/parse'
 /** 压缩包上传上限：7.4MB 的真实资料包留足余量，同时挡住误传大文件 */
@@ -2726,6 +2730,12 @@ export function runServerStartupTasks(root: string) {
   } catch {
     /* 清理失败不阻塞启动 */
   }
+  try {
+    // 安装根缺失即建：否则首次安装与并发读会互相等目录
+    ensureInstalledSkillsDir(root)
+  } catch {
+    /* 只读环境忽略；安装时会给出可读错误 */
+  }
 }
 
 /** 退出前释放渲染作业与草稿 */
@@ -3553,7 +3563,7 @@ export function createAppHandler({ root }: { root: string }) {
             if (!version) throw new Error('SkillHub 未返回可安装的版本')
 
             const zip = await skillhubDownloadZip(slug, ns, version)
-            const { text } = extractSkillMdFromZip(Buffer.from(zip))
+            const { text, files } = parseSkillPackage(Buffer.from(zip))
             const manifestName = manifestNameFromSkillText(text)
             if (manifestName) skillId = manifestName
             skillId = safeSkillId(skillId)
@@ -3562,8 +3572,10 @@ export function createAppHandler({ root }: { root: string }) {
             const existing = getSkillInstallBySource(ns, slug)
             if (existing && existing.id !== skillId) {
               deleteSkillInstall(existing.id)
+              removeInstalledSkill(root, existing.id)
             }
 
+            const written = writeInstalledSkill(root, skillId, files)
             const saved = upsertSkillInstall({
               id: skillId,
               provider: 'skillhub',
@@ -3576,6 +3588,10 @@ export function createAppHandler({ root }: { root: string }) {
                 name: String(detail.name || slug),
                 summary: String(detail.summary || ''),
                 profile,
+                dir: written.dir,
+                fileCount: written.fileCount,
+                totalBytes: written.totalBytes,
+                origin: 'skillhub',
               },
             })
             deleteSkillOverride(skillId)
@@ -3589,6 +3605,8 @@ export function createAppHandler({ root }: { root: string }) {
                   builtinText: saved!.text,
                   source: 'skillhub',
                   profile,
+                  attachments: listSkillAttachments(root, skillId),
+                  fileCount: listSkillAttachments(root, skillId).length,
                   skillhub: {
                     slug: saved!.slug,
                     namespace: saved!.namespace,
@@ -3611,7 +3629,15 @@ export function createAppHandler({ root }: { root: string }) {
           try {
             dbPath(resolveRoot(root))
             const id = safeSkillId(decodeURIComponent(url.slice('/api/skill-installs/'.length).replace(/\/+$/, '')))
-            if (!getSkillInstall(id)) throw new Error(`未安装技能「${id}」`)
+            if (!getSkillInstall(id)) {
+              // 内置技能不可卸载：文件随代码分发，删了会破坏仓库与安装包
+              const builtin = listSkillFiles(root).skills.some((s) => s.id === id)
+              throw new Error(
+                builtin ? `技能「${id}」是内置技能，不能卸载` : `未安装技能「${id}」`,
+              )
+            }
+            // 先删目录再删记录：目录删失败时记录还在，用户可重试
+            removeInstalledSkill(root, id)
             deleteSkillInstall(id)
             res.end(JSON.stringify({ ok: true }))
           } catch (e: any) {
@@ -3641,11 +3667,20 @@ export function createAppHandler({ root }: { root: string }) {
             if (!manifestName) throw new Error('SKILL.md 缺少 name')
             const skillId = safeSkillId(manifestName)
             const profile = classifySkillProfile(skillId, text, 'upload')
+            // 纯文本上传没有附件：落盘只有一个 SKILL.md，附件计数为 0
+            const written = writeInstalledSkill(root, skillId, [{ path: 'SKILL.md', data: Buffer.from(text, 'utf8') }])
             const saved = upsertSkillInstall({
               id: skillId,
               provider: 'upload',
               text,
-              meta: { name: manifestName, profile },
+              meta: {
+                name: manifestName,
+                profile,
+                dir: written.dir,
+                fileCount: written.fileCount,
+                totalBytes: written.totalBytes,
+                origin: 'upload-text',
+              },
             })
             deleteSkillOverride(skillId)
             res.end(
@@ -3658,6 +3693,8 @@ export function createAppHandler({ root }: { root: string }) {
                   builtinText: saved!.text,
                   source: 'upload',
                   profile,
+                  attachments: [],
+                  fileCount: 0,
                 },
               }),
             )
@@ -3673,16 +3710,26 @@ export function createAppHandler({ root }: { root: string }) {
           try {
             dbPath(resolveRoot(root))
             const buf = await readBody(req, 70 * 1024 * 1024)
-            const { text } = extractSkillMdFromZip(buf)
+            // 全量解压：references/scripts/assets 一起落盘，不再只挑 SKILL.md
+            const { text, files } = parseSkillPackage(buf)
             const manifestName = manifestNameFromSkillText(text)
             if (!manifestName) throw new Error('SKILL.md 缺少 name')
             const skillId = safeSkillId(manifestName)
             const profile = classifySkillProfile(skillId, text, 'upload')
+            // 校验全过才写盘：失败不会在 installed-skills/ 留下半份目录
+            const written = writeInstalledSkill(root, skillId, files)
             const saved = upsertSkillInstall({
               id: skillId,
               provider: 'upload',
               text,
-              meta: { name: manifestName, profile },
+              meta: {
+                name: manifestName,
+                profile,
+                dir: written.dir,
+                fileCount: written.fileCount,
+                totalBytes: written.totalBytes,
+                origin: 'upload-zip',
+              },
             })
             deleteSkillOverride(skillId)
             res.end(
@@ -3695,6 +3742,8 @@ export function createAppHandler({ root }: { root: string }) {
                   builtinText: saved!.text,
                   source: 'upload',
                   profile,
+                  attachments: listSkillAttachments(root, skillId),
+                  fileCount: listSkillAttachments(root, skillId).length,
                 },
               }),
             )
@@ -3713,11 +3762,42 @@ export function createAppHandler({ root }: { root: string }) {
             dbPath(rootDir)
             const tail = url.slice('/api/skills'.length).replace(/^\/+/, '')
 
+            // 包内单文件读取：GET /api/skills/<id>/files?path=references/guide.md
+            // 用子路径而不是查询串里的整个路径，是为了让 id 与文件路径各自可校验
+            const fileMatch = tail.match(/^([^/]+)\/files\/?$/)
+            if (fileMatch) {
+              if (req.method !== 'GET') {
+                res.statusCode = 405
+                res.end(JSON.stringify({ ok: false, message: '包内文件只支持 GET' }))
+                return
+              }
+              const fileId = safeSkillId(decodeURIComponent(fileMatch[1]))
+              const u = new URL(req.url || '/', 'http://local')
+              const rel = String(u.searchParams.get('path') || '')
+              try {
+                const got = readSkillSubFile(root, fileId, rel)
+                res.end(
+                  JSON.stringify({ ok: true, id: fileId, path: got.path, bytes: got.bytes, source: got.source, text: got.text }),
+                )
+              } catch (e: any) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+              }
+              return
+            }
+
             const overrides = listSkillOverrides()
             const installs = listSkillInstalls()
             const disk = listSkillFiles(root)
-            const diskById = new Map(disk.skills.map((s) => [s.id, s.text]))
+            const diskById = new Map(disk.skills.map((s) => [s.id, s]))
             const catalog = mergeSkillCatalog(disk.skills, installs)
+
+            /** 附件清单来自磁盘（逐文件合并安装与内置两个根）；安装记录只有正文，无附件 */
+            const attachmentsFor = (id: string) => {
+              const entry = diskById.get(id)
+              const list = entry?.attachments || []
+              return { attachments: list, fileCount: list.length }
+            }
 
             const asRecord = (entry: {
               id: string
@@ -3732,16 +3812,18 @@ export function createAppHandler({ root }: { root: string }) {
                   text: entry.text,
                   builtinText: entry.text,
                   source,
+                  ...attachmentsFor(entry.id),
                   ...(entry.skillhub ? { skillhub: entry.skillhub } : {}),
                 }
               }
-              const builtin = diskById.get(entry.id) || entry.text
+              const builtin = diskById.get(entry.id)?.text || entry.text
               const ov = overrides[entry.id]
               return {
                 id: entry.id,
                 text: ov ? withBuiltinFrontmatter(builtin, ov.body) : builtin,
                 builtinText: builtin,
                 source: ov ? 'override' : 'builtin',
+                ...attachmentsFor(entry.id),
                 ...(ov ? { baseVersion: ov.baseVersion, updatedAt: ov.updatedAt } : {}),
               }
             }

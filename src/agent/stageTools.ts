@@ -23,7 +23,8 @@ import {
   takeBatchByChars,
 } from '../skills/writePaging'
 import { isAgentPackSkill, parseAgentPackMeta } from '../skills/agentPack'
-import { getSkill, getSkillTextRecord, loadSkills } from '../skills/registry'
+import { getSkill, getSkillTextRecord, loadSkills, skillAttachmentList } from '../skills/registry'
+import { readSkillFile } from '../skills/api'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
 import {
   packFields,
@@ -1428,6 +1429,7 @@ function createReadSkillTool(): ToolDef {
 
 /** 技能列表行：描述原样输出，不按字符裁剪 */
 export function skillSummaryRow(s: Skill) {
+  const files = skillAttachmentList(s.id)
   return {
     id: s.id,
     name: s.manifest.name || s.id,
@@ -1437,6 +1439,9 @@ export function skillSummaryRow(s: Skill) {
     source: s.source,
     version: s.manifest.version,
     readWith: (s.profile || 'workbench') === 'agent-pack' ? 'read_skill_text' : 'read_skill',
+    /** 包内附加文件：非空时用 read_skill_file 按需读取，不要把全文当正文拼进上下文 */
+    files: files.map((f) => f.path),
+    fileCount: files.length,
   }
 }
 
@@ -1565,14 +1570,47 @@ function createReadSkillTextTool(): ToolDef {
   })
 }
 
+function createReadSkillFileTool(): ToolDef {
+  return defineTool({
+    name: 'read_skill_file',
+    description:
+      '读取技能包内的单个附件文件（references/、scripts/、assets/ 等相对路径）。先用 list_installed_skills 看该技能的 files 清单，再按需读一个文件；路径越界、文件不存在或超过单文件上限都会直接失败并说明原因。',
+    schema: z.object({
+      id: z.string().min(1).describe('技能 id，例如 short-drama-video-prompts'),
+      path: z.string().min(1).describe('包内相对路径，例如 references/video-prompt-guide.md'),
+    }),
+    run: async ({ id, path }) => {
+      try {
+        const sid = String(id).trim()
+        const rel = String(path || '').trim()
+        if (!sid) return { ok: false, error: '缺少技能 id' }
+        if (!rel) return { ok: false, error: '缺少文件路径' }
+        const got = await readSkillFile(sid, rel)
+        return {
+          ok: true,
+          id: sid,
+          path: got.path,
+          bytes: got.bytes,
+          source: got.source,
+          text: got.text,
+        }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || String(e) }
+      }
+    },
+  })
+}
+
 export function createPiNativeToolSet(): StageToolSet {
   const readSkill = createReadSkillTool()
   const readSkillText = createReadSkillTextTool()
+  const readSkillFile = createReadSkillFileTool()
   const listSkills = createListInstalledSkillsTool()
   const listExperts = createListExpertsTool()
   const byName = new Map<string, ToolDef>([
     [readSkill.name, readSkill],
     [readSkillText.name, readSkillText],
+    [readSkillFile.name, readSkillFile],
     [listSkills.name, listSkills],
     [listExperts.name, listExperts],
   ])
