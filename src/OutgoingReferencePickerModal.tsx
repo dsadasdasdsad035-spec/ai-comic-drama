@@ -29,6 +29,10 @@ export type OutgoingReferencePickerModalProps = {
   onClearBoundary: (side: 'out' | 'in') => void
   onExtractBoundary?: () => void
   extractBusy?: boolean
+  /** 抽取失败原因（阻断性提示，属于"没抽到"语义） */
+  extractError?: string
+  /** 抽取成功但边界帧接近黑场（非阻断提示，真帧照用） */
+  boundaryNotice?: string
   onFocusSourceShot?: () => void
   onFocusTargetShot?: () => void
   charItems: OutgoingRefPickItem[]
@@ -66,6 +70,8 @@ export default function OutgoingReferencePickerModal({
   onClearBoundary,
   onExtractBoundary,
   extractBusy,
+  extractError,
+  boundaryNotice,
   onFocusSourceShot,
   onFocusTargetShot,
   charItems,
@@ -175,7 +181,7 @@ export default function OutgoingReferencePickerModal({
           {tab === 'boundary' ? (
             <>
               <p className="orp-note">
-                首帧取<b>上一镜成片的最后一帧</b>，尾帧取<b>下一镜成片的第一帧</b>；点「抽取两镜成片帧」一次填好两侧，两帧都就绪才能生成。
+                首帧取<b>上镜成片解码输出的最后一帧</b>，尾帧取<b>下镜成片的第 0 帧</b>；点「抽取两镜成片帧」一次填好两侧，两帧都就绪才能生成。
               </p>
               {boundarySlots.map((slot) => (
                 <div key={slot.side} className="orp-slot" data-boundary-slot={slot.side}>
@@ -230,6 +236,10 @@ export default function OutgoingReferencePickerModal({
                   </button>
                 ) : null}
               </div>
+              {extractError ? <div className="gen-note vp-field-note">{extractError}</div> : null}
+              {boundaryNotice ? (
+                <div className="gen-note vp-field-note boundary-dim-note">{boundaryNotice}</div>
+              ) : null}
             </>
           ) : null}
 

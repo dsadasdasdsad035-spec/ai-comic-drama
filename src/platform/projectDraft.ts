@@ -66,6 +66,7 @@ export async function applyProjectDraft(
   contractId: string,
   payload: unknown,
   ctx: ProjectDraftCtx,
+  opts?: { partial?: boolean },
 ): Promise<DraftApplyResult> {
   const p = ctx.getSnapshot()
   if (!p) return { ok: false, summary: '', error: '未加载项目：请先在顶栏选择项目' }
@@ -73,10 +74,13 @@ export async function applyProjectDraft(
   const writePatch = ctx.writer?.patch ?? patchProject
   const writeShots = ctx.writer?.mergeShots ?? mergeProjectShots
   /**
-   * 契约写回都是「按当前快照重算出的全集」：缺席=被删是模型/合并的意图，
+   * 一次性写回都是「按当前快照重算出的全集」：缺席=被删是模型/合并的意图，
    * 因此显式声明 full，让服务端把缺席的旧镜头标成 orphan 而不是静默丢弃。
+   *
+   * 分批写回相反：一批只带一部分镜头，缺席的那些还在后续批次里，
+   * 必须走 partial，否则第一批就会把没提交的镜头判成删除。
    */
-  const FULL = { mode: 'full' as const }
+  const FULL = { mode: opts?.partial ? ('partial' as const) : ('full' as const) }
 
   if (contractId === 'script-v1') {
     // 按集号合并：本次没出现的集必须原样保留，否则一次改第 2 集会把整部剧本删成 1 集。

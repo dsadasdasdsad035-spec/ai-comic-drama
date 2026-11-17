@@ -3,6 +3,7 @@ import { parseDialogue } from './prompts'
 import {
   audioRefCapabilitiesFor,
   nativeAudioRef,
+  speakingNames,
 } from './nativeAudio'
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
@@ -58,25 +59,40 @@ export type TransitionRef = {
   source: 'character' | 'asset' | 'extra'
 }
 
-const frameCache = new Map<string, { start?: string; end?: string }>()
+/** 缓存里存原始 YAVG（不是布尔），阈值调整后不会命中旧判定 */
+const frameCache = new Map<string, { start?: string; end?: string; startYavg?: number; endYavg?: number }>()
 
-/** 尾帧用负时间表示距片尾秒数（/api/frames → ffmpeg -sseof），避免按 duration seek 落空。 */
+/**
+ * 尾帧用负时间表示「距片尾秒数」（/api/frames → ffmpeg -sseof）。
+ * 注意它只是解码窗口起点：服务端用 `-update 1` 解码到片尾，落盘的才是真末帧。
+ */
 const TAIL_FRAME_SSEOF_SEC = -0.1
 
+/** 近黑阈值，与服务端 `/api/frames` 的判黑阈值保持一致（约占 7% 亮度） */
+const DARK_FRAME_YAVG = 18
+
 /** 视频首帧/尾帧；同一 URL 只抽一次；只缓存首尾都成功的结果，避免尾帧失败后永久回退静帧。 */
-async function videoFrames(url: string): Promise<{ start?: string; end?: string }> {
+async function videoFrames(url: string): Promise<{ start?: string; end?: string; startYavg?: number; endYavg?: number }> {
   const hit = frameCache.get(url)
   if (hit?.start && hit?.end) return hit
   try {
     const first = await extractFrames(url, 2, undefined, [0])
+    const startYavg = first.stats?.[0]?.yavg
     let end: string | undefined
+    let endYavg: number | undefined
     try {
       const last = await extractFrames(url, 2, undefined, [TAIL_FRAME_SSEOF_SEC])
       end = last.urls[0]
+      endYavg = last.stats?.[0]?.yavg
     } catch {
       end = undefined
     }
-    const out = { start: first.urls[0], end }
+    const out = {
+      start: first.urls[0],
+      end,
+      ...(startYavg === undefined ? {} : { startYavg }),
+      ...(endYavg === undefined ? {} : { endYavg }),
+    }
     if (out.start && out.end) frameCache.set(url, out)
     return out
   } catch {
@@ -87,32 +103,46 @@ async function videoFrames(url: string): Promise<{ start?: string; end?: string 
 /**
  * 边界帧只从成片抽取：上一镜成片尾帧、下一镜成片首帧。
  * 没有成片或抽帧失败都留空并给 warning；不回退静帧。
+ * 抽取成功但该帧接近黑场时不进 warnings（那是失败语义），只进 notices：真帧照用，只提示参考价值有限。
  */
 export async function ensureTransitionBoundary(
   source: ShotNodeType,
   target: ShotNodeType,
-): Promise<{ boundary: TransitionBoundary; warnings: string[] }> {
+): Promise<{ boundary: TransitionBoundary; warnings: string[]; notices: string[] }> {
   const warnings: string[] = []
+  const notices: string[] = []
   let out: string | undefined
   let inn: string | undefined
 
   if (source.data.videoUrl) {
     const f = await videoFrames(String(source.data.videoUrl))
-    if (f.end) out = f.end
-    else warnings.push('上镜成片尾帧抽取失败，请重新抽取或检查成片')
+    if (f.end) {
+      out = f.end
+      if (f.endYavg !== undefined && f.endYavg < DARK_FRAME_YAVG) {
+        notices.push('上镜成片尾帧接近黑场，首帧锚点的连续性参考有限')
+      }
+    } else warnings.push('上镜成片尾帧抽取失败，请重新抽取或检查成片')
   } else {
-    warnings.push('上镜还没有成片，无法抽取首帧')
+    warnings.push('上镜还没有成片，无法抽取尾帧')
   }
 
   if (target.data.videoUrl) {
     const f = await videoFrames(String(target.data.videoUrl))
-    if (f.start) inn = f.start
-    else warnings.push('下镜成片首帧抽取失败，请重新抽取或检查成片')
+    if (f.start) {
+      inn = f.start
+      if (f.startYavg !== undefined && f.startYavg < DARK_FRAME_YAVG) {
+        notices.push('下镜成片首帧接近黑场，尾帧锚点的连续性参考有限')
+      }
+    } else warnings.push('下镜成片首帧抽取失败，请重新抽取或检查成片')
   } else {
-    warnings.push('下镜还没有成片，无法抽取尾帧')
+    warnings.push('下镜还没有成片，无法抽取首帧')
   }
 
-  return { boundary: { ...(out ? { out } : {}), ...(inn ? { in: inn } : {}) }, warnings }
+  return {
+    boundary: { ...(out ? { out } : {}), ...(inn ? { in: inn } : {}) },
+    warnings,
+    notices,
+  }
 }
 
 const isRefSource = (s: string) => s === 'character' || s === 'asset' || s === 'extra'
@@ -192,6 +222,133 @@ export function effectiveTransitionRefs(
     chosen.push(hit)
   }
   return chosen
+}
+
+/** 候选池里的一行：能选什么，以及它是否已被 `generated.refIds` 选中 */
+export type TransitionRefCandidateView = {
+  token: string
+  label: string
+  source: 'character' | 'asset' | 'extra'
+  url: string
+  submitted: boolean
+  /** 不可用原因（媒体文件缺失等）；可用时不出现 */
+  reason?: string
+}
+
+/**
+ * 转场参考候选池投影：候选与「已提交」必须取自同一份计算，
+ * 否则两次读取之间用户改了画布，模型就会按过期候选写 `[图N]`。
+ *
+ * 占位角色（`char-miss-*`）不可选；非图片素材卡已被 `transitionRefCandidates` 排除。
+ */
+export function transitionRefCandidateView(input: {
+  source: ShotNodeType
+  target: ShotNodeType
+  nodes: ShotNodeType[]
+  characters: CharacterSheet[]
+  missingMedia: Set<string>
+  generated: TransitionGenerated | undefined
+}): { candidates: TransitionRefCandidateView[]; summary: string } {
+  const pool = transitionRefCandidates(
+    input.source,
+    input.target,
+    input.nodes,
+    input.characters,
+    input.missingMedia,
+  ).filter((r) => isTransitionDedicatedRefToken(r.token))
+  const chosen = effectiveTransitionRefs(
+    input.source,
+    input.target,
+    input.nodes,
+    input.characters,
+    input.missingMedia,
+    input.generated,
+  )
+  const submittedTokens = new Set(chosen.map((r) => r.token))
+  const candidates = pool.map((r) => ({
+    token: r.token,
+    label: r.label,
+    source: r.source,
+    url: r.url,
+    submitted: submittedTokens.has(r.token),
+    ...(input.missingMedia.has(r.url) ? { reason: '媒体文件缺失，提交前需重新导入' } : {}),
+  }))
+  const submitted = candidates.filter((c) => c.submitted).length
+  return { candidates, summary: `候选 ${candidates.length} 项、已提交 ${submitted} 项` }
+}
+
+/**
+ * 原生音频就绪度：假设现在开启原生音频，回答「能不能开、开不了为什么、开了请求几秒」。
+ *
+ * 与面板同一处门禁（`audioRefCapabilitiesFor` + `nativeAudioRef`），不另写一套判断。
+ * 秒数门槛由 `transitionRequestSeconds` 自动抬升，所以这里给出的是抬升后的请求秒数，
+ * 而不是把一个系统本来就会自动解决的问题报成阻断。
+ */
+export function transitionNativeAudioReadiness(input: {
+  source: ShotNodeType
+  target: ShotNodeType
+  characters: CharacterSheet[]
+  model?: {
+    model?: string
+    providerKind?: string
+    features?: { audioOut?: boolean }
+  } | null
+  targetSeconds: number
+  submitsLastFrame: boolean
+}): {
+  caps: {
+    supported: boolean
+    minSeconds: number
+    maxSeconds: number
+    requestSeconds: number
+    reason?: string
+  }
+  sample: { character: string; seconds: number; stale: boolean } | null
+  reason?: string
+} {
+  const caps = audioRefCapabilitiesFor({
+    providerKind: input.model?.providerKind,
+    model: input.model?.model,
+    audioOut: input.model?.features?.audioOut,
+  })
+  const req = transitionRequestSeconds(
+    input.targetSeconds,
+    input.model?.model,
+    input.submitsLastFrame,
+    { nativeAudio: true, nativeAudioMinVideoSeconds: caps?.minVideoSeconds },
+  )
+  const dialogue = parseDialogue(transitionDialogueText(input.source, input.target))
+  const performance = [...(input.source.data.performance ?? []), ...(input.target.data.performance ?? [])]
+  const speakers = speakingNames(dialogue, performance)
+  const who = speakers[0]
+  const card = who ? input.characters.find((c) => c.name === who || c.id === who) : undefined
+  const resolved = caps?.supported
+    ? nativeAudioRef({
+        dialogue,
+        performance,
+        characters: input.characters,
+        caps,
+        seconds: req.seconds,
+      })
+    : null
+  return {
+    caps: {
+      supported: Boolean(caps?.supported),
+      minSeconds: caps?.minSeconds ?? 0,
+      maxSeconds: caps?.maxSeconds ?? 0,
+      requestSeconds: req.seconds,
+      ...(caps?.supported ? {} : { reason: '当前视频模型没有通过音频参考探测' }),
+    },
+    sample:
+      who && card?.voiceSample
+        ? {
+            character: who,
+            seconds: Number(card.voiceSample.seconds) || 0,
+            stale: Boolean(card.voiceSample.stale),
+          }
+        : null,
+    ...(!resolved ? {} : resolved.ok ? {} : { reason: resolved.reason }),
+  }
 }
 
 function collectInherited(
@@ -978,6 +1135,7 @@ export function buildTransitionVideoPreview(input: {
     label: r.label,
     purpose: purposeOfShotReference(r),
     source: r.source,
+    token: r.token,
   }))
   const primaryVideo = merge.videos[0]
   const video: VideoAttachment | null = primaryVideo
@@ -988,6 +1146,7 @@ export function buildTransitionVideoPreview(input: {
         label: primaryVideo.label,
         purpose: '运动/机位',
         source: 'asset',
+        token: primaryVideo.token,
       }
     : null
 

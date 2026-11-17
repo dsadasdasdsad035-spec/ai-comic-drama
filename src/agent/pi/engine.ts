@@ -16,6 +16,12 @@ import { DEFAULT_AGENT_LIMITS, type AgentEvent, type SceneAgentResult } from '..
 import { createPiEventBridge } from './events'
 import { toPiTools } from './toolAdapter'
 import { createPiStreamFn, toOpenAIFunctions } from './streamFn'
+import {
+  MAX_TEXT_CONTINUATIONS,
+  MAX_TOOL_CONTINUATIONS,
+  TEXT_CONTINUATION_NUDGE,
+  TOOL_CONTINUATION_NUDGE,
+} from './lengthContinuation'
 import { compactPiHistory } from './compact'
 import { gateAgentEvents } from '../agentEventGate'
 
@@ -119,6 +125,10 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
   // 512 步安全阀：模型只回文本时不会无限催促下去。
   let turns = 0
   const MAX_TURNS = 512
+  /** 长度上限续写：与 stageRunner 同一套规则，避免 3D 路径仍直接失败 */
+  let lastLengthKind: 'text' | 'tools' | null = null
+  let textContinuations = 0
+  let toolContinuations = 0
 
   const streamFn = createPiStreamFn({
     ask,
@@ -141,6 +151,9 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
         toolName: delta.name,
         delta: delta.delta,
       })
+    },
+    onLengthStop: (kind) => {
+      lastLengthKind = kind
     },
   })
 
@@ -183,6 +196,32 @@ export async function runSceneAgentPi(input: RunSceneAgentInput): Promise<SceneA
       if (session.finished || session.terminalError) return { action: 'end' }
       if (turns >= MAX_TURNS) return { action: 'end' }
       if (turn.message.stopReason === 'error' || turn.message.stopReason === 'aborted') return undefined
+
+      // 撞输出长度上限（整段 Blender Python 最容易）：保留已生成部分并续写，
+      // 而不是把它当成渠道失败。工具参数被截断时同样不为半截参数背书。
+      if (turn.message.stopReason === 'length') {
+        const kind = lastLengthKind || 'text'
+        lastLengthKind = null
+        const limit = kind === 'tools' ? MAX_TOOL_CONTINUATIONS : MAX_TEXT_CONTINUATIONS
+        const used = kind === 'tools' ? toolContinuations : textContinuations
+        if (used < limit) {
+          if (kind === 'tools') toolContinuations += 1
+          else textContinuations += 1
+          pendingNudge = kind === 'tools' ? TOOL_CONTINUATION_NUDGE : TEXT_CONTINUATION_NUDGE
+          emit({
+            type: 'custom',
+            name: 'continuation',
+            value: { attempt: used + 1, total: limit, reason: kind },
+          })
+          return { action: 'continue' }
+        }
+        session.terminalError =
+          kind === 'tools'
+            ? `模型输出连续 ${MAX_TOOL_CONTINUATIONS} 次达到长度上限，工具参数始终无法完整生成；已保留已提交代码，请缩小单次修改`
+            : `模型输出连续 ${MAX_TEXT_CONTINUATIONS} 次达到长度上限；已保留已提交代码，请把改动拆成更小的部分`
+        return { action: 'end' }
+      }
+
       // 试跑次数仅作审计；不因 maxCodeAttempts 提前结束，避免尚未修完就停（总时长与 MAX_TURNS 仍兜底）。
       if (
         session.reviewAttempts >= DEFAULT_AGENT_LIMITS.maxReviewAttempts &&

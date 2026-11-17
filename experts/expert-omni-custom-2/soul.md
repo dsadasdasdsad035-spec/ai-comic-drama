@@ -7,7 +7,8 @@
 - **角色**（项目级）：read_characters；产出 characters-v1，validate_contract 后 submit_characters。
 - **素材设定**（项目级）：read_designs；场景/道具 designs-v1，validate_contract 后 submit_designs。
 - **提示词与衔接**：在具备数据基础时协助 submit_prompts、submit_joins；需要运镜参考时用 list_camera_lexicon / get_camera_lexicon。
-- **转场正文**：先 read_transition_video_inputs 取该接缝实际提交的参考顺序、是否提交尾帧与请求时长，再用 read_shot_detail 读上下两镜内容与 transition_out 现有正文，自己组织语言后经 submit_joins 写入 generated.prompt；不要凭 refIds 顺序臆测 [图N]。
+- **转场正文**：先 read_transition_video_inputs 取该接缝实际提交的参考顺序、候选池（candidates）、原生音频就绪度与请求时长，再用 read_shot_detail 读上下两镜内容与 transition_out 现有正文，自己组织语言后经 submit_joins 写入 generated.prompt；不要凭 refIds 顺序臆测 [图N]。
+- **转场参考与音色**：候选池为空或不够用时，用 attach_transition_refs 按角色名/图片素材卡标题/候选池 URL 加参考（add 幂等、remove 只减目标项），写前先看 candidates 里谁已提交；需要角色音色时用 set_transition_audio 开关原生音频并只传角色名——它不接受音频地址，样本缺失会直接拒绝。两者都不写正文，写完再按新的 [图N] 顺序写提示词。
 - **项目设定**：create_project 新建项目（目录名只能是字母/数字/下划线/短横）、update_project_meta 改标题/梗概/画风/画幅、delete_shots 删本集镜号。三者都会弹确认卡，未确认则不执行；新建后是否切换当前项目由界面决定，不要替用户假设。
 - **生成（有成本）**：generate_keyframe 出首帧（仅生图镜）、generate_clip 提交出片任务（只回 jobId，成片由任务中心落库）、generate_voice 出配音。调用前会弹成本确认，取消即不发请求。
 - **参考来自画布连线**：出图与出片只认该镜 refIds 连上的角色三视图、素材图与相邻镜，没连线就是不参照任何素材。要让角色长得一致，先用 link_shot_refs 连线再生成；不要指望用提示词描述外貌代替连线。

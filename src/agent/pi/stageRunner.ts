@@ -9,6 +9,14 @@ import type { AgentEvent } from '../sceneAgentTypes'
 import type { ToolDef } from '../tool'
 import { createPiEventBridge } from './events'
 import { createPiStreamFn, toOpenAIFunctions } from './streamFn'
+import { applyHistoryBudget, AGGRESSIVE_HISTORY_BUDGET, type HistoryBudgetResult } from './budget'
+import {
+  lengthExhaustedMessage,
+  MAX_TEXT_CONTINUATIONS,
+  MAX_TOOL_CONTINUATIONS,
+  TEXT_CONTINUATION_NUDGE,
+  TOOL_CONTINUATION_NUDGE,
+} from './lengthContinuation'
 import { toPiTools } from './toolAdapter'
 import { gateAgentEvents } from '../agentEventGate'
 
@@ -41,6 +49,9 @@ export type RunStageAgentResult = {
   cancelled?: boolean
   steps: number
 }
+
+/** 长度上限续写次数上限：正文接着写，工具参数改用拆批策略 */
+
 
 function defaultAsk(): SceneCodeAsk {
   return (o) =>
@@ -80,6 +91,17 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
   const maxSteps = input.maxSteps == null ? 0 : Math.max(2, input.maxSteps)
   const ask = input.ask || defaultAsk()
 
+  /**
+   * 长度上限续写：每次续写仍是一次普通轮次，受总时长与步数安全阀约束。
+   * 正文续写与工具参数续写分开计数——工具参数被截断时模型需要换拆批策略，
+   * 而不是「接着往下写」。
+   */
+  let lastLengthKind: 'text' | 'tools' | null = null
+  let textContinuations = 0
+  let toolContinuations = 0
+  let lengthExhausted: 'text' | 'tools' | null = null
+  let pendingNudge: string | null = null
+
   const controller = new AbortController()
   const onExternalAbort = () => controller.abort()
   input.signal?.addEventListener('abort', onExternalAbort, { once: true })
@@ -101,6 +123,12 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
 
   // 上限只在显式要求时下发；不传就不带 max_tokens，由渠道决定。
   const maxTokens = input.maxTokens ?? runtime?.maxTokens
+  // 续写用尽后的错误要说明预算来源，避免用户以为「模型抽风」。
+  const tokenBudget = input.maxTokens
+    ? { maxTokens: input.maxTokens, source: 'configured' as const }
+    : runtime?.maxTokens
+      ? { maxTokens: runtime.maxTokens, source: 'stage-default' as const }
+      : { source: 'unset' as const }
   const streamFn = createPiStreamFn({
     ask,
     ...(input.modelKey ? { modelKey: input.modelKey } : {}),
@@ -116,6 +144,12 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
       if (controller.signal.aborted || !delta.id) return
       emit({ type: 'tool_call_args', toolCallId: delta.id, toolName: delta.name, delta: delta.delta })
     },
+    onLengthStop: (kind) => {
+      lastLengthKind = kind
+    },
+    onStreamError: (info) => {
+      lastStreamKind = info.kind || null
+    },
   })
 
   const usePiMemory = Array.isArray(input.priorMessages) && input.priorMessages.length > 0
@@ -129,9 +163,56 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
   let steps = 0
   let hitLimit = false
   let agent: Agent | undefined
+  /** 最近一次历史投影的规模统计（诊断与 system 一致性用） */
+  let lastBudget: HistoryBudgetResult | null = null
+  let lastBudgetSignature = ''
+  /** 渠道错误 kind：只有 context-overflow 值得压缩重跑 */
+  let lastStreamKind: string | null = null
+  /** 上下文超限只用激进预算重试一次，避免无限重跑 */
+  let aggressive = false
+  let overflowRetried = false
 
   agent = new Agent({
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    // 历史预算只作用于「送往模型的投影」：context.messages 仍是全量，
+    // 界面线程与落库内容不受影响（creative-thread-context 的现行要求）。
+    transformContext: async (messages) => {
+      // 重试时用激进预算：卸载更多、摘要更多，并丢掉上一轮失败的助手消息
+      // （它只带错误文案，留着只会继续抬高体积）。
+      const source = aggressive
+        ? messages.filter(
+            (m) =>
+              !(
+                (m as unknown as { role?: string }).role === 'assistant' &&
+                (m as unknown as { stopReason?: string }).stopReason === 'error'
+              ),
+          )
+        : messages
+      const projected = applyHistoryBudget(
+        source,
+        aggressive
+          ? { budget: AGGRESSIVE_HISTORY_BUDGET, keepRounds: 1 }
+          : undefined,
+      )
+      lastBudget = projected
+      if (projected.stubbed || projected.summarized) {
+        const signature = `${projected.stubbed}:${projected.summarized}`
+        if (signature !== lastBudgetSignature) {
+          lastBudgetSignature = signature
+          emit({
+            type: 'custom',
+            name: 'context_compaction',
+            value: {
+              stubbed: projected.stubbed,
+              summarized: projected.summarized,
+              charsBefore: projected.charsBefore,
+              charsAfter: projected.charsAfter,
+            },
+          })
+        }
+      }
+      return projected.messages
+    },
     initialState: {
       systemPrompt: input.system,
       ...(usePiMemory ? { messages: [...input.priorMessages!] } : {}),
@@ -160,6 +241,28 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
     },
     finishTurn: (turn) => {
       steps += 1
+
+      // 撞输出长度上限：保留已生成部分，注入推动消息继续，而不是以失败结束。
+      if (turn.message.stopReason === 'length') {
+        const kind = lastLengthKind || 'text'
+        lastLengthKind = null
+        const limit = kind === 'tools' ? MAX_TOOL_CONTINUATIONS : MAX_TEXT_CONTINUATIONS
+        const used = kind === 'tools' ? toolContinuations : textContinuations
+        if (used < limit) {
+          if (kind === 'tools') toolContinuations += 1
+          else textContinuations += 1
+          pendingNudge = kind === 'tools' ? TOOL_CONTINUATION_NUDGE : TEXT_CONTINUATION_NUDGE
+          emit({
+            type: 'custom',
+            name: 'continuation',
+            value: { attempt: used + 1, total: limit, reason: kind },
+          })
+          return { action: 'continue' }
+        }
+        lengthExhausted = kind
+        return { action: 'end' }
+      }
+
       // 没有工具调用 = 本轮自然结束；与升级前「工具循环结束即完成」一致。
       if (!hasToolCall(turn.message)) return undefined
       // 显式步数上限只是内部安全阀：超过即终止，退出后补发可读错误。
@@ -168,6 +271,12 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
         return { action: 'end' }
       }
       return undefined
+    },
+    prepareNextTurn: () => {
+      if (!pendingNudge) return undefined
+      const text = pendingNudge
+      pendingNudge = null
+      return { messages: [{ role: 'user', content: text, timestamp: Date.now() } as AgentMessage] }
     },
   })
 
@@ -187,14 +296,50 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
   })
   try {
     const images = input.images?.length ? input.images : undefined
-    const outcome = await Promise.race([agent.prompt(userText, images).then(() => 'done' as const), stopped])
-    if (outcome === 'stopped' || controller.signal.aborted) {
-      if (timedOut) error = timeoutMessage(input.totalMs ?? 180_000)
-      else cancelled = true
-    } else {
+    const runOnce = async () => {
+      const outcome = await Promise.race([agent.prompt(userText, images).then(() => 'done' as const), stopped])
+      if (outcome === 'stopped' || controller.signal.aborted) {
+        if (timedOut) error = timeoutMessage(input.totalMs ?? 180_000)
+        else cancelled = true
+        return
+      }
       // streamFn 按 pi 契约把渠道失败编码进消息而不是抛出；
       // 不在这里读出来，运行就会以「无错误」结束，错误被静默吞掉。
       error = lastStreamError(agent.state.messages)
+    }
+    await runOnce()
+
+    // 上下文超限：换激进预算的投影再跑一次，而不是让用户丢掉整段历史。
+    // 事件沿用同一 bridge，失败的助手消息在投影里被剔除，所以正文不会重复。
+    if (
+      !cancelled &&
+      !timedOut &&
+      lastStreamKind === 'context-overflow' &&
+      !overflowRetried
+    ) {
+      overflowRetried = true
+      aggressive = true
+      error = ''
+      emit({
+        type: 'custom',
+        name: 'context_compaction',
+        value: { reason: 'context-overflow', retry: 1, budget: AGGRESSIVE_HISTORY_BUDGET },
+      })
+      // pi 的 continue 要求末条不是 assistant；失败的那条只带错误文案，直接摘掉。
+      const msgs = agent.state.messages
+      if (msgs[msgs.length - 1]?.role === 'assistant') {
+        agent.state.messages = msgs.slice(0, -1)
+      }
+      const outcome = await Promise.race([agent.continue().then(() => 'done' as const), stopped])
+      if (outcome === 'stopped' || controller.signal.aborted) {
+        if (timedOut) error = timeoutMessage(input.totalMs ?? 180_000)
+        else cancelled = true
+      } else {
+        error = lastStreamError(agent.state.messages)
+        if (error && lastStreamKind === 'context-overflow') {
+          error = '上下文超限：已用压缩历史重试一次仍失败，建议新建会话（历史仍保留在侧栏）。'
+        }
+      }
     }
   } catch (e) {
     if (timedOut) error = timeoutMessage(input.totalMs ?? 180_000)
@@ -207,7 +352,9 @@ export async function runStageAgent(input: RunStageAgentInput): Promise<RunStage
   }
 
   if (cancelled) emit({ type: 'cancelled' })
-  if (!cancelled && !error && hitLimit) error = `工具循环达到 ${maxSteps} 步上限`
+    // 续写次数用尽：给出比「被截断」更具体的下一步，而不是停在笼统文案上。
+    if (lengthExhausted && !cancelled) error = lengthExhaustedMessage(lengthExhausted, tokenBudget)
+    if (!cancelled && !error && hitLimit) error = `工具循环达到 ${maxSteps} 步上限`
   if (error) emit({ type: 'error', message: error })
 
   return {

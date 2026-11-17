@@ -94,6 +94,14 @@ const LAST_FRAME_MODEL = {
   features: { lastFrame: true, textToVideo: true },
 }
 
+/** 原生音频探测只认 apimart + seedance 2.x + audioOut */
+const NATIVE_AUDIO_MODEL = {
+  label: 'Seedance 2.5 原生声音',
+  model: 'seedance-2.5',
+  providerKind: 'apimart',
+  features: { lastFrame: true, textToVideo: true, audioOut: true },
+}
+
 async function main() {
   // ---- 有序参考与提交模式 ----
   await check('read_transition_video_inputs 按提交顺序给出参考与尾帧互斥原因', async () => {
@@ -255,6 +263,105 @@ async function main() {
     assert.equal(res.supportsLastFrame, true, '不能因为没传 features 就说模型不支持尾帧')
     assert.equal(res.submitsLastFrame, true)
     assert.equal(res.modelLabel, 'Seedance 2.5')
+  })
+
+  // ---- 1.2 候选池投影 ----
+  await check('read_transition_video_inputs refIds 为空时仍回完整候选与计数摘要', async () => {
+    const { set } = makeSet()
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      ok: boolean
+      refs: unknown[]
+      candidates: { token: string; label: string; source: string; submitted: boolean }[]
+      candidateSummary: string
+    }
+    assert.equal(res.ok, true)
+    assert.equal(res.refs.length, 0, '没有显式选择时不应提交任何风格参考')
+    assert.equal(res.candidates.length, 4, `两镜手工 URL + 两角色外观 = 4，实际 ${res.candidates.length}`)
+    assert.equal(res.candidates.every((c) => c.submitted === false), true)
+    assert.match(res.candidateSummary, /候选 4 项/)
+    assert.match(res.candidateSummary, /已提交 0 项/)
+  })
+
+  await check('read_transition_video_inputs 候选与已提交取自同一份计算', async () => {
+    const shots = makeShots({ refIds: ['char-陈默'] })
+    const { set } = makeSet({ shots })
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      refs: { index: number; label: string }[]
+      candidates: { token: string; submitted: boolean }[]
+      candidateSummary: string
+    }
+    assert.equal(res.candidates.find((c) => c.token === 'char-陈默')?.submitted, true)
+    assert.equal(res.refs.length, 1)
+    assert.equal(res.refs[0].index, 1)
+    assert.match(res.candidateSummary, /已提交 1 项/)
+  })
+
+  // ---- 1.3 原生音频就绪度 ----
+  await check('read_transition_video_inputs 无台词时给出可读的音频就绪原因', async () => {
+    const { set } = makeSet({
+      shotVideoContext: () => ({ model: NATIVE_AUDIO_MODEL as never }),
+    })
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      audio: {
+        caps: { supported: boolean; minSeconds: number; maxSeconds: number; requestSeconds: number }
+        sample: unknown
+        readinessReason?: string
+      }
+    }
+    assert.equal(res.audio.caps.supported, true, 'Seedance 2.5 应通过音频能力探测')
+    assert.equal(res.audio.sample, null)
+    assert.match(String(res.audio.readinessReason), /没有台词/)
+  })
+
+  await check('read_transition_video_inputs 单说话人无样本时指向角色卡', async () => {
+    const shots = makeShots()
+    ;(shots[0] as Record<string, unknown>).dialogue = '陈默：走这边。'
+    const { set } = makeSet({
+      shots,
+      shotVideoContext: () => ({ model: NATIVE_AUDIO_MODEL as never }),
+    })
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      audio: { sample: unknown; readinessReason?: string }
+    }
+    assert.equal(res.audio.sample, null, '没有音色样本时不应伪造 sample')
+    assert.match(String(res.audio.readinessReason), /音色样本/)
+  })
+
+  await check('read_transition_video_inputs 多说话人时拒绝并给出拆镜建议', async () => {
+    const shots = makeShots()
+    ;(shots[0] as Record<string, unknown>).dialogue = '陈默：走这边。'
+    ;(shots[1] as Record<string, unknown>).dialogue = '林小满：等一下。'
+    const { set } = makeSet({
+      shots,
+      shotVideoContext: () => ({ model: NATIVE_AUDIO_MODEL as never }),
+    })
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      audio: { readinessReason?: string }
+    }
+    assert.match(String(res.audio.readinessReason), /单说话人/)
+  })
+
+  await check('read_transition_video_inputs 有样本时给出 sample 与抬升后的请求秒数', async () => {
+    const shots = makeShots()
+    ;(shots[0] as Record<string, unknown>).dialogue = '陈默：走这边。'
+    const { set } = makeSet({
+      shots,
+      characters: [
+        {
+          name: '陈默',
+          image: '/generated/chen.png',
+          voiceSample: { url: '/generated/chen.wav', text: '样本', seconds: 6, engine: 'e', voiceId: 'v', fingerprint: 'f' },
+        },
+        { name: '林小满', image: '/generated/lin.png' },
+      ],
+      shotVideoContext: () => ({ model: NATIVE_AUDIO_MODEL as never }),
+    })
+    const res = (await set.byName.get('read_transition_video_inputs')!.invoke({ after_no: 'S01', episode: 1 })) as {
+      audio: { sample: { character: string; seconds: number; stale: boolean } | null; readinessReason?: string; caps: { requestSeconds: number } }
+    }
+    assert.deepEqual(res.audio.sample, { character: '陈默', seconds: 6, stale: false })
+    assert.equal(res.audio.readinessReason, undefined, '样本齐全时不应有理由')
+    assert.ok(res.audio.caps.requestSeconds >= 5, '原生音频请求须抬到最小视频秒数 + 1')
   })
 
   // ---- 6.2 Pi 与画布两条路径读到同一份输入 ----

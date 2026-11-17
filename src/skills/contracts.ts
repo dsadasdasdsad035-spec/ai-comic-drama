@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SCENE_CODE_ABI } from '../sceneCodePrompt'
 import { ASPECT_OPTIONS } from '../project/aspect'
+import { pagingPlan } from './writePaging'
 
 export type ContractResult = { ok: true; value: unknown } | { ok: false; errors: string[] }
 
@@ -366,8 +367,19 @@ export const CONTRACT_WRITE_HINTS: Record<string, string> = {
     '按 designId 或「characterName + expression-sheet」去重合并，其次按「类型 + 标题」：已有的卡只更新、不新增；本次未提交的卡不会被删除。url 必须是当前项目里已存在的媒体地址。',
 }
 
+/**
+ * 分批写入的统一说明。挂进所有可分页写工具的提示里：
+ * 模型必须知道「一次太多」时的下一条指令，而不是把超限当成契约失败。
+ */
+export const PAGING_WRITE_HINT =
+  '可分批写入：单次提交超限时不要重试整段——带 limit（本批最多条数）提交前一批，' +
+  '用回执里的 nextCursor 作为下一次的 cursor 继续；未写完的部分留在宿主，不必重发。' +
+  '分批按业务键合并，未提交的条目不会被删除。'
+
 export function contractWriteHint(id: string): string {
-  return CONTRACT_WRITE_HINTS[id] || ''
+  const own = CONTRACT_WRITE_HINTS[id] || ''
+  if (!pagingPlan(id)) return own
+  return own ? `${own}\n${PAGING_WRITE_HINT}` : PAGING_WRITE_HINT
 }
 
 /** 给工具参数复用同一份输出 schema，避免提示词形状与工具校验两套。 */
@@ -375,10 +387,38 @@ export function getContractSchema(id: string): z.ZodType | undefined {
   return REGISTRY[id]?.schema
 }
 
+/**
+ * 分页字段：只在工具声明里出现（可选），执行前由 stageTools 剥离。
+ * 说明写全，模型才知道「什么时候该用它」而不是把它当业务字段。
+ */
+const PAGING_FIELDS = {
+  cursor: z
+    .string()
+    .optional()
+    .describe('上一批回执里的 nextCursor；第一批不要传。只能使用宿主签发的值。'),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .describe('本批最多写入的条数；省略时用该契约的默认单批条数。'),
+}
+
 /** 发给模型的 tool 参数 schema；校验仍用 getContractSchema + validateContract。 */
 export function getContractToolSchema(id: string): z.ZodType | undefined {
-  if (id === 'characters-v1') return charactersV1ToolDeclaration
-  return getContractSchema(id)
+  const base = id === 'characters-v1' ? charactersV1ToolDeclaration : getContractSchema(id)
+  if (!base) return undefined
+  // 分批写入的分页字段只加在「声明层」：契约 schema 本体不动，
+  // 否则校验会把 cursor/limit 当成业务字段，历史载荷也会被污染。
+  const plan = pagingPlan(id)
+  if (!plan) return base
+  if (!(base instanceof z.ZodObject)) return base
+  const shape = base.shape as Record<string, z.ZodType>
+  const paged: Record<string, z.ZodType> = { ...PAGING_FIELDS }
+  // 带游标时可以只传游标：本批条目由宿主按上一批留下的剩余部分续上。
+  if (shape[plan.key]) paged[plan.key] = shape[plan.key].optional()
+  return base.extend(paged)
 }
 
 /** 契约校验前：裸数组 → `{ characters: [...] }`。 */

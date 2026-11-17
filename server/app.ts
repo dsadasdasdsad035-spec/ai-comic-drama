@@ -387,6 +387,10 @@ const CAP_VALUES: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 
 type Stage = 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
 const STAGES: Stage[] = ['character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
 
+/** 输出上限可配置的环节：创意会话有预算，但不做模型绑定 */
+type BudgetStage = Stage | 'creative'
+const BUDGET_STAGES: BudgetStage[] = [...STAGES, 'creative']
+
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'apimart' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
 
@@ -456,6 +460,8 @@ type AppSettings = {
   defaults: Partial<Record<Cap, string>>
   /** 每个生成环节的默认模型键；空 = 沿用 defaults.text */
   stageModels?: Partial<Record<Stage, string>>
+  /** 每个环节的输出上限（tokens）；未配置 = 不带 max_tokens，交给渠道默认 */
+  stageMaxTokens?: Partial<Record<BudgetStage, number>>
   pricing?: Pricing
   /** 3D agent 的运行上限；缺省使用默认值 */
   agentLimits?: AgentLimitSettings
@@ -490,6 +496,18 @@ function normalizeStageModels(raw: unknown): Partial<Record<Stage, string>> {
   for (const stage of STAGES) {
     const value = (raw as Record<string, unknown>)[stage]
     if (typeof value === 'string' && value.trim()) out[stage] = value.trim()
+  }
+  return out
+}
+
+/** 环节输出上限：只收正整数；非法值直接丢掉（等于回到「渠道默认」） */
+function normalizeStageMaxTokens(raw: unknown): Partial<Record<BudgetStage, number>> {
+  const out: Partial<Record<BudgetStage, number>> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const stage of BUDGET_STAGES) {
+    const value = Number((raw as Record<string, unknown>)[stage])
+    if (!Number.isFinite(value) || value < 1 || value > 200_000) continue
+    out[stage] = Math.floor(value)
   }
   return out
 }
@@ -990,6 +1008,7 @@ function normalizeSettings(raw: any): AppSettings {
         models,
         defaults: { ...DEFAULT_DEFAULTS, ...(raw.defaults || {}) },
         stageModels: normalizeStageModels(raw.stageModels),
+        stageMaxTokens: normalizeStageMaxTokens(raw.stageMaxTokens),
         pricing: raw.pricing || {},
         agentLimits: normalizeAgentLimits(raw.agentLimits),
         agentHostMode: normalizeAgentHostMode(raw.agentHostMode),
@@ -1021,6 +1040,7 @@ function normalizeSettings(raw: any): AppSettings {
     models,
     defaults: { ...DEFAULT_DEFAULTS },
     stageModels: {},
+    stageMaxTokens: normalizeStageMaxTokens(raw?.stageMaxTokens),
     pricing: {},
     agentLimits: normalizeAgentLimits(undefined),
     agentHostMode: 'full_host',
@@ -1096,6 +1116,11 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
       patch.stageModels !== undefined
         ? normalizeStageModels(patch.stageModels)
         : normalizeStageModels(cur.stageModels),
+    // 输出上限同样整体替换：设置页清空某个环节就回到「渠道默认」
+    stageMaxTokens:
+      patch.stageMaxTokens !== undefined
+        ? normalizeStageMaxTokens(patch.stageMaxTokens)
+        : normalizeStageMaxTokens(cur.stageMaxTokens),
     pricing: { ...(cur.pricing || {}), ...(patch.pricing || {}) },
     agentLimits: normalizeAgentLimits({ ...(cur.agentLimits || {}), ...(patch.agentLimits || {}) }),
     agentHostMode:
@@ -2176,6 +2201,45 @@ async function synthesizeSay(
 }
 
 /** 读媒体真实时长，失败返回 0 */
+/** 近黑判定阈值：YAVG 低于此值（约 7% 亮度）视为黑场，用于边界帧提示 */
+const DARK_FRAME_YAVG = 18
+
+/**
+ * 单帧平均亮度（YAVG，0–255）。
+ * 抽帧本身已经成功才调用；探测失败只返回 undefined，不让整次抽帧失败。
+ */
+async function frameLuma(file: string): Promise<number | undefined> {
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      execFile(
+        ffProbe(),
+        [
+          '-v',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          `movie=${file},signalstats`,
+          '-show_entries',
+          'frame_tags=lavfi.signalstats.YAVG',
+          '-of',
+          'default=nw=1:nk=1',
+        ],
+        { timeout: 15000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      )
+    })
+    const first = String(out)
+      .split('\n')
+      .map((s) => s.trim())
+      .find(Boolean)
+    const n = Number(first)
+    return Number.isFinite(n) ? n : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function probeDuration(file: string): Promise<number> {
   try {
     const out = await new Promise<string>((resolve, reject) => {
@@ -5312,13 +5376,18 @@ export function createAppHandler({ root }: { root: string }) {
             fs.mkdirSync(dir, { recursive: true })
             const urls: string[] = []
             const usedTimes: number[] = []
+            const stats: { yavg?: number; dark: boolean }[] = []
             for (const [i, t] of times.entries()) {
               const tn = Number(t) || 0
               const name = `sched-${Date.now()}-${i}-${crypto.randomBytes(2).toString('hex')}.jpg`
               const out = path.join(dir, name)
+              // 负时间表示「距片尾秒数」：-sseof 只决定解码窗口起点，
+              // 真正取到末帧靠 -update 1 —— 从窗口起点解码到片尾，
+              // 每帧覆盖写同一个文件，留在磁盘上的必然是解码输出的最后一帧。
+              // 不能用 -frames:v 1（会在窗口起点就停，退回倒数第 1~3 帧）。
               const args =
                 tn < 0
-                  ? ['-y', '-sseof', String(tn), '-i', local, '-frames:v', '1', '-q:v', '2', out]
+                  ? ['-y', '-sseof', String(tn), '-i', local, '-update', '1', '-q:v', '2', out]
                   : (() => {
                       const safeT = Math.max(0, Math.min(tn, Math.max(0, (dur || 3) - 0.05)))
                       return ['-y', '-ss', String(safeT), '-i', local, '-frames:v', '1', '-q:v', '2', out]
@@ -5328,13 +5397,23 @@ export function createAppHandler({ root }: { root: string }) {
                 if (fs.existsSync(out) && fs.statSync(out).size > 512) {
                   urls.push(`/generated/${name}`)
                   usedTimes.push(Math.round(tn * 100) / 100)
+                  const yavg = await frameLuma(out)
+                  stats.push({ ...(yavg === undefined ? {} : { yavg }), dark: yavg !== undefined && yavg < DARK_FRAME_YAVG })
                 }
               } catch {
                 /* 时间点可能落在最后一帧之后；跳过这一帧，别让整次抽帧失败 */
               }
             }
             if (urls.length === 0) throw new Error('抽帧失败')
-            res.end(JSON.stringify({ ok: true, urls, duration: Math.round(dur * 100) / 100, times: usedTimes }))
+            res.end(
+              JSON.stringify({
+                ok: true,
+                urls,
+                duration: Math.round(dur * 100) / 100,
+                times: usedTimes,
+                stats,
+              }),
+            )
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e), urls: [] }))

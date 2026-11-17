@@ -49,6 +49,23 @@ export type OutgoingVideoPromptPanelProps = {
   defaultRefsOpen?: boolean
   /** 正文实际提交的视频模型与参数 */
   submitTarget?: VideoSubmitTarget
+  /** 本轮由 Agent 写入的参考 token：命中的条目显示 Agent 标记 */
+  agentTokens?: string[]
+}
+
+/** 参考来源标签：让用户一眼看出这张图是角色外观、素材卡还是手填地址 */
+const REF_SOURCE_LABEL: Record<string, string> = {
+  character: '角色',
+  asset: '素材',
+  extra: '手工 URL',
+  adjacent: '相邻镜',
+  expression: '表情',
+  lexicon: '运镜',
+}
+
+export function refSourceLabel(source?: string): string {
+  if (!source) return ''
+  return REF_SOURCE_LABEL[source] ?? source
 }
 
 /**
@@ -76,6 +93,7 @@ export default function OutgoingVideoPromptPanel({
   advancedSlot,
   defaultRefsOpen = false,
   submitTarget,
+  agentTokens = [],
 }: OutgoingVideoPromptPanelProps) {
   const [open, setOpen] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -136,6 +154,7 @@ export default function OutgoingVideoPromptPanel({
 
   // 附件与槽位默认收起：展开时正文优先，避免一屏被参考清单占满
   const [refsOpen, setRefsOpen] = useState(defaultRefsOpen)
+  const agentSet = new Set(agentTokens)
   // 提示合并成一行入口，逐条内容按需展开
   const [warnsOpen, setWarnsOpen] = useState(false)
 
@@ -224,13 +243,20 @@ export default function OutgoingVideoPromptPanel({
             ))}
             {refs.map((r) => (
               <li key={`${r.slot}-${r.index}-${r.url}`}>
+                <img className="vp-ref-thumb" src={r.url} alt="" loading="lazy" />
                 <b>图{r.index}</b> {r.label}
+                {refSourceLabel(r.source) ? (
+                  <em className="vp-ref-src">{refSourceLabel(r.source)}</em>
+                ) : null}
+                {r.token && agentSet.has(r.token) ? <em className="vp-ref-agent">Agent</em> : null}
                 <span>{r.purpose}</span>
               </li>
             ))}
             {video ? (
               <li>
                 <b>视频1</b> {video.label}
+                <em className="vp-ref-src">{refSourceLabel(video.source)}</em>
+                {video.token && agentSet.has(video.token) ? <em className="vp-ref-agent">Agent</em> : null}
                 <span>{video.purpose}</span>
               </li>
             ) : null}

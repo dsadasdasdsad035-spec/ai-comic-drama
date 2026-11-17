@@ -141,6 +141,9 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
             ? `第 ${part.turn} 轮 · 模型调用失败${part.text ? `：${part.text}` : ''}`
             : `第 ${part.turn} 轮 · ${part.text ? `模型说明：${part.text}` : '模型调用完成'}`
       content.push({ type: 'text', text })
+    } else if (part.type === 'notice') {
+      // 续写/压缩提示用引用块，和助手正文区分开，重开线程仍在
+      content.push({ type: 'text', text: `> ${part.text}` })
     } else if (part.type === 'context') {
       content.push({ type: 'data', name: 'agent-context', data: part })
     } else if (part.type === 'draft') {

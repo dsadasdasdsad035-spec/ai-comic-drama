@@ -144,7 +144,11 @@ const streamError = async () => {
 console.log('\n=== 服务端：上下文超限 ===')
 const overflowEvent = await streamError()
 check('error 事件带 kind=context-overflow', overflowEvent?.kind === 'context-overflow', JSON.stringify(overflowEvent))
-check('服务端直接给可操作说明', String(overflowEvent?.message || '').includes('建议新建会话'))
+check(
+  '服务端仍带可操作说明（客户端按 kind 自救，文案只作兜底）',
+  String(overflowEvent?.message || '').includes('建议新建会话'),
+  String(overflowEvent?.message || ''),
+)
 
 console.log('\n=== 服务端：普通 500 不被改写 ===')
 upstreamMode = 'boom'
@@ -194,6 +198,80 @@ try {
 }
 check('普通错误原样抛出', clientPlain?.message === 'OvfProbe 500: internal upstream failure', String(clientPlain?.message || ''))
 check('普通错误没有 kind', !clientPlain?.kind)
+
+// ---- 运行时：首次超限自动压缩重跑一次 ----
+console.log('\n=== 运行时：压缩重试 ===')
+const runnerEntry = path.join(TMP, 'runner-entry.ts')
+fs.writeFileSync(runnerEntry, `export * from ${JSON.stringify(path.join(ROOT, 'src/agent/pi/stageRunner.ts'))}\n`)
+const runnerOut = await build({
+  entryPoints: [runnerEntry],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  write: false,
+  logLevel: 'error',
+})
+const runner = await import(
+  'data:text/javascript;base64,' + Buffer.from(runnerOut.outputFiles[0].text).toString('base64')
+)
+
+const overflowError = () => {
+  const e = new Error('本次会话上下文已满，建议新建会话（历史仍保留在侧栏）。')
+  e.kind = 'context-overflow'
+  return e
+}
+
+// 两条都失败：提示必须说明已尝试压缩，而不是只说「新建会话」
+{
+  const events = []
+  const seen = []
+  let calls = 0
+  const result = await runner.runStageAgent({
+    userText: '继续',
+    system: 'sys',
+    tools: [],
+    stage: 'creative',
+    priorMessages: [{ role: 'user', content: '历史' }],
+    ask: async (o) => {
+      calls += 1
+      seen.push((o.messages || []).length)
+      throw overflowError()
+    },
+    onEvent: (e) => events.push(e),
+  })
+  const compaction = events.filter((e) => e.type === 'custom' && e.name === 'context_compaction')
+  check('超限后只重试一次', calls === 2, `ask 调用 ${calls} 次`)
+  check('重试使用压缩后的投影', seen[1] <= seen[0], JSON.stringify(seen))
+  check('压缩提示可见', compaction.some((e) => e.value?.reason === 'context-overflow'), JSON.stringify(compaction))
+  check('两次都失败时说明已压缩重试', /已用压缩历史重试一次仍失败/.test(String(result.error || '')), String(result.error || ''))
+}
+
+// 首次超限、第二次成功：本轮应正常完成，且不重复正文
+{
+  const events = []
+  let calls = 0
+  const result = await runner.runStageAgent({
+    userText: '继续',
+    system: 'sys',
+    tools: [],
+    stage: 'creative',
+    priorMessages: [{ role: 'user', content: '历史' }],
+    ask: async (o) => {
+      calls += 1
+      if (calls === 1) throw overflowError()
+      o.onTextDelta?.('压缩后继续写')
+      return { text: '压缩后继续写', finishReason: 'stop' }
+    },
+    onEvent: (e) => events.push(e),
+  })
+  const text = events
+    .filter((e) => e.type === 'text_message_content')
+    .map((e) => e.delta)
+    .join('')
+  check('压缩重试后本轮完成', !result.error && calls === 2, JSON.stringify({ error: result.error, calls }))
+  check('重试后正文不重复', text === '压缩后继续写', text)
+  check('压缩事件先于重试', events.some((e) => e.type === 'custom' && e.name === 'context_compaction'))
+}
 
 console.log(bad ? `\n❌ 失败 ${bad} 项` : '\n✅ 全部通过')
 child.kill()

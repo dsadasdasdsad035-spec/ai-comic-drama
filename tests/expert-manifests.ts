@@ -83,6 +83,9 @@ async function main() {
       // 出片输入读取：分镜与转场各一个，Agent 写正文靠它们拿有序参考
       'read_shot_video_inputs',
       'read_transition_video_inputs',
+      // 转场参考与音色写入：Agent 自己选参考，不再只能由人在画布上点
+      'attach_transition_refs',
+      'set_transition_audio',
     ]) {
       assert.ok(have.has(name), `全能专家缺 ${name}`)
     }
@@ -96,9 +99,43 @@ async function main() {
     }
   })
 
+  /**
+   * 新增平台工具后必须给每套专家勾上。
+   * 只断言「全能专家」不够：另外两套是用户自己另存的版本，漏勾后不会有任何报错，
+   * 只会在创意会话里静默少一个能力。名单以 DEFAULT_EXPERT_PLATFORM_TOOLS 为准，
+   * `list_experts` 由运行时无条件注入，不写进 manifest。
+   */
+  await check('每套内置专家都勾满平台工具（新增工具不许漏勾）', () => {
+    for (const m of manifests) {
+      const have = new Set(m.toolIds)
+      const missing = DEFAULT_EXPERT_PLATFORM_TOOLS.filter((n) => !have.has(n))
+      assert.deepEqual(missing, [], `专家「${m.id}」漏勾：${missing.join('、')}`)
+    }
+  })
+
   await check('内置专家清单没有重复项', () => {
     for (const m of manifests) {
       assert.equal(new Set(m.toolIds).size, m.toolIds.length, `专家「${m.id}」toolIds 有重复`)
+    }
+  })
+
+  /**
+   * soul 里的「已读可省读」承诺必须与历史能力一致。
+   * 专家 soul 由用户自行编辑，一旦写了这句，压缩后模型会凭印象编造早期内容；
+   * 统一改由 buildExpertSystem 在压缩状态注入重取提示（见 creative-workspace-context）。
+   */
+  await check('专家 soul 不自行声明「已读可不再重复读取」', () => {
+    const root = path.join(process.cwd(), 'experts')
+    if (!fs.existsSync(root)) return
+    for (const ent of fs.readdirSync(root, { withFileTypes: true })) {
+      const file = path.join(root, ent.name, 'soul.md')
+      if (!fs.existsSync(file)) continue
+      const soul = fs.readFileSync(file, 'utf8')
+      assert.doesNotMatch(
+        soul,
+        /可不再重复读取|已读.*(无需|不必).*重复/,
+        `专家「${ent.name}」soul 声明了省读能力；请改用「需要时重取」`,
+      )
     }
   })
 

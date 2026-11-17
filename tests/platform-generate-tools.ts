@@ -67,6 +67,7 @@ function shots(): ProjectShot[] {
       seconds: 4,
       desc: '车灯扫过',
       keyframe_prompt: '车灯扫过墙面',
+      video_prompt: '车灯扫过墙面，镜头横移',
       clip: '/old/s02.mp4',
       video_meta: { fingerprint: 'fp', createdAt: 't' },
       dialogue: '老周：走。',
@@ -250,10 +251,9 @@ async function main() {
       assert.equal(body.image, undefined, '有参考图时不再退回首帧模式')
       assert.equal(body.seconds, 5)
       assert.equal(body.ratio, '9:16')
-      // 正文以 video_prompt 为底，再追加运镜/参考图槽位/约束等指令块
-      assert.ok(body.prompt.startsWith('镜头缓慢推进'), '正文以 video_prompt 开头')
-      assert.ok(body.prompt.includes('参考图：[图1]=角色「阿岚」外观'), '参考图槽位要写进正文，模型才知道图序')
-      assert.ok(body.prompt.includes('【约束】'), '约束块随正文提交')
+      // 正文只由人/Agent 写入：逐字提交，运行时不追加运镜/参考图槽位/约束块
+      assert.equal(body.prompt, '镜头缓慢推进', '正文逐字提交，不拼装')
+      assert.deepEqual(body.refImages, ['/project-assets/demo/lan.png'], '参考图仍按结构化字段送出，顺序即图序')
     } finally {
       restore()
     }

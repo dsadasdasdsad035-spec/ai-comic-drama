@@ -557,6 +557,11 @@ function Shell() {
   const [candCount, setCandCount] = useState(1)
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
+  /**
+   * 本轮由 Agent 写入的转场参考：`afterShotId|toShotId` → token 列表。
+   * 刻意只放内存——标记语义是「这一轮改的」，落盘后用户手改也无法撤销。
+   */
+  const [transitionAgentRefs, setTransitionAgentRefs] = useState<Record<string, string[]>>({})
   const [preview, setPreview] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
@@ -4014,6 +4019,12 @@ function Shell() {
               }),
               getSelectedVideoModel: () => selectedVideoModel,
               getVideoResolution: () => vidRes,
+              // Agent 写参考后只在内存里标「本轮 Agent 写入」，刷新即失效
+              onTransitionRefsWritten: ({ afterShotId, toShotId, tokens }) =>
+                setTransitionAgentRefs((prev) => ({
+                  ...prev,
+                  [`${afterShotId}|${toShotId}`]: [...new Set([...(prev[`${afterShotId}|${toShotId}`] ?? []), ...tokens])],
+                })),
               // Agent 写回后立刻重读项目：不传 fit，避免打断用户当前视口
               onProjectDataChanged: () => void refreshProjectSnapshot(),
             }}
@@ -4532,6 +4543,11 @@ function Shell() {
               projectStyle={projectStyle}
               stagePick={stagePick}
               onPickStage={pickStageModel}
+              agentRefTokens={
+                transitionAgentRefs[
+                  `${String(selEdgeSource.data.shotId || selEdgeSource.id)}|${String(selEdgeTarget.data.shotId || selEdgeTarget.id)}`
+                ] ?? []
+              }
             />
           ) : (
             <Inspector

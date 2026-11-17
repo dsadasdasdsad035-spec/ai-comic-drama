@@ -1366,6 +1366,8 @@ export type AppSettings = {
   defaults: Partial<Record<Cap, string>>
   /** 每个生成环节绑定的默认模型键；空 = 沿用 defaults.text */
   stageModels?: Partial<Record<Stage, string>>
+  /** 每个环节的输出上限（tokens）；未配置 = 请求不带 max_tokens，交给渠道默认 */
+  stageMaxTokens?: Partial<Record<Stage, number>>
   /** 计价单价（估算，可校准） */
   pricing?: { image?: number; video480?: number; video720?: number; audio?: number }
   /** 3D agent 的运行上限；缺省使用默认值 */
@@ -1576,12 +1578,15 @@ export async function getVggtJob(id: string): Promise<VggtJob | null> {
   return j.job as VggtJob
 }
 
+/** 单帧平均亮度（YAVG，0–255）；`dark` 由服务端按近黑阈值判定 */
+export type FrameStat = { yavg?: number; dark: boolean }
+
 export async function extractFrames(
   video: string,
   count = 3,
   signal?: AbortSignal,
   times?: number[],
-): Promise<{ urls: string[]; duration: number; times: number[] }> {
+): Promise<{ urls: string[]; duration: number; times: number[]; stats: FrameStat[] }> {
   const r = await apiFetch('/api/frames', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1593,5 +1598,7 @@ export async function extractFrames(
     urls: (r.urls ?? []) as string[],
     duration: Number(r.duration) || 0,
     times: Array.isArray(r.times) ? r.times.map(Number) : [],
+    // 老服务端没有 stats 时按空数组兜底，调用方无需判空
+    stats: Array.isArray(r.stats) ? (r.stats as FrameStat[]) : [],
   }
 }

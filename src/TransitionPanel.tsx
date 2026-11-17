@@ -40,7 +40,7 @@ import { audioRefCapabilitiesFor } from './nativeAudio'
 import OutgoingReferencePickerModal, { type OutgoingBoundarySlot } from './OutgoingReferencePickerModal'
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
-import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
+import OutgoingVideoPromptPanel, { refSourceLabel } from './OutgoingVideoPromptPanel'
 import Fold from './Fold'
 import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategory } from './transitionPresets'
 import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
@@ -81,6 +81,8 @@ type Props = {
   projectStyle: string
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
+  /** 本轮由 Agent 写入的参考 token：出片区与附件列表据此打 Agent 标记 */
+  agentRefTokens?: string[]
 }
 
 export default function TransitionPanel({
@@ -108,6 +110,7 @@ export default function TransitionPanel({
   projectStyle: _projectStyle,
   stagePick,
   onPickStage,
+  agentRefTokens = [],
 }: Props) {
   const relation: Relation = edge.data?.relation ?? 'cut'
   const t = useMemo(
@@ -264,13 +267,16 @@ export default function TransitionPanel({
 
   const [extractBusy, setExtractBusy] = useState(false)
   const [extractError, setExtractError] = useState('')
+  /** 抽取成功但边界帧接近黑场：只提示，不参与禁用与失败语义 */
+  const [extractNotices, setExtractNotices] = useState('')
 
   /** 抽取即写入：首帧取上镜成片尾帧，尾帧取下镜成片首帧；失败侧保留原值 */
   const extractBoundary = async () => {
     setExtractBusy(true)
     setExtractError('')
+    setExtractNotices('')
     try {
-      const { boundary, warnings } = await ensureTransitionBoundary(source, target)
+      const { boundary, warnings, notices } = await ensureTransitionBoundary(source, target)
       const cur = g.boundary ?? {}
       const out = boundary.out ?? cur.out
       const inn = boundary.in ?? cur.in
@@ -281,6 +287,7 @@ export default function TransitionPanel({
         },
       })
       setExtractError(warnings.join('；'))
+      setExtractNotices(notices.join('；'))
     } catch (e) {
       setExtractError((e as Error).message || '抽取失败')
     } finally {
@@ -384,6 +391,8 @@ export default function TransitionPanel({
       onClearBoundary={clearBoundary}
       onExtractBoundary={() => void extractBoundary()}
       extractBusy={extractBusy}
+      extractError={extractError}
+      boundaryNotice={extractNotices}
       onFocusSourceShot={() => onFocusShot(source.id)}
       onFocusTargetShot={() => onFocusShot(target.id)}
       charItems={charPickCandidates.map((c) => ({
@@ -621,6 +630,28 @@ export default function TransitionPanel({
                 </a>
               </div>
             ) : null}
+            {/* 参考素材条默认可见：不展开折叠也要能核对这次到底送了哪些图 */}
+            <div className="tr-refs-strip" data-tr-refs>
+              <span className="tr-refs-title">参考素材</span>
+              {preview.refs.length === 0 ? (
+                <span className="tr-refs-empty">无参考图</span>
+              ) : (
+                preview.refs.map((r) => (
+                  <figure className="tr-ref-chip" key={`${r.slot}-${r.index}-${r.url}`}>
+                    <img src={r.url} alt="" loading="lazy" />
+                    <figcaption>
+                      图{r.index} {r.label}
+                    </figcaption>
+                    {refSourceLabel(r.source) ? (
+                      <span className="tr-ref-src">{refSourceLabel(r.source)}</span>
+                    ) : null}
+                    {r.token && agentRefTokens.includes(r.token) ? (
+                      <span className="tr-ref-agent">Agent</span>
+                    ) : null}
+                  </figure>
+                ))
+              )}
+            </div>
             <Fold
               className="vid-settings"
               idPrefix="tr-settings"
@@ -700,6 +731,7 @@ export default function TransitionPanel({
               }
               videoMeta={videoMeta}
               hasVideoUrl={Boolean(g.video?.url)}
+              agentTokens={agentRefTokens}
               advancedSlot={
                 <Fold
                   className="tr-advanced"
@@ -725,6 +757,9 @@ export default function TransitionPanel({
                     </span>
                   </div>
                   {extractError ? <div className="gen-note vp-field-note">{extractError}</div> : null}
+                  {extractNotices ? (
+                    <div className="gen-note vp-field-note boundary-dim-note">{extractNotices}</div>
+                  ) : null}
                   {boundaryBlocking ? (
                     <div className="gen-error">首尾帧还没齐：打开「选择出片参考 → 首尾帧」点「抽取两镜成片帧」（上镜与下镜都要有成片）。</div>
                   ) : null}

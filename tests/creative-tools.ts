@@ -29,8 +29,7 @@ const settings = {
 } as unknown as AppSettings
 
 const session = {
-  id: 'cs-demo',
-  title: '测试',
+  id: 'cs-demo',  title: '测试',
   mode: 'reverse',
   createdAt: '',
   updatedAt: '',
@@ -263,6 +262,20 @@ async function main() {
     const names = bindCreativeTools(set, [{ skill, mode: 'readonly' }]).map((t) => t.name)
     // read_skill 是只读技能的固定附带项（读正文才可能看懂别的技能），其余读写/付费工具不该出现
     assert.deepEqual(names, ['read_video_shots', 'read_skill'])
+  })
+
+  await check('可分页写工具的提示包含 cursor / limit 与下一步', async () => {
+    const { contractWriteHint, PAGING_WRITE_HINT } = await import('../src/skills/contracts')
+    const { WRITE_PAGING } = await import('../src/skills/writePaging')
+    assert.match(PAGING_WRITE_HINT, /cursor/)
+    assert.match(PAGING_WRITE_HINT, /limit/)
+    for (const id of Object.keys(WRITE_PAGING)) {
+      const hint = contractWriteHint(id)
+      assert.match(hint, /cursor/, `${id} 的提示缺少 cursor`)
+      assert.match(hint, /limit/, `${id} 的提示缺少 limit`)
+    }
+    // 不可分页的契约不该出现分页说法，避免模型对不支持的工具传参
+    assert.doesNotMatch(contractWriteHint('reverse-v1'), /cursor/)
   })
 
   console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

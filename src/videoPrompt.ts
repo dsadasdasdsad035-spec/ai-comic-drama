@@ -29,6 +29,11 @@ export type VideoAttachment = {
   label: string
   purpose: string
   source?: string
+  /**
+   * 参考 token（`char-*` / `asset-*` / `extra:*`）。
+   * 面板据此标出「本轮由 Agent 写入」的条目；不参与出片请求。
+   */
+  token?: string
   /** 仅音频：音色参考对应的角色名 */
   character?: string
 }

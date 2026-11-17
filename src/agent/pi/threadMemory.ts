@@ -106,13 +106,25 @@ export function estimateChars(messages: PiMessage[]): number {
   }
 }
 
-/** 检查器用：展示本轮送入模型的历史规模（历史按原文送出，不折叠）。 */
-export function describePiThreadMemory(messages: UiMessage[], draftText: string): string {
+/** 检查器用：展示本轮送入模型的历史规模；压缩必须可见。 */
+export function describePiThreadMemory(
+  messages: UiMessage[],
+  draftText: string,
+  projection?: { stubbed: number; summarized: number; charsBefore: number; charsAfter: number },
+): string {
   const prior = uiThreadToPiMessages(messages)
-  const lines = [
-    '【Pi 历史】',
-    `线程消息 ${prior.length} 条，约 ${estimateChars(prior)} 字符；全文按原文送入模型，不做折叠。`,
-  ]
+  const lines = ['【Pi 历史】', `线程消息 ${prior.length} 条，约 ${estimateChars(prior)} 字符。`]
+  if (projection) {
+    const parts = [`本轮送入约 ${projection.charsAfter} 字符`]
+    if (projection.charsAfter !== projection.charsBefore) {
+      parts.push(`原始 ${projection.charsBefore} 字符`)
+    }
+    parts.push(`卸载工具结果 ${projection.stubbed} 条`)
+    parts.push(`摘要 ${projection.summarized} 轮`)
+    lines.push(`${parts.join('，')}。`)
+  } else {
+    lines.push('全文按原文送入模型，不做折叠。')
+  }
   const draft = String(draftText || '').trim()
   lines.push(draft ? `本轮输入草稿：${draft}` : '本轮输入草稿：（空）')
   return lines.join('\n')

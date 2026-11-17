@@ -71,7 +71,7 @@ export function createCreativeProjectAdapter(
       if (p) return p
       throw new Error('项目数据未加载')
     },
-    applyDraft: (payload): Promise<DraftApplyResult> => {
+    applyDraft: (payload, opts): Promise<DraftApplyResult> => {
       const draftCtx: ProjectDraftCtx = {
         projectName: ctx.projectName,
         epNo: ctx.epNo,
@@ -79,7 +79,7 @@ export function createCreativeProjectAdapter(
         setSnapshot: ctx.setSnapshot,
         onProjectDataChanged: ctx.onProjectDataChanged,
       }
-      return applyProjectDraft(host.manifest.output, payload, draftCtx)
+      return applyProjectDraft(host.manifest.output, payload, draftCtx, opts)
     },
   }
 }

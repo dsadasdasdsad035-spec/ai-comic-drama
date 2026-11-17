@@ -19,6 +19,13 @@ export type PiStreamDeps = {
   onProgress?: (chars: number) => void
   /** 工具参数分片；只作进度，参数完整前不执行 */
   onToolCallDelta?: (delta: ProviderToolCallDelta) => void
+  /**
+   * 本轮因输出长度上限结束。`text` = 只截断了正文；`tools` = 工具参数可能被截断。
+   * 运行器据此注入续写推动消息，而不是把这一轮当作失败。
+   */
+  onLengthStop?: (kind: 'text' | 'tools') => void
+  /** 渠道错误信息（带 kind 时由运行器判断是否可压缩重试） */
+  onStreamError?: (info: { kind?: string; message: string }) => void
 }
 
 const EMPTY_USAGE: Usage = {
@@ -76,9 +83,8 @@ function errText(e: unknown): string {
  * - 必须自己响应 options.signal：agent.abort() 只中止当前流，不会停循环
  *
  * 正文是**真流式**转发的：代理每吐一段 delta 就立刻推成 pi 的
- * text_delta 事件，界面边生成边显示，不必等整段完成。这也意味着
- * 输出被截断时已经流出的正文不会丢——错误消息里带上它，
- * 既留在界面上，也进下一轮历史。
+ * text_delta 事件，界面边生成边显示，不必等整段完成。输出撞长度上限时
+ * 以 stopReason 'length' 正常收尾（正文保留），由运行器决定续写。
  */
 export function createPiStreamFn(deps: PiStreamDeps): StreamFn {
   return (model, context, options) => {
@@ -157,6 +163,9 @@ export function createPiStreamFn(deps: PiStreamDeps): StreamFn {
         })
       } catch (e) {
         const aborted = (e as Error)?.name === 'AbortError' || Boolean(signal?.aborted)
+        const kind = (e as Error & { kind?: string })?.kind
+        // 上下文超限是可自救的：运行器据 kind 压缩后重跑，不必让用户新建会话。
+        if (!aborted && kind) deps.onStreamError?.({ kind, message: errText(e) })
         fail(aborted ? '已取消' : errText(e), aborted)
         return
       }
@@ -174,15 +183,16 @@ export function createPiStreamFn(deps: PiStreamDeps): StreamFn {
       const finishReason = String(result.finishReason || '')
       const rawCalls = Array.isArray(result.toolCalls) ? (result.toolCalls as ProviderToolCall[]) : []
 
-      // 撞上限一律编码成 error：pi 见到 'length' 也不会执行工具调用。
-      // 关键是 fail() 把已经流出的正文带回错误消息——界面不丢，历史也不丢。
+      // 撞上限不当作失败：已流出的正文照常收尾，工具调用一律丢弃（参数可能被截断，
+      // 执行半截 JSON 会按 partial 语义删掉字段）。是否续写由运行器决定。
       if (finishReason === 'length') {
-        fail(
-          rawCalls.length
-            ? '模型输出达到长度上限，工具参数被截断；已保留生成内容，请缩小单次输出或分批重试'
-            : '模型输出达到长度上限被截断；已保留生成部分，可继续让它往下写',
-          false,
-        )
+        const message = baseMessage(model, 'length')
+        message.usage = usageOf(result.usage)
+        message.content = textContent(text)
+        ensureStarted()
+        closeText(message)
+        deps.onLengthStop?.(rawCalls.length ? 'tools' : 'text')
+        stream.push({ type: 'done', reason: 'length', message })
         return
       }
 

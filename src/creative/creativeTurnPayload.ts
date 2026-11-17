@@ -1,6 +1,7 @@
 import type { AgentMessage } from '../agent/sceneAgentTypes'
 import type { ChatAttachment } from '../agent/chatAttachments'
 import type { WorkbenchProfile, WorkbenchTaskView } from '../agent/workbenchChat'
+import { applyHistoryBudget } from '../agent/pi/budget'
 import { describePiThreadMemory, uiThreadToPiMessages } from '../agent/pi/threadMemory'
 import { builtinPlatformToolNames } from '../agent/builtinPlatformTools'
 import { isMarketInstalledSkill } from './creativeSkillHost'
@@ -94,12 +95,21 @@ export function creativeWorkspaceNeedsShotEpisode(expert: CreativeExpert | null 
   return expertUsesShotEpisodeTools(expert.toolIds)
 }
 
+/** 历史投影状态：决定 system 能不能承诺「已读过可省读」 */
+export type CreativeHistoryState = {
+  /** 发生了指针化或摘要化 */
+  historyCompacted?: boolean
+}
+
 /** 无顶栏偏好宿主：由技能目录驱动 */
-export function buildCreativePiSystemAutonomous(): string {
+export function buildCreativePiSystemAutonomous(opts?: CreativeHistoryState): string {
   return [
     '你是 Agent（Pi）。',
     '创意会话不要求用户预选技能。每轮先理解用户意图；在需要执行某套工作流、或用户问「有什么技能/该用哪个包」时，必须先调用 list_installed_skills（可选 hostsOnly 只看 Agent 包），用中文向用户说明推荐项，再对选定 id 调用 read_skill_text 读 SKILL.md 全文并严格遵循。',
-    '同一对话中若已读过某技能全文，本轮未换任务类型时可不再重复读取；换技能或用户明确要求时再 read_skill_text。',
+    // 承诺必须与历史能力一致：发生过指针化/摘要化时不能再声称「已读过可省读」
+    opts?.historyCompacted
+      ? '本会话历史中的早期技能正文与数据可能已被卸载（只保留一行指针）。需要时用 read_skill_text / 对应 read_* 工具重新读取，不要凭印象作答。'
+      : '同一对话中若已读过某技能全文，本轮未换任务类型时可不再重复读取；换技能或用户明确要求时再 read_skill_text。',
     ...CREATIVE_PLATFORM_LINES,
   ].join('\n')
 }
@@ -109,10 +119,11 @@ export function buildCreativePiSystem(
   host: Skill | null,
   workspace?: CreativeWorkspaceCtx,
   workspaceOpts?: CreativeWorkspaceFormatOpts,
+  historyState?: CreativeHistoryState,
 ): string {
-  if (!host) return withWorkspaceContext(buildCreativePiSystemAutonomous(), workspace, workspaceOpts)
+  if (!host) return withWorkspaceContext(buildCreativePiSystemAutonomous(historyState), workspace, workspaceOpts)
 
-  const autonomous = buildCreativePiSystemAutonomous()
+  const autonomous = buildCreativePiSystemAutonomous(historyState)
   if (isAgentPackSkill(host)) {
     const declared = host.agentPack?.allowedTools?.length
       ? host.agentPack.allowedTools.join('、')
@@ -222,6 +233,7 @@ export function interpolateExpertSoul(
 export function buildExpertSystem(
   expert: CreativeExpert,
   ctx: { projectName?: string; epNo?: number },
+  historyState?: CreativeHistoryState,
 ): string {
   const soul = interpolateExpertSoul(expert.soul, { ...ctx, expert })
   const workspaceOpts: CreativeWorkspaceFormatOpts = {
@@ -229,7 +241,11 @@ export function buildExpertSystem(
   }
   // 专家未启用盘点工具时不提示，避免让它调用白名单外的工具
   const materialHint = expert.toolIds.includes('read_asset_inventory') ? CREATIVE_MATERIAL_HINT : ''
-  const body = [soul, materialHint].filter(Boolean).join('\n\n')
+  // 历史被卸载时说明重取入口，避免模型凭印象编造早期内容
+  const compactHint = historyState?.historyCompacted
+    ? '【历史提示】本会话早期读过的技能正文与项目数据已被卸载（只保留一行指针）。需要时用 read_skill_text / 对应 read_* 工具重新读取，不要凭印象作答。'
+    : ''
+  const body = [soul, materialHint, compactHint].filter(Boolean).join('\n\n')
   return withWorkspaceContext(body, { projectName: ctx.projectName, epNo: ctx.epNo }, workspaceOpts)
 }
 
@@ -238,9 +254,17 @@ export type CreativeTurnPayload = {
   /** 本轮单条 user 正文（不含历史摘要） */
   userForModel: string
   toolNames: string[]
-  /** 检查器展示：本轮历史规模说明（历史按原文送出） */
+  /** 检查器展示：本轮历史规模说明（含压缩统计） */
   piMemoryPreview: string
   priorPiMessages: ReturnType<typeof uiThreadToPiMessages>
+  /** 本轮历史投影统计：界面与诊断据此说明「卸载了几条」 */
+  historyBudget: {
+    stubbed: number
+    summarized: number
+    charsBefore: number
+    charsAfter: number
+    compacted: boolean
+  }
 }
 
 export function buildCreativeTurnPayload(input: {
@@ -255,27 +279,44 @@ export function buildCreativeTurnPayload(input: {
 }): CreativeTurnPayload {
   const attach = creativeAttachmentBlock(input.attachments || [])
   const draft = String(input.draftText || '').trim()
-  const priorPiMessages = uiThreadToPiMessages(input.messages)
-  const piMemoryPreview = describePiThreadMemory(input.messages, draft)
+  // 先投影再拼 system：system 不能承诺一项已被卸载的历史能力。
+  const projected = applyHistoryBudget(uiThreadToPiMessages(input.messages))
+  const priorPiMessages = projected.messages as ReturnType<typeof uiThreadToPiMessages>
+  const historyState: CreativeHistoryState = {
+    historyCompacted: projected.stubbed > 0 || projected.summarized > 0,
+  }
+  const piMemoryPreview = describePiThreadMemory(input.messages, draft, projected)
+  const historyBudget = {
+    stubbed: projected.stubbed,
+    summarized: projected.summarized,
+    charsBefore: projected.charsBefore,
+    charsAfter: projected.charsAfter,
+    compacted: Boolean(historyState.historyCompacted),
+  }
 
   if (input.expert) {
     const mcpExtra = (input.extraToolNames || []).filter((n) => input.expert!.toolIds.includes(n))
     return {
-      system: buildExpertSystem(input.expert, {
-        projectName: input.projectName,
-        epNo: input.epNo,
-      }),
+      system: buildExpertSystem(
+        input.expert,
+        {
+          projectName: input.projectName,
+          epNo: input.epNo,
+        },
+        historyState,
+      ),
       userForModel: attach + draft,
       toolNames: [...expertToolNames(input.expert), ...mcpExtra].sort(),
       piMemoryPreview,
       priorPiMessages,
+      historyBudget,
     }
   }
 
   const workspace = { projectName: input.projectName, epNo: input.epNo }
   const bindings = input.host ? [{ skill: input.host, mode: 'host' as const }] : []
   return {
-    system: buildCreativePiSystem(input.host, workspace),
+    system: buildCreativePiSystem(input.host, workspace, undefined, historyState),
     userForModel: attach + draft,
     toolNames: [
       ...listCreativeToolNames(bindings, input.extraToolNames || []),
@@ -283,6 +324,7 @@ export function buildCreativeTurnPayload(input: {
     ].sort(),
     piMemoryPreview,
     priorPiMessages,
+    historyBudget,
   }
 }
 

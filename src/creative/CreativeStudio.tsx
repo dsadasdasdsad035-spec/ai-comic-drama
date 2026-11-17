@@ -16,6 +16,7 @@ import {
   CREATIVE_INSPECT_PROFILE,
 } from './creativeTurnPayload'
 import { reloadSkills } from '../skills/registry'
+import { resolveStageMaxTokens } from '../skills/stages'
 import type { Skill } from '../skills/types'
 import { ChatMessage } from '@/chat-ui/ChatMessage'
 import { ChatText } from '@/chat-ui/ChatText'
@@ -110,6 +111,9 @@ function convertMessage(message: AgentMessage): ThreadMessageLike {
             ? `第 ${part.turn} 轮 · 模型调用失败${part.text ? `：${part.text}` : ''}`
             : `第 ${part.turn} 轮 · ${part.text ? `模型说明：${part.text}` : '模型调用完成'}`
       content.push({ type: 'text', text })
+    } else if (part.type === 'notice') {
+      // 续写/压缩提示用引用块，和助手正文区分开，重开线程仍在
+      content.push({ type: 'text', text: `> ${part.text}` })
     } else if (part.type === 'tool-call') {
       content.push({
         type: 'tool-call',
@@ -221,6 +225,8 @@ export type CreativeStudioProps = {
     }
     getSelectedVideoModel?: () => VideoModelInput | null
     getVideoResolution?: () => string
+    /** Agent 写转场参考后的内存标记：宿主据此在出片区标「本轮 Agent 写入」 */
+    onTransitionRefsWritten?: (info: { afterShotId: string; toShotId: string; tokens: string[] }) => void
     /**
      * 项目数据被 Agent 写回后通知宿主重新拉取快照。
      * 缺省时画布要等用户切走再切回才更新，看起来像「写回没生效」。
@@ -643,6 +649,7 @@ export default function CreativeStudio({
       getCanvasContext: materialHost?.getCanvasContext,
       getSelectedVideoModel: materialHost?.getSelectedVideoModel,
       getVideoResolution: materialHost?.getVideoResolution,
+      onTransitionRefsWritten: materialHost?.onTransitionRefsWritten,
       onProjectDataChanged: materialHost?.onProjectDataChanged,
     })
     const listExpertsTool = PI_NATIVE_TOOLS.byName.get('list_experts')
@@ -664,6 +671,8 @@ export default function CreativeStudio({
     const controller = new AbortController()
     abortRef.current = controller
     setRunning(true)
+    // 输出上限只在设置页显式配置时下发；未配置就不带 max_tokens。
+    const budget = resolveStageMaxTokens('creative', settings)
     try {
       const result = await runStageAgent({
         userText: draft,
@@ -673,6 +682,7 @@ export default function CreativeStudio({
         sessionId: session.id,
         modelKey,
         stage: 'creative',
+        ...(budget.maxTokens ? { maxTokens: budget.maxTokens } : {}),
         // 总时长是唯一的产品预算：取设置页「Agent 运行上限」，缺省 300 秒。
         totalMs: resolveAgentLimits(settings).totalMs,
         signal: controller.signal,

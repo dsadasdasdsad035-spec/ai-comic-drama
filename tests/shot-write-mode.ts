@@ -158,6 +158,46 @@ async function main() {
     assert.ok(true, JSON.stringify(after))
   })
 
+  await check('分批写入走 partial：12 镜分三批，未提交的镜头不被判删除', async () => {
+    const rec = recorder()
+    const before = project(Array.from({ length: 12 }, (_, i) => shot({ id: `E01-S${String(i + 1).padStart(2, '0')}` })))
+    const ctx = rec.ctx(before)
+    const batches = [0, 4, 8].map((start) =>
+      Array.from({ length: 4 }, (_, i) => ({
+        id: `E01-S${String(start + i + 1).padStart(2, '0')}`,
+        desc: `第 ${start + i + 1} 镜`,
+      })),
+    )
+    for (const shots of batches) {
+      const r = await applyProjectDraft('shots-v1', { shots }, ctx, { partial: true })
+      assert.equal(r.ok, true, r.error)
+    }
+    assert.equal(rec.calls.length, 3)
+    assert.deepEqual(
+      rec.calls.map((c) => c.opts?.mode),
+      ['partial', 'partial', 'partial'],
+      '分批写入必须声明 partial',
+    )
+    assert.deepEqual(
+      rec.calls[2].shots.map((s) => s.id),
+      Array.from({ length: 12 }, (_, i) => `E01-S${String(i + 1).padStart(2, '0')}`),
+      '最终镜头顺序必须与一次写回一致',
+    )
+    assert.equal(
+      rec.calls[2].shots.some((s) => (s as { orphan?: boolean }).orphan),
+      false,
+      '未提交的镜头不能被判为删除',
+    )
+  })
+
+  await check('非分批路径仍会删除缺席镜头（整表语义不变）', async () => {
+    const rec = recorder()
+    const before = project([shot({ id: 'E01-S01' }), shot({ id: 'E01-S02' })])
+    const r = await applyProjectDraft('shots-v1', { shots: [{ id: 'E01-S01' }] }, rec.ctx(before))
+    assert.equal(r.ok, true, r.error)
+    assert.equal(rec.calls[0].opts?.mode, 'full')
+  })
+
   if (bad) {
     console.log(`\n❌ ${bad} 项失败`)
     process.exit(1)

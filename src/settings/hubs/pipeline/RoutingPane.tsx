@@ -7,7 +7,7 @@ import { capModelEntries, resolveStageModel, stageModelEntries, textModelEntries
 type Props = { wb: SettingsWorkbench }
 
 export function RoutingPane({ wb }: Props) {
-  const { models, providers, defaults, stageModels, setDefaults, setStageModels, settingsDraft } = wb
+  const { models, providers, defaults, stageModels, stageMaxTokens, setDefaults, setStageModels, settingsDraft } = wb
   return (
     <>
       <section className="st-sec" data-settings-routing data-settings-pane="routing">
@@ -76,7 +76,8 @@ export function RoutingPane({ wb }: Props) {
 
       <h4 className="st-subhead">生成环节默认</h4>
       <p className="st-hint">
-        文本环节空着 = 用「文本 · 常规」；视觉为空 = 素材只给标签；视频理解为空 = 回退关键帧。
+        文本环节空着 = 用「文本 · 常规」；视觉为空 = 素材只给标签；视频理解为空 = 回退关键帧。右侧「输出上限」留空 =
+        请求不带 max_tokens，交给渠道默认值。
       </p>
       <div className="st-stage-table">
         {STAGE_META.map((s) => {
@@ -119,6 +120,30 @@ export function RoutingPane({ wb }: Props) {
               <em className="st-stage-resolved">
                 {resolved.entry ? `当前：${resolved.entry.label}` : resolved.invalidKey ? '配置的模型不可用' : '未解析'}
               </em>
+              {/* 输出上限：留空就不下发 max_tokens，交给渠道默认 */}
+              <input
+                data-stage-max-tokens={s.stage}
+                type="number"
+                min={1}
+                max={200000}
+                step={1}
+                inputMode="numeric"
+                placeholder="渠道默认"
+                title="输出上限（tokens）；留空 = 请求不带 max_tokens"
+                aria-label={`${s.label} 输出上限`}
+                className="st-stage-max-tokens"
+                value={stageMaxTokens[s.stage] ?? ''}
+                onChange={(e) => {
+                  const raw = e.target.value.trim()
+                  const n = Math.floor(Number(raw))
+                  wb.setStageMaxTokens((prev) => {
+                    const next = { ...prev }
+                    if (!raw || !Number.isFinite(n) || n < 1) delete next[s.stage]
+                    else next[s.stage] = n
+                    return next
+                  })
+                }}
+              />
             </label>
           )
         })}

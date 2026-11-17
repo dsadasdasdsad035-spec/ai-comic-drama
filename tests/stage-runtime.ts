@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import type { Stage } from '../src/api'
-import { STAGE_RUNTIME, assertStageOutput, stageOutput, stageRuntime } from '../src/skills/stages'
+import { STAGE_RUNTIME, assertStageOutput, resolveStageMaxTokens, stageOutput, stageRuntime } from '../src/skills/stages'
 
 const STAGES: Stage[] = [
   'character',
@@ -46,6 +46,41 @@ check('创意环节保留反推契约与温度', () => {
   const r = stageRuntime('creative')
   assert.equal(r.temperature, 0.4)
   assert.equal(r.output, 'reverse-v1')
+})
+
+check('未配置输出上限：不带 max_tokens', () => {
+  for (const stage of STAGES) {
+    const r = resolveStageMaxTokens(stage, {})
+    assert.equal(r.maxTokens, undefined, `环节 ${stage} 未配置却带了上限`)
+    assert.equal(r.source, 'unset')
+  }
+  // 传 null / 缺字段也一样
+  assert.equal(resolveStageMaxTokens('creative', null).maxTokens, undefined)
+  assert.equal(resolveStageMaxTokens('creative').source, 'unset')
+})
+
+check('设置页配置输出上限：按配置生效', () => {
+  const r = resolveStageMaxTokens('creative', { stageMaxTokens: { creative: 16000 } })
+  assert.equal(r.maxTokens, 16000)
+  assert.equal(r.source, 'configured')
+  // 字符串数字与小数也认，小数向下取整
+  assert.equal(resolveStageMaxTokens('shot', { stageMaxTokens: { shot: '8000' } }).maxTokens, 8000)
+  assert.equal(resolveStageMaxTokens('shot', { stageMaxTokens: { shot: 8000.9 } }).maxTokens, 8000)
+  // 只影响配置过的环节
+  assert.equal(resolveStageMaxTokens('asset', { stageMaxTokens: { creative: 16000 } }).maxTokens, undefined)
+})
+
+check('非法配置回退且不静默生效', () => {
+  for (const bad of [0, -1, 'abc', Number.NaN, Number.POSITIVE_INFINITY, 999999]) {
+    const r = resolveStageMaxTokens('creative', { stageMaxTokens: { creative: bad } })
+    assert.equal(r.maxTokens, undefined, `非法值 ${String(bad)} 不应生效`)
+    assert.equal(r.source, 'unset')
+    assert.ok('invalid' in r, `非法值 ${String(bad)} 应保留原值供报错`)
+  }
+  // 空字符串视为未配置，不算非法
+  const blank = resolveStageMaxTokens('creative', { stageMaxTokens: { creative: '' } })
+  assert.equal(blank.maxTokens, undefined)
+  assert.equal('invalid' in blank, false)
 })
 
 check('视觉环节没有输出契约', () => {

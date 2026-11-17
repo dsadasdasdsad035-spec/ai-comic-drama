@@ -77,5 +77,49 @@ check('creative-plan-v1 接受纯回复', () => {
   assert.equal(r.ok, true, r.ok ? '' : r.errors.join('；'))
 })
 
+// ---- 分批写入的分页字段只存在于工具声明层
+const validShot = () => ({
+  no: 'S01',
+  scene_no: 1,
+  scene_slug: '街口',
+  seconds: 3,
+  size: '中景',
+  move: '固定',
+  desc: '夜色街口',
+})
+{
+  const { getContractToolSchema } = await import('../src/skills/contracts')
+  const schema = getContractToolSchema('shots-v1')
+  assert.ok(schema, 'shots-v1 必须有工具声明')
+  const declaration = JSON.stringify(
+    // io:'input' 与发给模型的口径一致：可选字段不进 required
+    (await import('../src/agent/pi/toolAdapter')).toolParameters(schema),
+  )
+  check('工具声明包含可选 cursor', () => {
+    assert.match(declaration, /"cursor"/)
+    assert.match(declaration, /宿主签发/)
+  })
+  check('工具声明包含可选 limit', () => {
+    assert.match(declaration, /"limit"/)
+  })
+  check('分页字段不进 required', () => {
+    assert.doesNotMatch(declaration, /"required":\[[^\]]*"(cursor|limit)"/)
+  })
+
+  // 剥离分页字段后仍走原契约校验：它们不是业务字段
+  const { cursor: _c, limit: _l, ...business } = { shots: [validShot()], cursor: 'x', limit: 2 }
+  const r = validateContract('shots-v1', business)
+  check('剥离分页字段后原契约校验通过', () => {
+    assert.equal(r.ok, true, r.ok ? '' : r.errors.join('；'))
+  })
+  check('分页字段不会被当作业务字段', () => {
+    const raw = validateContract('shots-v1', business)
+    assert.equal(raw.ok, true)
+    const text = JSON.stringify(raw.ok ? raw.value : {})
+    assert.ok(!text.includes('"cursor"'), '剥离后业务载荷里不应再有 cursor')
+    assert.ok(!text.includes('"limit"'), '剥离后业务载荷里不应再有 limit')
+  })
+}
+
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

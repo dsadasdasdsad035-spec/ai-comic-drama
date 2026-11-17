@@ -269,7 +269,14 @@ export type WorkbenchChatAdapter = {
   inputs: () => SkillInputs
   ownDraft: () => unknown
   projectSnapshot: () => Promise<ProjectData>
-  applyDraft: (payload: unknown) => DraftApplyResult | Promise<DraftApplyResult>
+  /**
+   * 写回草稿。`partial` 表示这是分批提交中的一批：未提交的条目必须原样保留，
+   * 不能被当成「缺席=删除」。
+   */
+  applyDraft: (
+    payload: unknown,
+    opts?: { partial?: boolean },
+  ) => DraftApplyResult | Promise<DraftApplyResult>
   /** 显式保存的工作台把保存函数交给写回执，自动保存/立即落库的工作台不提供。 */
   saveDraft?: () => Promise<void> | void
   onDraftChanged?: () => void

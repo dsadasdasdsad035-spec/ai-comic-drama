@@ -3921,6 +3921,11 @@ body.si-resizing {
   margin-top: -4px;
 }
 
+/* 边界帧近黑：成功抽取后的非阻断提示，用暖色与"抽取失败"区分开 */
+.boundary-dim-note {
+  color: var(--warn);
+}
+
 .vid-thumb {
   width: 100%;
   border-radius: var(--r-md);
@@ -18063,4 +18068,106 @@ button.crumb:hover {
   .acct-table td:nth-child(4) {
     display: none;
   }
+}
+
+/* ---- 转场参考素材条与参考来源标签 ---- */
+.vp-ref-thumb {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  object-fit: cover;
+  background: var(--panel-2);
+  align-self: center;
+}
+
+.vp-ref-src {
+  flex: none;
+  font-style: normal;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.vp-ref-agent {
+  flex: none;
+  font-style: normal;
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.tr-refs-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+}
+
+.tr-refs-title {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tr-refs-empty {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.tr-ref-chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  max-width: 96px;
+}
+
+.tr-ref-chip img {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  object-fit: cover;
+  background: var(--panel);
+}
+
+.tr-ref-chip figcaption {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tr-ref-agent {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 9px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.tr-ref-chip .tr-ref-src {
+  align-self: flex-start;
+  font-size: 9px;
+  padding: 0 3px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--muted);
 }

@@ -46,6 +46,8 @@ const PROJECT = new Set([
   'delete_shots',
   // 画布与角色上的写动作：改的是项目里的具体对象，不是整表草稿
   'link_shot_refs',
+  'attach_transition_refs',
+  'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
 ])
@@ -109,6 +111,8 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'generate_clip',
   'generate_voice',
   'link_shot_refs',
+  'attach_transition_refs',
+  'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
   'generate_character_views',

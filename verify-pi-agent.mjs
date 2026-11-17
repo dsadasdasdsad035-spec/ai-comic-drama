@@ -311,6 +311,28 @@ function deps(overrides = {}) {
   check('催促后仍能完成', result.finished === true, JSON.stringify(result.error))
 }
 
+// ---------------------------------------------------------------- 5.4b 长度上限续写
+{
+  const asks = []
+  const result = await lib.runSceneAgent({
+    prompt: '写一段场景代码',
+    settings,
+    ask: scriptedAsk(
+      [
+        // 整段 Blender Python 撞输出上限：正文写了一半
+        () => ({ text: 'import bpy\\n# 写到一半', finishReason: 'length' }),
+        { calls: [{ name: 'set_scene_code', args: { code: CODE } }, { name: 'run_render', args: {} }, { name: 'capture_frames', args: { times: [0] } }, { name: 'review_frames', args: {} }, { name: 'finish', args: { summary: 'ok' } }] },
+      ],
+      (o, i) => asks.push(o),
+    ),
+    deps: deps(),
+  })
+  const continued = (asks[1]?.messages || []).filter((m) => m.role === 'user').map((m) => String(m.content)).join('\n')
+  check('3D 撞长度上限时注入续写推动', asks.length >= 2 && /断点|继续/.test(continued), continued.slice(-120))
+  check('续写后工具按完整参数执行', result.code?.includes('primitive_cone_add') === true && result.finished === true, JSON.stringify({ error: result.error }))
+  check('续写事件可见', result.events.some((e) => e.type === 'custom' && e.name === 'continuation'), '缺少 continuation 事件')
+}
+
 // ---------------------------------------------------------------- 5.5 取消
 {
   let sawAbort = false

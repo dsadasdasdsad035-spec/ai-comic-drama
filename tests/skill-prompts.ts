@@ -15,7 +15,7 @@ import {
   STORYBOARD_BASE,
   STORYBOARD_SYS,
 } from '../src/skills/legacyPrompts'
-import { validateContract } from '../src/skills/contracts'
+import { contractWriteHint, validateContract } from '../src/skills/contracts'
 import { parseSkillText } from '../src/skills/parse'
 import { buildSkillPrompt } from '../src/skills/render'
 
@@ -338,6 +338,13 @@ check('契约校验：合法提示词', () => {
 check('契约校验：合法 3D 代码', () => {
   const r = validateContract('scene3d-code-v1', { reply: 'R', code: 'def build(ctx):\n  pass' })
   assert.equal(r.ok, true)
+})
+
+check('分镜写回提示带分批参数与下一步', () => {
+  const hint = contractWriteHint('shots-v1')
+  assert.match(hint, /cursor/)
+  assert.match(hint, /limit/)
+  assert.match(hint, /未提交的条目不会被删除|按业务键合并/)
 })
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

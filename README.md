@@ -744,6 +744,8 @@ node verify-asset-board.mjs    # 素材守则 / 场景道具拆解 / 生图约�
 node verify-theme.mjs          # 日间/夜间切换 / 系统偏好 / 持久化 / 对比度 / 画布适配 / 窄屏（自起临时库）
 node verify-media-picker.mjs   # 素材来源分类/缩略图/图片视频预览/确认取消/类型修正/键盘/窄屏（自起临时库）
 node verify-media-persistence.mjs  # 项目媒体落盘 / 刷新恢复 / 旧图迁移 / 缺失标记与出图保护（自起临时库）
+node verify-creative-context-overflow.mjs  # 上下文超限：kind 透传 / 压缩重试一次 / 两次失败文案（自起临时库 + mock 上游）
+node verify-creative-notices-ui.mjs        # 续写提示：截断后自动续写、两段正文都在、重开会话仍可见（自起临时库）
 node verify-agent-graph.mjs        # LangGraph agent 图：成功/失败修复/取消/上限/无视觉/工具白名单
 node verify-agent-scene-draft.mjs  # 场景草稿：路径安全/大小上限/append/patch/read/commit/trial 边界/历史压缩
 APP_URL=http://127.0.0.1:5274 node verify-agent-draft.mjs  # 长代码草稿 UI：分片写入/预览/真实试运行/取消清理

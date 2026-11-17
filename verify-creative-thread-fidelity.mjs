@@ -100,7 +100,8 @@ check('compactPiThreadMemory 已移除', lib.compactPiThreadMemory === undefined
 check('不再导出 TOOL_RESULT_MAX', lib.TOOL_RESULT_MAX === undefined)
 
 const runnerSrc = fs.readFileSync(path.join(ROOT, 'src/agent/pi/stageRunner.ts'), 'utf8')
-check('stageRunner 不再装配 transformContext', !runnerSrc.includes('transformContext'))
+// 本轮变更恢复了「按预算投影」：超预算才指针化早期工具结果，未超预算不动。
+check('stageRunner 用 applyHistoryBudget 装配 transformContext', runnerSrc.includes('transformContext') && runnerSrc.includes('applyHistoryBudget'))
 check('stageRunner 仍预置 priorMessages', runnerSrc.includes('priorMessages'))
 
 // ---- 检查器说明与真实行为一致 ----

@@ -217,6 +217,8 @@ export function cleanHash(input: {
   models: ModelEntry[]
   defaults: Partial<Record<Cap, string>>
   stageModels: Partial<Record<Stage, string>>
+  /** 环节输出上限；缺省项 = 不带 max_tokens */
+  stageMaxTokens?: Partial<Record<Stage, number>>
   pricing: Pricing
   agentLimits: Required<AgentLimitSettings>
   agentHostMode: AgentHostMode

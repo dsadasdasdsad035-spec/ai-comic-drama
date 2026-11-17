@@ -402,5 +402,65 @@ await check('有图时第二条参数进入用户消息，无图时仍是字符�
   assert.equal((content as { type: string; data?: string }[]).some((part) => part.type === 'image' && part.data === 'AAAA'), true)
 })
 
+await check('历史超预算时早期工具结果指针化，最近两轮仍原文', async () => {
+  // 20 轮「读工具 + 大结果」，总量明显超过 48k 字符预算
+  const prior: unknown[] = [{ role: 'user', content: '先读一遍全部镜头' }]
+  for (let i = 0; i < 20; i++) {
+    prior.push({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: `第 ${i} 轮：读镜头` },
+        { type: 'toolCall', id: `c${i}`, name: 'read_shots', arguments: {} },
+      ],
+    })
+    prior.push({
+      role: 'toolResult',
+      toolCallId: `c${i}`,
+      toolName: 'read_shots',
+      content: [{ type: 'text', text: i >= 18 ? `RECENT-${i}` : `OLD-${i}-` + 'x'.repeat(4000) }],
+      isError: false,
+      timestamp: 0,
+    })
+  }
+
+  let sent = ''
+  const ask = async (o: { messages: unknown[] }) => {
+    sent = JSON.stringify(o.messages)
+    return { text: '收到', finishReason: 'stop' } as never
+  }
+  await runStageAgent({
+    userText: '继续',
+    system: 'sys',
+    tools: [],
+    stage: 'creative',
+    priorMessages: prior as never,
+    ask: ask as never,
+  })
+
+  assert.match(sent, /已卸载/, '早期工具结果必须换成指针 stub')
+  assert.match(sent, /read_shots/, 'stub 必须带重取工具名')
+  assert.match(sent, /RECENT-18/, '最近一轮工具结果应保真')
+  assert.match(sent, /RECENT-19/, '最近一轮工具结果应保真')
+  assert.ok(!sent.includes('OLD-0-xxxx'), '更早的原始 payload 不应再送给模型')
+})
+
+await check('历史未超预算时不产生压缩事件', async () => {
+  const events: AgentEvent[] = []
+  const ask = async () => ({ text: '收到', finishReason: 'stop' }) as never
+  await runStageAgent({
+    userText: '继续',
+    system: 'sys',
+    tools: [],
+    stage: 'creative',
+    priorMessages: [
+      { role: 'user', content: '短历史' },
+      { role: 'assistant', content: [{ type: 'text', text: '好的' }] },
+    ] as never,
+    ask: ask as never,
+    onEvent: (e) => events.push(e),
+  })
+  assert.equal(events.filter((e) => e.type === 'custom' && e.name === 'context_compaction').length, 0)
+})
+
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

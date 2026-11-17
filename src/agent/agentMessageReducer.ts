@@ -3,6 +3,7 @@ import type {
   AgentDraftPart,
   AgentEvent,
   AgentMessage,
+  AgentNoticePart,
   AgentStepPart,
   AgentTextPart,
   AgentToolPart,
@@ -79,8 +80,60 @@ function upsertStep(
   }
 }
 
-function findTool(message: AgentMessage, toolCallId: string): AgentToolPart | undefined {
-  return message.parts.find(
+/** 续写提示：说明为什么模型会「接着说」，以及还剩几次机会 */
+function continuationNotice(value: unknown): AgentNoticePart {
+  const v = (value || {}) as { attempt?: unknown; total?: unknown; reason?: unknown }
+  const attempt = Number(v.attempt) || 1
+  const total = Number(v.total) || attempt
+  const tools = String(v.reason || '') === 'tools'
+  return {
+    type: 'notice',
+    kind: 'continuation',
+    text: tools
+      ? `输出达到长度上限，工具参数被截断；已改用分批续写（第 ${attempt}/${total} 次）`
+      : `输出达到长度上限，已自动从断点续写（第 ${attempt}/${total} 次）`,
+  }
+}
+
+/** 压缩提示：说清卸掉了多少、是否因为上下文超限而重试 */
+function compactionNotice(value: unknown): AgentNoticePart {
+  const v = (value || {}) as {
+    reason?: unknown
+    retry?: unknown
+    budget?: unknown
+    stubbed?: unknown
+    summarized?: unknown
+    charsBefore?: unknown
+    charsAfter?: unknown
+  }
+  if (String(v.reason || '') === 'context-overflow') {
+    const budget = Number(v.budget) || 0
+    const retry = Number(v.retry) || 1
+    return {
+      type: 'notice',
+      kind: 'context_compaction',
+      text: `上下文超限：已压缩历史（预算约 ${budget} 字符）并重试（第 ${retry} 次），历史仍完整保留在侧栏`,
+    }
+  }
+  const stubbed = Number(v.stubbed) || 0
+  const summarized = Number(v.summarized) || 0
+  const before = Number(v.charsBefore) || 0
+  const after = Number(v.charsAfter) || 0
+  return {
+    type: 'notice',
+    kind: 'context_compaction',
+    text: `历史较长：已把 ${stubbed} 条工具结果换成指针、摘要 ${summarized} 轮（${before}→${after} 字符），需要时可重新读取`,
+  }
+}
+
+/** 同类提示只留一条，避免每轮都追加同样的话 */
+function appendNotice(message: AgentMessage, notice: AgentNoticePart): AgentMessage {
+  const exists = message.parts.some((p) => p.type === 'notice' && p.text === notice.text)
+  if (exists) return message
+  return { ...message, parts: [...message.parts, notice] }
+}
+
+function findTool(message: AgentMessage, toolCallId: string): AgentToolPart | undefined {  return message.parts.find(
     (p): p is AgentToolPart => p.type === 'tool-call' && p.toolCallId === toolCallId,
   )
 }
@@ -244,6 +297,13 @@ export function applyAgentEvent(message: AgentMessage, event: AgentEvent): Agent
       )
 
     case 'custom': {
+      // 续写与压缩都要在界面上留痕：否则用户只看到「模型突然继续写」或「它忘了刚才读过什么」。
+      if (event.name === 'continuation') {
+        return appendNotice(message, continuationNotice(event.value))
+      }
+      if (event.name === 'context_compaction') {
+        return appendNotice(message, compactionNotice(event.value))
+      }
       if (event.name !== 'progress') return message
       const value = (event.value || {}) as { chars?: unknown; turn?: unknown }
       const chars = Number(value.chars) || 0

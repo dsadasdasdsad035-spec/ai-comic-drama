@@ -5,7 +5,7 @@ import { readCharacters } from '../charMap'
 import { assetNodesFromAssets, composeShotCanvasNodes } from '../canvasShots'
 import type { ShotNodeType } from '../data'
 import { buildShotVideoRequest, type VideoModelInput } from '../videoPrompt'
-import { buildTransitionVideoPreview } from '../transitionGen'
+import { buildTransitionVideoPreview, transitionNativeAudioReadiness, transitionRefCandidateView } from '../transitionGen'
 import {
   contractWriteHint,
   getContractToolSchema,
@@ -13,6 +13,15 @@ import {
   validateContract,
 } from '../skills/contracts'
 import type { Skill } from '../skills/types'
+import {
+  consumeCursor,
+  fingerprintOf,
+  pagingPlan,
+  readCursor,
+  stashPending,
+  SUBMIT_CHAR_LIMIT,
+  takeBatchByChars,
+} from '../skills/writePaging'
 import { isAgentPackSkill, parseAgentPackMeta } from '../skills/agentPack'
 import { getSkill, getSkillTextRecord, loadSkills } from '../skills/registry'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
@@ -25,8 +34,22 @@ import {
 import type { PromptRenderBundle } from '../promptRender'
 import { defineTool, type ToolDef } from './tool'
 
-export type LoadedSkill = { skill: Skill; mode: 'host' | 'readonly' }
+/** 取契约主集合；不是数组就视为「不可分批」 */
+function readCollection(payload: Record<string, unknown>, key: string): { items: unknown[] } | null {
+  const value = payload[key]
+  return Array.isArray(value) ? { items: value } : null
+}
 
+/** 用本批已接受的条目替换主集合，其余字段原样带上 */
+function withCollection(
+  payload: Record<string, unknown>,
+  key: string,
+  items: unknown[],
+): Record<string, unknown> {
+  return { ...payload, [key]: items }
+}
+
+export type LoadedSkill = { skill: Skill; mode: 'host' | 'readonly' }
 export type StageToolSet = {
   read: Map<string, ToolDef>
   submit?: ToolDef
@@ -822,8 +845,11 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     description:
       '只读：读取某个镜间转场（接缝）出片请求的实际输入——输入模式、桥接方式、是否提交尾帧、镜头秒数与请求秒数、' +
       '按提交顺序排列的参考图槽位（index 从 1 起）、被互斥或截断的参考与原因、参考视频与音轨。' +
+      '同时回候选参考池（candidates：能选什么、各自是否已提交）与原生音频就绪度（audio.caps / audio.sample / readinessReason），' +
+      '以及一句 candidateSummary。' +
       '用它来写转场正文：参考图按这里的 index 对应 [图N]，不要凭 refIds 臆测顺序。' +
-      '本工具不返回正文；正文用 read_shot_detail 读 transition_out.generated.prompt，写入用 submit_joins。',
+      '本工具不返回正文；正文用 read_shot_detail 读 transition_out.generated.prompt，写入用 submit_joins。' +
+      '补参考用 attach_transition_refs，开关角色音色用 set_transition_audio。',
     schema: z.object({
       after_no: z.string().describe('接缝前镜（源镜）的镜号，如 S03'),
       to_no: z
@@ -889,6 +915,22 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         missingMedia: ctx.missingMedia,
       })
       const recordedTo = String(out.to ?? '')
+      const refView = transitionRefCandidateView({
+        source: sourceNode,
+        target: targetNode,
+        nodes: ctx.nodes,
+        characters: ctx.characters,
+        missingMedia: ctx.missingMedia,
+        generated: out.generated,
+      })
+      const audioReadiness = transitionNativeAudioReadiness({
+        source: sourceNode,
+        target: targetNode,
+        characters: ctx.characters,
+        model: transitionModelOf(ctx.model),
+        targetSeconds: preview.seconds,
+        submitsLastFrame: preview.submitsLastFrame,
+      })
       return {
         ok: true,
         seam: {
@@ -925,12 +967,17 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         styleOmitted: preview.styleOmitted.map((r) => ({ token: r.token, label: r.label, reason: r.reason })),
         omitted: preview.omitted,
         omittedVideos: preview.omittedVideos,
+        candidates: refView.candidates,
+        candidateSummary: refView.summary,
         video: preview.video ? { label: preview.video.label, purpose: preview.video.purpose } : null,
         audio: {
           mode: preview.audio.mode,
           label: preview.audio.label,
           detail: preview.audio.detail,
           ...(preview.audio.character ? { character: preview.audio.character } : {}),
+          caps: audioReadiness.caps,
+          sample: audioReadiness.sample,
+          ...(audioReadiness.reason ? { readinessReason: audioReadiness.reason } : {}),
         },
         blocking: preview.blocking.map((b) => ({ code: b.code, message: b.message })),
         warnings: preview.warnings.map((w) => ({ code: w.code, message: w.message })),
@@ -1183,15 +1230,76 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   const contractId = adapter.writeContract
   const submitSchema = getContractToolSchema(contractId)
   if (!submitSchema) throw new Error(`未知输出契约：${contractId}`)
+  const plan = pagingPlan(contractId)
   const submit = defineTool({
     name: adapter.writeTool,
     description:
       '提交当前工作台的产物草稿。写入当前项目并返回新增/更新数量；大产物不要重复贴给用户。' +
+      (plan
+        ? `\n支持分批：可选 limit（本批最多条数）与 cursor（上一批回执里的 nextCursor）。` +
+          `一次提交超限时会返回 suggestedLimit 与 hint，按提示拆批即可，未写完的部分留在宿主，不必重发。`
+        : '') +
       (contractWriteHint(contractId) ? `\n${contractWriteHint(contractId)}` : ''),
     schema: submitSchema,
-    run: async (payload) => {
+    run: async (rawPayload) => {
+      // 分页字段是传输层参数，必须先剥离再校验：契约 schema 不知道它们的存在。
+      const { cursor: rawCursor, limit: rawLimit, ...rest } = rawPayload as Record<string, unknown>
+      const cursor = typeof rawCursor === 'string' ? rawCursor.trim() : ''
+      const limit = Number(rawLimit) > 0 ? Math.floor(Number(rawLimit)) : 0
+      const fingerprint = fingerprintOf(adapter.ownDraft?.())
+      const reread = plan?.reread || '对应的 read_* 读取工具'
+      const collection = plan ? readCollection(rest, plan.key) : null
+
+      let pendingItems: unknown[] | null = null
+      let cursorSeq = 0
+      if (cursor) {
+        if (!plan) {
+          return { ok: false, error: `契约 ${contractId} 不支持分批写入；请一次提交完整载荷` }
+        }
+        const read = readCursor(cursor, contractId, fingerprint)
+        if (!read.ok) return { ok: false, error: read.error, hint: read.hint }
+        // 同一次游标调用可以只带游标（承接宿主留存的剩余条目），也可以补带新条目。
+        pendingItems = read.pending?.items || null
+        cursorSeq = read.data.seq
+      }
+
+      const baseLimit = limit || plan?.defaultLimit || 0
+      const incomingItems = collection ? collection.items : []
+      const incoming = pendingItems ? [...pendingItems, ...incomingItems] : incomingItems.slice()
+      let batch = rest
+      let remainingItems: unknown[] = []
+      let partial = false
+
+      if (plan && (incoming.length > 0 || pendingItems !== null)) {
+        // 先按条数切；再按字符上限收窄，保证单批请求不会撑爆模型输出。
+        const byCount = baseLimit > 0 ? incoming.slice(0, baseLimit) : incoming
+        const taken = takeBatchByChars(byCount, SUBMIT_CHAR_LIMIT, Math.max(1, byCount.length))
+        const accepted = taken ? taken.batch : []
+        // 字符预算没吃掉的首批尾部 + 超出条数上限的部分，都留到下一批
+        remainingItems = [...(taken ? (taken.rest as unknown[]) : byCount), ...incoming.slice(byCount.length)]
+        batch = withCollection(rest, plan.key, accepted) as Record<string, unknown>
+        // 只要这次调用属于分批流程（带游标或还有剩余），写回就必须走 partial，
+        // 否则未提交的镜头会被当成「已删除」。
+        partial = Boolean(cursor) || remainingItems.length > 0
+      }
+
+      // 单条自身就超过字符上限：不写入任何数据，直接给拆条建议。
+      const chars = JSON.stringify(batch).length
+      if (chars > SUBMIT_CHAR_LIMIT) {
+        const count = incomingItems.length || 1
+        const suggestedLimit = Math.max(1, Math.min(count, Math.floor(SUBMIT_CHAR_LIMIT / 4000)))
+        return {
+          ok: false,
+          error: `本次提交约 ${chars} 字符，超过单次上限 ${SUBMIT_CHAR_LIMIT}；未写入任何数据`,
+          suggestedLimit,
+          hint:
+            `请改用 limit=${suggestedLimit} 分批提交（可同时带 cursor 承接上一批），` +
+            `或先用 ${reread} 确认现状再缩小单条内容`,
+        }
+      }
+
       const normalized =
-        contractId === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
+        contractId === 'characters-v1' ? normalizeCharactersContractPayload(batch) : batch
       const checked = validateContract(contractId, normalized)
       if (!checked.ok) return { ok: false, error: `提交不符合契约：${checked.errors.join('；')}` }
       const body = checked.value as Record<string, unknown>
@@ -1217,13 +1325,43 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
           }
         }
       }
-      const applied = await adapter.applyDraft(checked.value)
+      const applied = await adapter.applyDraft(checked.value, { partial })
       adapter.onDraftChanged?.()
       if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
+
+      const acceptedCount =
+        plan && Array.isArray((checked.value as Record<string, unknown>)?.[plan.key])
+          ? ((checked.value as Record<string, unknown>)[plan.key] as unknown[]).length
+          : 0
+      let nextCursor: string | undefined
+      if (plan && remainingItems.length) {
+        // 指纹要在本批写入之后取：下一批校验的是「本批写完之后」的状态。
+        const nextFingerprint = fingerprintOf(adapter.ownDraft?.())
+        const last = remainingItems[remainingItems.length - 1]
+        const lastKey = String((last as Record<string, unknown>)?.[plan.identity] ?? '')
+        nextCursor = stashPending(contractId, remainingItems, nextFingerprint, cursorSeq + 1, lastKey)
+        // 旧游标写成功后才消费，失败批次还能重试
+        if (cursor) consumeCursor(cursor)
+      } else if (cursor) {
+        consumeCursor(cursor)
+      }
+
       return {
         ok: true,
         summary: applied.summary,
         ...(applied.counts ? { counts: applied.counts } : {}),
+        ...(plan
+          ? {
+              accepted: acceptedCount,
+              remaining: remainingItems.length,
+              ...(nextCursor ? { nextCursor } : {}),
+              ...(remainingItems.length
+                ? {
+                    hint: `还有 ${remainingItems.length} 条未写入：带 cursor=${nextCursor} 再提交一次即可（不必重发已写入的数据）。`,
+                  }
+                : { hint: '本批已写完，没有后续批次。' }),
+            }
+          : {}),
         // 回执上的「用它生成三视图」靠它定位目标角色，不解析文本
         ...(applied.subjects?.length ? { subjects: applied.subjects } : {}),
         ...(applied.hash ? { hash: applied.hash } : {}),

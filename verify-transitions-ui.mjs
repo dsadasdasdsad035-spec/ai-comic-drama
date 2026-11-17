@@ -84,6 +84,8 @@ let seedreamBody = null
 let videoBody = null
 /** /api/frames 请求体：首尾帧抽取走这条接口 */
 const framesBodies = []
+/** 让假抽帧结果变成近黑（只影响 stats.dark，URL 不变），用于验证非阻断提示 */
+let framesDark = true
 
 await page.route('**/api/project**', async (route) => {
   const req = route.request()
@@ -128,7 +130,13 @@ await page.route('**/api/frames', async (route) => {
   await route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ ok: true, urls: [url], duration: 3, times }),
+    body: JSON.stringify({
+      ok: true,
+      urls: [url],
+      duration: 3,
+      times,
+      stats: [{ yavg: framesDark ? 4 : 128, dark: framesDark }],
+    }),
   })
 })
 await page.route('**/api/seedream', async (route) => {
@@ -298,15 +306,52 @@ await page.locator('.orp-actions button', { hasText: '抽取两镜成片帧' }).
 await page.waitForTimeout(1200)
 check('抽帧覆盖两镜成片', framesBodies.filter((b) => b.video === VID).length >= 2, JSON.stringify(framesBodies.map((b) => b.times)))
 check('两个首尾帧槽位都已选', (await page.locator('.orp-slot-state', { hasText: '已选' }).count()) === 2)
+const orpNote = await page.locator('.orp-note').first().innerText()
+check('弹窗说明写清末帧与第 0 帧', orpNote.includes('最后一帧') && orpNote.includes('第 0 帧'), orpNote)
+
+// 近黑只看提示：帧照常写入、不阻断。假抽帧此时返回 dark:true
+const dimNote = await page.locator('.boundary-dim-note').allInnerTexts()
+check(
+  '近黑时弹窗出现非阻断提示',
+  dimNote.length >= 1 && dimNote.every((t) => t.includes('黑场')),
+  JSON.stringify(dimNote),
+)
+check('近黑时两槽仍然写入', (await page.locator('.orp-slot-state', { hasText: '已选' }).count()) === 2)
 // 当前出片模型不支持尾帧：清掉尾帧只留首帧，否则按钮被阻断（模型切换不在本用例范围）
 await page.locator('.orp-slot[data-boundary-slot="in"] button', { hasText: '清除' }).click()
 await page.waitForTimeout(300)
 check(
-  '清掉尾帧后不再阻断出片',
-  await page.locator('.tr-panel footer button', { hasText: '生成视频' }).isEnabled(),
+  '清掉尾帧后不再阻断出片（近黑提示不参与禁用）',
+  (await page.locator('.boundary-dim-note').count()) >= 1 &&
+    (await page.locator('.tr-panel footer button', { hasText: '生成视频' }).isEnabled()),
 )
 await page.locator('.orp-close').click()
 await page.waitForTimeout(400)
+check('近黑提示在面板同样可见', (await page.locator('.tr-panel .boundary-dim-note').count()) === 1)
+// 正常亮度应完全不产生提示：用未缓存过的 URL 直连拼装函数，避开同一片只抽一次的缓存
+framesDark = false
+const lightCase = await page.evaluate(async (VID) => {
+  const mod = await import('/src/transitionGen.ts')
+  const mk = (u) => ({ id: u, data: { videoUrl: u } })
+  return mod.ensureTransitionBoundary(mk(`${VID}?light=1`), mk(`${VID}?light=1`))
+}, VID)
+check(
+  '正常帧：notices 为空、warnings 为空、两帧仍写入',
+  lightCase.notices.length === 0 && lightCase.warnings.length === 0 && !!lightCase.boundary.out && !!lightCase.boundary.in,
+  JSON.stringify({ notices: lightCase.notices, warnings: lightCase.warnings }),
+)
+framesDark = true
+const darkCase = await page.evaluate(async (VID) => {
+  const mod = await import('/src/transitionGen.ts')
+  const mk = (u) => ({ id: u, data: { videoUrl: u } })
+  return mod.ensureTransitionBoundary(mk(`${VID}?dark=1`), mk(`${VID}?dark=1`))
+}, VID)
+check(
+  '近黑帧：只进 notices（两侧各一条），warnings 仍为空',
+  darkCase.notices.length === 2 && darkCase.warnings.length === 0 && !!darkCase.boundary.out && !!darkCase.boundary.in,
+  JSON.stringify({ notices: darkCase.notices, warnings: darkCase.warnings }),
+)
+framesDark = false
 
 await page.locator('.tr-panel footer button', { hasText: '生成视频' }).click()
 await page.waitForTimeout(4200)

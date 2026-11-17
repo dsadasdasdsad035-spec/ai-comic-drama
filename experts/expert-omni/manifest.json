@@ -37,6 +37,8 @@
     "update_project_meta",
     "delete_shots",
     "link_shot_refs",
+    "attach_transition_refs",
+    "set_transition_audio",
     "set_shot_camera_lexicon",
     "set_character_visual",
     "generate_keyframe",

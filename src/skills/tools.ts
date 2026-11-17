@@ -52,6 +52,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'generate_expression_sheet',
   // 画布动作（按名字寻址，不用画布节点 id）：连参考 / 指定运镜参照 / 采纳角色外观 / 素材卡
   'link_shot_refs',
+  'attach_transition_refs',
+  'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
   'submit_assets',
@@ -86,3 +88,18 @@ export const READ_TOOL_IDS = new Set(
 export const DRAFT_TOOL_IDS = new Set(
   [...KNOWN_TOOL_IDS].filter((id) => id.startsWith('submit_')),
 )
+
+/**
+ * 支持分批提交的写工具：契约主集合是数组、且业务键稳定（镜号、角色名、素材标题…）。
+ *
+ * 技能提示提到「一次写不完」时指向这些工具的 `limit` / `cursor`： 分批按业务键合并，未提交的条目不会被删除；游标由宿主签发，失效时用对应读工具重读。
+ */
+export const PAGED_WRITE_TOOL_IDS = new Set([
+  'submit_shots',
+  'submit_prompts',
+  'submit_prompt_renders',
+  'submit_characters',
+  'submit_assets',
+  'submit_joins',
+  'submit_episodes',
+])

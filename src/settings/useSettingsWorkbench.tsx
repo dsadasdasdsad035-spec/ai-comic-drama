@@ -86,6 +86,7 @@ export function useSettingsWorkbench({
   const [models, setModels] = useState<ModelEntry[]>([])
   const [defaults, setDefaults] = useState<Partial<Record<Cap, string>>>({})
   const [stageModels, setStageModels] = useState<Partial<Record<Stage, string>>>({})
+  const [stageMaxTokens, setStageMaxTokens] = useState<Partial<Record<Stage, number>>>({})
   const [pricing, setPricing] = useState<Pricing>(DEFAULT_PRICING)
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
   const [agentHostMode, setAgentHostMode] = useState<AgentHostMode>('full_host')
@@ -195,6 +196,7 @@ export function useSettingsWorkbench({
         setModels(s.models || [])
         setDefaults(s.defaults || {})
         setStageModels(s.stageModels || {})
+        setStageMaxTokens(s.stageMaxTokens || {})
         setPricing(normalizePricing(s.pricing))
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
         setAgentHostMode(normalizeAgentHostMode(s.agentHostMode))
@@ -212,6 +214,7 @@ export function useSettingsWorkbench({
             models: s.models || [],
             defaults: s.defaults || {},
             stageModels: s.stageModels || {},
+            stageMaxTokens: s.stageMaxTokens || {},
             pricing: normalizePricing(s.pricing),
             agentLimits: normalizeAgentLimits(s.agentLimits),
             agentHostMode: normalizeAgentHostMode(s.agentHostMode),
@@ -331,6 +334,7 @@ export function useSettingsWorkbench({
         models,
         defaults,
         stageModels,
+        stageMaxTokens,
         pricing,
         agentLimits,
         agentHostMode,
@@ -346,6 +350,7 @@ export function useSettingsWorkbench({
         models: saved.models || models,
         defaults: saved.defaults || defaults,
         stageModels: saved.stageModels || stageModels,
+        stageMaxTokens: saved.stageMaxTokens || stageMaxTokens,
         pricing: normalizePricing(saved.pricing),
         agentLimits: normalizeAgentLimits(saved.agentLimits),
         agentHostMode: normalizeAgentHostMode(saved.agentHostMode),
@@ -360,6 +365,7 @@ export function useSettingsWorkbench({
       setModels(next.models)
       setDefaults(next.defaults)
       setStageModels(next.stageModels)
+      setStageMaxTokens(next.stageMaxTokens)
       setPricing(next.pricing)
       setAgentLimits(next.agentLimits)
       setAgentHostMode(next.agentHostMode)
@@ -675,6 +681,8 @@ export function useSettingsWorkbench({
     setDefaults,
     stageModels,
     setStageModels,
+    stageMaxTokens,
+    setStageMaxTokens,
     pricing,
     setPricing,
     agentLimits,

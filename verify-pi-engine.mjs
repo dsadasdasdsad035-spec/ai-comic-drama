@@ -160,19 +160,31 @@ const MODEL = { id: 'fake-model', api: 'fake-api', provider: 'fake-provider' }
 
 // ---------------------------------------------------------------- 3.5 截断
 {
+  const kinds = []
   const stream = lib.createPiStreamFn({
     ask: async () => ({ text: 'abc', finishReason: 'length', toolCalls: [{ id: 'c1', name: 'ping', arguments: '{"x":1}' }] }),
+    onLengthStop: (k) => kinds.push(k),
   })(MODEL, { messages: [] })
   const events = await collect(stream)
   const error = events.find((e) => e.type === 'error')
-  check('length 编码为 error', Boolean(error) && error.error.errorMessage.includes('长度上限'), error?.error?.errorMessage)
+  const done = events.find((e) => e.type === 'done')
+  check('length 不再编码为 error', !error, error?.error?.errorMessage)
+  check('length 以 done 正常收尾', Boolean(done) && done.reason === 'length', done?.reason)
+  check('截断时标记工具参数被截断', kinds[0] === 'tools', kinds.join(','))
   check('截断时不产出工具调用', !events.some((e) => e.type === 'toolcall_end'), events.map((e) => e.type).join(','))
 }
 {
-  const stream = lib.createPiStreamFn({ ask: async () => ({ text: 'abc', finishReason: 'length' }) })(MODEL, { messages: [] })
+  const kinds = []
+  const stream = lib.createPiStreamFn({
+    ask: async () => ({ text: 'abc', finishReason: 'length' }),
+    onLengthStop: (k) => kinds.push(k),
+  })(MODEL, { messages: [] })
   const events = await collect(stream)
   const error = events.find((e) => e.type === 'error')
-  check('纯文本截断也报错', Boolean(error) && error.error.errorMessage.includes('截断'), error?.error?.errorMessage)
+  const final = await stream.result()
+  check('纯文本截断不报错', !error, error?.error?.errorMessage)
+  check('纯文本截断标记为正文', kinds[0] === 'text', kinds.join(','))
+  check('纯文本截断保留正文', final.content.some((p) => p.type === 'text' && p.text === 'abc'), JSON.stringify(final.content))
 }
 
 // ---------------------------------------------------------------- 工具声明转换

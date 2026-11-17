@@ -70,6 +70,17 @@ export type AgentStepPart = {
   /** 当前轮已接收的字符数（L1 进度） */
   chars?: number
 }
+/**
+ * 运行时的可见提示：输出撞长度上限自动续写、上下文超限压缩重试。
+ *
+ * 必须是独立部件而不是塞进 step：step 按轮次唯一，提示会和轮次状态互相覆盖。
+ * 也不走 `message` 事件——那是助手正文，会被当成模型说的话。
+ */
+export type AgentNoticePart = {
+  type: 'notice'
+  kind: 'continuation' | 'context_compaction'
+  text: string
+}
 export type AgentDraftStatus = 'staged' | 'committed' | 'trial-passed' | 'failed' | 'discarded'
 export type AgentDraftPart = {
   type: 'draft'
@@ -104,6 +115,7 @@ export type AgentMessagePart =
   | AgentVideoPart
   | AgentVideoReviewPart
   | AgentStepPart
+  | AgentNoticePart
   | AgentContextPart
   | AgentImageContextPart
   | AgentDraftPart
@@ -126,8 +138,7 @@ export type AgentEvent =
   | { type: 'tool_call_args'; toolCallId: string; toolName?: string; delta: string }
   | { type: 'tool_call_input_available'; toolCallId: string; input: Record<string, unknown> }
   | { type: 'tool_end'; toolCallId: string; toolName: string; result: unknown; isError?: boolean }
-  | { type: 'custom'; name: string; value: unknown }
-  | {
+  | { type: 'custom'; name: string; value: unknown }  | {
       type: 'context_manifest'
       turn: number
       keys: string[]
@@ -286,8 +297,18 @@ export type SceneAgentResult = {
   events: AgentEvent[]
 }
 
-export const DEFAULT_AGENT_LIMITS = {
-  maxCodeAttempts: 3,
+/**
+ * 需要在界面上留下的运行时提示。这两个 custom 事件会变成 `notice` 部件：
+ * 不产生用户气泡，也不会被当成助手正文，重开线程仍可见。
+ */
+export const AGENT_NOTICE_EVENTS = ['continuation', 'context_compaction'] as const
+export type AgentNoticeEventName = (typeof AGENT_NOTICE_EVENTS)[number]
+
+export function isNoticeEventName(name: string): name is AgentNoticeEventName {
+  return (AGENT_NOTICE_EVENTS as readonly string[]).includes(name)
+}
+
+export const DEFAULT_AGENT_LIMITS = {  maxCodeAttempts: 3,
   maxReviewAttempts: 2,
   totalMs: AGENT_LIMIT_DEFAULTS.totalSeconds * 1000,
   toolMs: 30_000,
