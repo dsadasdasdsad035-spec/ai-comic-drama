@@ -4,7 +4,6 @@ import type { WorkbenchProfile, WorkbenchTaskView } from '../agent/workbenchChat
 import { applyHistoryBudget } from '../agent/pi/budget'
 import { describePiThreadMemory, uiThreadToPiMessages } from '../agent/pi/threadMemory'
 import { builtinPlatformToolNames } from '../agent/builtinPlatformTools'
-import { isMarketInstalledSkill } from './creativeSkillHost'
 import { isAgentPackSkill } from '../skills/agentPack'
 import type { Skill } from '../skills/types'
 import { expertHasAllSkills, type CreativeExpert } from './expertTypes'
@@ -149,15 +148,9 @@ export function buildCreativePiSystem(
       workspaceOpts,
     )
   }
-  if (!isMarketInstalledSkill(host)) {
-    return withWorkspaceContext(
-      [autonomous, '', `【顶栏偏好】${host.id} 非 SkillHub Agent 包；仍可用 read_skill 读工作台技能。`].join('\n'),
-      workspace,
-      workspaceOpts,
-    )
-  }
+  // 宿主候选集只含 Agent 包；走到这里说明是本机残留的旧记录，按工作台技能读
   return withWorkspaceContext(
-    [autonomous, '', '【顶栏偏好技能】优先 read_skill_text：' + `${host.id} · v${host.manifest.version}`].join('\n'),
+    [autonomous, '', `【顶栏偏好】${host.id} 非 Agent 包；仍可用 read_skill 读工作台技能。`].join('\n'),
     workspace,
     workspaceOpts,
   )

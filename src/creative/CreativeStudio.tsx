@@ -47,6 +47,7 @@ import {
   type CreativeSessionSummary,
 } from './sessionStore'
 import {
+  groupCreativeHostSkills,
   listCreativeHostSkills,
   readStoredCreativeHostId,
   resolveCreativeHostId,
@@ -300,7 +301,8 @@ export default function CreativeStudio({
   const mcpToolsRef = useRef<ToolDef[]>([])
   const [hostSkillId, setHostSkillId] = useState(() => readStoredCreativeHostId())
   const [skillCatalog, setSkillCatalog] = useState<Skill[]>([])
-  const [totalSkillsCount, setTotalSkillsCount] = useState(0)
+  /** 技能目录里的全部技能数（含解析失败的记录）；用于区分「没有技能」与「没有宿主」 */
+  const [skillCount, setSkillCount] = useState(0)
   const [inspectOpen, setInspectOpen] = useState(false)
   const [composerDraft, setComposerDraft] = useState('')
   const [skillError, setSkillError] = useState('')
@@ -445,7 +447,8 @@ export default function CreativeStudio({
         if (!alive) return
         const hosts = listCreativeHostSkills(skills.values())
         setSkillCatalog(hosts)
-        setTotalSkillsCount(hosts.length)
+        // 「有技能但没有宿主」与「技能目录为空」是两种状态，横幅文案据此分流
+        setSkillCount(skills.size + issues.filter((x) => x.id !== '*').length)
 
         const resolvedId = resolveCreativeHostId(hosts, hostSkillId)
         if (resolvedId !== hostSkillId) {
@@ -810,10 +813,7 @@ export default function CreativeStudio({
           onPickStage={onPickStage}
           modelKey={modelKey}
           hostSkillId={hostSkillId}
-          skillChoices={skillCatalog.map((s) => ({
-            id: s.id,
-            label: `${s.manifest.name || s.id} · ${s.manifest.stage}`,
-          }))}
+          hostGroups={groupCreativeHostSkills(skillCatalog)}
           onHostSkillChange={pickHostSkill}
           hideHostSkill={Boolean(activeExpert)}
           expertId={expertId}
@@ -822,7 +822,6 @@ export default function CreativeStudio({
           onOpenExperts={onOpenExperts}
           inspectOpen={inspectOpen}
           canInspect={Boolean(session && modelKey) && !loadError}
-          catalogEmpty={skillCatalog.length === 0}
           onToggleInspect={() => setInspectOpen((v) => !v)}
           skillError={headerSkillError}
           running={running}
@@ -830,8 +829,7 @@ export default function CreativeStudio({
           onOpenAllSkills={onOpenAllSkills}
           onOpenMcp={onOpenMcp}
           mcpToolCount={mcpToolNames.length}
-          hostSkillOptions={skillCatalog.length}
-          totalSkillsCount={totalSkillsCount}
+          skillCount={skillCount}
           projectName={projectKey}
           epNo={epNo}
           showEpisode={showEpisodeInHeader}

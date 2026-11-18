@@ -1,5 +1,6 @@
 import type { AppSettings, Stage } from '../api'
 import { StageModelSelect, type StagePick } from '../ModelSelect'
+import { creativeHostBanner, type CreativeHostGroup } from './creativeSkillHost'
 
 const MODE_LABEL: Record<string, string> = {
   running: '运行中',
@@ -15,7 +16,7 @@ export function CreativeHeader({
   onPickStage,
   modelKey,
   hostSkillId,
-  skillChoices,
+  hostGroups,
   onHostSkillChange,
   hideHostSkill,
   expertId,
@@ -31,9 +32,7 @@ export function CreativeHeader({
   onOpenAllSkills,
   onOpenMcp,
   mcpToolCount,
-  hostSkillOptions,
-  totalSkillsCount,
-  catalogEmpty,
+  skillCount,
   projectName,
   epNo,
   showEpisode = true,
@@ -44,7 +43,8 @@ export function CreativeHeader({
   onPickStage?: (stage: Stage, key: string) => void
   modelKey: string
   hostSkillId: string
-  skillChoices: Array<{ id: string; label: string }>
+  /** 宿主下拉分组；空组已由调用方剔除，这里不再渲染空组头 */
+  hostGroups: CreativeHostGroup[]
   onHostSkillChange: (id: string) => void
   /** 选中专家时隐藏顶栏偏好技能 */
   hideHostSkill?: boolean
@@ -61,10 +61,8 @@ export function CreativeHeader({
   onOpenAllSkills?: () => void
   onOpenMcp?: () => void
   mcpToolCount?: number
-  hostSkillOptions?: number
-  totalSkillsCount?: number
-  /** 无已安装 Agent 包时的提示（不阻断聊天） */
-  catalogEmpty?: boolean
+  /** 技能目录里的全部技能数（含解析失败的记录），用于区分「没有技能」与「没有宿主」 */
+  skillCount?: number
   projectName?: string
   epNo?: number
   /** 角色/素材等项目级专家为 false */
@@ -75,6 +73,7 @@ export function CreativeHeader({
     expertId && expertChoices?.length
       ? expertChoices.find((e) => e.id === expertId)?.label || expertId
       : ''
+  const hostCount = hostGroups.reduce((n, g) => n + g.options.length, 0)
   const notice =
     skillError && !running
       ? { tone: 'alert' as const, text: skillError }
@@ -85,11 +84,8 @@ export function CreativeHeader({
               ? `专家「${expertLabel}」：对话仅使用该 soul 与白名单工具。`
               : '专家模式：换专家请顶栏下拉或让 Pi 调用 list_experts。',
           }
-        : catalogEmpty && !skillError && !running && !hideHostSkill
-          ? {
-              tone: 'info' as const,
-              text: '尚未安装 Agent 包：仍可对话，但 list_installed_skills 为空。可到技能市场安装。',
-            }
+        : !running
+          ? creativeHostBanner(skillCount ?? hostCount, hostCount)
           : null
 
   return (
@@ -188,13 +184,15 @@ export function CreativeHeader({
                 className="creative-context-select"
               >
                 <option value="">自动（技能目录）</option>
-                {skillChoices.length > 0
-                  ? skillChoices.map((s) => (
+                {hostGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.label}
                       </option>
-                    ))
-                  : null}
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </label>
           ) : null}
@@ -219,9 +217,9 @@ export function CreativeHeader({
               data-creative-action="all-skills"
               onClick={onOpenAllSkills}
               title={
-                totalSkillsCount
-                  ? `已安装创意技能 ${hostSkillOptions ?? skillChoices.length}。打开 SkillHub。`
-                  : '设置 → SkillHub 安装 Agent 包'
+                skillCount
+                  ? `已安装技能 ${skillCount}，其中 ${hostCount} 个可作宿主。打开技能设置。`
+                  : '设置 → 技能市场安装 Agent 包'
               }
             >
               技能
