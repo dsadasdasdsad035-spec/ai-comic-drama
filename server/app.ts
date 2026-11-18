@@ -68,6 +68,7 @@ import {
 import {
   MAX_SKILL_BYTES,
   ensureInstalledSkillsDir,
+  hasInstalledSkillDir,
   listSkillAttachments,
   listSkillFiles,
   mergeSkillCatalog,
@@ -3798,6 +3799,11 @@ export function createAppHandler({ root }: { root: string }) {
               const list = entry?.attachments || []
               return { attachments: list, fileCount: list.length }
             }
+            /**
+             * 「记录在、目录不在」：修复前安装的记录只有正文，包内文件从未落盘。
+             * 只能按安装目录是否存在判定——附件数为 0 在「纯文本上装」时同样成立。
+             */
+            const filesMissingFor = (id: string) => !hasInstalledSkillDir(root, id)
 
             const asRecord = (entry: {
               id: string
@@ -3813,6 +3819,7 @@ export function createAppHandler({ root }: { root: string }) {
                   builtinText: entry.text,
                   source,
                   ...attachmentsFor(entry.id),
+                  ...(filesMissingFor(entry.id) ? { filesMissing: true } : {}),
                   ...(entry.skillhub ? { skillhub: entry.skillhub } : {}),
                 }
               }

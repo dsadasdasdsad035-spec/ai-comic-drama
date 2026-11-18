@@ -150,9 +150,20 @@ export function SkillInstalledDetailDialog({
 
             <SkillDetailPanel
               title="包内文件"
-              hint={fileCount ? `${fileCount} 个附加文件 · Pi 用 read_skill_file 按需读取` : '无附加文件'}
+              hint={
+                row.record.filesMissing
+                  ? '包内文件缺失 · 需重新安装'
+                  : fileCount
+                    ? `${fileCount} 个附加文件 · Pi 用 read_skill_file 按需读取`
+                    : '无附加文件'
+              }
             >
-              {attachments.length ? (
+              {row.record.filesMissing && !attachments.length ? (
+                <p className="st-hint" data-skill-files-missing>
+                  该技能的安装记录还在，但包内文件不在磁盘上（较早版本安装留下的记录，只存了正文）。
+                  正文仍可读；references / scripts / assets 需要重新安装这个技能才会补齐。
+                </p>
+              ) : attachments.length ? (
                 <ul className="skill-detail-files" data-skill-attachments>
                   {attachments.map((f) => (
                     <li key={f.path}>

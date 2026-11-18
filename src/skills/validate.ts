@@ -75,7 +75,11 @@ export function parseSkillRecords(records: SkillTextRecord[]): SkillLoadResult {
       continue
     }
     const skill = parseRecord(record, issues)
-    if (skill) skills.set(skill.id, skill)
+    if (skill) {
+      // 服务端判定「记录在、目录不在」；装载期只做透传，不在这里推断
+      if (record.filesMissing) skill.filesMissing = true
+      skills.set(skill.id, skill)
+    }
   }
   return { skills, issues, fallback: false }
 }

@@ -37,6 +37,8 @@ export type Skill = {
   /** 缺省为 workbench（严格 manifest） */
   profile?: SkillProfile
   agentPack?: AgentPackInfo
+  /** 安装记录存在但安装目录不在磁盘上：正文可用，包内文件需重装才能补齐 */
+  filesMissing?: boolean
 }
 
 export type SkillHubMeta = {
@@ -59,6 +61,8 @@ export type SkillTextRecord = {
   attachments?: SkillAttachment[]
   /** 附加文件数量，与 attachments 等长 */
   fileCount?: number
+  /** 安装记录存在但安装目录不在磁盘上：正文可用，包内文件需重装才能补齐 */
+  filesMissing?: boolean
 }
 
 /** 包内附加文件：相对路径 + 字节数 */

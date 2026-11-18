@@ -180,7 +180,9 @@ export function parseSkillPackage(buffer) {
   for (const rawName of names) {
     const p = safeZipPath(rawName)
     const data = entries[rawName]
-    if (!data?.length) continue
+    // 0 字节文件是包内合法文件（.keep、__init__.py、空 config.yaml）：目录条目与系统
+    // 垃圾文件已在解压 filter 里排除，这里不能再按长度丢弃，否则磁盘结构与 zip 不一致。
+    if (!data) continue
     if (data.length > MAX_FILE_BYTES) {
       throw new Error(`文件 ${p} 超过 ${Math.floor(MAX_FILE_BYTES / 1024)}KB 限制`)
     }

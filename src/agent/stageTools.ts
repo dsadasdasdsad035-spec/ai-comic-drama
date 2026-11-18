@@ -23,6 +23,7 @@ import {
   takeBatchByChars,
 } from '../skills/writePaging'
 import { isAgentPackSkill, parseAgentPackMeta } from '../skills/agentPack'
+import { isCreativeHostSkill } from '../creative/creativeSkillHost'
 import { getSkill, getSkillTextRecord, loadSkills, skillAttachmentList } from '../skills/registry'
 import { readSkillFile } from '../skills/api'
 import { boundJson, type WorkbenchChatAdapter } from './workbenchChat'
@@ -1442,6 +1443,8 @@ export function skillSummaryRow(s: Skill) {
     /** 包内附加文件：非空时用 read_skill_file 按需读取，不要把全文当正文拼进上下文 */
     files: files.map((f) => f.path),
     fileCount: files.length,
+    /** 安装记录在、目录不在：正文可用但包内文件缺失，用户需重装；别让模型反复试读 */
+    ...(s.filesMissing ? { filesMissing: true } : {}),
   }
 }
 
@@ -1456,7 +1459,7 @@ function createListInstalledSkillsTool(): ToolDef {
       hostsOnly: z
         .boolean()
         .optional()
-        .describe('为 true 时仅返回可作创意宿主的 SkillHub/上传 Agent 包'),
+        .describe('为 true 时仅返回可作创意宿主的 Agent 技能包（不按安装来源过滤）'),
     }),
     run: async ({ stage, profile, hostsOnly }) => {
       const { skills, issues } = await loadSkills()
@@ -1469,10 +1472,7 @@ function createListInstalledSkillsTool(): ToolDef {
         list = list.filter((s) => (s.profile || 'workbench') === profile)
       }
       if (hostsOnly) {
-        list = list.filter(
-          (s) =>
-            (s.source === 'skillhub' || s.source === 'upload') && isAgentPackSkill(s),
-        )
+        list = list.filter(isCreativeHostSkill)
       }
       list.sort((a, b) => (a.manifest.name || a.id).localeCompare(b.manifest.name || b.id, 'zh'))
       return {

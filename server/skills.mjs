@@ -61,6 +61,17 @@ function isDir(p) {
   }
 }
 
+/**
+ * 该技能的安装目录是否存在。
+ *
+ * 用于区分两种外观相同的状态：`skill_installs` 有记录但包内文件从未落盘（修复前装的记录），
+ * 与「目录存在、本包确实没有附加文件」。只能用目录存在性判断——附件数为 0 两者都成立，
+ * 拿它判缺会让纯文本上装的包永久挂一条错误提示。
+ */
+export function hasInstalledSkillDir(appRoot, id) {
+  return isDir(installedSkillDir(appRoot, id))
+}
+
 /** 把 SKILL.md 拆成 frontmatter 和正文；frontmatter 由内置文件拥有，用户只改正文。 */
 export function splitSkillText(text) {
   const raw = String(text || '')

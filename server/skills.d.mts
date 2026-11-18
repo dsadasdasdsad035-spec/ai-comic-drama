@@ -5,6 +5,7 @@ export declare function safeSkillId(id: unknown): string
 export declare function skillsDir(appRoot: string): string
 export declare function installedSkillsDir(appRoot: string): string
 export declare function installedSkillDir(appRoot: string, id: unknown): string
+export declare function hasInstalledSkillDir(appRoot: string, id: unknown): boolean
 export declare function resolveSkillDir(
   appRoot: string,
   id: unknown,
