@@ -21,7 +21,7 @@ import {
 } from '../skills/contracts'
 import type { DraftApplyResult, WorkbenchChatAdapter, WriteTool } from './workbenchChat'
 import { applyProjectDraft, PLATFORM_WRITE_TOOLS, type ProjectDraftCtx } from '../platform/projectDraft'
-import { DEFAULT_EXPERT_PLATFORM_TOOLS } from '../creative/expertToolGroups'
+import { DEFAULT_EXPERT_PLATFORM_TOOLS, HOST_NATIVE_TOOLS } from '../creative/expertToolGroups'
 import { ASPECT_OPTIONS, isAspectOption } from '../project/aspect'
 import { resolveProdKind } from '../shotProdKind'
 import { dialogueToText, parseDialogue } from '../prompts'
@@ -1100,10 +1100,11 @@ export function platformToolNameDiff(registered: Iterable<string>): PlatformTool
   const declared = new Set(builtinPlatformToolNames())
   const actual = new Set(registered)
   const expert = new Set(DEFAULT_EXPERT_PLATFORM_TOOLS)
+  const hostNative = new Set<string>(HOST_NATIVE_TOOLS)
   return {
     declaredNotRegistered: [...declared].filter((n) => !actual.has(n)),
     registeredNotDeclared: [...actual].filter((n) => !declared.has(n)),
-    expertNotDeclared: [...expert].filter((n) => !declared.has(n)),
+    expertNotDeclared: [...expert].filter((n) => !declared.has(n) && !hostNative.has(n)),
   }
 }
 

@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_EXPERT_PLATFORM_TOOLS,
   EXPERT_TOOL_GROUP_LABEL,
+  HOST_NATIVE_TOOLS,
   groupExpertPlatformTools,
 } from '../creative/expertToolGroups'
 import { EXPERT_SKILL_WILDCARD, type CreativeExpert } from '../creative/expertTypes'
@@ -36,7 +37,10 @@ import {
  * preset 只在宿主启动时被读取，因此保存会触发一次宿主重启。
  * 已开始过任务的会话不会跟着换 preset——切换只在空白会话里生效。
  */
-const ALL_PLATFORM_TOOLS = builtinPlatformToolNames().filter((n) => n !== 'list_experts')
+const ALL_PLATFORM_TOOLS = [
+  ...builtinPlatformToolNames().filter((n) => n !== 'list_experts'),
+  ...HOST_NATIVE_TOOLS,
+].sort()
 const DEFAULT_TOOLS = DEFAULT_EXPERT_PLATFORM_TOOLS.filter((n) => ALL_PLATFORM_TOOLS.includes(n))
 const GROUPED_TOOLS = groupExpertPlatformTools(ALL_PLATFORM_TOOLS)
 /** 平台强制注入、不可勾选：会话里始终可用 */

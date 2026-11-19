@@ -20,6 +20,7 @@ import {
   resolveExpertToolNames,
   SKILL_READ_TOOLS,
 } from './dsh-experts.mjs'
+import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
 
 const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
@@ -166,7 +167,7 @@ export class StudioToolBridge {
     this.invokeExpertAllowlist = expert ? resolveExpertSkillAllowlist(expert, this.root).ids : null
     if (expert) {
       const allowedTools = resolveExpertToolNames(expert, [...tools.keys()])
-      if (allowedTools && !allowedTools.has(name)) {
+      if (allowedTools && !allowedTools.has(name) && !HOST_NATIVE_TOOLS.includes(name)) {
         return {
           ok: false,
           error: `专家「${expert}」不允许使用工具「${name}」`,

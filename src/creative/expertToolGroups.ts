@@ -1,14 +1,20 @@
 /** 专家设置：平台工具分组（不含 list_experts） */
 import { SKILL_READ_TOOL_NAMES } from '../skills/tools'
 
+/** dsh-base 自带、不经应用工具桥的工具（与 server/studio-host-tools.mjs 同步） */
+export const HOST_NATIVE_TOOLS = ['bash'] as const
+
 export const EXPERT_TOOL_GROUP_LABEL: Record<string, string> = {
   read: '读项目',
   skill: '技能',
   write: '写草稿',
   project: '项目与分镜管理',
   generate: '生成（有成本）',
+  host: '宿主 Shell',
   other: '其它',
 }
+
+const HOST = new Set<string>(HOST_NATIVE_TOOLS)
 
 const READ = new Set([
   'read_source',
@@ -71,11 +77,20 @@ export function classifyExpertTool(name: string): keyof typeof EXPERT_TOOL_GROUP
   if (WRITE.has(name)) return 'write'
   if (PROJECT.has(name)) return 'project'
   if (GENERATE.has(name)) return 'generate'
+  if (HOST.has(name)) return 'host'
   return 'other'
 }
 
 export function groupExpertPlatformTools(names: string[]): Record<string, string[]> {
-  const out: Record<string, string[]> = { read: [], skill: [], write: [], project: [], generate: [], other: [] }
+  const out: Record<string, string[]> = {
+    read: [],
+    skill: [],
+    write: [],
+    project: [],
+    generate: [],
+    host: [],
+    other: [],
+  }
   for (const name of names) {
     out[classifyExpertTool(name)].push(name)
   }
@@ -129,4 +144,5 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'set_shot_neighbor_refs',
   'generate_character_views',
   'generate_expression_sheet',
+  ...HOST_NATIVE_TOOLS,
 ]

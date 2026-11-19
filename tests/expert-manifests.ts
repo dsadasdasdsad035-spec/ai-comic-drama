@@ -12,7 +12,7 @@ import {
   builtinPlatformToolNames,
   createBuiltinPlatformTools,
 } from '../src/agent/builtinPlatformTools'
-import { DEFAULT_EXPERT_PLATFORM_TOOLS } from '../src/creative/expertToolGroups'
+import { DEFAULT_EXPERT_PLATFORM_TOOLS, HOST_NATIVE_TOOLS } from '../src/creative/expertToolGroups'
 
 let bad = 0
 function check(name: string, fn: () => void | Promise<void>) {
@@ -45,6 +45,7 @@ function readManifests(): Array<{ id: string; toolIds: string[] }> {
 
 const declared = new Set(builtinPlatformToolNames())
 const registered = new Set(createBuiltinPlatformTools({ projectName: '', epNo: 1 }).map((t) => t.name))
+const hostNative = new Set(HOST_NATIVE_TOOLS)
 const manifests = readManifests()
 
 async function main() {
@@ -54,7 +55,7 @@ async function main() {
 
   await check('每个内置专家只声明真实注册的工具', () => {
     for (const m of manifests) {
-      const ghost = m.toolIds.filter((t) => !declared.has(t) || !registered.has(t))
+      const ghost = m.toolIds.filter((t) => (!declared.has(t) || !registered.has(t)) && !hostNative.has(t))
       assert.deepEqual(ghost, [], `专家「${m.id}」声明了不存在的工具：${ghost.join('、')}`)
     }
   })

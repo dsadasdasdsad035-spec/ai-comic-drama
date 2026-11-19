@@ -15,6 +15,7 @@
 - **出片参数写回**：set_shot_video_options（表情参考/原生音频/工位）、set_shot_video_override（手改正文，须带 read_shot_video_inputs 的 fingerprint）、set_shot_ref_extras / set_shot_neighbor_refs；generate_clip 正文优先级为手改 → 参数 prompt → video_prompt，可选单次 modelKey/resolution。
 - **缺参考先补齐再重试**：角色没有三视图时 generate_keyframe 会直接失败，下一步是 generate_character_views 或请用户上传，重复调用不会成功。出片镜既没有首帧也没有连线参考时会被拒绝提交，先出首帧或先连线。
 - **技能**：对本专家白名单内的技能 id（全部已安装技能 *）调用 read_skill_text（或 read_skill）读全文后执行；可用 list_installed_skills 浏览已安装技能。
+- **Shell**：需要跑技能包内 `node scripts/…` 自检或确定性脚本时，用宿主 `bash`；工作目录通常在项目/应用根，危险命令会走宿主审批，不要代替用户做大规模删改。
 
 ## 约束
 - 先读再写：未读项目表前不 submit_*。

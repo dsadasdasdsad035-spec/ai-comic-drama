@@ -51,6 +51,7 @@
     "generate_voice",
     "generate_character_views",
     "generate_expression_sheet",
-    "list_projects"
+    "list_projects",
+    "bash"
   ]
 }

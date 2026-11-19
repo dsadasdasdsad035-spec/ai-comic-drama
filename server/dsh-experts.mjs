@@ -18,6 +18,31 @@ import { createHash } from 'node:crypto'
 import { stringify as stringifyYaml } from 'yaml'
 import { listAllExperts } from './experts.mjs'
 import { listSkillFiles, resolveSkillDir } from './skills.mjs'
+import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
+
+/**
+ * Web profile 在 `@deepseek-ai/dsh-web-app` 里关闭了全局 `tool-bash`；
+ * 须在专家 preset 内按会话挂载，restrict 的 allow 里才能有可执行的 `bash`。
+ * 与 standard preset 的 `tool-bash` 行一致（Windows 禁用 pwsh 侧同理，此处仅 bash）。
+ */
+const HOST_PRESET_TOOL_PLUGINS = {
+  bash: {
+    id: 'tool-bash',
+    name: '@deepseek-ai/dsh-tool-bash',
+    ...(process.platform === 'win32' ? { disabled: true } : {}),
+  },
+}
+
+function hostPresetPluginsForTools(toolNames) {
+  const allow = new Set(toolNames)
+  const out = []
+  for (const name of HOST_NATIVE_TOOLS) {
+    if (!allow.has(name)) continue
+    const spec = HOST_PRESET_TOOL_PLUGINS[name]
+    if (spec) out.push({ ...spec })
+  }
+  return out
+}
 
 /** 预设 id 前缀：与专家 id 一一对应，会话保存的就是这个值 */
 export const EXPERT_PRESET_PREFIX = 'expert-'
@@ -83,9 +108,12 @@ export function resolveSkillWhitelist(skillIds, availableIds) {
 /** 工具子集：`toolIds` ∩ 运行时真实存在的工具，再加始终可用的那几个 */
 export function resolveToolSubset(toolIds, registeredNames) {
   const registered = new Set(registeredNames)
+  const hostNative = new Set(HOST_NATIVE_TOOLS)
   const list = Array.isArray(toolIds) ? toolIds.map((t) => String(t).trim()).filter(Boolean) : []
   const out = new Set()
-  for (const name of list) if (registered.has(name)) out.add(name)
+  for (const name of list) {
+    if (registered.has(name) || hostNative.has(name)) out.add(name)
+  }
   for (const name of ALWAYS_ON_TOOLS) if (registered.has(name)) out.add(name)
   for (const name of SKILL_READ_TOOLS) if (list.includes(name) && registered.has(name)) out.add(name)
   return [...out].sort()
@@ -242,6 +270,7 @@ export function compileExpertPreset({ expert, registeredNames, skillRoot, skillI
         { name: '@deepseek-ai/dsh-compaction-tool-result-pruner' },
       ],
     },
+    ...hostPresetPluginsForTools(tools),
     {
       // 本应用自己的闸门：限制工具可见性并兜住技能 id 白名单
       name: 'dsh-plugin-creative-expert',

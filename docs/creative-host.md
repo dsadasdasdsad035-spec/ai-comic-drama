@@ -569,6 +569,7 @@ preset——专家只在空白会话里可切换。
 
 工具可见集只看专家的 `toolIds`，例外与边界：
 
+- `bash` 由宿主在 preset 内挂载 `@deepseek-ai/dsh-tool-bash` 后注册（Web profile 关闭了全局 `tool-bash`）；勾选后编译进 patch，专家闸门才会放行，默认跟随「全能专家」开启；
 - `list_experts`（`ALWAYS_ON_TOOLS`）由平台始终注入，面板里是锁定行，不可勾选；
 - `list_installed_skills` **不再**强制注入，必须在「工具 → 技能」组里勾选才进可见集；
 - `read_skill*` 同样只按 `toolIds` 进入，且执行时还要过技能 id 白名单。

@@ -101,6 +101,28 @@ await check('toolIds 收窄成真实工具，并只补上 list_experts', async (
   for (const name of ALWAYS_ON_TOOLS) assert.ok(gate.config.toolIds.includes(name))
 })
 
+await check('宿主 bash：preset 挂载 dsh-tool-bash 且闸门放行', async () => {
+  const preset = compileExpertPreset({
+    expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['bash', 'read_source'], skillIds: [] },
+    registeredNames,
+  })
+  const bashPlugin = preset.plugins.find((p) => p.name === '@deepseek-ai/dsh-tool-bash')
+  assert.ok(bashPlugin, 'web profile 须在 preset 内挂载 dsh-tool-bash')
+  const gate = preset.plugins.find((p) => p.name === 'dsh-plugin-creative-expert')
+  assert.ok(gate.config.toolIds.includes('bash'))
+  const gateIdx = preset.plugins.indexOf(gate)
+  const bashIdx = preset.plugins.indexOf(bashPlugin)
+  assert.ok(bashIdx >= 0 && bashIdx < gateIdx, 'bash 插件须在闸门之前注册')
+})
+
+await check('未勾选 bash 时不挂载 dsh-tool-bash', async () => {
+  const preset = compileExpertPreset({
+    expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['read_source'], skillIds: [] },
+    registeredNames,
+  })
+  assert.ok(!preset.plugins.some((p) => p.name === '@deepseek-ai/dsh-tool-bash'))
+})
+
 await check('专家勾选 list_installed_skills 时才进可见集', async () => {
   const preset = compileExpertPreset({
     expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['read_source', 'list_installed_skills'], skillIds: [] },
