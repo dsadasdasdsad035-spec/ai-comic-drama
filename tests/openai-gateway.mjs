@@ -85,9 +85,12 @@ function startFakeText() {
 }
 
 const upstream = await startFakeText()
+// 创意环节的输出上限：设置页改完立即生效，所以按请求读取
+let creativeMaxTokens
 const gateway = createOpenAIGateway({
   baseUrl: upstream.base,
   getModels: () => MODELS,
+  getCreativeMaxTokens: () => creativeMaxTokens,
   getSessionToken: () => '',
   log: () => {},
 })
@@ -190,6 +193,50 @@ await check('非流式：拼成完整 message + tool_calls', async () => {
   assert.equal(choice.message.content, '你好')
   assert.equal(choice.message.tool_calls[0].function.arguments, '{"episode":1}')
   assert.equal(choice.finish_reason, 'tool_calls')
+})
+
+await check('创意输出上限：有值透传，留空不带字段', async () => {
+  const send = () =>
+    fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'sb/main', messages: [{ role: 'user', content: 'x' }], stream: true }),
+    })
+
+  creativeMaxTokens = 4096
+  await (await send()).text()
+  assert.equal(upstream.state.lastBody.maxTokens, 4096, '设置的上限没有透传给应用')
+
+  creativeMaxTokens = undefined
+  await (await send()).text()
+  assert.ok(!('maxTokens' in upstream.state.lastBody), '留空时不应携带 maxTokens')
+  creativeMaxTokens = undefined
+})
+
+await check('模型表为空：可读的未配置提示', async () => {
+  const empty = createOpenAIGateway({
+    baseUrl: upstream.base,
+    getModels: () => [],
+    getSessionToken: () => '',
+    log: () => {},
+  })
+  const s = http.createServer((req, res) => {
+    empty.handle(req, res).catch(() => res.end())
+  })
+  await new Promise((r) => s.listen(0, '127.0.0.1', r))
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'sb/default', messages: [{ role: 'user', content: 'x' }] }),
+    })
+    assert.equal(res.status, 400)
+    const body = await res.json()
+    assert.equal(body.error.code, 'no_text_model')
+    assert.match(body.error.message, /设置页/)
+  } finally {
+    s.close()
+  }
 })
 
 await check('未知模型：OpenAI 形状的 404', async () => {

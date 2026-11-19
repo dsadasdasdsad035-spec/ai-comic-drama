@@ -15,8 +15,13 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
+
+// 平台工具数从代码算：宿主注册的就是同一份清单，新增工具不必再改这里的数字
+const toolsBundle = await import(pathToFileURL(path.join(ROOT, 'server-build', 'studio-tools.mjs')).href)
+const EXPECTED_MIN_TOOLS = toolsBundle.createBuiltinPlatformTools({ projectName: '', epNo: 1 }).length
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-flow-'))
 const STATE = path.join(TMP, 'state')
 const TOKEN = 'flow-smoke-token'
@@ -99,10 +104,10 @@ await check('宿主注册完全部平台工具（含技能读工具）', async (
   for (let i = 0; i < 60; i += 1) {
     const res = await fetch(`${base}/studio/_host/status`, { credentials: 'include' })
     status = await res.json()
-    if (Number(status.tools?.count) >= 40) break
+    if (Number(status.tools?.count) >= EXPECTED_MIN_TOOLS) break
     await new Promise((r) => setTimeout(r, 250))
   }
-  assert.ok(Number(status.tools?.count) >= 40, `只注册了 ${status.tools?.count} 个工具`)
+  assert.ok(Number(status.tools?.count) >= EXPECTED_MIN_TOOLS, `只注册了 ${status.tools?.count} 个工具，期望至少 ${EXPECTED_MIN_TOOLS}`)
   for (const name of ['read_skill_text', 'read_skill_file', 'list_installed_skills', 'submit_shots']) {
     assert.ok(status.tools.names.includes(name), `缺少工具 ${name}`)
   }

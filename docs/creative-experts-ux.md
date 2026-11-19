@@ -1,8 +1,9 @@
 # 创意「专家」功能 — UI/UX 设计（v0）
 
-> **现状（`creative-studio-dsh-runtime` 之后）**：专家的管理在创意宿主（`/studio/` → 设置 → 专家），
-> 应用侧 `设置 → 创意专家` 只剩一句说明。专家的 manifest/soul 存在 `<DSH_HOME>/experts/<id>/`，
-> 编译成宿主 preset，工具与技能白名单由 `dsh-plugin-creative-expert` 在执行前强制。
+> **现状（`creative-expert-settings-pane` 之后）**：专家的管理回到应用侧 `设置 → 智能与扩展 → 创意专家`，
+> 在那里可以查看/新建/另存为自定义专家、勾选技能与工具、导入导出 JSON/zip。
+> 专家的定义仍存在 `<DSH_HOME>/experts/<id>/`（不再写入应用设置库），保存后由服务端重编译成宿主 preset，
+> 工具与技能白名单由 `dsh-plugin-creative-expert` 在执行前强制。宿主运行时会因重编译而重启。
 > 本文是当时的设计稿，保留作交互语义参考；实现细节以 [`creative-host.md`](./creative-host.md) 为准。
 
 > 目标：在创意会话中用户可选一个**专家**（Expert），由专家自带的 **soul / 系统提示词**、**技能白名单**、**工具白名单** 约束 Pi 行为；系统工具 **`list_experts`** 始终可用，帮用户发现与切换专家。  
@@ -195,6 +196,28 @@ flowchart TB
 | 专家工具全关只剩 list_experts | 允许保存；空态提示「至少建议保留读技能与一项读项目」 |
 | 无项目 | 与现有一致：无会话；专家选择可禁用或仅预览 |
 
+### 6.1 保存后什么时候真的生效
+
+专家的 preset 由宿主在**启动时**读取（`--patch` 叠加层，宿主的 HMR 不监听它），
+所以「保存」与「生效」之间隔着一次宿主重启。判断要不要重启的依据是专家的**内容指纹**：
+
+| 改动 | 是否触发重同步 | 是否重启宿主 |
+|---|---|---|
+| `soul` 任意一个字符 | 是 | 是 |
+| 显示名 / 说明 | 是 | 是 |
+| 工具白名单内容（含同数量替换） | 是 | 是 |
+| 技能白名单内容（含同数量替换、通配 ⇄ 显式） | 是 | 是 |
+| 新增 / 删除专家 | 是 | 是 |
+| 图标、`imageDescription`、来源 | 否 | 否 |
+| 白名单顺序调整、内容完全一致 | 否 | 否 |
+
+指纹由 `expertFingerprint()` 计算，只覆盖影响 preset 的六个字段
+（`id`、`name`、`description`、`soul`、排序后的 `toolIds` 与 `skillIds`）。
+旧实现只拼「工具数 / 技能数」，改 soul 或用同数量替换白名单都不会重启，
+表现为「设置里改了、会话里没改」——这类失效没有报错，只能靠指纹避免。
+
+技能包的**正文**改动不在此列：它由宿主的文件监听热生效，见 `docs/creative-host.md`。
+
 ---
 
 ## 7. 线框（ASCII）
@@ -265,7 +288,8 @@ flowchart TB
 | 选专家后的 system / 技能 | **仅**专家 soul + **仅**专家技能名单 |
 | `list_experts` | **系统内置**，运行时**永远保留**，不进专家工具勾选 |
 | 选专家 vs 偏好技能 | 有专家时 **隐藏偏好技能**，不双轨 |
-| `list_installed_skills` | **非**强制；由专家工具白名单决定是否可用 |
+| `list_installed_skills` | **非**强制；由专家在「工具 → 技能」组里勾选决定是否可用 |
+| 专家管理入口 | **应用设置页**（`设置 → 智能与扩展 → 创意专家`）；保存即重编译 preset，宿主运行时会重启 |
 | 会话级 expert | **已实现** `creative_sessions.expert_id` + 顶栏写回 |
 
 OpenSpec：`creative-experts` 已归档（`openspec/changes/archive/2026-11-14-creative-experts/`），主 spec：`openspec/specs/creative-experts/spec.md`。

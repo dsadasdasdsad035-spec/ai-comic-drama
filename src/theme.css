@@ -15986,6 +15986,8 @@ body,
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 常驻视图的隐藏态用绝对定位铺满这里：需要一个精确的定位上下文 */
+  position: relative;
 }
 
 /* ---------------------------------------------------------------- 左栏 */
@@ -18212,7 +18214,56 @@ button.crumb:hover {
  * 容器只负责「占满可用区、不制造滚动」：宿主的会话列表与消息流自己滚。
  * 尺寸用 100% 而不是 100vh，避免外壳头部/底部把 iframe 挤出可视区，
  * 那会让创意页出现一条永远关不掉的页面级滚动条。
+ *
+ * 配色、尺度与品牌降噪**不在这里**：它们必须写进宿主文档才生效，统一由
+ * `src/creative/StudioFrame.tsx` 注入（`applyStudioTheme` 写 body 内联变量，
+ * `studioStyleText` 提供圆角映射与降噪规则）。本文件只负责容器自身的底色，
+ * 让 iframe 首帧之前不闪白。
+ *
+ * 圆角之所以走注入而不是这里：宿主把 `--dsw-radius-*` 声明在自己的 `:root` 上，
+ * 只有在宿主文档内声明才能盖过它。宿主浮层原本靠 `panel(28px)` 与 `xl(20px)`
+ * 的圆角差建立层级，压到应用的 10px 后两者同值——层级改由宿主的描边与阴影
+ * 承担，所以这里不额外加视觉补偿。
  */
+/**
+ * 创意会话常驻容器。
+ *
+ * 两条约束同时成立：
+ *
+ * 1. 不能销毁 iframe 的浏览上下文——宿主文档、Cordis 上下文与 WebSocket
+ *    都存活，切回时无需重建，这是「切页丝滑」的全部机制；
+ * 2. 未激活时**必须保留布局**——`display: none` 的 iframe 视口是 0×0，
+ *    宿主算不出列表高度，一行会话都渲染不出来（实测隐藏期 0 行），
+ *    揭示时要补一次布局与列表构建（实测 45ms，正好落在用户等待的那一帧）。
+ *
+ * 所以隐藏用「离屏但占位」：绝对定位铺满内容区、`visibility: hidden` 不绘制
+ * 也不进可访问树，脚本与布局照常跑。`inset: 0` 让隐藏期的视口就等于揭示后的
+ * 视口——不需要 `ResizeObserver` 测量，也不存在测量滞后导致的二次 resize。
+ *
+ * `display: flex` 是为了让 `.studio-frame` 的 `flex: 1 1 auto` 有参照，
+ * 隐不隐藏都保持同一套盒模型。
+ */
+.view-keepalive {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  pointer-events: none;
+  /* 绝对定位时被忽略，激活回到文档流后负责撑满内容区 */
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* 揭示只是把定位与可见性翻回来：容器尺寸与激活态完全一致，不产生重排 */
+.view-keepalive[data-active='true'] {
+  position: relative;
+  inset: auto;
+  visibility: visible;
+  pointer-events: auto;
+}
+
 .studio-frame {
   position: relative;
   display: flex;
@@ -18222,7 +18273,6 @@ button.crumb:hover {
   width: 100%;
   background: var(--bg);
 }
-
 .studio-frame-iframe {
   flex: 1 1 auto;
   width: 100%;
@@ -18247,9 +18297,96 @@ button.crumb:hover {
   color: var(--text);
 }
 
+/**
+ * 加载期骨架。
+ *
+ * 存在的理由：宿主自己的启动页是 `HARNESS / Loading plugins…`，和本应用的
+ * 视觉语言对不上，突然出现会让创意视图像「打开了另一个软件」。
+ * 这条遮罩按会话外壳的实际结构铺三块（侧栏条 + 消息气泡 + 输入区），
+ * 宿主外壳挂上去时的版式跳变最小。
+ */
 .studio-frame-loading {
+  /* 骨架要铺满，不能居中的一小块 */
+  place-content: stretch;
+  grid-template-columns: minmax(120px, 22%) 1fr;
+  align-items: stretch;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
   color: var(--muted);
   font-size: var(--fs-md);
+}
+
+.studio-skeleton {
+  display: grid;
+  grid-template-columns: minmax(120px, 22%) 1fr;
+  gap: var(--sp-4);
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.studio-skeleton-rail,
+.studio-skeleton-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-height: 0;
+}
+
+.studio-skeleton-rail span {
+  height: 26px;
+  border-radius: 7px;
+  background: var(--panel-2);
+}
+
+.studio-skeleton-rail span:first-child {
+  height: 34px;
+  background: var(--chrome-2);
+}
+
+.studio-skeleton-bubble {
+  height: 64px;
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.studio-skeleton-bubble.is-narrow {
+  width: 62%;
+  height: 44px;
+}
+
+.studio-skeleton-composer {
+  margin-top: auto;
+  height: 84px;
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.studio-skeleton-pulse {
+  animation: studio-skeleton-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes studio-skeleton-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 骨架只是版式参考，不该被读屏念出来 */
+.studio-skeleton-caption {
+  grid-column: 1 / -1;
+  justify-self: center;
+  align-self: end;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-skeleton-pulse {
+    animation: none;
+  }
 }
 
 .studio-frame-error h2 {
@@ -18264,4 +18401,32 @@ button.crumb:hover {
   color: var(--text-2);
   font-size: var(--fs-md);
   line-height: 1.6;
+}
+
+/* 失败摘要默认折叠：默认视图仍是「一句原因 + 重试」，需要时才展开 */
+.studio-frame-error-detail {
+  max-width: 72ch;
+  text-align: left;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+
+.studio-frame-error-detail summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.studio-frame-error-detail pre {
+  margin: var(--sp-2) 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

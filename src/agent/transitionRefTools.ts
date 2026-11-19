@@ -55,7 +55,7 @@ export type TransitionRefToolDeps = {
 /** 单次最多写入的参考项；再多就分两次，避免一次把整张角色表塞进请求 */
 const MAX_NAMES = 8
 
-const NO_PROJECT = '请先在顶栏选择项目'
+const NO_PROJECT = '请先在顶栏选择项目；可用 list_projects 查看已有项目'
 
 type CanvasCtx = {
   nodes: ShotNodeType[]

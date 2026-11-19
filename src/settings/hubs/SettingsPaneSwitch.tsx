@@ -9,7 +9,7 @@ import { AgentPane } from './extensions/AgentPane'
 import { StockPane } from './extensions/StockPane'
 import { CreativePane } from './extensions/CreativePane'
 import { SkillsPane } from './extensions/SkillsPane'
-import { ExpertsPane } from './extensions/ExpertsPane'
+import { ExpertSettingsPanel } from '../ExpertSettingsPanel'
 import { McpPane } from './extensions/McpPane'
 import { PricingPane } from './billing/PricingPane'
 import { DataPane } from './data/DataPane'
@@ -40,7 +40,7 @@ export function SettingsPaneSwitch({ pane, wb }: Props) {
     case 'skills':
       return <SkillsPane wb={wb} />
     case 'experts':
-      return <ExpertsPane wb={wb} />
+      return <ExpertSettingsPanel toast={wb.toast} />
     case 'mcp':
       return <McpPane wb={wb} />
     case 'pricing':

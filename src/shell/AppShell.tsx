@@ -20,6 +20,8 @@ export type AppShellProps = {
   onToggleCollapsed: () => void
   /** 灰度关闭的视图：左栏不显示入口 */
   hiddenViews?: ViewId[]
+  /** 入口的提前意图（指针悬停 / 键盘聚焦），用于预热重视图 */
+  onIntent?: (view: ViewId) => void
   children: ReactNode
 }
 
@@ -43,6 +45,7 @@ export default function AppShell({
   collapsed,
   onToggleCollapsed,
   hiddenViews = [],
+  onIntent,
   children,
 }: AppShellProps) {
   const item = navItemOf(view)
@@ -78,6 +81,7 @@ export default function AppShell({
         <SideNav
           view={view}
           hiddenViews={hiddenViews}
+          onIntent={onIntent}
           onNavigate={onNavigate}
           projectSlot={projectSlot}
           collapsed={collapsed}

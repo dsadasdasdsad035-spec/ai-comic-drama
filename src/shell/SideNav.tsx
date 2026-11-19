@@ -17,6 +17,13 @@ export type SideNavProps = {
   footer: ReactNode
   /** 被灰度开关关掉的视图：不渲染入口，避免点进去才报错 */
   hiddenViews?: ViewId[]
+  /**
+   * 入口的「提前意图」上报：指针悬停或键盘聚焦。
+   *
+   * 用来在点击之前预热对应的重视图（目前只有创意会话用到）。
+   * 只当作加速信号，不影响导航本身；不传就是纯静态导航。
+   */
+  onIntent?: (view: ViewId) => void
 }
 
 /**
@@ -36,6 +43,7 @@ export default function SideNav({
   counts = {},
   footer,
   hiddenViews = [],
+  onIntent,
 }: SideNavProps) {
   return (
     <aside className="rail" data-collapsed={collapsed ? 'true' : 'false'} aria-label="项目导航">
@@ -74,6 +82,9 @@ export default function SideNav({
                     aria-current={active ? 'page' : undefined}
                     aria-label={item.label}
                     title={item.label}
+                    onPointerEnter={() => onIntent?.(item.id)}
+                    // 键盘用户不会触发 pointerenter：没有这一条就等于把无障碍用户排除在预热之外
+                    onFocus={() => onIntent?.(item.id)}
                     onClick={() => onNavigate(item.id)}
                   >
                     <Icon size={16} aria-hidden className="rail-icon" />

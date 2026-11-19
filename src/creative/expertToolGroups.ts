@@ -26,6 +26,7 @@ const READ = new Set([
   'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
+  'list_projects',
 ])
 
 const SKILL = new Set<string>(SKILL_READ_TOOL_NAMES)
@@ -98,6 +99,7 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'read_skill_text',
   'read_skill_file',
   'list_installed_skills',
+  'list_projects',
   'validate_contract',
   'submit_episodes',
   'submit_characters',

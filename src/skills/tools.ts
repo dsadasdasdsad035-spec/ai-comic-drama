@@ -52,6 +52,7 @@ export const KNOWN_TOOL_IDS = new Set([
   'read_skill_file',
   'list_installed_skills',
   'list_experts',
+  'list_projects',
   'validate_contract',
   // 项目与分镜管理（需用户确认）：新建项目、改项目设定、删分镜
   'create_project',
@@ -91,6 +92,7 @@ export const READ_TOOL_IDS = new Set(
       id.startsWith('read_') ||
       id === 'list_installed_skills' ||
       id === 'list_experts' ||
+      id === 'list_projects' ||
       id === 'get_shot_context' ||
       id === 'list_camera_lexicon' ||
       id === 'get_camera_lexicon',

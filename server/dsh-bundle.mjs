@@ -43,6 +43,23 @@ export function profileDir(dshHome) {
 }
 
 /**
+ * profile 清单里声明的 bundle 层。
+ *
+ * 宿主对解析不到的 bundle 只是跳过并打一行日志，不会失败；应用侧拿这份清单在启动后
+ * 核对「该起的都起了」，否则少一个插件只会表现成功能凭空消失。
+ * @returns {string[]} 声明的 bundle 包名；读不到清单时返回空数组
+ */
+export function expectedBundles(dshHome) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(profileDir(dshHome), 'package.json'), 'utf8'))
+    const bundles = manifest?.dsh?.profile?.bundles
+    return Array.isArray(bundles) ? bundles.filter((name) => typeof name === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * 把插件源码复制进 profile 的 node_modules（内容相同则跳过）。
  * @returns 是否有变化
  */

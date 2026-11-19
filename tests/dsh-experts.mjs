@@ -67,15 +67,26 @@ await check('soul 编译成 complete persona（不叠加默认说明）', async 
   assert.equal(persona.config.complete, true, 'persona 必须是完整系统提示词')
 })
 
-await check('toolIds 收窄成真实工具，并补上始终可用的工具', async () => {
+await check('toolIds 收窄成真实工具，并只补上 list_experts', async () => {
   const preset = compileExpertPreset({
     expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['read_source', 'no_such_tool'], skillIds: [] },
     registeredNames,
   })
   const gate = preset.plugins.find((p) => p.name === 'dsh-plugin-creative-expert')
   assert.ok(gate, '没有专家闸门插件')
-  assert.deepEqual(gate.config.toolIds.sort(), ['list_experts', 'list_installed_skills', 'read_source'].sort())
+  // list_installed_skills 不再被强制注入：未勾选就不在可见集里
+  assert.deepEqual(gate.config.toolIds.sort(), ['list_experts', 'read_source'].sort())
+  assert.ok(!gate.config.toolIds.includes('list_installed_skills'), 'list_installed_skills 不该被强制注入')
   for (const name of ALWAYS_ON_TOOLS) assert.ok(gate.config.toolIds.includes(name))
+})
+
+await check('专家勾选 list_installed_skills 时才进可见集', async () => {
+  const preset = compileExpertPreset({
+    expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['read_source', 'list_installed_skills'], skillIds: [] },
+    registeredNames,
+  })
+  const gate = preset.plugins.find((p) => p.name === 'dsh-plugin-creative-expert')
+  assert.ok(gate.config.toolIds.includes('list_installed_skills'), '勾选了却不生效')
 })
 
 await check('不在 toolIds 的工具不会进白名单', async () => {

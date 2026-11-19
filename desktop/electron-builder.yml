@@ -34,6 +34,10 @@ extraResources:
     to: app/server-build
   - from: dist
     to: app/dist
+  # 服务端运行时直接 import 的前端核心（`server/db.mjs` → `../src/promptAuditCore.mjs`）：
+  # 少了它打包产物能打开窗口，但本地服务一启动就 ERR_MODULE_NOT_FOUND
+  - from: src/promptAuditCore.mjs
+    to: app/src/promptAuditCore.mjs
   # 只读资产：presets 由 server/index.mjs 的 STATIC_PUBLIC_DIRS 分发
   - from: public/presets
     to: app/public/presets

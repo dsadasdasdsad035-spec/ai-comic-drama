@@ -39,9 +39,10 @@ function errorBody(message, type = 'invalid_request_error', code = '') {
 
 /**
  * 创建门面。`baseUrl` 指向应用自身（回环），`getModels` 返回当前可用文本模型，
- * `getSessionToken` 返回当前操作员的会话令牌（账号模式下用于把账记到人头上）。
+ * `getSessionToken` 返回当前操作员的会话令牌（账号模式下用于把账记到人头上），
+ * `getCreativeMaxTokens` 返回本轮输出上限（`undefined` = 不带 `max_tokens`）。
  */
-export function createOpenAIGateway({ baseUrl, getModels, getSessionToken, log = () => {} }) {
+export function createOpenAIGateway({ baseUrl, getModels, getCreativeMaxTokens, getSessionToken, log = () => {} }) {
   function models() {
     try {
       return getModels() || []
@@ -84,6 +85,20 @@ export function createOpenAIGateway({ baseUrl, getModels, getSessionToken, log =
     }
 
     const list = models()
+    // 模型表为空时给「去设置页绑定」的可读提示：
+    // 此时 sb/default 只是占位，让它走到 resolveModelId 只会得到「没有对应的应用模型键」
+    if (!list.length) {
+      sendJson(
+        res,
+        400,
+        errorBody(
+          '设置页还没有可用的文本模型，请到设置页的「生成环节默认」绑定「创意（对话助手）」模型',
+          'invalid_request_error',
+          'no_text_model',
+        ),
+      )
+      return
+    }
     const resolved = resolveModelId(body.model, list)
     if (resolved.error) {
       sendJson(res, 404, errorBody(resolved.error, 'invalid_request_error', 'model_not_found'))
@@ -91,11 +106,16 @@ export function createOpenAIGateway({ baseUrl, getModels, getSessionToken, log =
     }
 
     const stream = Boolean(body.stream)
+    const creativeMaxTokens = typeof getCreativeMaxTokens === 'function' ? Number(getCreativeMaxTokens()) : NaN
     const upstreamBody = {
       messages: body.messages,
       tools: body.tools,
       modelKey: resolved.modelKey,
       ...(resolved.tier ? { tier: resolved.tier } : {}),
+      // 留空就不带：`max_tokens` 缺失等于交给渠道默认上限
+      ...(Number.isFinite(creativeMaxTokens) && creativeMaxTokens > 0
+        ? { maxTokens: Math.floor(creativeMaxTokens) }
+        : {}),
       stream: true,
     }
 

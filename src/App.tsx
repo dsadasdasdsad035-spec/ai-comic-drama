@@ -81,6 +81,8 @@ import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
 import { blankEpisode, nextEpisodeNo } from './board/episodeOps'
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import StudioFrame from './creative/StudioFrame'
+import { resolveStudioMount } from './creative/keepalive'
+import { useStudioWarmup } from './creative/useStudioWarmup'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, identityFingerprint, markExpressionSheetStale, markExpressionsStale, markVoiceSampleStale, type CharacterSheet } from './characters'
@@ -306,6 +308,26 @@ function loadSaved(): Saved | null {
   return readSavedKey(STORAGE_KEY)
 }
 
+/** 创意视图访问标记：回访用户的外壳值得提前载入，这是首访之外唯一的预热信号之一 */
+const STUDIO_VISITED_KEY = 'sb.studioVisited'
+
+function readStudioVisited(): boolean {
+  try {
+    return localStorage.getItem(STUDIO_VISITED_KEY) === '1'
+  } catch {
+    // 隐私模式下 localStorage 会抛错：按首访处理，最坏结果只是晚一点预热
+    return false
+  }
+}
+
+function markStudioVisited() {
+  try {
+    localStorage.setItem(STUDIO_VISITED_KEY, '1')
+  } catch {
+    // 存不了就只在本次会话里生效：不影响功能，只是下次启动会重新当首访
+  }
+}
+
 /**
  * 项目级画布：
  * - 有项目 key 直接用；
@@ -510,20 +532,87 @@ function Shell() {
    * 值来自服务端设置而不是构建时常量，所以切换后刷新即可生效，不必重启应用。
    */
   const [studioEnabled, setStudioEnabled] = useState(true)
+  /**
+   * 创意视图是否常驻：首次进入后切走只隐藏、不卸载 iframe。
+   * 宿主前端是几十 MB 的一份独立应用，重建一次要重新激活整棵插件树，
+   * 而切页本身在应用里是亚毫秒的组件替换——常驻就是为了抹平这个差。
+   * 值由服务端下发（`SB_STUDIO_NO_KEEPALIVE` 可关掉），默认开启。
+   */
+  const [studioKeepAlive, setStudioKeepAlive] = useState(true)
+  /**
+   * 是否允许在后台预热带创意外壳（`SB_STUDIO_NO_PRELOAD` 可关）。
+   * 值同样由服务端下发：弱网机队或排障时改环境变量重启即可，不必重新构建前端。
+   */
+  const [studioPreload, setStudioPreload] = useState(true)
+  /**
+   * 开关是否已经从服务端拿到。
+   *
+   * 首帧还不知道服务端是否允许预热，必须先当「不允许」：否则默认值 `true`
+   * 会抢在开关到达之前发一次探测，让「关掉预热」也留下后台请求。
+   */
+  const [studioFlagsLoaded, setStudioFlagsLoaded] = useState(false)
+  /** 此前进入过创意：回访用户的外壳值得提前载入（`localStorage` 读不到就当首访） */
+  const [studioVisited, setStudioVisited] = useState(readStudioVisited)
+  /** 指针悬停或键盘聚焦过「创意」入口：首访用户的提前意图 */
+  const [studioIntent, setStudioIntent] = useState(false)
+  /** 首次进入创意后才挂载：应用启动就挂等于让宿主产物和首屏抢带宽 */
+  const [studioMounted, setStudioMounted] = useState(view === 'creative')
   useEffect(() => {
     let alive = true
     fetch('/api/studio/enabled', { credentials: 'include' })
       .then((r) => r.json())
       .then((body) => {
-        if (alive && typeof body?.enabled === 'boolean') setStudioEnabled(body.enabled)
+        if (!alive) return
+        if (typeof body?.enabled === 'boolean') setStudioEnabled(body.enabled)
+        if (typeof body?.keepAlive === 'boolean') setStudioKeepAlive(body.keepAlive)
+        // 缺字段按开启处理：老后端配新前端时不该因为少一个字段就悄悄失去预热
+        if (typeof body?.preload === 'boolean') setStudioPreload(body.preload)
+        setStudioFlagsLoaded(true)
       })
       .catch(() => {
         // 拿不到就按开启处理：隐藏入口是灰度手段，不该因一次网络抖动把功能藏掉
+        if (alive) setStudioFlagsLoaded(true)
       })
     return () => {
       alive = false
     }
   }, [])
+  useEffect(() => {
+    if (view !== 'creative' || !studioEnabled) return
+    // 一次性置位：之后离开创意视图只隐藏，保证宿主文档与连接存活
+    setStudioMounted(true)
+    // 记下「来过」：下次启动时外壳值得在后台预热（首访仍按需加载）
+    markStudioVisited()
+    setStudioVisited(true)
+  }, [view, studioEnabled])
+  /**
+   * 挂载决策放在渲染前算一次：内联分支与常驻容器都读它，
+   * 避免两处各写一份「什么时候该渲染」而漂移。
+   */
+  const studioMount = resolveStudioMount({
+    enabled: studioEnabled,
+    keepAlive: studioKeepAlive,
+    mounted: studioMounted,
+    active: view === 'creative',
+  })
+  /**
+   * 外壳预热：把「点开创意要等 300ms 加载 + 插件树激活」挪到后台。
+   *
+   * 触发条件由 `resolveStudioWarmup` 决定（回访或指针/焦点意图，且链路与设备都允许），
+   * 命中就提前把 `studioMounted` 置为真——渲染树与常驻容器完全不用改，
+   * 整个特性只是让这个布尔值早一点变 true。
+   */
+  useStudioWarmup({
+    enabled: studioEnabled,
+    keepAlive: studioKeepAlive,
+    // 开关未到达前当「不允许」：宁可晚一次渲染，也不要先漏一次探测
+    preload: studioFlagsLoaded && studioPreload,
+    mounted: studioMounted,
+    active: view === 'creative',
+    visited: studioVisited,
+    intent: studioIntent,
+    onMount: () => setStudioMounted(true),
+  })
   useEffect(() => {
     if (studioEnabled || route.kind !== 'project' || route.view !== 'creative') return
     navigate(projectHash(route.project, 'overview'))
@@ -3989,6 +4078,10 @@ function Shell() {
         collapsed={railCollapsed}
         onToggleCollapsed={toggleRail}
         hiddenViews={studioEnabled ? [] : ['creative']}
+        onIntent={(target) => {
+          // 只关心创意入口：其它视图是亚毫秒的组件替换，没有可预热的成本
+          if (target === 'creative') setStudioIntent(true)
+        }}
       >
         {view === 'overview' ? (
           <OverviewPage
@@ -4004,8 +4097,11 @@ function Shell() {
             }}
           />
         ) : view === 'creative' ? (
-          // 创意会话整体交给宿主：这里只放容器与错误态
-          <StudioFrame />
+          // 常驻模式下由下面的 keepalive 容器承担渲染，这里留空避免落进画布分支
+          studioMount.mode === 'inline' ? (
+            // 创意会话整体交给宿主：这里只放容器与错误态
+            <StudioFrame projectName={projectName} />
+          ) : null
         ) : view === 'account' ? (
           <AccountPage
             toast={(m) => {
@@ -4563,6 +4659,17 @@ function Shell() {
         </main>
         </div>
         )}
+
+        {/*
+          创意会话常驻：`display: none` 不销毁 iframe 的浏览上下文，
+          所以会话列表、滚动位置、输入草稿与 WebSocket 都还在，切回即用。
+          只在首次进入后挂载——启动就挂会拖慢首屏。
+        */}
+        {studioMount.mode === 'keepalive' ? (
+          <div className="view-keepalive" data-active={studioMount.visible ? 'true' : 'false'}>
+            <StudioFrame active={studioMount.visible} projectName={projectName} />
+          </div>
+        ) : null}
       </AppShell>
       )}
 

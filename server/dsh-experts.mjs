@@ -14,14 +14,22 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { stringify as stringifyYaml } from 'yaml'
 import { listAllExperts } from './experts.mjs'
 import { listSkillFiles, resolveSkillDir } from './skills.mjs'
 
 /** 预设 id 前缀：与专家 id 一一对应，会话保存的就是这个值 */
 export const EXPERT_PRESET_PREFIX = 'expert-'
-/** 始终可用的工具：列举专家、以及技能发现入口都必须在任何专家下可用 */
-export const ALWAYS_ON_TOOLS = ['list_experts', 'list_installed_skills']
+/**
+ * 始终可用的工具：只有列举专家。
+ *
+ * `list_installed_skills` 不在这里：它由专家自己在工具白名单里勾选。
+ * 强制注入会让「专家没勾技能目录」变成一句空话，也会让模型列出
+ * 白名单外、读时会被闸门拒绝的技能。技能读工具（read_skill*）不靠这里，
+ * 它们本来就只能通过 `toolIds` 勾选进入可见集。
+ */
+export const ALWAYS_ON_TOOLS = ['list_experts']
 /** 技能读工具：勾选归入「技能」组，不列为可单独勾选的外部工具 */
 export const SKILL_READ_TOOLS = ['read_skill', 'read_skill_text', 'read_skill_file', 'list_installed_skills']
 
@@ -33,6 +41,32 @@ export function presetIdForExpert(expertId) {
 export function expertIdFromPreset(presetId) {
   const v = String(presetId || '').trim()
   return v.startsWith(EXPERT_PRESET_PREFIX) ? v.slice(EXPERT_PRESET_PREFIX.length) : ''
+}
+
+/**
+ * 专家的内容指纹。
+ *
+ * 只覆盖会影响宿主行为的六个字段，并且对白名单排序：
+ * - 不能只拼个数——改 `soul`、或用同数量的工具/技能替换，个数都不变，
+ *   而宿主会继续跑旧 persona，表现为「界面改了、会话里没改」；
+ * - 不整体 `JSON.stringify(expert)`——`iconUrl`、`imageDescription`、`source`
+ *   这些字段不影响 preset，算进去会造成无意义的重启。
+ *
+ * 落在这里而不是调用方：指纹必须和「真正写进 patch 的内容」同源，
+ * 两处各算一份迟早漂移。
+ */
+export function expertFingerprint(expert) {
+  const toolIds = Array.isArray(expert?.toolIds) ? expert.toolIds.map(String).sort() : []
+  const skillIds = Array.isArray(expert?.skillIds) ? expert.skillIds.map(String).sort() : []
+  const payload = JSON.stringify({
+    id: String(expert?.id || ''),
+    name: String(expert?.name || ''),
+    description: String(expert?.description || ''),
+    soul: String(expert?.soul || ''),
+    toolIds,
+    skillIds,
+  })
+  return createHash('sha256').update(payload).digest('hex').slice(0, 16)
 }
 
 /**
@@ -63,36 +97,73 @@ export function resolveToolSubset(toolIds, registeredNames) {
  * 为什么用目录而不是拦截读工具：宿主自己的技能发现也要按根扫，
  * 只拦读工具会让「模型在候选列表里看得见却读不到」，反而误导。
  * 白名单外的技能根本不出现在根里，模型自然发现不到。
+ *
+ * 为什么增量而不是删掉重建：宿主的文件监听盯着这个根，整棵子树消失再出现
+ * 会让监听器看到一次大批量事件，且窗口期内技能全部不可见。这里只补缺、
+ * 只删多余，新增项先建到临时名再原子 rename——监听器最多看到一次「出现」。
  */
 export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {} }) {
   const expertId = String(expert.id || '')
   if (!expertId) throw new Error('专家缺少 id')
   const base = path.join(dshHome, 'experts', expertId, 'skills')
-  fs.rmSync(base, { recursive: true, force: true })
   fs.mkdirSync(base, { recursive: true })
 
   const available = listSkillFiles(root).skills.map((s) => s.id)
   const whitelist = resolveSkillWhitelist(expert.skillIds, available)
-  let linked = 0
+
+  /** 白名单内、且磁盘上真的存在的技能 → 真实目录 */
+  const desired = new Map()
   for (const id of whitelist.ids) {
     const found = resolveSkillDir(root, id)
-    if (!found) continue
+    if (found) desired.set(id, found.dir)
+  }
+
+  // 先删多余的：白名单收窄或技能被卸载时，根里不能留着读不到/不该看到的条目
+  let removed = 0
+  let existing = []
+  try {
+    existing = fs.readdirSync(base)
+  } catch {
+    existing = []
+  }
+  for (const name of existing) {
+    if (desired.has(name)) continue
+    // 临时目录残留也一并清掉，避免 rename 中途崩溃后留下垃圾
+    fs.rmSync(path.join(base, name), { recursive: true, force: true })
+    removed += 1
+  }
+
+  // 再补缺失的
+  let linked = 0
+  for (const [id, dir] of desired) {
+    if (existing.includes(id)) continue
     const dest = path.join(base, id)
+    const tmp = path.join(base, `.${id}.tmp`)
+    fs.rmSync(tmp, { recursive: true, force: true })
     try {
       // 软链而不是复制：技能是可热改的，复制会让改完的 SKILL.md 读不到
-      fs.symlinkSync(found.dir, dest, 'dir')
-      linked += 1
-    } catch (e) {
-      // 不支持软链（或已存在）时退化成复制，功能可用但不热更
+      fs.symlinkSync(dir, tmp, 'dir')
+    } catch {
+      // 不支持软链的平台退化成复制，功能可用但不热更
       try {
-        fs.cpSync(found.dir, dest, { recursive: true })
-        linked += 1
+        fs.cpSync(dir, tmp, { recursive: true })
       } catch (e2) {
         log(`[studio-experts] 技能 ${id} 挂载失败：${e2?.message || String(e2)}`)
+        fs.rmSync(tmp, { recursive: true, force: true })
+        continue
       }
     }
+    try {
+      // 同文件系统内 rename 是原子的：监听器看不到半成品
+      fs.renameSync(tmp, dest)
+      linked += 1
+    } catch (e) {
+      log(`[studio-experts] 技能 ${id} 落位失败：${e?.message || String(e)}`)
+      fs.rmSync(tmp, { recursive: true, force: true })
+    }
   }
-  return { dir: base, wildcard: whitelist.wildcard, ids: whitelist.ids, linked }
+
+  return { dir: base, wildcard: whitelist.wildcard, ids: whitelist.ids, linked, removed }
 }
 
 /**
@@ -141,6 +212,8 @@ export function compileExpertPreset({ expert, registeredNames, skillRoot, skillI
         customSkillDirs: [skillRoot],
         watch: true,
         watchUsePolling: false,
+        // 不要显式关掉 followSymlinks：技能根里的条目是软链，
+        // 关了它技能增删与正文热更会同时失效（详见 docs/creative-host.md 的热更新边界）
       },
     })
   }
@@ -243,6 +316,9 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
         tools: resolveToolSubset(expert.toolIds, registeredNames).length,
         skills: whitelist.ids.length,
         wildcard: whitelist.wildcard,
+        // 内容指纹：调用方用它判断「这次编译结果和上一次是否等价」，
+        // 计数逐项保留是为了排障时能一眼看到专家规模
+        fingerprint: expertFingerprint(expert),
       })
       rows.push({
         id: `preset-${preset.id}`,
@@ -264,8 +340,14 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
   const body = rows.length ? stringifyYaml([{ insert: rows }]) : '# 当前没有可用专家\n[]\n'
   fs.writeFileSync(file, body, 'utf8')
   fs.writeFileSync(path.join(path.dirname(file), 'creative-experts.json'), `${JSON.stringify(compiled, null, 2)}\n`, 'utf8')
+  // 整批签名：专家增删、改名、改 soul、换白名单都会改变它。
+  // 只拼「谁存在」不够——那正是旧实现漏掉 soul 改动的原因。
+  const signature = compiled
+    .map((row) => `${row.id}@${row.fingerprint}`)
+    .sort()
+    .join(',')
   log(`[studio-experts] 已生成 ${rows.length} 个专家 preset：${file}`)
-  return { file, compiled }
+  return { file, compiled, signature }
 }
 
 /** 读回编译结果：排障与「会话列表显示专家名」都用它，不必再扫配置 */

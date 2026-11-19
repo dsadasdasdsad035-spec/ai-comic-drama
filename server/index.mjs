@@ -19,7 +19,7 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { MEDIA_DIRS, ensureMediaDir, ensureStateDir, resolveStaticRoot } from './paths.mjs'
-import { dbPath, resolveRoot } from './db.mjs'
+import { dbPath, listProjects, resolveRoot } from './db.mjs'
 import { assertNodeVersion } from './runtime-version.mjs'
 import { createCreativeHost } from './creative-host.mjs'
 import { createOpenAIGateway } from './openai-gateway.mjs'
@@ -28,7 +28,12 @@ import { STUDIO_KEY_ENV, STUDIO_INTERNAL_ENV, writeStudioProfile } from './studi
 import { installCreativeToolsBundle } from './dsh-bundle.mjs'
 import { expertsPatchPath, readCompiledExperts, writeExpertsPatch } from './dsh-experts.mjs'
 import { isStudioEnabled, setStudioEnabled, studioFlagPayload } from './studio-flag.mjs'
-import { StudioToolBridge, INTERNAL_TOKEN_HEADER as STUDIO_INTERNAL_HEADER } from './studio-tool-bridge.mjs'
+import { createStudioPrewarm } from './studio-prewarm.mjs'
+import {
+  StudioToolBridge,
+  catalogVersion,
+  INTERNAL_TOKEN_HEADER as STUDIO_INTERNAL_HEADER,
+} from './studio-tool-bridge.mjs'
 
 // 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
 if (!assertNodeVersion()) process.exit(1)
@@ -63,6 +68,8 @@ const {
   runServerShutdownTasks,
   runServerStartupTasks,
   serveFile,
+  studioCreativeMaxTokens,
+  studioDefaultModel,
 } = app
 
 /**
@@ -195,6 +202,12 @@ let studioProxy = null
 let gateway = null
 /** 最近一次通过鉴权的操作员会话：模型门面据此把账记到人头上（单操作员，后写覆盖） */
 let studioSessionToken = ''
+/**
+ * 创意会话的当前项目：宿主是一个进程服务所有会话，拿不到浏览器里顶栏选了什么，
+ * 所以由前端在进入创意视图与切项目时推上来，工具执行时作为默认上下文（后写覆盖）。
+ * 与 `studioSessionToken` 同构的单槽位：多标签会互相覆盖，属当前单租户架构的已知限制。
+ */
+let studioProject = ''
 /** 门面专用密钥：宿主用 apiKeyEnv 引用它，外部请求无法冒充。可用环境变量覆盖以便联调。 */
 const STUDIO_GATEWAY_KEY = String(process.env.SB_STUDIO_GATEWAY_KEY || '').trim() || randomBytes(24).toString('base64url')
 /** 工具桥内部令牌：宿主插件持有，浏览器拿不到（它不在任何页面里出现） */
@@ -205,6 +218,8 @@ let toolBridge = null
 let studioToolStatus = { count: 0, names: [], at: '' }
 /** 宿主的配置根：专家 preset 与镜像都写在这里，接口要按同一处读回 */
 let studioDshHome = ''
+/** @type {ReturnType<typeof createStudioPrewarm> | null} */
+let studioPrewarm = null
 
 /**
  * 读取请求体（工具桥的请求都很小，限个上限防止被塞爆内存）。
@@ -251,19 +266,21 @@ function setupStudio(actualPort) {
   /**
    * 把当前模型表同步进宿主的 profile patch。
    * 宿主每次请求都会重读这份文档，所以设置页改完模型不用重启宿主；
-   * 换行只发生在模型集合真的变化时，避免每次保存都重写文件。
+   * 换行只发生在模型集合或默认模型真的变化时，避免每次保存都重写文件。
    */
   let profileSignature = ''
   const syncProfile = () => {
     const models = listStudioModels()
-    const signature = models.map((m) => `${m.id}:${m.vision ? 1 : 0}`).join(',')
+    const defaultModelId = studioDefaultModel()
+    // 默认模型也要进签名：只改「创意（对话助手）」绑定、模型集不变时，patch 仍必须重写
+    const signature = `${models.map((m) => `${m.id}:${m.vision ? 1 : 0}`).join(',')}|default=${defaultModelId}`
     if (signature === profileSignature) return models
     try {
       writeStudioProfile({
         dshHome,
         gatewayBaseUrl,
         models,
-        defaultModelId: models[0]?.id || 'sb/default',
+        defaultModelId,
         log: (line) => console.log(line),
       })
       // 工具桥是 bundle 层（用户层 patch 不能新增插件行），装完才能在宿主里生效
@@ -282,11 +299,14 @@ function setupStudio(actualPort) {
    * 专家集合与技能白名单都可能被设置页改动，因此按内容签名判断是否需要重写；
    * preset 只在宿主启动时读取，所以内容变了且宿主在跑时要重启一次，
    * 否则列表里看得见新专家、会话里却选不到。
+   *
+   * 签名来自 `writeExpertsPatch` 的返回值（内容指纹），调用方不再自己拼：
+   * 只有和「真正写进 patch 的内容」同源的签名才不会漏掉 soul 改动。
    */
   let expertSignature = ''
   const syncExperts = async ({ restartIfRunning = true } = {}) => {
     try {
-      if (!toolBridge) return { compiled: [] }
+      if (!toolBridge) return { compiled: [], signature: '' }
       // 工具名清单来自工具桥本身（同一份 ToolDef），不另抄一张表
       const registeredNames = (await toolBridge.catalog('', 1)).map((tool) => tool.name)
       const result = writeExpertsPatch({
@@ -295,21 +315,20 @@ function setupStudio(actualPort) {
         registeredNames,
         log: (line) => console.log(line),
       })
-      const nextSignature = result.compiled
-        .map((e) => `${e.id}:${e.tools}:${e.skills}:${e.wildcard ? 1 : 0}`)
-        .join(',')
+      const nextSignature = result.signature
       const previous = expertSignature
       expertSignature = nextSignature
       if (previous === nextSignature) return result
       // 首次同步时宿主还没起，不用重启
       if (restartIfRunning && previous && creativeHost?.status().state === 'ready') {
+        console.log('[studio-experts] 专家内容已变化，重启宿主以加载新 preset')
         await creativeHost.stop()
         await creativeHost.start()
       }
       return result
     } catch (e) {
       console.error(`[studio] 生成专家 preset 失败：${e?.message || String(e)}`)
-      return { compiled: [] }
+      return { compiled: [], signature: '' }
     }
   }
 
@@ -345,6 +364,23 @@ function setupStudio(actualPort) {
   })
   // 先算一遍专家 preset：首次进创意时宿主就要能读到它，不能等第一次会话
   void syncExperts({ restartIfRunning: false })
+
+  /**
+   * 拉起宿主前的统一准备 + 启动。
+   *
+   * 反代与空闲预热都走这一个函数：宿主可能隔了很久才被拉起，
+   * 期间模型表与专家 preset 都可能被设置页改过，所以每次拉起前都要先对齐。
+   * 走同一入口的另一个好处是单飞——`start()` 在 `starting` 状态下复用同一个
+   * promise，预热还没完成时用户进入创意也不会拉起第二个宿主进程。
+   */
+  const startHostForRequest = async () => {
+    syncProfile()
+    await syncExperts({ restartIfRunning: false })
+    const state = creativeHost.status().state
+    if (state === 'failed') return false
+    return await creativeHost.start()
+  }
+
   studioProxy = createStudioProxy({
     host: creativeHost,
     authorize: (req) => {
@@ -354,29 +390,36 @@ function setupStudio(actualPort) {
     },
     // 只从「还没开始 / 已停止」拉起：崩溃或启动失败后不再自动重试，
     // 由错误页上的「重试」按钮显式触发，避免一个坏掉的宿主被反复拉起刷屏
-    ensureStarted: async () => {
-      // 每次拉起前对齐一次模型表与专家 preset：宿主可能是隔了很久才被重新拉起
-      syncProfile()
-      await syncExperts({ restartIfRunning: false })
-      const state = creativeHost.status().state
-      if (state === 'failed') return false
-      return await creativeHost.start()
-    },
+    ensureStarted: startHostForRequest,
     log: (line) => console.log(line),
   })
   gateway = createOpenAIGateway({
     baseUrl: `http://127.0.0.1:${actualPort}`,
     // 模型表随时可能在设置页变化，按请求读取，不做缓存
     getModels: () => listStudioModels(),
+    // 创意环节的输出上限同理：设置页改完，下一轮请求就带上新值
+    getCreativeMaxTokens: () => studioCreativeMaxTokens(),
     getSessionToken: () => studioSessionToken,
     log: (line) => console.log(line),
   })
-  // 设置页保存后立即同步，模型选择器不必等下一次宿主启动
-  onSettingsChanged(() => {
+  // 设置页保存后立即同步，模型选择器不必等下一次宿主启动。
+  // 原因决定要不要重启：技能集合变化只需重建专家技能根（技能正文靠宿主文件监听
+  // 热生效），重启一次纯属浪费，还会打断进行中的会话。
+  onSettingsChanged(({ reason }) => {
     syncProfile()
-    // 专家与技能白名单同样来自设置：改完要让宿主按新 preset 重开
-    void syncExperts()
+    void syncExperts({ restartIfRunning: reason !== 'skills' })
   })
+
+  // 空闲预热：把「第一次点创意」的冷启动挪到应用启动的尾巴上。
+  // 延迟是必要的——立即预热会和首屏的 bundle 与静态资源抢带宽。
+  // 预热失败不重试，错误页的「重试」仍是唯一显式入口。
+  studioPrewarm = createStudioPrewarm({
+    isEnabled: () => isStudioEnabled(),
+    status: () => creativeHost.status(),
+    prepare: startHostForRequest,
+    log: (line) => console.log(line),
+  })
+  if (String(process.env.SB_STUDIO_NO_PREWARM || '').trim() !== '1') studioPrewarm.schedule()
 }
 
 const server = http.createServer((req, res) => {
@@ -434,7 +477,8 @@ const server = http.createServer((req, res) => {
     }
     readBody(req)
       .then(async (body) => {
-        const project = String(body.project || '')
+        // 项目上下文：宿主不带 project 时用前端推送的当前项目，避免 32 个平台工具全部报「未选项目」
+        const project = String(body.project || studioProject || '')
         const episode = Number(body.episode || 1)
         if (!toolBridge) {
           res.statusCode = 503
@@ -442,7 +486,9 @@ const server = http.createServer((req, res) => {
           return
         }
         if (reqPath === '/api/studio/tools') {
-          res.end(JSON.stringify({ ok: true, tools: await toolBridge.catalog(project, episode) }))
+          // version 让宿主插件判断「声明是否变了」：schema 改动不必重启宿主
+          const tools = await toolBridge.catalog(project, episode)
+          res.end(JSON.stringify({ ok: true, version: catalogVersion(tools), tools }))
           return
         }
         if (reqPath === '/api/studio/experts') {
@@ -507,6 +553,54 @@ const server = http.createServer((req, res) => {
           // 关掉就立刻停宿主；打开不在请求里拉起，避免把「点开关」变成一次长启动
           if (!enabled) await creativeHost?.stop()
           res.end(JSON.stringify({ ok: true, enabled }))
+        })
+        .catch((e) => {
+          res.statusCode = 400
+          res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+        })
+      return
+    }
+    res.statusCode = 405
+    res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST' }))
+    return
+  }
+
+  // 创意会话的当前项目：前端在进入创意视图与切项目时推送，宿主工具执行时当默认上下文。
+  // 名字必须在项目库里存在：默认值会被 32 个工具直接用，放过非法名会让每次调用都失败。
+  if (reqPath === '/api/studio/project') {
+    const decision = authorizeStudioRequest(req)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    if (!decision.ok) {
+      res.statusCode = decision.status || 401
+      res.end(JSON.stringify({ ok: false, message: decision.message || '未通过认证' }))
+      return
+    }
+    if (req.method === 'GET') {
+      res.end(JSON.stringify({ ok: true, name: studioProject }))
+      return
+    }
+    if (req.method === 'POST') {
+      readBody(req)
+        .then((body) => {
+          const name = String(body?.name ?? '').trim()
+          if (!name) {
+            // 空串是显式清除：前端离开项目（回大厅或卸载创意视图）时用
+            studioProject = ''
+            res.end(JSON.stringify({ ok: true, name: studioProject }))
+            return
+          }
+          const known = listProjects(resolveRoot(ROOT)).some((row) => row.name === name)
+          if (!known) {
+            // 保留最后一个合法值：前端推送时序抖动不该让进行中的会话突然失效
+            res.statusCode = 400
+            res.end(
+              JSON.stringify({ ok: false, message: `项目不存在：${name}`, name: studioProject }),
+            )
+            return
+          }
+          studioProject = name
+          res.end(JSON.stringify({ ok: true, name: studioProject }))
         })
         .catch((e) => {
           res.statusCode = 400
@@ -639,6 +733,7 @@ function shutdown(signal) {
   closing = true
   console.log(`[server] 收到 ${signal}，正在退出`)
   // 宿主是子进程：不显式停会留下孤儿进程继续占着端口和内存
+  studioPrewarm?.cancel()
   Promise.resolve(creativeHost?.stop()).catch(() => {})
   const timer = setTimeout(() => {
     console.error('[server] 退出超时，强制结束')

@@ -15,10 +15,20 @@ import { spawn, execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { StudioToolBridge, INTERNAL_TOKEN_HEADER, catalogFromTools } from '../server/studio-tool-bridge.mjs'
 import { z as zod } from 'zod'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
+
+// 工具数从代码算，不手写：新增平台工具时这里不需要跟着改数字。
+// 合并规则与桥一致（平台工具 + Pi 原生工具按名字去重）。
+const toolsBundle = await import(pathToFileURL(path.join(ROOT, 'server-build', 'studio-tools.mjs')).href)
+const EXPECTED_TOOL_COUNT = toolsBundle.mergeBuiltinWithSkillTools(
+  toolsBundle.createBuiltinPlatformTools({ projectName: '', epNo: 1 }),
+  [...toolsBundle.createPiNativeToolSet().byName.values()],
+).length
+
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-tools-'))
 const PROJECT = 'tool-bridge-fixture'
 const TOKEN = 'test-internal-token'
@@ -114,7 +124,7 @@ await check('没有内部令牌拒绝工具清单', async () => {
 await check('令牌正确才返回工具清单', async () => {
   const r = await post('/api/studio/tools', { project: PROJECT, episode: 1 })
   assert.equal(r.status, 200)
-  assert.ok(Array.isArray(r.body.tools) && r.body.tools.length >= 40, `工具数 ${r.body.tools?.length}`)
+  assert.equal(r.body.tools?.length, EXPECTED_TOOL_COUNT, `工具数 ${r.body.tools?.length}，期望 ${EXPECTED_TOOL_COUNT}`)
   const names = new Set(r.body.tools.map((t) => t.name))
   assert.equal(names.size, r.body.tools.length, '工具名重复')
   for (const tool of r.body.tools) {
@@ -147,6 +157,77 @@ await check('执行镜头工具拿到真实镜头与素材', async () => {
   assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 300))
   const raw = JSON.stringify(r.body.details)
   assert.ok(raw.includes('E01-S01') && raw.includes('伞下'), '读不到夹具镜头')
+})
+
+async function get(url, token = TOKEN) {
+  const res = await fetch(`${base}${url}`, {
+    headers: token ? { [INTERNAL_TOKEN_HEADER]: token } : {},
+  })
+  return { status: res.status, body: await res.json() }
+}
+
+await check('前端未推送项目时，工具按「未选项目」失败', async () => {
+  const r = await post('/api/studio/tools/execute', { name: 'read_source', args: {} })
+  assert.equal(r.body.ok, false, '没有项目上下文时不该成功')
+  assert.match(String(r.body.error || ''), /项目/, `错误未提到项目：${r.body.error}`)
+  assert.match(String(r.body.error || ''), /list_projects/, '错误里没有给出自救出口')
+})
+
+await check('推送当前项目后，宿主不带 project 也能读到原文、分集与分镜', async () => {
+  const pushed = await post('/api/studio/project', { name: PROJECT })
+  assert.equal(pushed.status, 200)
+  assert.equal(pushed.body.name, PROJECT)
+  for (const [name, args, expect] of [
+    ['read_source', {}, '雨夜'],
+    ['read_episodes', {}, '第一集'],
+    ['read_shots', { episode: 1 }, 'E01-S01'],
+  ]) {
+    const r = await post('/api/studio/tools/execute', { name, args })
+    assert.equal(r.body.ok, true, `${name} 失败：${JSON.stringify(r.body).slice(0, 300)}`)
+    assert.ok(JSON.stringify(r.body.details).includes(expect), `${name} 读不到夹具数据`)
+  }
+})
+
+await check('非法项目名被拒绝且保留上一个合法值', async () => {
+  const bad = await post('/api/studio/project', { name: 'no-such-project' })
+  assert.equal(bad.status, 400)
+  assert.equal(bad.body.ok, false)
+  const read = await get('/api/studio/project')
+  assert.equal(read.body.name, PROJECT, '非法推送不该覆盖原值')
+  // 原值仍在，工具照常可用
+  const r = await post('/api/studio/tools/execute', { name: 'read_source', args: {} })
+  assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 200))
+})
+
+await check('空串清除项目上下文', async () => {
+  const cleared = await post('/api/studio/project', { name: '' })
+  assert.equal(cleared.status, 200)
+  assert.equal(cleared.body.name, '')
+  assert.equal((await get('/api/studio/project')).body.name, '')
+  // 之后没带 project 的调用回到「未选项目」，且错误里给出可执行的下一步
+  const r = await post('/api/studio/tools/execute', { name: 'read_source', args: {} })
+  assert.equal(r.body.ok, false)
+  assert.match(String(r.body.error || ''), /list_projects/, '失败文案没有给出 list_projects 出口')
+})
+
+await check('未选项目时 list_projects 仍能列出已有项目', async () => {
+  const r = await post('/api/studio/tools/execute', { name: 'list_projects', args: {} })
+  assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 300))
+  assert.equal(r.body.details.current, '')
+  const row = r.body.details.projects.find((p) => p.name === PROJECT)
+  assert.ok(row, '清单里没有夹具项目')
+  assert.equal(row.title, '工具桥夹具')
+  assert.equal(row.episodes, 1)
+  assert.equal(row.shots, 2)
+  assert.ok(row.updated_at, '缺更新时间')
+})
+
+await check('list_projects 标出当前项目（走服务端默认上下文）', async () => {
+  await post('/api/studio/project', { name: PROJECT })
+  const r = await post('/api/studio/tools/execute', { name: 'list_projects', args: {} })
+  assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 300))
+  assert.equal(r.body.details.current, PROJECT)
+  assert.match(String(r.body.details.summary || ''), /当前/, '摘要没标出当前项目')
 })
 
 await check('结果拆成模型摘要与界面详情两份', async () => {
@@ -260,6 +341,69 @@ server.kill('SIGTERM')
 await new Promise((resolve) => {
   server.on('exit', resolve)
   setTimeout(resolve, 5000)
+})
+
+/**
+ * 产物重建 → 模块重载。
+ *
+ * 用一个假 bundle 精确控制「实现文案」，避免依赖真实工具的返回内容：
+ * 同样的命令跑两次，第一次 v1、重建后第二次必须 v2，且工具表要整表重建
+ * （旧表里的 run 闭包指向旧模块，不重建就会一直返回 v1）。
+ */
+await check('产物重建后自动重载模块，不重启应用也生效', async () => {
+  // 放在仓库内的临时目录：假 bundle 里 `import 'zod'` 要靠仓库的 node_modules 解析
+  const bundleRoot = fs.mkdtempSync(path.join(ROOT, '.tmp-tools-hot-'))
+  const bundleDir = path.join(bundleRoot, 'server-build')
+  fs.mkdirSync(bundleDir, { recursive: true })
+  const bundle = path.join(bundleDir, 'studio-tools.mjs')
+  const writeBundle = (tag) => {
+    fs.writeFileSync(
+      bundle,
+      `import { z } from 'zod'
+export function createBuiltinPlatformTools() {
+  return [{ name: 'probe_tool', description: '探针 ${tag}', schema: z.object({}), run: async () => ({ ok: true, text: '${tag}' }) }]
+}
+export function createPiNativeToolSet() { return { byName: new Map() } }
+export function mergeBuiltinWithSkillTools(platform) { return platform }
+export function modelFacingResult(_name, result) { return { ok: true, text: result.text } }
+`,
+      'utf8',
+    )
+    // 显式推后 mtime：同一毫秒内写完两次会得到相同的时间戳，用例就成了碰运气
+    const future = new Date(Date.now() + 5000)
+    fs.utimesSync(bundle, future, future)
+  }
+  writeBundle('v1')
+  const logs = []
+  const bridge = new StudioToolBridge({
+    root: bundleRoot,
+    baseUrl: base,
+    internalToken: TOKEN,
+    log: (line) => logs.push(line),
+  })
+  try {
+    const first = await bridge.catalog(PROJECT, 1)
+    assert.equal(first[0].description, '探针 v1', '首次加载没读到 v1')
+    const firstTool = bridge.tools.get('probe_tool')
+    assert.equal((await firstTool.run()).text, 'v1')
+
+    writeBundle('v2')
+    const second = await bridge.catalog(PROJECT, 1)
+    assert.equal(second[0].description, '探针 v2', '重建产物后仍是旧实现')
+    assert.notEqual(bridge.tools.get('probe_tool'), firstTool, '工具表没有整表重建')
+    assert.equal((await bridge.tools.get('probe_tool').run()).text, 'v2')
+    assert.match(logs.join('\n'), /工具实现已更新/)
+
+    // 时间戳没再变：不该继续新增模块实例或重复打日志
+    const stamp = fs.statSync(bundle).mtimeMs
+    const before = logs.length
+    await bridge.catalog(PROJECT, 1)
+    await bridge.catalog(PROJECT, 1)
+    assert.equal(fs.statSync(bundle).mtimeMs, stamp)
+    assert.equal(logs.length, before, '未变化时不该重复重载')
+  } finally {
+    fs.rmSync(bundleRoot, { recursive: true, force: true })
+  }
 })
 
 if (bad) {

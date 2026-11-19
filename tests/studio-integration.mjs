@@ -228,10 +228,11 @@ await check('9.2 新建窄口专家后，preset 只放行它声明的工具与�
   assert.match(text, /expert-narrow/, '窄口专家没有进宿主 preset')
   const block = text.slice(text.indexOf('expertId: expert-narrow'))
   const toolIds = [...block.matchAll(/^ {16}- (\w+)$/gm)].map((m) => m[1])
-  // 系统保底项（列专家 / 列技能）始终放行，其余必须是专家自己声明的子集
+  // 系统保底项只有「列专家」；list_installed_skills 不再强制注入，
+  // 所以可见集 = list_experts + 专家自己声明的子集
   assert.deepEqual(
     toolIds.sort(),
-    ['list_experts', 'list_installed_skills', 'read_shots', 'read_skill_text'],
+    ['list_experts', 'read_shots', 'read_skill_text'],
     `工具没有收紧：${toolIds.join(',')}`,
   )
   assert.match(text, /dsh-plugin-creative-expert/, '专家 patch 没有挂白名单插件')

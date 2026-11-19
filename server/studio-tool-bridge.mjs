@@ -10,7 +10,9 @@
  * 结果按「模型可见摘要 / 界面可见详情」拆开返回：摘要经 modelFacingResult 裁剪，
  * 详情原样给宿主界面。
  */
+import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 
@@ -60,6 +62,8 @@ export class StudioToolBridge {
     this.module = null
     this.tools = new Map()
     this.loadedProject = ''
+    /** 已加载产物的时间戳：用来发现「产物被重建」 */
+    this.bundleMtimeMs = null
   }
 
   /** 当前调用上下文（会话令牌随每次调用更新，供垫片使用） */
@@ -67,12 +71,29 @@ export class StudioToolBridge {
     this.context.sessionToken = String(token || '')
   }
 
-  /** 加载工具 bundle 并建好工具表；项目上下文变化时重建 */
+  /** 加载工具 bundle 并建好工具表；产物被重建或项目上下文变化时重建 */
   async ensureLoaded(projectName, epNo) {
     const bundle = path.join(this.root, 'server-build', 'studio-tools.mjs')
-    if (!this.module) {
+    let mtimeMs = null
+    try {
+      mtimeMs = fs.statSync(bundle).mtimeMs
+    } catch {
+      // 缺产物时不在这里报错：交给下面的 import 抛，错误信息更直接
+      mtimeMs = null
+    }
+    // 只有「之前加载过」且时间戳真的变了才算重建；首次加载走普通路径
+    const rebuilt = mtimeMs !== null && this.bundleMtimeMs !== null && mtimeMs !== this.bundleMtimeMs
+    if (!this.module || rebuilt) {
       installFetchShim(this.baseUrl, () => this.context)
-      this.module = await import(pathToFileURL(bundle).href)
+      // `?v=<mtime>` 让 ESM 的模块缓存失效：重建产物后不必重启应用就能拿到新实现。
+      // 只在时间戳变化时换 URL，否则每次调用都会新增一份模块实例。
+      const href = pathToFileURL(bundle).href
+      this.module = await import(mtimeMs === null ? href : `${href}?v=${Math.round(mtimeMs)}`)
+      this.bundleMtimeMs = mtimeMs
+      // 旧工具表里的 run 闭包指向旧模块，必须整表重建
+      this.tools = new Map()
+      this.loadedProject = ''
+      if (rebuilt) this.log('[studio-tools] 工具实现已更新，已重新加载模块')
     }
     const key = `${projectName || ''}\u0000${epNo || 1}`
     if (key === this.loadedProject && this.tools.size) return this.tools
@@ -157,6 +178,25 @@ export function catalogFromTools(tools, log = () => {}) {
       parameters: rest.type === 'object' ? rest : { type: 'object', properties: {}, ...rest },
     }
   })
+}
+
+/**
+ * 工具清单版本：对「会影响模型调用」的字段取稳定哈希。
+ *
+ * 排序后哈希是必要的：`catalogFromTools` 的顺序来自工具注册顺序，
+ * 只要源码里调换了两个 `mergeBuiltinWithSkillTools` 的分支顺序，
+ * 清单内容其实没变，不排序就会误判成变化并触发一次重注册。
+ * 只取前 12 位：它只用于相等判断，不需要抗碰撞强度。
+ */
+export function catalogVersion(tools) {
+  const rows = [...(tools || [])]
+    .map((tool) => ({
+      name: String(tool?.name || ''),
+      description: String(tool?.description || ''),
+      parameters: tool?.parameters ?? {},
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex').slice(0, 12)
 }
 
 /** zod 错误 → 指明字段的中文错误（模型据此补齐参数） */

@@ -13,10 +13,18 @@
  * 不能用普通 HTTP 转发，否则页面上会出现「连不上」但没有任何报错的空壳。
  */
 import http from 'node:http'
+import { createHash } from 'node:crypto'
 
 /** 挂在应用路径下的前缀；不带尾斜杠的请求会被重定向到带斜杠的形式 */
 export const STUDIO_PREFIX = '/studio'
-/** 宿主的鉴权 cookie 前缀（宿主按 authority 派生后缀，所以只能按前缀判断） */
+/**
+ * 宿主的鉴权 cookie 前缀。
+ *
+ * 完整名字是 `dsh-auth-<base64url(sha256(authority))>`，authority 就是上游的
+ * `host:port`。宿主每次重启换随机端口，名字随之变化——所以**不能只看前缀**：
+ * 浏览器里一旦留下换端口前的旧 cookie，只看前缀就会认为「已持有凭据」而不再
+ * 注入引导令牌，宿主收到不认识的 cookie 名后永远回 401。
+ */
 const AUTH_COOKIE_PREFIX = 'dsh-auth-'
 /** 这些头是逐跳头，不能原样转发 */
 const HOP_BY_HOP = new Set([
@@ -47,20 +55,52 @@ export function stripStudioPrefix(url) {
   return `${rest || '/'}${search}`
 }
 
-/** 浏览器是否已经持有宿主的鉴权 cookie */
-export function hasHostCookie(cookieHeader) {
+/** 宿主按当前 authority 派生出的 cookie 名；与 `dsh-client-connection` 的实现一致 */
+export function hostCookieName(authority) {
+  const digest = createHash('sha256')
+    .update(String(authority || ''))
+    .digest('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/, '')
+  return `${AUTH_COOKIE_PREFIX}${digest}`
+}
+
+/** 浏览器是否已经持有**当前宿主实例**的鉴权 cookie */
+export function hasHostCookie(cookieHeader, authority) {
+  const expected = authority ? hostCookieName(authority) : null
   for (const part of String(cookieHeader || '').split(';')) {
-    if (part.trim().startsWith(AUTH_COOKIE_PREFIX)) return true
+    const name = part.split('=')[0].trim()
+    if (!name.startsWith(AUTH_COOKIE_PREFIX)) continue
+    // 没有 authority 时退化成前缀判定（兼容只关心「有没有凭据」的调用方）
+    if (expected === null || name === expected) return true
   }
   return false
 }
 
 /**
- * 给上游 URL 补上引导令牌。
- * 已有 cookie 的请求不再带令牌：令牌是「换 cookie」的一次性手段，不是每次请求的凭据。
+ * 换端口前留下的过期 cookie 名：前缀对但不是当前 authority 派生的那些。
+ *
+ * 它们不会被宿主接受，但浏览器会一直带上；顺手加一条 `Max-Age=0` 把它们清掉，
+ * 免得每次宿主重启都在浏览器里多留一份永不作废的凭据。
  */
-export function withBootstrapToken(pathWithQuery, token, cookieHeader) {
-  if (!token || hasHostCookie(cookieHeader)) return pathWithQuery
+export function staleHostCookies(cookieHeader, authority) {
+  if (!authority) return []
+  const expected = hostCookieName(authority)
+  const stale = []
+  for (const part of String(cookieHeader || '').split(';')) {
+    const name = part.split('=')[0].trim()
+    if (name.startsWith(AUTH_COOKIE_PREFIX) && name !== expected) stale.push(name)
+  }
+  return stale
+}
+
+/**
+ * 给上游 URL 补上引导令牌。
+ * 已有**当前实例**的 cookie 时不再带令牌：令牌是「换 cookie」的一次性手段，不是每次请求的凭据。
+ */
+export function withBootstrapToken(pathWithQuery, token, cookieHeader, authority) {
+  if (!token || hasHostCookie(cookieHeader, authority)) return pathWithQuery
   const url = new URL(pathWithQuery, 'http://placeholder.invalid')
   url.searchParams.set('token', token)
   return `${url.pathname}${url.search}`
@@ -96,6 +136,16 @@ export function rewriteLocation(location, { publicBase, upstreamOrigin }) {
 /** 把宿主 cookie 的作用域收窄到 `/studio`，避免凭据被无关接口带上 */
 export function rewriteSetCookie(cookie) {
   return String(cookie || '').replace(/;\s*Path=\/(?=;|$)/i, `; Path=${STUDIO_PREFIX}`)
+}
+
+/** 转发给上游时使用的 authority：宿主的浏览器信任围栏按它判定来源，cookie 名也由它派生 */
+function upstreamAuthority(up) {
+  return String(up?.origin || '').replace(/^https?:\/\//, '')
+}
+
+/** 作废一条过期凭据：路径必须与它被写入时一致，否则浏览器不会删 */
+function expireHostCookie(name) {
+  return `${name}=; Max-Age=0; Path=${STUDIO_PREFIX}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Strict`
 }
 
 function jsonError(res, status, message) {
@@ -189,7 +239,12 @@ export function createStudioProxy({ host, authorize, ensureStarted, log = () => 
       headers[key] = v
     }
     // Host 必须是上游 authority：宿主的浏览器信任围栏按它判定来源
-    headers.host = up.origin.replace(/^https?:\/\//, '')
+    headers.host = upstreamAuthority(up)
+    // Origin 围栏要求 Origin 与 Host 是同一个 authority。浏览器带的是对外地址（同一台机器的另一个端口），
+    // 只改 Host 会让两者对不上，WebSocket 升级会被宿主直接回 403（界面一直停在「重新连接中」）。
+    // 对外来源已经在 authorize() 校验过，这里把 Origin 一并换成上游 authority；
+    // `null` 这类不透明来源保持原样，继续被宿主拒绝。
+    if (typeof headers.origin === 'string' && /^https?:\/\//i.test(headers.origin)) headers.origin = up.origin
     return headers
   }
 
@@ -228,7 +283,8 @@ export function createStudioProxy({ host, authorize, ensureStarted, log = () => 
     const up = upstreamOrNull(res, wantsHtml)
     if (!up) return
 
-    const upstreamPath = withBootstrapToken(stripStudioPrefix(rawUrl), up.token, req.headers.cookie)
+    const upstreamPath = withBootstrapToken(stripStudioPrefix(rawUrl), up.token, req.headers.cookie, upstreamAuthority(up))
+    const stale = staleHostCookies(req.headers.cookie, upstreamAuthority(up))
     const publicBase = decision.publicBase || ''
 
     await new Promise((resolve) => {
@@ -250,6 +306,12 @@ export function createStudioProxy({ host, authorize, ensureStarted, log = () => 
           if (location) res.setHeader('Location', rewriteLocation(location, { publicBase, upstreamOrigin: up.origin }))
           const cookies = upstreamRes.headers['set-cookie']
           if (cookies) res.setHeader('Set-Cookie', cookies.map(rewriteSetCookie))
+          // 换端口前的旧凭据顺手作废：它们只会被浏览器一直带上，宿主永远不认
+          if (stale.length) {
+            const existing = res.getHeader('Set-Cookie')
+            const list = existing === undefined ? [] : Array.isArray(existing) ? existing : [String(existing)]
+            res.setHeader('Set-Cookie', [...list, ...stale.map(expireHostCookie)])
+          }
           // 让前置 nginx 也不要缓冲：会话通道是流式的，缓冲会表现成「界面一直转圈」
           res.setHeader('X-Accel-Buffering', 'no')
           res.flushHeaders?.()
@@ -282,7 +344,7 @@ export function createStudioProxy({ host, authorize, ensureStarted, log = () => 
       socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n')
       return true
     }
-    const upstreamPath = withBootstrapToken(stripStudioPrefix(req.url), up.token, req.headers.cookie)
+    const upstreamPath = withBootstrapToken(stripStudioPrefix(req.url), up.token, req.headers.cookie, upstreamAuthority(up))
     const upstreamReq = http.request({
       // 升级请求不能用复用连接的 agent：它会把 101 之后的字节当成普通响应
       agent: false,

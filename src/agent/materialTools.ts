@@ -93,7 +93,7 @@ function findShot(project: ProjectData, ep: number, no: string): ProjectShot | u
   return (project.shots || []).find((s) => (Number(s.episode) || 1) === ep && String(s.no ?? '').trim() === want)
 }
 
-const NO_PROJECT = '请先在顶栏选择项目'
+const NO_PROJECT = '请先在顶栏选择项目；可用 list_projects 查看已有项目'
 
 /** 项目媒体地址清单；读失败按空清单处理，宁可拒绝也不写进打不开的地址 */
 async function projectMediaUrls(deps: MaterialToolDeps): Promise<string[]> {

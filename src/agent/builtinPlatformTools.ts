@@ -5,6 +5,7 @@ import {
   generateVoice,
   getProject,
   listMedia,
+  listProjects,
   mergeProjectShots,
   patchProject,
   startVideo,
@@ -153,7 +154,7 @@ async function ensureProjectLoaded(input: BuiltinPlatformCtx): Promise<ProjectDa
     if (snap) return snap
   }
   const name = input.projectName.trim()
-  if (!name) throw new Error('请先在顶栏选择项目，平台读/写工具需要项目上下文')
+  if (!name) throw new Error('请先在顶栏选择项目，平台读/写工具需要项目上下文；可用 list_projects 查看已有项目')
   const data = await getProject(name)
   input.setSnapshot?.(data)
   return data
@@ -317,6 +318,50 @@ async function requireConfirm(
   return { ok: true }
 }
 
+/**
+ * 项目清单：模型在「未选项目」时唯一的自救出口。
+ *
+ * 刻意不经过 `ensureProjectLoaded`：没有项目上下文时它必须还能用，
+ * 否则模型只能把「请先选项目」原样转述给用户，对话就断了。
+ * 同属只读且无副作用，不需要确认，也不受专家白名单里的写工具限制。
+ */
+function createListProjectsTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'list_projects',
+    description:
+      '【平台内置】列出所有项目（目录名、标题、画风、画幅、集数、镜头数、更新时间），并标出当前项目。' +
+      '不依赖当前项目上下文；读取项目内容前若不知道有哪些项目，先调它再问用户要读哪个。',
+    schema: z.object({}),
+    run: async () => {
+      const current = input.projectName.trim()
+      let projects: Awaited<ReturnType<typeof listProjects>>['projects']
+      try {
+        ;({ projects } = await listProjects())
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const rows = projects.map((p) => ({
+        name: p.name,
+        title: p.title,
+        style: p.style,
+        aspect: p.aspect,
+        episodes: p.episodes,
+        shots: p.shots,
+        updated_at: p.updated_at ?? '',
+      }))
+      // 摘要给模型看：一句话说清「现在在哪、还有哪些」，避免它再补一次工具调用
+      const names = rows.map((r) => (r.name === current ? `${r.name}（当前）` : r.name))
+      const head = current ? `当前项目：${current}` : '当前未选择项目'
+      return {
+        ok: true,
+        summary: rows.length ? `${head}；共 ${rows.length} 个项目：${names.join('、')}` : `${head}；还没有任何项目`,
+        current,
+        projects: rows,
+      }
+    },
+  })
+}
+
 /** 新建项目：与界面入口同一套目录名规则；不切换当前项目 */
 function createCreateProjectTool(input: BuiltinPlatformCtx): ToolDef {
   return defineTool({
@@ -411,7 +456,7 @@ function createUpdateProjectMetaTool(input: BuiltinPlatformCtx): ToolDef {
       })
       if (!checked.ok) return { ok: false, error: `项目设定不合规：${checked.errors.join('；')}` }
       const name = input.projectName.trim()
-      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       const gate = await requireConfirm(input, {
         action: 'update_project_meta',
         title: '修改项目设定',
@@ -465,7 +510,7 @@ function createDeleteShotsTool(input: BuiltinPlatformCtx): ToolDef {
     }),
     run: async ({ nos, episode }) => {
       const name = input.projectName.trim()
-      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       let project: ProjectData
       try {
         project = await ensureProjectLoaded(input)
@@ -586,7 +631,7 @@ function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
     }),
     run: async ({ no, prompt, episode }) => {
       const name = input.projectName.trim()
-      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       let project: ProjectData
       try {
         project = await ensureProjectLoaded(input)
@@ -700,7 +745,7 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
     }),
     run: async ({ no, prompt, episode }) => {
       const name = input.projectName.trim()
-      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       let project: ProjectData
       try {
         project = await ensureProjectLoaded(input)
@@ -817,7 +862,7 @@ function createGenerateVoiceTool(input: BuiltinPlatformCtx): ToolDef {
     }),
     run: async ({ no, text, episode }) => {
       const name = input.projectName.trim()
-      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       let project: ProjectData
       try {
         project = await ensureProjectLoaded(input)
@@ -896,6 +941,7 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
     byName.set(tool, createSubmitTool(input, tool as WriteTool, contract))
   }
   byName.set(validateContractTool.name, validateContractTool)
+  byName.set('list_projects', createListProjectsTool(input))
   byName.set('create_project', createCreateProjectTool(input))
   byName.set('update_project_meta', createUpdateProjectMetaTool(input))
   byName.set('delete_shots', createDeleteShotsTool(input))
@@ -978,6 +1024,7 @@ const PLATFORM_READ_TOOL_NAMES = [
   'read_skill_file',
   'list_installed_skills',
   'list_experts',
+  'list_projects',
 ]
 
 export function builtinPlatformToolNames(): string[] {

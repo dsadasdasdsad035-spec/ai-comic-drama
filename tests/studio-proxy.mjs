@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import net from 'node:net'
-import { createStudioProxy, isStudioPath, rewriteLocation, rewriteSetCookie, stripStudioPrefix, withBootstrapToken } from '../server/studio-proxy.mjs'
+import { createStudioProxy, hasHostCookie, hostCookieName, isStudioPath, rewriteLocation, rewriteSetCookie, staleHostCookies, stripStudioPrefix, withBootstrapToken } from '../server/studio-proxy.mjs'
 
 let bad = 0
 async function check(name, fn) {
@@ -37,10 +37,30 @@ await check('前缀判定与剥离', () => {
   assert.equal(stripStudioPrefix('/studio/'), '/')
 })
 
-await check('令牌注入：无 cookie 才注入', () => {
+await check('令牌注入：只认当前 authority 派生的 cookie', () => {
+  const authority = '127.0.0.1:6000'
+  const fresh = `${hostCookieName(authority)}=v1.abc`
   assert.equal(withBootstrapToken('/a?b=1', 'T0K', ''), '/a?b=1&token=T0K')
-  assert.equal(withBootstrapToken('/a', 'T0K', 'dsh-auth-x=v1.abc'), '/a')
+  assert.equal(withBootstrapToken('/a', 'T0K', fresh, authority), '/a')
   assert.equal(withBootstrapToken('/a', '', ''), '/a')
+  // 换端口前的旧 cookie 前缀也对，但名字不是当前 authority 派生的：必须重新注入令牌
+  assert.equal(
+    withBootstrapToken('/a', 'T0K', 'dsh-auth-stale=v1.abc', authority),
+    '/a?token=T0K',
+    '旧 cookie 被当成有效凭据，宿主会一直回 401',
+  )
+  assert.equal(hasHostCookie(fresh, authority), true)
+  assert.equal(hasHostCookie('dsh-auth-stale=v1.abc', authority), false)
+  // 只关心「有没有凭据」的调用方仍可退化成前缀判定
+  assert.equal(hasHostCookie('dsh-auth-stale=v1.abc'), true)
+})
+
+await check('过期凭据会被列出来作废', () => {
+  const authority = '127.0.0.1:6000'
+  const fresh = `${hostCookieName(authority)}=v1.abc`
+  assert.deepEqual(staleHostCookies(`${fresh}; dsh-auth-old=v1.abc`, authority), ['dsh-auth-old'])
+  assert.deepEqual(staleHostCookies(fresh, authority), [])
+  assert.deepEqual(staleHostCookies('sb_session=x; dsh-auth-old=v1', ''), [])
 })
 
 await check('Set-Cookie 作用域收窄到 /studio', () => {
@@ -63,12 +83,25 @@ await check('Location 改写：相对地址补前缀、绝对地址换前缀、�
 
 function startFakeUpstream() {
   return new Promise((resolve) => {
-    const state = { hits: 0, lastCookie: '', lastHost: '', lastUrl: '' }
+    const state = { hits: 0, lastCookie: '', lastHost: '', lastUrl: '', lastOrigin: '', upgradeOrigin: '' }
+    /** 与真实宿主一致：cookie 名由自己的 authority 派生 */
+    const authCookie = () => {
+      const a = `127.0.0.1:${server.address().port}`
+      return `${hostCookieName(a)}=v1.abc; Max-Age=60; Path=/; HttpOnly; SameSite=Strict`
+    }
+    /** 真实宿主只认自己派生出来的那个名字，换端口前的旧 cookie 视同没有 */
+    const hasValidCookie = (req) => {
+      const expected = hostCookieName(`127.0.0.1:${server.address().port}`)
+      return String(req.headers.cookie || '')
+        .split(';')
+        .some((part) => part.split('=')[0].trim() === expected)
+    }
     const server = http.createServer((req, res) => {
       state.hits += 1
       state.lastCookie = String(req.headers.cookie || '')
       state.lastHost = String(req.headers.host || '')
       state.lastUrl = String(req.url || '')
+      state.lastOrigin = String(req.headers.origin || '')
       if (req.url.startsWith('/stream')) {
         res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
         res.write('chunk-1\n')
@@ -80,21 +113,15 @@ function startFakeUpstream() {
         return
       }
       if (req.url.startsWith('/redir')) {
-        res.writeHead(303, {
-          Location: './',
-          'Set-Cookie': 'dsh-auth-test=v1.abc; Max-Age=60; Path=/; HttpOnly; SameSite=Strict',
-        })
+        res.writeHead(303, { Location: './', 'Set-Cookie': authCookie() })
         res.end()
         return
       }
-      // 与真实宿主一致：带正确令牌 → 303 + cookie；没有 cookie 且没有令牌 → 401
+      // 与真实宿主一致：带正确令牌 → 303 + cookie；没有当前实例的 cookie 且没有令牌 → 401
       const hasToken = new URL(req.url, 'http://x').searchParams.get('token') === 'TOK-123'
-      if (!String(req.headers.cookie || '').includes('dsh-auth-')) {
+      if (!hasValidCookie(req)) {
         if (hasToken) {
-          res.writeHead(303, {
-            Location: './',
-            'Set-Cookie': 'dsh-auth-test=v1.abc; Max-Age=60; Path=/; HttpOnly; SameSite=Strict',
-          })
+          res.writeHead(303, { Location: './', 'Set-Cookie': authCookie() })
           res.end()
           return
         }
@@ -106,6 +133,7 @@ function startFakeUpstream() {
       res.end('<html><head><base href="./"></head><body>壳</body></html>')
     })
     server.on('upgrade', (req, socket) => {
+      state.upgradeOrigin = String(req.headers.origin || '')
       socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n')
       socket.write('HELLO')
       socket.on('data', (chunk) => socket.write(`ECHO:${chunk.toString()}`))
@@ -149,6 +177,8 @@ function startProxyHost({ upstream, authorize, ensureCalls }) {
 const allowAll = async () => ({ ok: true, publicBase: 'http://127.0.0.1:5273/studio' })
 
 const upstream = await startFakeUpstream()
+/** 当前上游实例的有效凭据：名字必须与它自己的 authority 派生结果一致 */
+const sessionCookie = `${hostCookieName(upstream.origin.replace('http://', ''))}=v1.abc`
 const ensureCalls = { calls: 0 }
 const proxyServer = await startProxyHost({ upstream, authorize: allowAll, ensureCalls })
 
@@ -172,7 +202,7 @@ await check('无 cookie：服务端注入令牌并跟随到壳页面', async () 
 await check('带 cookie：壳页面正常返回且不再带令牌', async () => {
   upstream.state.lastUrl = ''
   const res = await fetch(`${proxyServer.base}/studio/`, {
-    headers: { cookie: 'dsh-auth-test=v1.abc' },
+    headers: { cookie: sessionCookie },
     redirect: 'manual',
   })
   assert.equal(res.status, 200)
@@ -181,9 +211,46 @@ await check('带 cookie：壳页面正常返回且不再带令牌', async () => 
   assert.equal(upstream.state.lastUrl.includes('token='), false, `上游收到的 URL：${upstream.state.lastUrl}`)
 })
 
+await check('Origin 围栏：转发时把 Origin 换成上游 authority', async () => {
+  upstream.state.lastOrigin = ''
+  const res = await fetch(`${proxyServer.base}/studio/`, {
+    headers: { cookie: sessionCookie, origin: `http://127.0.0.1:${proxyServer.port}` },
+    redirect: 'manual',
+  })
+  assert.equal(res.status, 200)
+  // 宿主只认「Origin 等于 Host」：不改写的话真实宿主会中止升级，界面一直停在「重新连接中」
+  assert.equal(upstream.state.lastOrigin, upstream.origin, `上游收到的 Origin：${upstream.state.lastOrigin}`)
+})
+
+await check('Origin 为 null（不透明来源）不改写', async () => {
+  upstream.state.lastOrigin = ''
+  await fetch(`${proxyServer.base}/studio/`, {
+    headers: { cookie: sessionCookie, origin: 'null' },
+    redirect: 'manual',
+  })
+  assert.equal(upstream.state.lastOrigin, 'null', '不透明来源必须原样交给宿主拒绝')
+})
+
+await check('换端口前的旧凭据：重新注入令牌并作废旧 cookie', async () => {
+  upstream.state.lastUrl = ''
+  // 模拟宿主重启换了端口：浏览器里留着旧 authority 派生的 dsh-auth-*
+  const res = await fetch(`${proxyServer.base}/studio/`, {
+    headers: { cookie: 'dsh-auth-stalePort=v1.abc' },
+    redirect: 'manual',
+  })
+  assert.equal(res.status, 303, '旧 cookie 被误判为有效凭据，宿主会一直回 401')
+  assert.equal(upstream.state.lastUrl.includes('token=TOK-123'), true, `上游收到的 URL：${upstream.state.lastUrl}`)
+  const cookies = res.headers.getSetCookie?.() ?? []
+  assert.ok(
+    cookies.some((c) => c.startsWith('dsh-auth-stalePort=;') && /Max-Age=0/.test(c)),
+    `没有作废旧 cookie：${cookies.join(' | ')}`,
+  )
+})
+
+
 await check('流式响应按块到达而不是一次吐完', async () => {
   const started = Date.now()
-  const res = await fetch(`${proxyServer.base}/studio/stream`, { headers: { cookie: 'dsh-auth-test=v1.abc' } })
+  const res = await fetch(`${proxyServer.base}/studio/stream`, { headers: { cookie: sessionCookie } })
   assert.equal(res.status, 200)
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -210,7 +277,8 @@ await check('WebSocket 升级透传', async () => {
           'Connection: Upgrade',
           'Sec-WebSocket-Version: 13',
           'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
-          'Cookie: dsh-auth-test=v1.abc',
+          `Cookie: ${sessionCookie}`,
+          `Origin: http://127.0.0.1:${proxyServer.port}`,
           '',
           '',
         ].join('\r\n'),
@@ -241,6 +309,8 @@ await check('WebSocket 升级透传', async () => {
   })
   assert.match(result, /HTTP\/1\.1 101/)
   assert.match(result, /ECHO:PING/)
+  // 浏览器一定会带 Origin；宿主要求它等于 Host，否则整个会话通道起不来
+  assert.equal(upstream.state.upgradeOrigin, upstream.origin, `升级时上游收到的 Origin：${upstream.state.upgradeOrigin}`)
 })
 
 await check('鉴权失败：401 且不拉起宿主', async () => {

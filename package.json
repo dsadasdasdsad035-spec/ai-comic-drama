@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && npm run build:server",
+    "build:dsh": "node scripts/build-dsh.mjs",
     "build:server": "esbuild server/app.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=server-build/app.mjs && esbuild server/studio-tools.ts --bundle --platform=browser --format=esm --target=node24 --outfile=server-build/studio-tools.mjs",
     "prestart": "npm run build:server",
     "start": "node server/index.mjs",
@@ -23,7 +24,7 @@
     "verify:billing": "node verify-billing-all.mjs",
     "verify:billing:e2e": "node verify-billing-e2e-smoke.mjs",
     "test:studio-tools": "node tests/studio-tool-bridge.mjs && node tests/creative-tools-plugin.mjs && node tests/studio-host-plugin.mjs",
-    "test:studio": "node tests/runtime-version.mjs && node tests/openai-gateway.mjs && node tests/studio-proxy.mjs && node tests/studio-proxy-dsh.mjs && node tests/studio-tool-bridge.mjs && node tests/creative-tools-plugin.mjs && node tests/studio-host-plugin.mjs && node tests/dsh-experts.mjs && node tests/creative-expert-plugin.mjs && node tests/skill-read-tools.mjs && node tests/studio-host-experts.mjs && node tests/studio-shell.mjs && node tests/legacy-storage.mjs && node tests/creative-host-smoke.mjs && node tests/studio-flow-smoke.mjs && node tests/studio-integration.mjs"
+    "test:studio": "node tests/runtime-version.mjs && node tests/dsh-entry-resolution.mjs && node tests/openai-gateway.mjs && node tests/studio-model-routing.mjs && node tests/studio-proxy.mjs && node tests/studio-proxy-dsh.mjs && node tests/studio-tool-bridge.mjs && node tests/creative-tools-plugin.mjs && node tests/studio-host-plugin.mjs && node tests/dsh-experts.mjs && node tests/studio-expert-signature.mjs && node tests/studio-skill-hot.mjs && node tests/studio-tools-hot.mjs && node tests/creative-expert-plugin.mjs && node tests/skill-read-tools.mjs && node tests/studio-host-experts.mjs && node tests/studio-shell.mjs && node tests/legacy-storage.mjs && node tests/studio-host-prewarm.mjs && node tests/studio-shell-prewarm.mjs && node tests/studio-view-keepalive.mjs && node tests/studio-boot-overlay.mjs && node tests/creative-host-smoke.mjs && node tests/studio-flow-smoke.mjs && node tests/studio-integration.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.30",

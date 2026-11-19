@@ -390,13 +390,17 @@ type RulePack = { enabled: boolean; text: string }
 type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
 const CAP_VALUES: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 'view', 'video', 'videoRef', 'audio']
 
-/** 生成环节：环节默认值只引用模型表里的键，不携带模型 ID */
-type Stage = 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision'
-const STAGES: Stage[] = ['character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision']
+/**
+ * 生成环节：环节默认值只引用模型表里的键，不携带模型 ID。
+ * `creative` 是创意会话的模型回退位 —— 它与前端 `Stage` 必须保持同一份清单，
+ * 否则设置页保存的值会在 normalize 阶段被静默丢弃。
+ */
+type Stage = 'character' | 'asset' | 'shot' | 'prompt' | 'sceneCode' | 'vision' | 'videoVision' | 'creative'
+const STAGES: Stage[] = ['character', 'asset', 'shot', 'prompt', 'sceneCode', 'vision', 'videoVision', 'creative']
 
-/** 输出上限可配置的环节：创意会话有预算，但不做模型绑定 */
-type BudgetStage = Stage | 'creative'
-const BUDGET_STAGES: BudgetStage[] = [...STAGES, 'creative']
+/** 输出上限可配置的环节：与环节默认同源，避免两处清单各自漂移 */
+type BudgetStage = Stage
+const BUDGET_STAGES: BudgetStage[] = STAGES
 
 /** 渠道协议：决定请求怎么发 */
 type ProviderKind = 'ark' | 'ark-plan' | 'apimart' | 'openai' | 'minimax' | 'elevenlabs' | 'volc-tts'
@@ -1110,12 +1114,35 @@ function withKeyStatus(s: AppSettings): AppSettings {
   }
 }
 
-/** 设置保存后的通知钩子：创意会话要在模型表变化时重写宿主配置 */
-let settingsChangedHook: (() => void) | null = null
+/**
+ * 设置变更的原因。
+ *
+ * 消费者据此决定要不要重启宿主：模型表与专家 preset 都是启动期读入的，
+ * 而技能包正文由宿主的文件监听热生效——技能集合变化只需重建专家技能根，
+ * 重启一次纯属浪费（还会打断进行中的会话）。
+ */
+export type SettingsChangeReason = 'settings' | 'experts' | 'skills'
+
+/** 设置保存后的通知钩子：创意会话要在模型表/专家/技能变化时重写宿主配置 */
+let settingsChangedHook: ((info: { reason: SettingsChangeReason }) => void) | null = null
 
 /** 注册设置变更钩子（进程内只有一个消费者，后注册覆盖） */
-export function onSettingsChanged(hook: (() => void) | null) {
+export function onSettingsChanged(hook: ((info: { reason: SettingsChangeReason }) => void) | null) {
   settingsChangedHook = hook
+}
+
+/**
+ * 通知一次设置变更。
+ *
+ * 统一入口而不是在每个路由里直接调用钩子：钩子的 null 判断与异常吞掉
+ * 都要一致，否则某条路径上「保存成功但没同步」会变成静默失效。
+ */
+function notifySettingsChanged(reason: SettingsChangeReason) {
+  try {
+    settingsChangedHook?.({ reason })
+  } catch {
+    /* 钩子失败不影响保存本身 */
+  }
 }
 
 function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
@@ -1175,11 +1202,7 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   setSetting('app', next)
   voiceCache.clear()
   // 模型表变了要同步给创意会话宿主，否则它的模型选择器还停在旧列表
-  try {
-    settingsChangedHook?.()
-  } catch {
-    /* 钩子失败不影响保存 */
-  }
+  notifySettingsChanged('settings')
   return next
 }
 
@@ -2752,6 +2775,37 @@ export function listStudioModels(): Array<{ id: string; key: string; label: stri
 }
 
 /**
+ * 创意会话的默认模型（宿主没有显式选择时用它播种）。
+ *
+ * 顺序与 `creative-chat` 规范一致：设置页「创意（对话助手）」→「文本 · 常规」→ 第一个可用文本模型。
+ * 返回 `sb/<模型键>`；模型表为空时返回 `sb/default` 占位，避免宿主回落到内置官方路由绕过账本 ——
+ * 该占位由门面在 `/v1/chat/completions` 上转成可读的未配置提示。
+ */
+export function studioDefaultModel(): string {
+  const s = getAppSettings()
+  const usable = (key: string | undefined) => {
+    if (!key) return false
+    const m = s.models.find((x) => x.key === key)
+    return Boolean(m && hasTextCap(m) && isRunnableModel(m))
+  }
+  const creative = String(s.stageModels?.creative || '').trim()
+  if (usable(creative)) return `sb/${creative}`
+  const textDefault = String(s.defaults?.text || '').trim()
+  if (usable(textDefault)) return `sb/${textDefault}`
+  const first = s.models.find((m) => hasTextCap(m) && isRunnableModel(m))
+  return first ? `sb/${first.key}` : 'sb/default'
+}
+
+/**
+ * 创意会话的输出上限：设置页「创意（对话助手）」的输出上限。
+ * `undefined` 表示不限制 —— 请求不带 `max_tokens`，交给渠道默认值。
+ */
+export function studioCreativeMaxTokens(): number | undefined {
+  const value = Number(getAppSettings().stageMaxTokens?.creative)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined
+}
+
+/**
  * 创意会话入口（`/studio/`）的访问控制。
  *
  * 账号模式（配置了 SB_BILLING_BASE）下，创意会话与钱包同级：必须持有效会话才能进入。
@@ -3663,6 +3717,8 @@ export function createAppHandler({ root }: { root: string }) {
               },
             })
             deleteSkillOverride(skillId)
+            // 新技能要进专家技能根：白名单按 id 判定，不同步的话「已安装但专家用不到」
+            notifySettingsChanged('skills')
             res.end(
               JSON.stringify({
                 ok: true,
@@ -3707,6 +3763,8 @@ export function createAppHandler({ root }: { root: string }) {
             // 先删目录再删记录：目录删失败时记录还在，用户可重试
             removeInstalledSkill(root, id)
             deleteSkillInstall(id)
+            // 卸载要把它从专家技能根里摘掉，否则模型还能在候选列表里看到它
+            notifySettingsChanged('skills')
             res.end(JSON.stringify({ ok: true }))
           } catch (e: any) {
             res.statusCode = 400
@@ -3751,6 +3809,8 @@ export function createAppHandler({ root }: { root: string }) {
               },
             })
             deleteSkillOverride(skillId)
+            // 纯文本上传同样是技能集合变化：专家技能根要跟着重建
+            notifySettingsChanged('skills')
             res.end(
               JSON.stringify({
                 ok: true,
@@ -3800,6 +3860,8 @@ export function createAppHandler({ root }: { root: string }) {
               },
             })
             deleteSkillOverride(skillId)
+            // zip 上传带附件：目录已落盘，专家技能根重建后即可读取包内文件
+            notifySettingsChanged('skills')
             res.end(
               JSON.stringify({
                 ok: true,
@@ -3956,6 +4018,9 @@ export function createAppHandler({ root }: { root: string }) {
             if (req.method === 'DELETE') {
               const builtin = readSkillFile(root, id)
               deleteSkillOverride(id)
+              // 覆盖重置会把正文换回内置版本：技能根指向的目录不变，
+              // 但宿主的文件监听未必盯着内置根，通知一次最稳
+              notifySettingsChanged('skills')
               res.end(JSON.stringify({ ok: true, skill: { id, text: builtin, builtinText: builtin, source: 'builtin' } }))
               return
             }
@@ -4027,11 +4092,7 @@ export function createAppHandler({ root }: { root: string }) {
               const body = await readJson(req)
               saveCustomExperts(body?.experts || [])
               // 专家集合变了要让宿主重新编译 preset：否则新建的专家要等下一次重启才出现
-              try {
-                settingsChangedHook?.()
-              } catch {
-                /* 钩子失败不影响保存 */
-              }
+              notifySettingsChanged('experts')
               res.end(JSON.stringify({ ok: true, experts: listAllExperts() }))
               return
             }

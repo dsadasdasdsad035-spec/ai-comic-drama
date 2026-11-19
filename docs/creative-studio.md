@@ -62,15 +62,44 @@
 
 摄取、反推、产物等 **HTTP API 仍留在仓库**，供脚本与后续技能扩展；当前 UI 不挂载这些能力。若要恢复，需在 `stageTools` 或独立模块重新注册并在创意页绑定。
 
+## 工具声明的热更新边界（当前 dsh 宿主）
+
+工具声明由 `src/agent/stageTools.ts` 的 zod schema 推导，经 `server-build/studio-tools.mjs`
+打进应用进程，再由 `/api/studio/tools` 暴露给宿主插件。
+
+| 改动 | 生效方式 |
+|---|---|
+| 参数 / 描述（zod schema、`description`） | 重建 `server-build` 后，宿主下一次工具调用即按新声明校验，**不用重启宿主** |
+| 工具函数体（`run()` 的实现） | 重建 `server-build` 后由工具桥按产物时间戳自动重载模块，下一次调用即生效，**应用与宿主都不用重启** |
+| 工具增删 | 重建后由清单版本差异触发宿主重注册 |
+
+### 实现热更为什么不用重启
+
+`StudioToolBridge.ensureLoaded` 每次加载前 `stat` 一次 `server-build/studio-tools.mjs`，
+时间戳变了就以 `?v=<mtime>` 重新 `import` —— ESM 的模块缓存按 URL 区分，
+换 URL 即可拿到新模块，然后整表重建工具（旧表里的 `run` 闭包指向旧模块）。
+
+约束：`npm run build:server` 必须真正改写产物（内容有变）。时间戳没变就不会重载，
+所以「改完忘了构建」的表现仍是旧实现，这一点与改动前一致。
+
+`/api/studio/tools` 的响应带 `version`（对排序后的 `name + description + parameters` 取
+sha256 前 12 位）。宿主插件 `creative-tools` 在每次 `tools/pre-execute` 与 15 秒兜底轮询时
+比对它，变了才「先摘后装」换表；因此：
+
+- 注册表按名字唯一，同名工具无法并存 —— 换表只能先注销再注册；
+- 换表失败会回滚到上一版定义，不会把工具清空；
+- 有调用正在执行时不换表，否则进行中的调用会丢掉自己的定义；
+- 旧服务端不返回 `version` 时，插件退化为「启动时拉一次」，行为与改动前一致。
+
 ## 验收
 
 ```bash
 # 宿主侧的自动化验收（Node 24，无需渠道 Key）
-node tests/studio-flow-smoke.mjs      # 拉起宿主 / 41 个工具注册 / 技能可读 / 压缩已开
+node tests/studio-flow-smoke.mjs      # 拉起宿主 / 42 个工具注册 / 技能可读 / 压缩已开
 node tests/studio-shell.mjs           # 外壳：入口、主题桥、错误态与重试
 node tests/legacy-storage.mjs         # 旧会话只读：写入一律 410
 node verify-skills-unit.mjs           # 技能与工具单元测试总入口
-node verify-creative-builtin-tools.mjs  # 逐项 invoke 41 个平台工具（无确认通道时必须 fail-closed）
+node verify-creative-builtin-tools.mjs  # 逐项 invoke 42 个平台工具（无确认通道时必须 fail-closed）
 ```
 
 模型回合（真正生成回复、出图出片）需要渠道 Key 与计费，只能手测。
