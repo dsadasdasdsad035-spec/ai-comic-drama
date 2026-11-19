@@ -8681,7 +8681,8 @@ html[data-theme='day'] {
 
   --text: #1d2733;
   --text-2: #465666;
-  --muted: #5d6b79;
+  /* 时间戳/次要标签用它：必须压到在 --bg-2 上也 ≥4.5:1（#5d6b79 只有 4.43） */
+  --muted: #586673;
 
   --accent: #0e7490;
   --accent-dim: rgba(14, 116, 144, 0.1);
@@ -18203,4 +18204,64 @@ button.crumb:hover {
   border-radius: 3px;
   border: 1px solid var(--line);
   color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- 创意容器（宿主 iframe） */
+
+/*
+ * 容器只负责「占满可用区、不制造滚动」：宿主的会话列表与消息流自己滚。
+ * 尺寸用 100% 而不是 100vh，避免外壳头部/底部把 iframe 挤出可视区，
+ * 那会让创意页出现一条永远关不掉的页面级滚动条。
+ */
+.studio-frame {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+}
+
+.studio-frame-iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg);
+  /* 首帧前不闪白：主题桥还没跑时用壳的底色兜住 */
+  color-scheme: inherit;
+}
+
+.studio-frame-loading,
+.studio-frame-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.studio-frame-loading {
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+
+.studio-frame-error h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.studio-frame-error p {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  line-height: 1.6;
 }

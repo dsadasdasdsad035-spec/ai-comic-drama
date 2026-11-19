@@ -85,18 +85,22 @@ export declare function ensureSessionDir(appRoot: string, sessionId: string): st
 export declare function removeSessionDir(appRoot: string, sessionId: string): boolean
 export declare function resolveCreativeFile(appRoot: string, ref: string): string
 
+/** 旧创意会话写操作统一抛这个（status 410）：声明成 never，调用方必须处理 */
+export declare function legacyReadOnlyError(action?: string): Error & { kind: 'legacy-readonly'; status: number }
+export declare const LEGACY_SESSION_NOTICE: string
+
 export declare function createSession(
   appRoot: string,
   init?: { id?: string; title?: string; mode?: unknown },
-): CreativeSessionRecord
+): never
 export declare function getSession(appRoot: string, id: string): CreativeSessionRecord | null
 export declare function listSessions(appRoot: string, limit?: number): CreativeSessionRecord[]
 export declare function touchSession(
   appRoot: string,
   id: string,
-  patch?: { title?: string; mode?: unknown },
-): CreativeSessionRecord | null
-export declare function deleteSession(appRoot: string, id: string): boolean
+  patch?: { title?: string; mode?: unknown; project?: string; expertId?: string },
+): never
+export declare function deleteSession(appRoot: string, id: string): never
 
 export declare function getThread(appRoot: string, id: string): CreativeThreadRecord
 export declare function saveThread(
@@ -104,7 +108,7 @@ export declare function saveThread(
   id: string,
   messages: unknown[],
   activeSkills?: unknown[],
-): CreativeThreadRecord
+): never
 
 export declare function insertSource(
   appRoot: string,

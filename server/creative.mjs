@@ -1,5 +1,10 @@
 /**
- * 创意会话存储：会话 / 线程 / 源视频 / 镜头 / 产物。
+ * 创意会话存储：会话 / 线程 / 源视频 / 镜头 / 产物（**只读**）。
+ *
+ * 从 creative-studio-dsh-runtime 起，新会话由创意会话宿主（`/studio/`）管理，
+ * 这里保留的只是历史数据的读取能力：旧会话列表、线程与媒体还要能被导出与排查。
+ * 因此所有写入口都返回同一条中文说明，不再产生 `creative_sessions` /
+ * `creative_threads` 新记录 —— 双写会让「会话到底存在哪」永远说不清。
  *
  * 为什么单独一套表而不是复用 chat_threads：
  * - chat_threads 的主键要求非空 project，而项目名走 safeProjectName（拒绝空串）；
@@ -128,18 +133,24 @@ function rowToSession(row) {
   }
 }
 
+/** 旧创意会话的写操作统一拒绝：新会话在宿主里，写旧表只会造成两套数据 */
+export function legacyReadOnlyError(action = '写创意会话') {
+  const err = new Error(
+    `${action}已停用：创意会话现在由创意会话宿主管理（/studio/），旧会话仅可查看与导出。`,
+  )
+  err.kind = 'legacy-readonly'
+  err.status = 410
+  return err
+}
+
+/** 旧会话的打开说明：界面拿到它就直接展示，不要空白或堆栈 */
+export const LEGACY_SESSION_NOTICE =
+  '这是旧版创意会话，已不能在当前界面继续对话；历史内容仍可查看与导出。新会话请进入创意页。'
+
 export function createSession(appRoot, init = {}) {
-  const id = safeSessionId(init.id || newSessionId())
-  ensureSessionDir(appRoot, id)
-  const d = open(appRoot)
-  const at = nowIso()
-  const project = normalizeSessionProject(init.project)
-  d.prepare(
-    `INSERT INTO creative_sessions (id, title, mode, project, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
-  ).run(id, String(init.title || '').slice(0, 200), normalizeMode(init.mode), project, at, at)
-  d.prepare(`INSERT OR IGNORE INTO creative_threads (session_id, messages, active_skills, updated_at) VALUES (?,?,?,?)`)
-    .run(id, '[]', '[]', at)
-  return getSession(appRoot, id)
+  void appRoot
+  void init
+  throw legacyReadOnlyError('新建创意会话')
 }
 
 export function getSession(appRoot, id) {
@@ -172,44 +183,17 @@ export function listSessions(appRoot, limit = 100, projectFilter) {
 }
 
 export function touchSession(appRoot, id, patch = {}) {
-  const d = open(appRoot)
-  const safe = safeSessionId(id)
-  const sets = []
-  const vals = []
-  if (patch.title !== undefined) {
-    sets.push('title=?')
-    vals.push(String(patch.title || '').slice(0, 200))
-  }
-  if (patch.mode !== undefined) {
-    sets.push('mode=?')
-    vals.push(normalizeMode(patch.mode))
-  }
-  if (patch.project !== undefined) {
-    sets.push('project=?')
-    vals.push(normalizeSessionProject(patch.project))
-  }
-  if (patch.expertId !== undefined) {
-    sets.push('expert_id=?')
-    vals.push(String(patch.expertId || '').trim().slice(0, 64))
-  }
-  sets.push('updated_at=?')
-  vals.push(nowIso())
-  d.prepare(`UPDATE creative_sessions SET ${sets.join(', ')} WHERE id=?`).run(...vals, safe)
-  return getSession(appRoot, safe)
+  void appRoot
+  void id
+  void patch
+  throw legacyReadOnlyError('修改创意会话')
 }
 
 /** 删除会话：先删库内子记录，再删磁盘目录；两者都不影响其他会话 */
 export function deleteSession(appRoot, id) {
-  const safe = safeSessionId(id)
-  const d = open(appRoot)
-  d.prepare('DELETE FROM creative_threads WHERE session_id=?').run(safe)
-  d.prepare('DELETE FROM creative_artifacts WHERE session_id=?').run(safe)
-  const sources = d.prepare('SELECT id FROM creative_sources WHERE session_id=?').all(safe)
-  for (const s of sources) d.prepare('DELETE FROM creative_shots WHERE source_id=?').run(s.id)
-  d.prepare('DELETE FROM creative_sources WHERE session_id=?').run(safe)
-  const res = d.prepare('DELETE FROM creative_sessions WHERE id=?').run(safe)
-  removeSessionDir(appRoot, safe)
-  return Number(res.changes) > 0
+  void appRoot
+  void id
+  throw legacyReadOnlyError('删除创意会话')
 }
 
 // ---------------------------------------------------------------- 线程
@@ -229,29 +213,11 @@ export function getThread(appRoot, id) {
 }
 
 export function saveThread(appRoot, id, messages, activeSkills = []) {
-  const safe = safeSessionId(id)
-  if (!Array.isArray(messages)) throw new Error('messages 必须是数组')
-  if (activeSkills !== undefined && !Array.isArray(activeSkills)) throw new Error('activeSkills 必须是数组')
-  const payload = JSON.stringify(messages)
-  const bytes = Buffer.byteLength(payload, 'utf8')
-  if (bytes > MAX_CREATIVE_THREAD_BYTES) {
-    const err = new Error(
-      `线程超过 ${Math.round(MAX_CREATIVE_THREAD_BYTES / 1024)}KB（当前 ${Math.round(bytes / 1024)}KB），请新建会话或清理旧轮次`,
-    )
-    err.kind = 'thread-too-large'
-    err.bytes = bytes
-    throw err
-  }
-  const d = open(appRoot)
-  const at = nowIso()
-  d.prepare(
-    `INSERT INTO creative_threads (session_id, messages, active_skills, updated_at)
-     VALUES (?,?,?,?)
-     ON CONFLICT(session_id) DO UPDATE SET
-       messages=excluded.messages, active_skills=excluded.active_skills, updated_at=excluded.updated_at`,
-  ).run(safe, payload, JSON.stringify(activeSkills || []), at)
-  d.prepare('UPDATE creative_sessions SET updated_at=? WHERE id=?').run(at, safe)
-  return getThread(appRoot, safe)
+  void appRoot
+  void id
+  void messages
+  void activeSkills
+  throw legacyReadOnlyError('保存创意会话线程')
 }
 
 // ---------------------------------------------------------------- 源视频

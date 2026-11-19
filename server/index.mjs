@@ -16,8 +16,22 @@
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { MEDIA_DIRS, ensureMediaDir, resolveStaticRoot } from './paths.mjs'
+import { MEDIA_DIRS, ensureMediaDir, ensureStateDir, resolveStaticRoot } from './paths.mjs'
+import { dbPath, resolveRoot } from './db.mjs'
+import { assertNodeVersion } from './runtime-version.mjs'
+import { createCreativeHost } from './creative-host.mjs'
+import { createOpenAIGateway } from './openai-gateway.mjs'
+import { createStudioProxy, isStudioPath } from './studio-proxy.mjs'
+import { STUDIO_KEY_ENV, STUDIO_INTERNAL_ENV, writeStudioProfile } from './studio-profile.mjs'
+import { installCreativeToolsBundle } from './dsh-bundle.mjs'
+import { expertsPatchPath, readCompiledExperts, writeExpertsPatch } from './dsh-experts.mjs'
+import { isStudioEnabled, setStudioEnabled, studioFlagPayload } from './studio-flag.mjs'
+import { StudioToolBridge, INTERNAL_TOKEN_HEADER as STUDIO_INTERNAL_HEADER } from './studio-tool-bridge.mjs'
+
+// 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
+if (!assertNodeVersion()) process.exit(1)
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const DIST_DIR = path.join(ROOT, 'dist')
@@ -41,7 +55,15 @@ if (!fs.existsSync(APP_ENTRY)) {
 }
 
 const app = await import(pathToFileURL(APP_ENTRY).href)
-const { createAppHandler, runServerShutdownTasks, runServerStartupTasks, serveFile } = app
+const {
+  authorizeStudioRequest,
+  createAppHandler,
+  listStudioModels,
+  onSettingsChanged,
+  runServerShutdownTasks,
+  runServerStartupTasks,
+  serveFile,
+} = app
 
 /**
  * 静态资源的 Content-Type。
@@ -154,7 +176,421 @@ for (const dir of MEDIA_DIRS) {
 }
 const handle = createAppHandler({ root: ROOT })
 
+// ---------------------------------------------------------------- 创意会话宿主
+// 开关默认开启；关闭时 `/studio/` 直接返回未启用，且完全不拉起宿主进程，
+// 用于灰度回滚（旧创意链路在此期间仍可用）。
+// 开关是运行时可改的：环境变量只作为默认值，见 studio-flag.mjs
+const STUDIO_PUBLIC_URL = String(process.env.SB_PUBLIC_URL || '').trim()
+/** 宿主需要信任「浏览器实际访问的那个 authority」，否则它的信任围栏会拒绝转发过来的请求 */
+const STUDIO_TRUSTED_HOSTS = String(process.env.SB_STUDIO_TRUSTED_HOSTS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+/** @type {ReturnType<typeof createCreativeHost> | null} */
+let creativeHost = null
+/** @type {ReturnType<typeof createStudioProxy> | null} */
+let studioProxy = null
+/** @type {ReturnType<typeof createOpenAIGateway> | null} */
+let gateway = null
+/** 最近一次通过鉴权的操作员会话：模型门面据此把账记到人头上（单操作员，后写覆盖） */
+let studioSessionToken = ''
+/** 门面专用密钥：宿主用 apiKeyEnv 引用它，外部请求无法冒充。可用环境变量覆盖以便联调。 */
+const STUDIO_GATEWAY_KEY = String(process.env.SB_STUDIO_GATEWAY_KEY || '').trim() || randomBytes(24).toString('base64url')
+/** 工具桥内部令牌：宿主插件持有，浏览器拿不到（它不在任何页面里出现） */
+const STUDIO_INTERNAL_TOKEN = String(process.env.SB_STUDIO_INTERNAL_TOKEN || '').trim() || randomBytes(24).toString('base64url')
+/** @type {import('./studio-tool-bridge.mjs').StudioToolBridge | null} */
+let toolBridge = null
+/** 宿主最近一次注册工具的结果；宿主日志不进应用日志，这里留一份可查的 */
+let studioToolStatus = { count: 0, names: [], at: '' }
+/** 宿主的配置根：专家 preset 与镜像都写在这里，接口要按同一处读回 */
+let studioDshHome = ''
+
+/**
+ * 读取请求体（工具桥的请求都很小，限个上限防止被塞爆内存）。
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} [limit]
+ */
+function readBody(req, limit = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > limit) {
+        reject(new Error('请求体过大'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim()
+      if (!text) return resolve({})
+      try {
+        resolve(JSON.parse(text))
+      } catch (e) {
+        reject(new Error(`请求体不是合法 JSON：${e?.message || String(e)}`))
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+/**
+ * 宿主与反代在拿到真实监听端口后再建：`SB_PORT=0` 时端口由系统分配，
+ * 而宿主的 trusted-host 白名单和 public-url 都必须写真实端口，
+ * 用配置里的 0 会让信任围栏认不出转发过来的请求。
+ */
+function setupStudio(actualPort) {
+  if (!isStudioEnabled() || creativeHost) return
+  const gatewayBaseUrl = `http://127.0.0.1:${actualPort}/v1`
+  const dshHome = ensureStateDir(ROOT, 'dsh')
+  studioDshHome = dshHome
+
+  /**
+   * 把当前模型表同步进宿主的 profile patch。
+   * 宿主每次请求都会重读这份文档，所以设置页改完模型不用重启宿主；
+   * 换行只发生在模型集合真的变化时，避免每次保存都重写文件。
+   */
+  let profileSignature = ''
+  const syncProfile = () => {
+    const models = listStudioModels()
+    const signature = models.map((m) => `${m.id}:${m.vision ? 1 : 0}`).join(',')
+    if (signature === profileSignature) return models
+    try {
+      writeStudioProfile({
+        dshHome,
+        gatewayBaseUrl,
+        models,
+        defaultModelId: models[0]?.id || 'sb/default',
+        log: (line) => console.log(line),
+      })
+      // 工具桥是 bundle 层（用户层 patch 不能新增插件行），装完才能在宿主里生效
+      installCreativeToolsBundle({ dshHome, root: ROOT, log: (line) => console.log(line) })
+      profileSignature = signature
+    } catch (e) {
+      console.error(`[studio] 写入宿主模型配置失败：${e?.message || String(e)}`)
+    }
+    return models
+  }
+  syncProfile()
+
+  /**
+   * 把专家同步成宿主 preset。
+   *
+   * 专家集合与技能白名单都可能被设置页改动，因此按内容签名判断是否需要重写；
+   * preset 只在宿主启动时读取，所以内容变了且宿主在跑时要重启一次，
+   * 否则列表里看得见新专家、会话里却选不到。
+   */
+  let expertSignature = ''
+  const syncExperts = async ({ restartIfRunning = true } = {}) => {
+    try {
+      if (!toolBridge) return { compiled: [] }
+      // 工具名清单来自工具桥本身（同一份 ToolDef），不另抄一张表
+      const registeredNames = (await toolBridge.catalog('', 1)).map((tool) => tool.name)
+      const result = writeExpertsPatch({
+        dshHome,
+        root: ROOT,
+        registeredNames,
+        log: (line) => console.log(line),
+      })
+      const nextSignature = result.compiled
+        .map((e) => `${e.id}:${e.tools}:${e.skills}:${e.wildcard ? 1 : 0}`)
+        .join(',')
+      const previous = expertSignature
+      expertSignature = nextSignature
+      if (previous === nextSignature) return result
+      // 首次同步时宿主还没起，不用重启
+      if (restartIfRunning && previous && creativeHost?.status().state === 'ready') {
+        await creativeHost.stop()
+        await creativeHost.start()
+      }
+      return result
+    } catch (e) {
+      console.error(`[studio] 生成专家 preset 失败：${e?.message || String(e)}`)
+      return { compiled: [] }
+    }
+  }
+
+  creativeHost = createCreativeHost({
+    root: ROOT,
+    dshHome,
+    // 专家 preset 走叠加层：profile 用户层加不了新行
+    patches: [expertsPatchPath(dshHome)],
+    // public-url 只影响宿主自己打印/上下文里的地址；前缀必须是 `/studio/`，
+    // 它的 <base href="./"> 与相对资源都按这个前缀工作。
+    publicUrl: STUDIO_PUBLIC_URL
+      ? `${STUDIO_PUBLIC_URL.replace(/\/+$/, '')}/studio/`
+      : `http://127.0.0.1:${actualPort}/studio/`,
+    trustedHosts: [
+      `127.0.0.1:${actualPort}`,
+      `localhost:${actualPort}`,
+      ...STUDIO_TRUSTED_HOSTS,
+      ...(STUDIO_PUBLIC_URL ? [new URL(STUDIO_PUBLIC_URL).host] : []),
+    ],
+    // 凭证只经环境变量交给宿主，配置文件里只有引用名
+    env: {
+      [STUDIO_KEY_ENV]: STUDIO_GATEWAY_KEY,
+      // 工具桥：宿主插件需要回调地址与内部令牌；令牌同样只走环境变量
+      [STUDIO_INTERNAL_ENV]: STUDIO_INTERNAL_TOKEN,
+      SB_STUDIO_BASE_URL: `http://127.0.0.1:${actualPort}`,
+    },
+  })
+  toolBridge = new StudioToolBridge({
+    root: ROOT,
+    baseUrl: `http://127.0.0.1:${actualPort}`,
+    internalToken: STUDIO_INTERNAL_TOKEN,
+    log: (line) => console.log(line),
+  })
+  // 先算一遍专家 preset：首次进创意时宿主就要能读到它，不能等第一次会话
+  void syncExperts({ restartIfRunning: false })
+  studioProxy = createStudioProxy({
+    host: creativeHost,
+    authorize: (req) => {
+      const decision = authorizeStudioRequest(req)
+      if (decision.ok && decision.sessionToken) studioSessionToken = decision.sessionToken
+      return decision
+    },
+    // 只从「还没开始 / 已停止」拉起：崩溃或启动失败后不再自动重试，
+    // 由错误页上的「重试」按钮显式触发，避免一个坏掉的宿主被反复拉起刷屏
+    ensureStarted: async () => {
+      // 每次拉起前对齐一次模型表与专家 preset：宿主可能是隔了很久才被重新拉起
+      syncProfile()
+      await syncExperts({ restartIfRunning: false })
+      const state = creativeHost.status().state
+      if (state === 'failed') return false
+      return await creativeHost.start()
+    },
+    log: (line) => console.log(line),
+  })
+  gateway = createOpenAIGateway({
+    baseUrl: `http://127.0.0.1:${actualPort}`,
+    // 模型表随时可能在设置页变化，按请求读取，不做缓存
+    getModels: () => listStudioModels(),
+    getSessionToken: () => studioSessionToken,
+    log: (line) => console.log(line),
+  })
+  // 设置页保存后立即同步，模型选择器不必等下一次宿主启动
+  onSettingsChanged(() => {
+    syncProfile()
+    // 专家与技能白名单同样来自设置：改完要让宿主按新 preset 重开
+    void syncExperts()
+  })
+}
+
 const server = http.createServer((req, res) => {
+  // 模型门面：只允许本机回环 + 门面密钥。宿主是同机子进程，外部永远不该到这里。
+  const reqPath = String(req.url || '').split('?')[0]
+  if (reqPath === '/v1/models' || reqPath === '/v1/chat/completions') {
+    const remote = String(req.socket.remoteAddress || '')
+    const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+    const auth = String(req.headers.authorization || '')
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+    if (!loopback || !gateway || bearer !== STUDIO_GATEWAY_KEY) {
+      res.statusCode = 401
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(
+        JSON.stringify({
+          error: {
+            message: loopback ? '模型门面密钥无效' : '模型门面只允许本机访问',
+            type: 'invalid_request_error',
+            code: 'unauthorized',
+          },
+        }),
+      )
+      return
+    }
+    Promise.resolve(gateway.handle(req, res)).catch((e) => {
+      if (res.writableEnded || res.destroyed) return
+      res.statusCode = 500
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ error: { message: e?.message || String(e), type: 'api_error' } }))
+    })
+    return
+  }
+
+  // 工具桥：只对宿主进程开放。回环 + 内部令牌双重校验，
+  // 因为这里的执行会写项目库、花上游额度，不能接受浏览器直连。
+  if (
+    reqPath === '/api/studio/tools' ||
+    reqPath === '/api/studio/tools/execute' ||
+    reqPath === '/api/studio/tools/ready' ||
+    reqPath === '/api/studio/experts'
+  ) {
+    const remote = String(req.socket.remoteAddress || '')
+    const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+    const token = String(req.headers[STUDIO_INTERNAL_HEADER] || '')
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    if (!loopback || token !== STUDIO_INTERNAL_TOKEN) {
+      res.statusCode = 401
+      res.end(JSON.stringify({ ok: false, message: loopback ? '内部令牌无效' : '工具桥只允许本机访问' }))
+      return
+    }
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+      return
+    }
+    readBody(req)
+      .then(async (body) => {
+        const project = String(body.project || '')
+        const episode = Number(body.episode || 1)
+        if (!toolBridge) {
+          res.statusCode = 503
+          res.end(JSON.stringify({ ok: false, message: '工具桥未就绪' }))
+          return
+        }
+        if (reqPath === '/api/studio/tools') {
+          res.end(JSON.stringify({ ok: true, tools: await toolBridge.catalog(project, episode) }))
+          return
+        }
+        if (reqPath === '/api/studio/experts') {
+          // 专家清单与 preset 映射：会话列表据此把 preset id 显示成专家名
+          res.end(
+            JSON.stringify({
+              ok: true,
+              experts: readCompiledExperts(studioDshHome).map((row) => ({
+                ...row,
+                presetId: row.presetId || `expert-${row.id}`,
+              })),
+            }),
+          )
+          return
+        }
+        if (reqPath === '/api/studio/tools/ready') {
+          // 宿主注册完工具后回报一次：加载失败才看得见，不用去翻宿主日志
+          studioToolStatus = {
+            count: Number(body.count || 0),
+            names: Array.isArray(body.names) ? body.names.slice(0, 200) : [],
+            at: new Date().toISOString(),
+          }
+          console.log(`[studio-tools] 宿主已注册 ${studioToolStatus.count} 个工具`)
+          res.end(JSON.stringify({ ok: true }))
+          return
+        }
+        const result = await toolBridge.invoke(String(body.name || ''), body.args || {}, {
+          projectName: project,
+          epNo: episode,
+          sessionToken: studioSessionToken,
+        })
+        // 业务失败也用 200 返回：宿主据此得到「可读失败」而不是传输错误
+        res.end(JSON.stringify(result))
+      })
+      .catch((e) => {
+        if (res.writableEnded) return
+        res.statusCode = 400
+        res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+      })
+    return
+  }
+
+  // 创意入口开关：前端据此隐藏/显示左栏入口，切回时无需重启应用
+  if (reqPath === '/api/studio/enabled') {
+    const decision = authorizeStudioRequest(req)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    if (!decision.ok) {
+      res.statusCode = decision.status || 401
+      res.end(JSON.stringify({ ok: false, message: decision.message || '未通过认证' }))
+      return
+    }
+    if (req.method === 'GET') {
+      res.end(JSON.stringify(studioFlagPayload()))
+      return
+    }
+    if (req.method === 'POST') {
+      // 处理函数是同步的：读 body 走 readBody 的 Promise，不能直接 await
+      readBody(req)
+        .then(async (body) => {
+          const enabled = setStudioEnabled(body?.enabled)
+          // 关掉就立刻停宿主；打开不在请求里拉起，避免把「点开关」变成一次长启动
+          if (!enabled) await creativeHost?.stop()
+          res.end(JSON.stringify({ ok: true, enabled }))
+        })
+        .catch((e) => {
+          res.statusCode = 400
+          res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+        })
+      return
+    }
+    res.statusCode = 405
+    res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST' }))
+    return
+  }
+
+  // 创意会话：`/studio/` 及其子路径整体交给宿主，不进入应用的接口分发
+  if (isStudioPath(req.url)) {
+    const studioPath = String(req.url || '').split('?')[0]
+
+    // 宿主自身的运维入口（不走反代）：错误页上的「重试」与排障用的状态查询
+    if (studioPath === '/studio/_host/restart') {
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.end()
+        return
+      }
+      const decision = authorizeStudioRequest(req)
+      if (!decision.ok) {
+        res.statusCode = decision.status || 401
+        res.setHeader('Content-Type', 'application/json; charset=utf-8')
+        res.end(JSON.stringify({ ok: false, message: decision.message || '未通过认证' }))
+        return
+      }
+      Promise.resolve(creativeHost?.stop())
+        .then(() => creativeHost?.start())
+        .then((ok) => {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-store')
+          const status = creativeHost?.status()
+          res.statusCode = ok ? 200 : 503
+          res.end(JSON.stringify({ ok: Boolean(ok), message: ok ? '宿主已重启' : status?.error || '重启失败' }))
+        })
+        .catch((e) => {
+          res.statusCode = 500
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+        })
+      return
+    }
+    if (studioPath === '/studio/_host/status') {
+      const decision = authorizeStudioRequest(req)
+      res.statusCode = decision.ok ? 200 : decision.status || 401
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-store')
+      res.end(
+        JSON.stringify(
+          decision.ok
+            ? {
+                ok: true,
+                ...(creativeHost?.status() || { state: 'not-configured', installed: false }),
+                tools: studioToolStatus,
+              }
+            : { ok: false, message: decision.message || '未通过认证' },
+        ),
+      )
+      return
+    }
+
+    if (!isStudioEnabled() || !studioProxy) {
+      res.statusCode = 503
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(
+        JSON.stringify({
+          ok: false,
+          message: isStudioEnabled() ? '创意会话宿主尚未就绪' : '创意会话已停用（设置里的创意入口开关已关闭）',
+        }),
+      )
+      return
+    }
+    Promise.resolve(studioProxy.handle(req, res)).catch((e) => {
+      if (res.writableEnded || res.destroyed) return
+      res.statusCode = 502
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.end(JSON.stringify({ ok: false, message: `创意会话转发失败：${e?.message || String(e)}` }))
+    })
+    return
+  }
   // 接口未命中时（只有 /api/seedream 之外的最后一道 next）落到静态层
   const next = () => serveStatic(req, res)
   Promise.resolve(handle(req, res, next)).catch((e) => {
@@ -174,9 +610,25 @@ server.on('error', (err) => {
   process.exit(1)
 })
 
+// 宿主的会话通道是 WebSocket：升级请求必须原样透传，否则页面能打开但连不上
+server.on('upgrade', (req, socket, head) => {
+  if (!isStudioEnabled() || !studioProxy) {
+    socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n')
+    return
+  }
+  if (!studioProxy.upgrade(req, socket, head)) socket.destroy()
+})
+
 server.listen(PORT, HOST, () => {
   const addr = server.address()
   const actual = typeof addr === 'object' && addr ? addr.port : PORT
+  // 打开设置库：创意入口开关、专家迁移都要读设置；首个请求之前就要可用
+  try {
+    dbPath(resolveRoot(ROOT))
+  } catch (e) {
+    console.error(`[server] 设置库打开失败：${e?.message || String(e)}`)
+  }
+  setupStudio(actual)
   // 单行握手：桌面外壳按这一行解析实际端口（SB_PORT=0 时端口由系统决定）
   console.log(`[server] listening http://${HOST}:${actual}`)
 })
@@ -186,6 +638,8 @@ function shutdown(signal) {
   if (closing) return
   closing = true
   console.log(`[server] 收到 ${signal}，正在退出`)
+  // 宿主是子进程：不显式停会留下孤儿进程继续占着端口和内存
+  Promise.resolve(creativeHost?.stop()).catch(() => {})
   const timer = setTimeout(() => {
     console.error('[server] 退出超时，强制结束')
     process.exit(0)

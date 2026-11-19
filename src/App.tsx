@@ -80,7 +80,7 @@ import BoardEpisodeGrid from './board/BoardEpisodeGrid'
 import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
 import { blankEpisode, nextEpisodeNo } from './board/episodeOps'
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
-import CreativeStudio from './creative/CreativeStudio'
+import StudioFrame from './creative/StudioFrame'
 import { cancelTask, endTask, startTask } from './tasks'
 import { DiagnosticsPanel, diagnose } from './Diagnostics'
 import { defaultCharacters, identityFingerprint, markExpressionSheetStale, markExpressionsStale, markVoiceSampleStale, type CharacterSheet } from './characters'
@@ -505,6 +505,29 @@ function Shell() {
     typeof window === 'undefined' ? '#/' : window.location.hash,
   ))
   const view: ViewId = route.kind === 'project' ? route.view : 'overview'
+  /**
+   * 创意入口开关（灰度）：关掉时左栏不显示「创意」，直接打开旧的创意 URL 也回落到概览。
+   * 值来自服务端设置而不是构建时常量，所以切换后刷新即可生效，不必重启应用。
+   */
+  const [studioEnabled, setStudioEnabled] = useState(true)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/studio/enabled', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((body) => {
+        if (alive && typeof body?.enabled === 'boolean') setStudioEnabled(body.enabled)
+      })
+      .catch(() => {
+        // 拿不到就按开启处理：隐藏入口是灰度手段，不该因一次网络抖动把功能藏掉
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+  useEffect(() => {
+    if (studioEnabled || route.kind !== 'project' || route.view !== 'creative') return
+    navigate(projectHash(route.project, 'overview'))
+  }, [studioEnabled, route])
   /** 项目名是路由的派生值：大厅没有当前项目，因此不会去拉项目详情 */
   const projectName = route.kind === 'project' ? route.project : ''
   const { collapsed: railCollapsed, toggle: toggleRail } = useRailCollapsed(view)
@@ -3965,6 +3988,7 @@ function Shell() {
         counts={{ assets: designSheetCount + characters.length }}
         collapsed={railCollapsed}
         onToggleCollapsed={toggleRail}
+        hiddenViews={studioEnabled ? [] : ['creative']}
       >
         {view === 'overview' ? (
           <OverviewPage
@@ -3980,55 +4004,8 @@ function Shell() {
             }}
           />
         ) : view === 'creative' ? (
-          <CreativeStudio
-            settings={appSettings}
-            stagePick={stagePick}
-            onPickStage={pickStageModel}
-            projectName={projectName}
-            epNo={epNo}
-            onToast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3000)
-            }}
-            onOpenAllSkills={() => changeView('settings', { settingsSection: 'skills' })}
-            onOpenMcp={() => changeView('settings', { settingsSection: 'mcp' })}
-            onOpenExperts={() => changeView('settings', { settingsSection: 'experts' })}
-            onProjectCreated={() => void reloadProjects()}
-            materialHost={{
-              getCanvasAssets: () =>
-                nodesRef.current
-                  .filter((n) => (n as unknown as AssetNodeType).type === 'asset')
-                  .map((n) => {
-                    const d = n.data as unknown as { title?: string; url?: string }
-                    return { id: n.id, title: String(d.title ?? ''), url: String(d.url ?? '') }
-                  })
-                  .filter((a) => a.title !== '' && a.url !== ''),
-              commitCharacters: (next) => {
-                // 落库通道统一收接口形状（蛇形），这里转成界面模型交给 React 状态
-                const list = readCharacters(next)
-                charactersRef.current = list
-                setCharacters(list)
-                return saveCharactersNow(list)
-              },
-              onAssetsWritten: (next) => syncAssetCards(next as ProjectAsset[]),
-              // 参考连线解析：Agent 出图/出片要和画布按钮走同一套解析，就得拿到同一份画布状态
-              getCanvasContext: () => ({
-                nodes: nodesRef.current,
-                characters: charactersRef.current,
-                missingMedia,
-              }),
-              getSelectedVideoModel: () => selectedVideoModel,
-              getVideoResolution: () => vidRes,
-              // Agent 写参考后只在内存里标「本轮 Agent 写入」，刷新即失效
-              onTransitionRefsWritten: ({ afterShotId, toShotId, tokens }) =>
-                setTransitionAgentRefs((prev) => ({
-                  ...prev,
-                  [`${afterShotId}|${toShotId}`]: [...new Set([...(prev[`${afterShotId}|${toShotId}`] ?? []), ...tokens])],
-                })),
-              // Agent 写回后立刻重读项目：不传 fit，避免打断用户当前视口
-              onProjectDataChanged: () => void refreshProjectSnapshot(),
-            }}
-          />
+          // 创意会话整体交给宿主：这里只放容器与错误态
+          <StudioFrame />
         ) : view === 'account' ? (
           <AccountPage
             toast={(m) => {

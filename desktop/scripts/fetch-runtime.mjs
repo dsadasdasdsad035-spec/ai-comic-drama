@@ -37,9 +37,9 @@ const MANIFEST = path.join(BIN, '.runtime-manifest.json')
  */
 const RUNTIMES = {
   node: {
-    version: '22.23.5',
-    url: 'https://nodejs.org/dist/v22.23.5/node-v22.23.5-darwin-arm64.tar.gz',
-    sha256: 'e7131995759b61a0170b646010d2ad35a5d37b4cb0d471f3e8317eac6f742f3d',
+    version: '24.22.3',
+    url: 'https://nodejs.org/dist/v24.22.3/node-v24.22.3-darwin-arm64.tar.gz',
+    sha256: 'ff6e17d4874b76d272212b908cc020d6e815fba5a6c7eaaa06add725840307fd',
     // 官方包里有 npm / include 等，桌面端只需要可执行文件
     files: ['node'],
   },

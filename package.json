@@ -4,10 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "main": "desktop/main/main.mjs",
+  "engines": {
+    "node": ">=24.9.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build && npm run build:server",
-    "build:server": "esbuild server/app.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=server-build/app.mjs",
+    "build:server": "esbuild server/app.ts --bundle --platform=node --format=esm --target=node24 --packages=external --outfile=server-build/app.mjs && esbuild server/studio-tools.ts --bundle --platform=browser --format=esm --target=node24 --outfile=server-build/studio-tools.mjs",
     "prestart": "npm run build:server",
     "start": "node server/index.mjs",
     "preview": "vite preview",
@@ -18,10 +21,13 @@
     "desktop:dist": "npm run desktop:prep && electron-builder --config desktop/electron-builder.yml --mac dmg",
     "desktop:dmg": "npm run desktop:prep && CSC_IDENTITY_AUTO_DISCOVERY=false SKIP_NOTARIZE=1 electron-builder --config desktop/electron-builder.yml --mac dmg",
     "verify:billing": "node verify-billing-all.mjs",
-    "verify:billing:e2e": "node verify-billing-e2e-smoke.mjs"
+    "verify:billing:e2e": "node verify-billing-e2e-smoke.mjs",
+    "test:studio-tools": "node tests/studio-tool-bridge.mjs && node tests/creative-tools-plugin.mjs && node tests/studio-host-plugin.mjs",
+    "test:studio": "node tests/runtime-version.mjs && node tests/openai-gateway.mjs && node tests/studio-proxy.mjs && node tests/studio-proxy-dsh.mjs && node tests/studio-tool-bridge.mjs && node tests/creative-tools-plugin.mjs && node tests/studio-host-plugin.mjs && node tests/dsh-experts.mjs && node tests/creative-expert-plugin.mjs && node tests/skill-read-tools.mjs && node tests/studio-host-experts.mjs && node tests/studio-shell.mjs && node tests/legacy-storage.mjs && node tests/creative-host-smoke.mjs && node tests/studio-flow-smoke.mjs && node tests/studio-integration.mjs"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.30",
+    "@deepseek-ai/dsh": "0.2.2-rc.5",
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@radix-ui/react-collapsible": "^1.2.1",

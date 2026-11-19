@@ -1,5 +1,10 @@
 # 创意「专家」功能 — UI/UX 设计（v0）
 
+> **现状（`creative-studio-dsh-runtime` 之后）**：专家的管理在创意宿主（`/studio/` → 设置 → 专家），
+> 应用侧 `设置 → 创意专家` 只剩一句说明。专家的 manifest/soul 存在 `<DSH_HOME>/experts/<id>/`，
+> 编译成宿主 preset，工具与技能白名单由 `dsh-plugin-creative-expert` 在执行前强制。
+> 本文是当时的设计稿，保留作交互语义参考；实现细节以 [`creative-host.md`](./creative-host.md) 为准。
+
 > 目标：在创意会话中用户可选一个**专家**（Expert），由专家自带的 **soul / 系统提示词**、**技能白名单**、**工具白名单** 约束 Pi 行为；系统工具 **`list_experts`** 始终可用，帮用户发现与切换专家。  
 > 本文仅设计交互与界面，不绑定最终实现路径。
 

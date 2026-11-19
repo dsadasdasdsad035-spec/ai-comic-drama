@@ -18,6 +18,8 @@ export type AppShellProps = {
   counts?: Partial<Record<'characters' | 'assets', number>>
   collapsed: boolean
   onToggleCollapsed: () => void
+  /** 灰度关闭的视图：左栏不显示入口 */
+  hiddenViews?: ViewId[]
   children: ReactNode
 }
 
@@ -40,6 +42,7 @@ export default function AppShell({
   counts,
   collapsed,
   onToggleCollapsed,
+  hiddenViews = [],
   children,
 }: AppShellProps) {
   const item = navItemOf(view)
@@ -74,6 +77,7 @@ export default function AppShell({
       <div className="app-body">
         <SideNav
           view={view}
+          hiddenViews={hiddenViews}
           onNavigate={onNavigate}
           projectSlot={projectSlot}
           collapsed={collapsed}

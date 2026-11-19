@@ -117,7 +117,6 @@ fs.writeFileSync(
   [
     `export { createBuiltinPlatformTools, mergeBuiltinWithSkillTools } from ${JSON.stringify(path.join(ROOT, 'src/agent/builtinPlatformTools.ts'))}`,
     `export { bindSkillTools, createPiNativeToolSet } from ${JSON.stringify(path.join(ROOT, 'src/agent/stageTools.ts'))}`,
-    `export { buildCreativeTurnPayload } from ${JSON.stringify(path.join(ROOT, 'src/creative/creativeTurnPayload.ts'))}`,
   ].join('\n'),
 )
 
@@ -153,10 +152,12 @@ const skillTools = lib.bindSkillTools(PI, [])
 const tools = lib.mergeBuiltinWithSkillTools(platform, skillTools)
 const byName = new Map(tools.map((t) => [t.name, t]))
 
-const payload = lib.buildCreativeTurnPayload({ host: null, messages: [], draftText: 'tool smoke' })
-check('载荷工具名数量', payload.toolNames.length >= 15, String(payload.toolNames.length))
+// 工具清单不再从已删除的前端载荷模块取：直接看合并后的工具集合，
+// 这正是宿主经工具桥注册到的那份（`server/studio-tool-bridge.mjs`）。
+const toolNames = tools.map((t) => t.name)
+check('工具数量', toolNames.length >= 15, String(toolNames.length))
 
-for (const name of payload.toolNames) {
+for (const name of toolNames) {
   check(`已注册 ${name}`, byName.has(name))
 }
 
@@ -295,6 +296,23 @@ const toolSpecs = {
     expect: 'fail',
     reason: /找不到角色/,
   },
+
+  // ---- 转场参考 / 音频：夹具里 S01→S02 是一条 generated 转场 ----
+  attach_transition_refs: {
+    // 夹具没有给角色外观图，add 会因「没有外观图」被拒；关键是不能写入猜测值
+    args: { after_no: 'S01', kind: 'character', names: ['主角'] },
+    expect: 'fail',
+    reason: /外观图|找不到|候选/,
+  },
+  set_transition_audio: {
+    // 夹具的转场台词里没有唯一说话人，开启原生音频必须报可读原因且不写入
+    args: { after_no: 'S01', mode: 'native' },
+    expect: 'fail',
+    reason: /说话人|台词|音色|样本|音频/,
+  },
+
+  // 包内文件读取：验收包只有 SKILL.md，读它必须成功（路径越界另有单测）
+  read_skill_file: { args: { id: FIXTURE_SKILL, path: 'SKILL.md' }, expect: 'ok' },
 }
 
 let lexiconKey = ''
@@ -404,9 +422,9 @@ for (const tool of tools.sort((a, b) => a.name.localeCompare(b.name))) {
   }
 }
 
-const missingInPayload = payload.toolNames.filter((n) => !byName.has(n))
+const missingInPayload = toolNames.filter((n) => !byName.has(n))
 if (missingInPayload.length) {
-  check('载荷列出的工具均已绑定', false, missingInPayload.join(', '))
+  check('清单里的工具均已绑定', false, missingInPayload.join(', '))
 }
 
 // --- 分镜续读：同一集连续两次读到不同镜头，nextCursor 最终消失 ---

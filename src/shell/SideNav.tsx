@@ -15,6 +15,8 @@ export type SideNavProps = {
   counts?: Partial<Record<'characters' | 'assets', number>>
   /** 底部全局工具（主题开关等） */
   footer: ReactNode
+  /** 被灰度开关关掉的视图：不渲染入口，避免点进去才报错 */
+  hiddenViews?: ViewId[]
 }
 
 /**
@@ -33,6 +35,7 @@ export default function SideNav({
   onReturnHub,
   counts = {},
   footer,
+  hiddenViews = [],
 }: SideNavProps) {
   return (
     <aside className="rail" data-collapsed={collapsed ? 'true' : 'false'} aria-label="项目导航">
@@ -52,7 +55,7 @@ export default function SideNav({
 
       <nav className="rail-nav viewtabs" aria-label="项目视图">
         {NAV_GROUPS.map((group) => {
-          const items = NAV_ITEMS.filter((i) => i.group === group.id)
+          const items = NAV_ITEMS.filter((i) => i.group === group.id && !hiddenViews.includes(i.id))
           if (!items.length) return null
           return (
             <div className="rail-group" role="group" aria-label={group.label} key={group.id}>

@@ -1,0 +1,12 @@
+{
+  "name": "dsh-plugin-creative-expert",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "description": "按专家 toolIds / skillIds 收窄 dsh agent 的工具与技能可见性"
+}

@@ -151,6 +151,7 @@ import {
   videoUrlFromTask,
 } from './apimart.mjs'
 import { handleBillingHttp, initBilling } from './billing/http.mjs'
+import { parseBearer, parseSessionCookie, sessionFromToken } from './billing/auth.mjs'
 import { billingModeInfo, proxyRemoteBilling, proxyRemoteMedia, shouldProxyRemoteBilling, shouldProxyRemoteMedia } from './remote-billing.mjs'
 import {
   guardApimartText,
@@ -232,6 +233,7 @@ import {
   listSources as listCreativeSources,
   patchSource as patchCreativeSource,
   patchShot as patchCreativeShot,
+  LEGACY_SESSION_NOTICE,
   replaceShots as replaceCreativeShots,
   resolveCreativeFile,
   saveArtifact as saveCreativeArtifact,
@@ -1108,6 +1110,14 @@ function withKeyStatus(s: AppSettings): AppSettings {
   }
 }
 
+/** 设置保存后的通知钩子：创意会话要在模型表变化时重写宿主配置 */
+let settingsChangedHook: (() => void) | null = null
+
+/** 注册设置变更钩子（进程内只有一个消费者，后注册覆盖） */
+export function onSettingsChanged(hook: (() => void) | null) {
+  settingsChangedHook = hook
+}
+
 function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   dbPath(resolveRoot(appRoot || process.cwd()))
   settingsReady = true
@@ -1164,6 +1174,12 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   setSetting('app', next)
   voiceCache.clear()
+  // 模型表变了要同步给创意会话宿主，否则它的模型选择器还停在旧列表
+  try {
+    settingsChangedHook?.()
+  } catch {
+    /* 钩子失败不影响保存 */
+  }
   return next
 }
 
@@ -2719,8 +2735,52 @@ async function buildAnimatic(
 
 
 /** 启动期清理：dev server 与独立入口共用，避免上一次的残留作业目录干扰 */
-export function runServerStartupTasks(root: string) {
-  try {
+/**
+ * 创意会话模型门面用：当前可用的文本模型。
+ * 宿主侧看到的 id 是 `sb/<模型键>`，避免与应用内的上游模型名混淆。
+ */
+export function listStudioModels(): Array<{ id: string; key: string; label: string; vision: boolean }> {
+  const s = getAppSettings()
+  return s.models
+    .filter((m) => hasTextCap(m) && isRunnableModel(m))
+    .map((m) => ({
+      id: `sb/${m.key}`,
+      key: m.key,
+      label: m.label || m.model || m.key,
+      vision: modelHasCap(m, 'vision') || modelHasCap(m, 'view'),
+    }))
+}
+
+/**
+ * 创意会话入口（`/studio/`）的访问控制。
+ *
+ * 账号模式（配置了 SB_BILLING_BASE）下，创意会话与钱包同级：必须持有效会话才能进入。
+ * 本机单操作员模式没有账号体系，入口由「宿主只监听回环」与前置代理（若配置）保护，
+ * 这里直接放行 —— 不伪造一层并不存在的登录。
+ */
+export function authorizeStudioRequest(req: any): {
+  ok: boolean
+  status?: number
+  message?: string
+  publicBase: string
+  /** 账号模式下当前操作员的会话令牌：模型门面用它把账记到人头上 */
+  sessionToken?: string
+} {
+  const forwardedProto = String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim()
+  const host = String(req?.headers?.host || '127.0.0.1:5273')
+  const proto = forwardedProto === 'https' || process.env.SB_PUBLIC_URL?.startsWith('https://') ? 'https' : 'http'
+  const publicBase =
+    String(process.env.SB_PUBLIC_URL || '').replace(/\/+$/, '') || `${proto}://${host}/studio`
+
+  if (billingModeInfo().mode !== 'remote') return { ok: true, publicBase }
+
+  const token = parseSessionCookie(req?.headers?.cookie) || parseBearer(req?.headers?.authorization)
+  const session = token ? sessionFromToken(token) : null
+  if (!session) return { ok: false, status: 401, message: '未登录或会话已过期', publicBase }
+  return { ok: true, publicBase, sessionToken: token || undefined }
+}
+
+export function runServerStartupTasks(root: string) {  try {
     cleanupStaleJobs(root)
     cleanupVggtJobs(root)
   } catch {
@@ -2974,7 +3034,13 @@ export function createAppHandler({ root }: { root: string }) {
                   res.end(JSON.stringify({ ok: false, message: `创意会话不存在：${id}` }))
                   return
                 }
-                res.end(JSON.stringify({ ok: true, session: summary }))
+                // 旧会话可以看、可以导出，但不能继续对话：界面拿到这句就直接展示
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    session: { ...summary, openable: false, notice: LEGACY_SESSION_NOTICE },
+                  }),
+                )
                 return
               }
               res.statusCode = 404
@@ -3034,9 +3100,10 @@ export function createAppHandler({ root }: { root: string }) {
             res.statusCode = 405
             res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST / PUT / DELETE' }))
           } catch (e: any) {
-            // 线程超限是用户可恢复的输入问题，不是服务端故障
+            // 线程超限是用户可恢复的输入问题，不是服务端故障；
+            // 旧表只读是「预期行为」，返回 410 而不是 400，客户端才能据此提示迁移
             const tooLarge = e?.kind === 'thread-too-large'
-            res.statusCode = tooLarge ? 413 : 400
+            res.statusCode = tooLarge ? 413 : Number(e?.status) || 400
             res.end(JSON.stringify({ ok: false, kind: e?.kind || 'creative-error', message: e?.message || String(e) }))
           }
           return
@@ -3959,6 +4026,12 @@ export function createAppHandler({ root }: { root: string }) {
             if (!tail && req.method === 'PUT') {
               const body = await readJson(req)
               saveCustomExperts(body?.experts || [])
+              // 专家集合变了要让宿主重新编译 preset：否则新建的专家要等下一次重启才出现
+              try {
+                settingsChangedHook?.()
+              } catch {
+                /* 钩子失败不影响保存 */
+              }
               res.end(JSON.stringify({ ok: true, experts: listAllExperts() }))
               return
             }

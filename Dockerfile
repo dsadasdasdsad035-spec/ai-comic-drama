@@ -6,10 +6,10 @@
 # - 媒体根由 SB_MEDIA_ROOT 决定，默认 /data/media；URL 前缀（/generated、/videos…）不变。
 # - ffmpeg 必须带 libass（字幕烧录）与 ffprobe（probe/抽帧）；Debian 的
 #   ffmpeg 包两者都有，比 ffmpeg-static 更完整。
-# - node:sqlite 需要 Node 22.5+；这里用 22.23（与开发机一致）。
+# - node:sqlite 需要 Node 22.5+；创意会话宿主（dsh）要求 >=24.9，这里统一用 24。
 # - 数据（SQLite / 项目媒体 / 创意源视频）挂在卷上，镜像本身不写业务数据。
 
-FROM node:22-bookworm-slim AS base
+FROM node:24-bookworm-slim AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=development \

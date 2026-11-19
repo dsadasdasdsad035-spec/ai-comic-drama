@@ -1,7 +1,7 @@
 # creative-asset-tools Specification
 
 ## Purpose
-让创意会话的 Pi agent 能盘点并钻取当前项目的全部物料：角色、场景、道具、素材卡（含视频与音频）以及项目级自定义白模，从而在不知道 id 的情况下也能正确引用项目已有内容。
+让创意会话的 agent 能盘点并钻取当前项目的全部物料：角色、场景、道具、素材卡（含视频与音频）以及项目级自定义白模，从而在不知道 id 的情况下也能正确引用项目已有内容。
 
 ## Requirements
 
@@ -109,7 +109,7 @@
 
 ### Requirement: 创意会话提示先盘点再钻取
 
-创意 Pi 的 system 提示 SHALL 指示：不确定项目里有何物料时，先调用 `read_asset_inventory` 取得 key，再按需 `read_asset_detail`。该提示 MUST 同时适用于自主发现模式与专家模式。
+创意会话的 system 提示 SHALL 指示：不确定项目里有何物料时，先调用 `read_asset_inventory` 取得 key，再按需 `read_asset_detail`。该提示 MUST 在默认 preset 与专家 preset 下都成立。
 
 #### Scenario: 自主模式提示包含盘点指引
 

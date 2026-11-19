@@ -10,9 +10,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { readSkillSubFile, listSkillAttachments, MAX_SKILL_FILE_BYTES } from '../server/skills.mjs'
 import { SKILL_ID_READ_TOOLS, SKILL_READ_TOOL_NAMES, KNOWN_TOOL_IDS } from '../src/skills/tools'
-import { wrapSkillReadForExpert } from '../src/creative/expertTools'
-import { defineTool } from '../src/agent/tool'
-import { z } from 'zod'
 
 let bad = 0
 function check(name: string, fn: () => void | Promise<void>) {
@@ -99,37 +96,8 @@ await check('技能读工具清单只有一个来源', () => {
   assert.ok(SKILL_READ_TOOL_NAMES.includes('list_installed_skills'))
 })
 
-function fakeFileTool(onRun: () => void) {
-  return defineTool({
-    name: 'read_skill_file',
-    description: '测试用',
-    schema: z.object({ id: z.string(), path: z.string() }),
-    run: async () => {
-      onRun()
-      return { ok: true }
-    },
-  })
-}
-
-await check('专家白名单拦截非名单技能', async () => {
-  let ran = 0
-  const wrapped = wrapSkillReadForExpert(fakeFileTool(() => ran++), ['other-skill'])
-  const r = (await wrapped.run({ id: 'unit-fixture', path: 'references/guide.md' })) as { ok: boolean; error?: string }
-  assert.equal(r.ok, false)
-  assert.ok(String(r.error).includes('不允许'), String(r.error))
-  assert.equal(ran, 0, '被拒时不应真正读文件')
-})
-
-await check('专家白名单放行名单内技能与通配', async () => {
-  let ran = 0
-  const listed = wrapSkillReadForExpert(fakeFileTool(() => ran++), ['unit-fixture'])
-  const r1 = (await listed.run({ id: 'unit-fixture', path: 'references/guide.md' })) as { ok: boolean }
-  assert.equal(r1.ok, true)
-  const wildcard = wrapSkillReadForExpert(fakeFileTool(() => ran++), ['*'])
-  const r2 = (await wildcard.run({ id: 'anything', path: 'a.md' })) as { ok: boolean }
-  assert.equal(r2.ok, true)
-  assert.equal(ran, 2)
-})
+// 专家技能白名单已从浏览器侧搬到宿主插件（`server/dsh-plugins/creative-expert`），
+// 拦截语义由 `tests/creative-expert-plugin.mjs` 覆盖：这里不再留一份会漂移的副本。
 
 fs.rmSync(ROOT, { recursive: true, force: true })
 fs.rmSync(STATE, { recursive: true, force: true })

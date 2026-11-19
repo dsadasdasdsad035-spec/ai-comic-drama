@@ -1,4 +1,8 @@
-# 创意工作室
+# 创意工作室（旧版 Pi 实现，已停用）
+
+> **本文描述的是旧版创意工作室（应用内 Pi 聊天），已被 `creative-studio-dsh-runtime` 换掉。**
+> 当前创意页是 `/studio/`（宿主前端），部署与排障见 [`creative-host.md`](./creative-host.md)。
+> 这里保留的是历史行为说明：旧会话仍可查看与导出（写入一律 410），旧表仍被保留。
 
 创意会话是 **Pi 纯聊天**：多会话列表保留，消息写入 `creative_threads`。
 
@@ -61,7 +65,12 @@
 ## 验收
 
 ```bash
-node verify-creative-ui.mjs
-node verify-creative-builtin-tools.mjs   # 逐项 invoke 创意内置工具
-node verify-creative-experts.mjs         # 专家载荷、zip、白名单
+# 宿主侧的自动化验收（Node 24，无需渠道 Key）
+node tests/studio-flow-smoke.mjs      # 拉起宿主 / 41 个工具注册 / 技能可读 / 压缩已开
+node tests/studio-shell.mjs           # 外壳：入口、主题桥、错误态与重试
+node tests/legacy-storage.mjs         # 旧会话只读：写入一律 410
+node verify-skills-unit.mjs           # 技能与工具单元测试总入口
+node verify-creative-builtin-tools.mjs  # 逐项 invoke 41 个平台工具（无确认通道时必须 fail-closed）
 ```
+
+模型回合（真正生成回复、出图出片）需要渠道 Key 与计费，只能手测。

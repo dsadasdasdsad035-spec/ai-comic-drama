@@ -6,15 +6,12 @@
  * 所以这里把「来源不该参与判定」写死成断言，避免再靠人眼复查。
  */
 import assert from 'node:assert/strict'
-import { z } from 'zod'
-import { defineTool } from '../src/agent/tool'
 import {
   creativeHostBanner,
   groupCreativeHostSkills,
   isCreativeHostSkill,
   listCreativeHostSkills,
 } from '../src/creative/creativeSkillHost'
-import { wrapSkillListForExpert } from '../src/creative/expertTools'
 import type { Skill, SkillSource } from '../src/skills/types'
 
 let bad = 0
@@ -126,65 +123,8 @@ await check('技能目录为空：文案才说目录为空', () => {
   assert.match(banner!.text, /技能目录为空/)
 })
 
-/** 构造一个假的 list_installed_skills，只关心返回结构 */
-function fakeListTool(rows: Array<{ id: string }>): ReturnType<typeof defineTool> {
-  return defineTool({
-    name: 'list_installed_skills',
-    description: '假实现',
-    schema: z.object({}),
-    run: async () => ({ ok: true, count: rows.length, skills: rows, loadIssues: [] }),
-  })
-}
-
-const expertOf = (skillIds: string[]) => ({ id: 'e1', name: '测试专家', skillIds })
-
-await check('专家白名单过滤 list_installed_skills', async () => {
-  const tool = wrapSkillListForExpert(
-    fakeListTool([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
-    expertOf(['a', 'c']),
-  )
-  const out = (await tool.run({})) as { count: number; skills: Array<{ id: string }>; note?: string }
-  assert.deepEqual(out.skills.map((s) => s.id), ['a', 'c'])
-  assert.equal(out.count, 2)
-})
-
-await check('受限专家回执说明被限制的数量', async () => {
-  const tool = wrapSkillListForExpert(
-    fakeListTool([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
-    expertOf(['a']),
-  )
-  const out = (await tool.run({})) as { note?: string }
-  assert.match(String(out.note), /另有 2 个技能/)
-  assert.match(String(out.note), /测试专家/)
-})
-
-await check('通配专家不过滤也不加说明', async () => {
-  const tool = wrapSkillListForExpert(
-    fakeListTool([{ id: 'a' }, { id: 'b' }]),
-    expertOf(['*']),
-  )
-  const out = (await tool.run({})) as { count: number; skills: Array<{ id: string }>; note?: string }
-  assert.deepEqual(out.skills.map((s) => s.id), ['a', 'b'])
-  assert.equal(out.note, undefined)
-})
-
-await check('空白名单专家列表为空且说明未配置', async () => {
-  const tool = wrapSkillListForExpert(fakeListTool([{ id: 'a' }]), expertOf([]))
-  const out = (await tool.run({})) as { count: number; skills: unknown[]; note?: string }
-  assert.deepEqual(out.skills, [])
-  assert.equal(out.count, 0)
-  assert.match(String(out.note), /未配置可读技能/)
-})
-
-await check('非 list 工具不被包装（无专家路径不受影响）', () => {
-  const other = defineTool({
-    name: 'read_shots',
-    description: '别的工具',
-    schema: z.object({}),
-    run: async () => ({ ok: true }),
-  })
-  assert.equal(wrapSkillListForExpert(other, expertOf([])), other)
-})
+/** 专家技能白名单改由宿主插件执行（`server/dsh-plugins/creative-expert`），
+ *  浏览器侧不再有包装层；对应断言见 `tests/creative-expert-plugin.mjs`。 */
 
 /**
  * 用假 `/api/skills` 驱动真实的 `list_installed_skills`，验证 `hostsOnly`

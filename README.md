@@ -18,6 +18,9 @@ npm run build    # tsc --noEmit && vite build && build:server
 npm start        # node server/index.mjs，默认 127.0.0.1:5273
 ```
 
+> 需要 **Node 24+**：创意页由 `@deepseek-ai/dsh` 宿主提供，用到 `node:sqlite` 与原生 ESM 类型剥离。
+> 创意入口是 `/studio/`（宿主前端），宿主状态在 `<状态根>/dsh`，部署与反代要求见 [`docs/creative-host.md`](./docs/creative-host.md)。
+
 - 端口：`SB_PORT`（默认 5273；`0` 表示由系统分配，启动行 `[server] listening http://...` 会打印实际端口）。`SB_HOST` 默认 `127.0.0.1`，容器内用 `0.0.0.0`。
 - 媒体根：`SB_MEDIA_ROOT` 决定 `/generated`、`/videos`、`/voices`、`/exports`、`/publish-packages` 的磁盘落点，默认 `<repo>/public`，容器内为 `/data/media`。URL 前缀不随媒体根变化。
 - 接口实现位于 `server/app.ts`，开发与独立运行共用同一份 handler。
@@ -52,7 +55,7 @@ brew install --cask blender    # 或自行安装到 /Applications
 - **分镜表导出**在视图内：画布上下文带的「导出」下载当前集 Markdown，分集目录工具条的「导出全部」把各集打成 zip。导出文件可直接拖回导入入口，文字与场次原样回灌。
 - **画布专属工具**（标注、操作、加素材、连播）在画布内左上角的浮动条里，不占全局带。
 - **集**只是全局带上的一个下拉选择器，显示当前集的集号、标题和镜数；剧本、角色、素材、3D、画布等项目视图共用；首帧/视频提示词在画布单镜面（Inspector / 时间尺 / 转场面板）或 Agent 内编辑。
-- **创意**是唯一不绑定项目的视图：进入后全局带隐藏项目与集选择器，聊天是主界面；会话与源视频独立存储，只有「晋升项目」才写入项目。详见 [`docs/creative-studio.md`](docs/creative-studio.md)。
+- **创意**是唯一不绑定项目的视图：进入后全局带隐藏项目与集选择器，聊天是主界面；页面本身由创意会话宿主（`@deepseek-ai/dsh`）提供，经 `/studio/` 同源反代，应用只保留入口与主题桥。部署、开关与排障见 [`docs/creative-host.md`](docs/creative-host.md)；旧版 Pi 实现的行为说明见 [`docs/creative-studio.md`](docs/creative-studio.md)。
 
 ## 项目上下文
 
@@ -745,7 +748,7 @@ node verify-theme.mjs          # 日间/夜间切换 / 系统偏好 / 持久化 
 node verify-media-picker.mjs   # 素材来源分类/缩略图/图片视频预览/确认取消/类型修正/键盘/窄屏（自起临时库）
 node verify-media-persistence.mjs  # 项目媒体落盘 / 刷新恢复 / 旧图迁移 / 缺失标记与出图保护（自起临时库）
 node verify-creative-context-overflow.mjs  # 上下文超限：kind 透传 / 压缩重试一次 / 两次失败文案（自起临时库 + mock 上游）
-node verify-creative-notices-ui.mjs        # 续写提示：截断后自动续写、两段正文都在、重开会话仍可见（自起临时库）
+node tests/studio-flow-smoke.mjs           # 创意宿主：拉起 / 41 工具 / 技能可读 / 专家压缩（Node 24）
 node verify-agent-graph.mjs        # LangGraph agent 图：成功/失败修复/取消/上限/无视觉/工具白名单
 node verify-agent-scene-draft.mjs  # 场景草稿：路径安全/大小上限/append/patch/read/commit/trial 边界/历史压缩
 APP_URL=http://127.0.0.1:5274 node verify-agent-draft.mjs  # 长代码草稿 UI：分片写入/预览/真实试运行/取消清理

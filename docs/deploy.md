@@ -59,6 +59,7 @@ DTK 是**独立的 compose 项目**（`-p dtk`），不用 `docker compose down`
 | 路径 | 内容 | 是否可丢 |
 | --- | --- | --- |
 | `data/projects/` | SQLite（项目/角色/镜头/设置/线程）+ 项目媒体 + 创意源视频 | **不可丢** |
+| `data/state/dsh/` | 创意会话宿主的会话、专家与 profile（`DSH_HOME`） | **不可丢**（丢了会话与自定义专家都没了） |
 | `data/media/generated/` | 镜头首帧、调度帧、证据帧 | 可重新生成 |
 | `data/media/videos/` | 出片结果 | 可重新生成 |
 | `data/media/voices/` | 配音 | 可重新生成 |
@@ -109,6 +110,17 @@ APP_BIND_ADDR=0.0.0.0
 | DTK 返回 `IDENTITY_POOL_EXHAUSTED` | 没起 browser 容器 | `./scripts/dtk-up.sh` 默认带 `--profile browser`，确认 `dtk-browser-rpc-1` 在跑 |
 | `dtk-up.sh` 报找不到 setup token | 实例已初始化过 | 正常；脚本会跳过管理员创建，只铸造新 Key（`--force-key`） |
 | 构建失败 | 全仓库 `tsc` 有错 | 镜像构建不跑 `tsc`（见下）；请单独跑 `npm run build` 修类型 |
+
+## 创意会话宿主
+
+创意页由 `@deepseek-ai/dsh` 提供，应用把 `/studio/` 反代过去：
+
+- 需要 **Node 24+**（`node:sqlite` 与原生 ESM 类型剥离）；
+- 反代必须放行 WebSocket 且读超时给足（默认 60s 会让长回答中途断线）；
+- 状态目录 `DSH_HOME` 固定为 `data/state/dsh`，会话与专家都在里面；
+- 入口有运行时开关（`/api/studio/enabled`），关掉后左栏隐藏入口且不影响其它视图。
+
+完整说明（含 nginx 片段与排障表）见 [`docs/creative-host.md`](./creative-host.md)。
 
 ## 关于镜像不跑 `tsc`
 

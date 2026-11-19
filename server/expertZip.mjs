@@ -91,7 +91,32 @@ export function expertsFromZipBuffer(buffer) {
     }
     const id = safeExpertId(manifest.id || dir.split('/').pop())
     const soulU8 = byPath.get(soulPath)
-    const soul = soulU8 ? decodeText(soulU8) : ''
+    // 旧格式包的 persona 正文可能叫 persona.md / persona 字段 / system.md
+    const legacySoulCandidates = dir
+      ? [`${dir}/persona.md`, `${dir}/system.md`, `${dir}/prompt.md`]
+      : ['persona.md', 'system.md', 'prompt.md']
+    let soul = soulU8 ? decodeText(soulU8) : ''
+    if (!soul.trim()) {
+      for (const candidate of legacySoulCandidates) {
+        const data = byPath.get(candidate)
+        if (data) {
+          soul = decodeText(data)
+          break
+        }
+      }
+    }
+    if (!soul.trim() && typeof manifest.persona === 'string') soul = manifest.persona
+    // 旧字段名归一：skills/tools 是早期包里用的键
+    const skillIds = Array.isArray(manifest.skillIds)
+      ? manifest.skillIds
+      : Array.isArray(manifest.skills)
+        ? manifest.skills
+        : []
+    const toolIds = Array.isArray(manifest.toolIds)
+      ? manifest.toolIds
+      : Array.isArray(manifest.tools)
+        ? manifest.tools
+        : []
     out.push({
       id,
       name: String(manifest.name || id).slice(0, 120),
@@ -99,8 +124,8 @@ export function expertsFromZipBuffer(buffer) {
       iconUrl: String(manifest.iconUrl || '').trim().slice(0, 2000),
       imageDescription: String(manifest.imageDescription || '').slice(0, 500),
       soul,
-      skillIds: Array.isArray(manifest.skillIds) ? manifest.skillIds.map(String) : [],
-      toolIds: Array.isArray(manifest.toolIds) ? manifest.toolIds.map(String) : [],
+      skillIds: skillIds.map(String),
+      toolIds: toolIds.map(String),
     })
   }
   if (!out.length) throw new Error('未从 zip 解析出专家')

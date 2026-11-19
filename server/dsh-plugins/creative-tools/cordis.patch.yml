@@ -1,0 +1,8 @@
+# 本 bundle 的插件层：只插入一行，把我们自己的插件挂进 dsh 的插件树。
+#
+# 为什么需要 bundle：profile 的 `cordis.patch.yml` 只能**覆盖已有行**（按 id），
+# 不能新增；新增行必须来自 bundle 的 patch 层。所以工具桥以本地 bundle 的形式
+# 安装进 profile（见 server/dsh-bundle.mjs），由这一行完成挂载。
+- insert:
+    - id: creative-tools
+      name: dsh-plugin-creative-tools
