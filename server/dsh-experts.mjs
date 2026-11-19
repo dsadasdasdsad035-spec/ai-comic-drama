@@ -102,13 +102,14 @@ export function resolveToolSubset(toolIds, registeredNames) {
  * 会让监听器看到一次大批量事件，且窗口期内技能全部不可见。这里只补缺、
  * 只删多余，新增项先建到临时名再原子 rename——监听器最多看到一次「出现」。
  */
-export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {} }) {
+export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {}, available: availableIds }) {
   const expertId = String(expert.id || '')
   if (!expertId) throw new Error('专家缺少 id')
   const base = path.join(dshHome, 'experts', expertId, 'skills')
-  fs.mkdirSync(base, { recursive: true })
 
-  const available = listSkillFiles(root).skills.map((s) => s.id)
+  // 技能清单由调用方给：一次进创意会为每个专家各同步一次，
+  // 每次重新扫技能根等于把「读全部 SKILL.md + 附件」重复几十遍。
+  const available = availableIds || listSkillFiles(root).skills.map((s) => s.id)
   const whitelist = resolveSkillWhitelist(expert.skillIds, available)
 
   /** 白名单内、且磁盘上真的存在的技能 → 真实目录 */
@@ -120,23 +121,27 @@ export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {} }) {
 
   // 先删多余的：白名单收窄或技能被卸载时，根里不能留着读不到/不该看到的条目
   let removed = 0
-  let existing = []
+  /** 一次列举拿全，后续判定都用集合查（旧实现每项各查一次） */
+  const existing = new Set()
   try {
-    existing = fs.readdirSync(base)
+    for (const name of fs.readdirSync(base)) existing.add(name)
   } catch {
-    existing = []
+    /* 根还没建：没有多余条目可删 */
   }
   for (const name of existing) {
     if (desired.has(name)) continue
     // 临时目录残留也一并清掉，避免 rename 中途崩溃后留下垃圾
     fs.rmSync(path.join(base, name), { recursive: true, force: true })
+    existing.delete(name)
     removed += 1
   }
 
   // 再补缺失的
   let linked = 0
   for (const [id, dir] of desired) {
-    if (existing.includes(id)) continue
+    if (existing.has(id)) continue
+    // 只在真的要挂载时才建根：无差异调用连一次 mkdir 都不产生
+    fs.mkdirSync(base, { recursive: true })
     const dest = path.join(base, id)
     const tmp = path.join(base, `.${id}.tmp`)
     fs.rmSync(tmp, { recursive: true, force: true })
@@ -230,19 +235,20 @@ export function compileExpertPreset({ expert, registeredNames, skillRoot, skillI
  *
  * 为什么镜像：宿主侧排障、导出、人工检查都要能在配置目录里看到「这个 preset 是谁」，
  * 只留一份编译产物（preset 行）等于把专家的可读来源丢了。
- * 权威来源仍是应用设置，这里只是派生镜像，每次全量重写。
+ * 权威来源仍是应用设置，这里只是派生镜像：内容等价时不写盘，
+ * 让「每次请求都同步一遍」退化成几十次只读（见 studio-entry-latency）。
  */
 export function mirrorExpertSources({ dshHome, experts, log = () => {} }) {
   // 放 compiled/ 子目录而不是 experts/<id>/：后者是自定义专家的权威目录，
   // 快照写进去会覆盖用户正在编辑的 manifest。
   const base = path.join(dshHome, 'experts', 'compiled')
   const keep = new Set()
+  let written = 0
   for (const expert of experts) {
     const id = String(expert.id || '')
     if (!id) continue
     keep.add(id)
     const dir = path.join(base, id)
-    fs.mkdirSync(dir, { recursive: true })
     const manifest = {
       id,
       name: String(expert.name || id),
@@ -250,16 +256,17 @@ export function mirrorExpertSources({ dshHome, experts, log = () => {} }) {
       skillIds: Array.isArray(expert.skillIds) ? expert.skillIds : [],
       toolIds: Array.isArray(expert.toolIds) ? expert.toolIds : [],
     }
-    const manifestPath = path.join(dir, 'manifest.json')
-    const soulPath = path.join(dir, 'soul.md')
     const manifestText = `${JSON.stringify(manifest, null, 2)}\n`
     const soulText = String(expert.soul || '')
-    if (!fs.existsSync(manifestPath) || fs.readFileSync(manifestPath, 'utf8') !== manifestText) {
-      fs.writeFileSync(manifestPath, manifestText, 'utf8')
-    }
-    if (!fs.existsSync(soulPath) || fs.readFileSync(soulPath, 'utf8') !== soulText) {
-      fs.writeFileSync(soulPath, soulText, 'utf8')
-    }
+    // 先比较再决定是否建目录：内容全等时连 mkdir 都不做
+    const manifestPath = path.join(dir, 'manifest.json')
+    const soulPath = path.join(dir, 'soul.md')
+    const manifestSame = readIfExists(manifestPath) === manifestText
+    const soulSame = readIfExists(soulPath) === soulText
+    if (manifestSame && soulSame) continue
+    fs.mkdirSync(dir, { recursive: true })
+    if (!manifestSame) written += writeIfChanged(manifestPath, manifestText)
+    if (!soulSame) written += writeIfChanged(soulPath, soulText)
   }
   // 删掉已经不存在的专家目录，但不要碰技能根以外的内容
   let entries = []
@@ -277,7 +284,16 @@ export function mirrorExpertSources({ dshHome, experts, log = () => {} }) {
       log(`[studio-experts] 已清理过期专家目录：${entry.name}`)
     }
   }
-  return { dir: base, count: keep.size }
+  return { dir: base, count: keep.size, written }
+}
+
+/** 文件读取，不存在时返回 null（用于「内容是否等价」判断，不抛错） */
+function readIfExists(file) {
+  try {
+    return fs.readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
 }
 
 /** 专家 patch 文件位置：放在 profile 目录旁，便于排查 */
@@ -301,7 +317,7 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
 
   for (const expert of experts) {
     try {
-      const rootInfo = syncExpertSkillRoot({ dshHome, expert, root, log })
+      const rootInfo = syncExpertSkillRoot({ dshHome, expert, root, log, available })
       const whitelist = resolveSkillWhitelist(expert.skillIds, available)
       const preset = compileExpertPreset({
         expert,
@@ -336,18 +352,40 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
   }
 
   const file = expertsPatchPath(dshHome)
+  const jsonFile = path.join(path.dirname(file), 'creative-experts.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const body = rows.length ? stringifyYaml([{ insert: rows }]) : '# 当前没有可用专家\n[]\n'
-  fs.writeFileSync(file, body, 'utf8')
-  fs.writeFileSync(path.join(path.dirname(file), 'creative-experts.json'), `${JSON.stringify(compiled, null, 2)}\n`, 'utf8')
+  const json = `${JSON.stringify(compiled, null, 2)}\n`
+  // 幂等落盘：内容没变就不动文件。
+  // 入口每次请求曾无条件重写这两个文件，一次进创意能写几十遍；
+  // 除了白花的 IO，还会让宿主的文件监听反复触发，把「配置没变」误当「配置变了」。
+  const written = writeIfChanged(file, body) | writeIfChanged(jsonFile, json)
   // 整批签名：专家增删、改名、改 soul、换白名单都会改变它。
   // 只拼「谁存在」不够——那正是旧实现漏掉 soul 改动的原因。
   const signature = compiled
     .map((row) => `${row.id}@${row.fingerprint}`)
     .sort()
     .join(',')
-  log(`[studio-experts] 已生成 ${rows.length} 个专家 preset：${file}`)
-  return { file, compiled, signature }
+  if (written) {
+    log(`[studio-experts] 已生成 ${rows.length} 个专家 preset：${file}`)
+  }
+  return { file, compiled, signature, written: Boolean(written) }
+}
+
+/**
+ * 内容等价时不写盘。
+ *
+ * 返回 1 表示真的写了、0 表示跳过——用位或合并两个文件的判定，
+ * 避免为了「要不要打日志」再多一次分支。
+ */
+function writeIfChanged(file, next) {
+  try {
+    if (fs.readFileSync(file, 'utf8') === next) return 0
+  } catch {
+    /* 文件不存在或不可读：当作需要写入 */
+  }
+  fs.writeFileSync(file, next, 'utf8')
+  return 1
 }
 
 /** 读回编译结果：排障与「会话列表显示专家名」都用它，不必再扫配置 */

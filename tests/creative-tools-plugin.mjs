@@ -108,10 +108,17 @@ function makeCtx() {
   }
 }
 
-/** 等到目录拉取完成（插件在 apply 时异步注册） */
-async function settle() {
-  for (let i = 0; i < 200; i += 1) {
-    if (calls.some((c) => c.url === '/api/studio/tools')) return
+/**
+ * 等到目录拉取**并注册完成**（插件在 apply 时异步注册）。
+ *
+ * 旧实现只等「请求发出」就返回：响应还在路上时断言就已经跑了，
+ * 于是这条用例在空闲机器上大概率通过、在串跑 `npm run test:studio` 时必然失败。
+ * 这里改为等注册表真正就位，顺带把等待上限放宽。
+ */
+async function settle(expected = 4, timeoutMs = 15_000) {
+  const until = Date.now() + timeoutMs
+  while (Date.now() < until) {
+    if (registered.size >= expected) return
     await new Promise((r) => setTimeout(r, 10))
   }
 }

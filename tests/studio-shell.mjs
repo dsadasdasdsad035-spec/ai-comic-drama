@@ -123,7 +123,7 @@ fs.writeFileSync(
 )
 fs.writeFileSync(
   entry,
-  `export { applyStudioTheme, applyStudioTokens, studioStyleText, hideHostAppearanceRow, applyStudioTitle, LIGHT_TOKENS, DARK_TOKENS, STUDIO_RADIUS, APP_TITLE } from './src/creative/StudioFrame'`,
+  `export { applyStudioTheme, applyStudioTokens, studioStyleText, hideHostAppearanceRow, applyStudioTitle, LIGHT_TOKENS, DARK_TOKENS, STUDIO_RADIUS, APP_TITLE, loadingCaption, CAPTION_CONNECTING, CAPTION_STARTING_HOST, CAPTION_LOADING_UI } from './src/creative/StudioFrame'`,
 )
 let applyStudioTheme
 let applyStudioTokens
@@ -134,6 +134,10 @@ let LIGHT_TOKENS
 let DARK_TOKENS
 let STUDIO_RADIUS
 let APP_TITLE
+let loadingCaption
+let CAPTION_CONNECTING
+let CAPTION_STARTING_HOST
+let CAPTION_LOADING_UI
 try {
   const out = await esbuild({
     entryPoints: [entry],
@@ -157,6 +161,10 @@ try {
   DARK_TOKENS = mod.DARK_TOKENS
   STUDIO_RADIUS = mod.STUDIO_RADIUS
   APP_TITLE = mod.APP_TITLE
+  loadingCaption = mod.loadingCaption
+  CAPTION_CONNECTING = mod.CAPTION_CONNECTING
+  CAPTION_STARTING_HOST = mod.CAPTION_STARTING_HOST
+  CAPTION_LOADING_UI = mod.CAPTION_LOADING_UI
 } finally {
   fs.rmSync(entry, { force: true })
   fs.rmSync(reactShim, { force: true })
@@ -508,6 +516,20 @@ await check('隐藏失败时静默退化，不抛错也不动其它行', async (
 
   // 空文档
   assert.doesNotThrow(() => hideHostAppearanceRow({ querySelectorAll: () => [] }))
+})
+
+await check('加载文案区分「启动宿主」与「加载界面」', async () => {
+  // 两段耗时量级不同：宿主冷启动数秒，外壳载入数百毫秒。
+  // 文案必须能说明卡在哪一段，否则用户无从判断该等还是该重试。
+  assert.equal(loadingCaption('idle'), CAPTION_STARTING_HOST, '宿主未启动时是「正在启动」')
+  assert.equal(loadingCaption('starting'), CAPTION_STARTING_HOST, '启动中同样是「正在启动」')
+  assert.equal(loadingCaption('ready'), CAPTION_LOADING_UI, '宿主就绪后是「正在加载界面」')
+  // 探针还没答复时退回既有文案，不凭空断言进度
+  assert.equal(loadingCaption('unknown'), CAPTION_CONNECTING)
+  assert.equal(loadingCaption('failed'), CAPTION_CONNECTING, '失败由错误页接管，不走加载文案')
+  assert.notEqual(CAPTION_STARTING_HOST, CAPTION_LOADING_UI, '两段文案必须可区分')
+  // 骨架里只用推导结果，不写死文案
+  assert.match(FRAME, /loadingCaption\(hostPhase\)/, '骨架文案必须由宿主阶段派生')
 })
 
 await check('标签页标题改成应用名', async () => {

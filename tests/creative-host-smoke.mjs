@@ -11,6 +11,7 @@
  * 避免在没有网络的机器上把「没装依赖」误报成「托管逻辑坏了」。
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -71,6 +72,53 @@ if (!isDshInstalled(ROOT)) {
     const up = host.upstream()
     const res = await fetch(`${up.origin}/?token=${encodeURIComponent(up.token)}`, { redirect: 'manual' })
     assert.ok(res.status === 200 || res.status === 303, `意外状态 ${res.status}`)
+  })
+
+  await check('崩溃后自动重启并回到就绪', async () => {
+    assert.equal(await host.start(), true)
+    const before = host.status()
+    const pids = execFileSync('lsof', ['-ti', `tcp:${before.port}`, '-sTCP:LISTEN'], { encoding: 'utf8' })
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    assert.ok(pids.length > 0, `找不到监听 ${before.port} 的宿主进程`)
+    for (const pid of pids) {
+      try {
+        process.kill(Number(pid), 'SIGKILL')
+      } catch {
+        /* 已经退了 */
+      }
+    }
+
+    // 崩溃后状态必须离开 ready。
+    // 旧实现停在 ready，于是自动重启调用的 start() 被 ready 短路直接返回 true，
+    // 宿主再也回不来——而 `_host/status` 也报 ready，错误页与自动化都看不出来。
+    const until = Date.now() + 10_000
+    let left = false
+    while (Date.now() < until) {
+      if (host.status().state !== 'ready') {
+        left = true
+        break
+      }
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    assert.ok(left, '崩溃后状态仍停在 ready，自动重启会被短路')
+
+    // 再次 start()：若正处于重启中就是等同一 promise，不会拉起第二个进程。
+    // 用竞速的定时器撑住事件循环：重启定时器是 unref 的（服务端有 http 服务保活），
+    // 测试里没有别的 handle，光 await 会让进程提前退出。
+    const result = await Promise.race([
+      host.start(),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 30_000)),
+    ])
+    assert.notEqual(result, 'timeout', '等重启超时')
+    assert.equal(result, true, `重启失败：${host.status().error}`)
+    const after = host.status()
+    assert.equal(after.state, 'ready')
+    assert.ok(after.restarts >= 1, '重启计数没有保留（退避与上限会失效）')
+    const up = host.upstream()
+    const res = await fetch(`${up.origin}/?token=${encodeURIComponent(up.token)}`, { redirect: 'manual' })
+    assert.ok(res.status === 200 || res.status === 303, `重启后壳页面不可用：${res.status}`)
   })
 
   await check('关闭后进程退出且端口释放', async () => {

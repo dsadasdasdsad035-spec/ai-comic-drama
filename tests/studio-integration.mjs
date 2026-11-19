@@ -257,6 +257,38 @@ await check('9.3 一轮内并行两个工具：互不串结果，摘要与详情
   assert.ok(!JSON.stringify(summary).includes('"attachments"'), '详情字段漏进了摘要')
 })
 
+await check('9.6 宿主就绪后连打转发 20 次：不重写配置、不再刷同步日志', async () => {
+  // 放在 9.4 之前：这条用例要的是「健康且就绪」的宿主。
+  // 一次进创意会连着发十几个子请求（文档、静态资源、插件清单、模型表），
+  // 以前每个请求都顺带做一遍全量同步，这里用 20 次连续请求把它钉住。
+  await waitHostReady()
+  const configFiles = {
+    expertsPatch: path.join(DSH_HOME, 'profiles', 'web', 'creative-experts.patch.yml'),
+    expertsJson: path.join(DSH_HOME, 'profiles', 'web', 'creative-experts.json'),
+    profile: path.join(DSH_HOME, 'profiles', 'web', 'cordis.patch.yml'),
+    mirror: path.join(DSH_HOME, 'experts', 'compiled', 'expert-omni', 'manifest.json'),
+  }
+  const stamps = () =>
+    Object.fromEntries(Object.entries(configFiles).map(([k, f]) => [k, fs.statSync(f).mtimeMs]))
+  const syncLogs = () => ({
+    experts: (log.match(/\[studio-experts\] 已生成/g) || []).length,
+    profile: (log.match(/\[studio-profile\] 已写入/g) || []).length,
+  })
+  // `/studio/` 首次会 303 跳到带 bootstrap token 的地址，那是正常响应
+  const okStatus = (status) => status === 200 || (status >= 300 && status < 400)
+  const stampBefore = stamps()
+  const logsBefore = syncLogs()
+
+  for (let i = 0; i < 20; i += 1) {
+    const res = await fetch(`${base}/studio/`, { redirect: 'manual' })
+    assert.ok(okStatus(res.status), `第 ${i + 1} 次转发失败：${res.status}`)
+    await res.arrayBuffer()
+  }
+
+  assert.deepEqual(stamps(), stampBefore, '转发期间配置被重写了（就绪短路失效）')
+  assert.deepEqual(syncLogs(), logsBefore, '转发期间仍在做配置同步（日志出现「已生成 / 已写入」）')
+})
+
 await check('9.4 宿主中途死掉：请求不挂住，且能自动恢复到就绪', async () => {
   const before = await waitHostReady()
   // 直接杀掉宿主子进程，模拟崩溃
@@ -279,9 +311,12 @@ await check('9.4 宿主中途死掉：请求不挂住，且能自动恢复到就
   assert.ok(elapsed < 8_000, `断线期间请求挂住了 ${elapsed}ms`)
   assert.ok(during !== null, '断线期间的请求没有得到任何响应')
 
-  // 宿主管理器负责重启：最终必须回到 ready，而不是停在 failed
+  // 宿主管理器负责重启：必须真的换过一次进程并回到 ready，而不是状态还停在崩前的 ready
   const recovered = await waitHostReady(120_000)
-  assert.ok(recovered.restarts >= 1 || recovered.state === 'ready', '宿主没有恢复')
+  assert.equal(recovered.state, 'ready', '宿主没有恢复')
+  assert.ok(recovered.restarts >= 1, '重启计数没有保留（自动重启实际没发生）')
+  const after = await fetch(`${base}/studio/`, { redirect: 'manual', signal: AbortSignal.timeout(8_000) })
+  assert.ok(after.status === 200 || after.status === 303, `恢复后转发失败：${after.status}`)
 })
 
 await check('9.5 关掉入口开关：/studio/ 立刻 503 且原因可读，旧会话仍可读', async () => {

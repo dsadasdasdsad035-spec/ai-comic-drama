@@ -360,8 +360,13 @@ export function createCreativeHost(options) {
         restarts += 1
         lastError = `${reason}，正在第 ${restarts} 次重启`
         logSafe(`[creative-host] ${lastError}`)
+        // 崩溃后必须离开 ready：否则状态一直停在 ready，自动重启调用的 start()
+        // 会被 ready 短路直接返回 true，宿主再也回不来（表现为「崩一次后入口永久空白」）。
+        // 这里直接调 launch()，不走 start() —— start() 会把 restarts 清零，
+        // 退避与重启上限就都失效了。
+        setState('starting', lastError)
         setTimeout(() => {
-          if (!stopping) void start()
+          if (!stopping) void launch()
         }, RESTART_BACKOFF_MS * restarts).unref()
         return
       }

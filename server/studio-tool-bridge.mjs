@@ -64,6 +64,15 @@ export class StudioToolBridge {
     this.loadedProject = ''
     /** 已加载产物的时间戳：用来发现「产物被重建」 */
     this.bundleMtimeMs = null
+    /**
+     * 工具表代号：每次重建 `this.tools` 都 +1。
+     * 声明缓存失效只看它——缓存依据是工具表本身，而不是时间或调用次数。
+     */
+    this.toolsGeneration = 0
+    /** 声明缓存：{ generation, list } */
+    this.catalogCache = { generation: -1, list: null }
+    /** 真正跑过 schema 推导的轮数（测试断言缓存生效，排障也能一眼看到） */
+    this.catalogBuilds = 0
   }
 
   /** 当前调用上下文（会话令牌随每次调用更新，供垫片使用） */
@@ -92,6 +101,7 @@ export class StudioToolBridge {
       this.bundleMtimeMs = mtimeMs
       // 旧工具表里的 run 闭包指向旧模块，必须整表重建
       this.tools = new Map()
+      this.toolsGeneration += 1
       this.loadedProject = ''
       if (rebuilt) this.log('[studio-tools] 工具实现已更新，已重新加载模块')
     }
@@ -106,14 +116,27 @@ export class StudioToolBridge {
     const pi = [...this.module.createPiNativeToolSet().byName.values()]
     const all = this.module.mergeBuiltinWithSkillTools(platform, pi)
     this.tools = new Map(all.map((tool) => [tool.name, tool]))
+    this.toolsGeneration += 1
     this.loadedProject = key
     return this.tools
   }
 
-  /** 生成模型可见的工具声明（JSON Schema 顶层强制 object，与 APIMart 的严格要求一致） */
+  /**
+   * 生成模型可见的工具声明（JSON Schema 顶层强制 object，与 APIMart 的严格要求一致）。
+   *
+   * 声明只取决于工具表，而工具表只在「产物重建 / 项目上下文变化」时变化，
+   * 所以按代号缓存：一次会话里模型清单会被反复请求（每次宿主刷新页面都会要），
+   * 每次都把几十个 zod schema 转一遍 JSON Schema 纯属重复劳动。
+   */
   async catalog(projectName, epNo) {
     const tools = await this.ensureLoaded(projectName, epNo)
-    return catalogFromTools([...tools.values()], this.log)
+    if (this.catalogCache.generation === this.toolsGeneration && this.catalogCache.list) {
+      return this.catalogCache.list
+    }
+    const list = catalogFromTools([...tools.values()], this.log)
+    this.catalogBuilds += 1
+    this.catalogCache = { generation: this.toolsGeneration, list }
+    return list
   }
 
   /**

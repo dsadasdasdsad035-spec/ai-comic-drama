@@ -384,6 +384,7 @@ export function modelFacingResult(_name, result) { return { ok: true, text: resu
   try {
     const first = await bridge.catalog(PROJECT, 1)
     assert.equal(first[0].description, '探针 v1', '首次加载没读到 v1')
+    assert.equal(bridge.catalogBuilds, 1, '首轮必须真的推导一次声明')
     const firstTool = bridge.tools.get('probe_tool')
     assert.equal((await firstTool.run()).text, 'v1')
 
@@ -393,6 +394,7 @@ export function modelFacingResult(_name, result) { return { ok: true, text: resu
     assert.notEqual(bridge.tools.get('probe_tool'), firstTool, '工具表没有整表重建')
     assert.equal((await bridge.tools.get('probe_tool').run()).text, 'v2')
     assert.match(logs.join('\n'), /工具实现已更新/)
+    assert.equal(bridge.catalogBuilds, 2, '产物重建后缓存必须失效并重新推导')
 
     // 时间戳没再变：不该继续新增模块实例或重复打日志
     const stamp = fs.statSync(bundle).mtimeMs
@@ -401,9 +403,40 @@ export function modelFacingResult(_name, result) { return { ok: true, text: resu
     await bridge.catalog(PROJECT, 1)
     assert.equal(fs.statSync(bundle).mtimeMs, stamp)
     assert.equal(logs.length, before, '未变化时不该重复重载')
+    assert.equal(bridge.catalogBuilds, 2, '未变化时不该重复推导声明')
   } finally {
     fs.rmSync(bundleRoot, { recursive: true, force: true })
   }
+})
+
+/**
+ * 声明缓存的命中条件：工具表代号。宿主每次刷新界面都会拉一次清单，
+ * 一次创意会话里几十次推导同一批 schema 是纯浪费，但缓存一旦错判，
+ * 模型看到的就是上一版参数——比慢更糟。
+ */
+await check('同一工具表连续取声明只推导一轮', async () => {
+  const bridge = new StudioToolBridge({ root: ROOT, baseUrl: base, internalToken: TOKEN })
+  const first = await bridge.catalog(PROJECT, 1)
+  assert.equal(bridge.catalogBuilds, 1, '首轮应当推导')
+  for (let i = 0; i < 20; i += 1) {
+    const again = await bridge.catalog(PROJECT, 1)
+    assert.equal(again, first, '缓存期内应返回同一个数组实例')
+  }
+  assert.equal(bridge.catalogBuilds, 1, '连续 20 次只允许推导一轮')
+  assert.ok(first.length >= EXPECTED_TOOL_COUNT, '缓存不能把工具漏掉')
+})
+
+await check('项目上下文变化后工具表重建且声明重新推导', async () => {
+  const bridge = new StudioToolBridge({ root: ROOT, baseUrl: base, internalToken: TOKEN })
+  await bridge.catalog('', 1)
+  const generation = bridge.toolsGeneration
+  const builds = bridge.catalogBuilds
+  const other = fs.mkdtempSync(path.join(TMP, 'another-'))
+  // 换一个不存在的项目名也会重建工具表（参数进了平台工具闭包）
+  await bridge.catalog('另一个项目', 1)
+  assert.notEqual(bridge.toolsGeneration, generation, '上下文变化必须重建工具表')
+  assert.equal(bridge.catalogBuilds, builds + 1, '工具表重建后声明缓存必须失效')
+  fs.rmSync(other, { recursive: true, force: true })
 })
 
 if (bad) {

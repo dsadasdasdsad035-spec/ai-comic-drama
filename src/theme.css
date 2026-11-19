@@ -18381,6 +18381,14 @@ button.crumb:hover {
   justify-self: center;
   align-self: end;
   color: var(--muted);
+  /* 两段文案（启动会话 / 加载界面）长度不同，锁定行高避免切换时骨架跳动 */
+  min-height: 18px;
+  line-height: 18px;
+  /* 文案只有一行且居中：窄视口下省略而不是换行挤掉骨架 */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

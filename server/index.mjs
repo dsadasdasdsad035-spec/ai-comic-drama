@@ -24,7 +24,12 @@ import { assertNodeVersion } from './runtime-version.mjs'
 import { createCreativeHost } from './creative-host.mjs'
 import { createOpenAIGateway } from './openai-gateway.mjs'
 import { createStudioProxy, isStudioPath } from './studio-proxy.mjs'
-import { STUDIO_KEY_ENV, STUDIO_INTERNAL_ENV, writeStudioProfile } from './studio-profile.mjs'
+import { createStudioStarter } from './studio-start.mjs'
+import {
+  STUDIO_KEY_ENV,
+  STUDIO_INTERNAL_ENV,
+  writeStudioProfile,
+} from './studio-profile.mjs'
 import { installCreativeToolsBundle } from './dsh-bundle.mjs'
 import { expertsPatchPath, readCompiledExperts, writeExpertsPatch } from './dsh-experts.mjs'
 import { isStudioEnabled, setStudioEnabled, studioFlagPayload } from './studio-flag.mjs'
@@ -64,6 +69,7 @@ const {
   authorizeStudioRequest,
   createAppHandler,
   listStudioModels,
+  listStudioRoutes,
   onSettingsChanged,
   runServerShutdownTasks,
   runServerStartupTasks,
@@ -268,24 +274,29 @@ function setupStudio(actualPort) {
    * 宿主每次请求都会重读这份文档，所以设置页改完模型不用重启宿主；
    * 换行只发生在模型集合或默认模型真的变化时，避免每次保存都重写文件。
    */
-  let profileSignature = ''
+  /**
+   * 把当前模型表同步进宿主的 profile patch。
+   * 宿主每次请求都会重读这份文档，所以设置页改完模型不用重启宿主；
+   * 是否落盘由 `writeStudioProfile` 按内容比对决定 —— 没变化不写文件，
+   * 也就不会触发宿主重载。
+   */
+  let toolsBundleInstalled = false
   const syncProfile = () => {
-    const models = listStudioModels()
-    const defaultModelId = studioDefaultModel()
-    // 默认模型也要进签名：只改「创意（对话助手）」绑定、模型集不变时，patch 仍必须重写
-    const signature = `${models.map((m) => `${m.id}:${m.vision ? 1 : 0}`).join(',')}|default=${defaultModelId}`
-    if (signature === profileSignature) return models
+    const routes = listStudioRoutes()
+    const models = routes.flatMap((route) => route.models)
     try {
       writeStudioProfile({
         dshHome,
         gatewayBaseUrl,
-        models,
-        defaultModelId,
+        routes,
+        defaultModelId: studioDefaultModel(),
         log: (line) => console.log(line),
       })
       // 工具桥是 bundle 层（用户层 patch 不能新增插件行），装完才能在宿主里生效
-      installCreativeToolsBundle({ dshHome, root: ROOT, log: (line) => console.log(line) })
-      profileSignature = signature
+      if (!toolsBundleInstalled) {
+        installCreativeToolsBundle({ dshHome, root: ROOT, log: (line) => console.log(line) })
+        toolsBundleInstalled = true
+      }
     } catch (e) {
       console.error(`[studio] 写入宿主模型配置失败：${e?.message || String(e)}`)
     }
@@ -368,18 +379,17 @@ function setupStudio(actualPort) {
   /**
    * 拉起宿主前的统一准备 + 启动。
    *
-   * 反代与空闲预热都走这一个函数：宿主可能隔了很久才被拉起，
-   * 期间模型表与专家 preset 都可能被设置页改过，所以每次拉起前都要先对齐。
-   * 走同一入口的另一个好处是单飞——`start()` 在 `starting` 状态下复用同一个
-   * promise，预热还没完成时用户进入创意也不会拉起第二个宿主进程。
+   * 反代与空闲预热都走这一个函数（实现在 `studio-start.mjs`，便于用假宿主断言）：
+   * 宿主可能隔了很久才被拉起，期间模型表与专家 preset 都可能被设置页改过，
+   * 所以「未就绪」时要先对齐再启动。已就绪时则直接返回——`start()` 本来就会
+   * 立刻返回，此时再同步只是给每个 `/studio/*` 请求加 20ms 级同步阻塞。
    */
-  const startHostForRequest = async () => {
-    syncProfile()
-    await syncExperts({ restartIfRunning: false })
-    const state = creativeHost.status().state
-    if (state === 'failed') return false
-    return await creativeHost.start()
-  }
+  const startHostForRequest = createStudioStarter({
+    host: creativeHost,
+    prepareProfile: syncProfile,
+    prepareExperts: syncExperts,
+    log: (line) => console.log(line),
+  })
 
   studioProxy = createStudioProxy({
     host: creativeHost,
@@ -412,11 +422,14 @@ function setupStudio(actualPort) {
 
   // 空闲预热：把「第一次点创意」的冷启动挪到应用启动的尾巴上。
   // 延迟是必要的——立即预热会和首屏的 bundle 与静态资源抢带宽。
+  // 桌面端例外：Electron 恢复上次路由时可能直接落在创意视图，
+  // 那时 2 秒的延迟只会在冷启动上再加 2 秒，所以桌面端立即预热。
   // 预热失败不重试，错误页的「重试」仍是唯一显式入口。
   studioPrewarm = createStudioPrewarm({
     isEnabled: () => isStudioEnabled(),
     status: () => creativeHost.status(),
     prepare: startHostForRequest,
+    delayMs: process.env.SB_DESKTOP_PARENT_PID ? 0 : undefined,
     log: (line) => console.log(line),
   })
   if (String(process.env.SB_STUDIO_NO_PREWARM || '').trim() !== '1') studioPrewarm.schedule()

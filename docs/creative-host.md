@@ -96,11 +96,104 @@ git -C deepseek-harness push origin patch/0.2.2-rc.5
 ├── profiles/web/            # profile 清单、模型 patch、专家 preset
 ├── experts/                 # 自定义专家（manifest.json + soul.md）
 │   └── compiled/            # 内置/自定义专家的可读快照与编译结果
+├── studio-routes.json       # 应用托管的宿主路由清单（删了下一轮会当成"没有自有路由"）
+├── studio-default.json      # 应用上次写入的默认模型配对与来源标记
 └── sessions/                # 会话日志（宿主自己维护）
 ```
 
 `SB_STATE_ROOT` 默认是应用根目录；容器里映射到 `./data/state`。
 **这个目录不可丢**：会话与专家都在里面。备份清单见 `docs/deploy.md`。
+
+## 模型投影：按渠道分路由
+
+宿主不直接读应用设置。应用把「可用文本模型」按设置页的**渠道**（`providers[]`）
+分组，写进 `$DSH_HOME/profiles/web/cordis.patch.yml` 的 `llm-pi-ai.providers`：
+一个渠道 = 一条路由（provider），路由 id 是 `sb-<渠道 id>`，分组名取自渠道 label。
+
+```yaml
+# cordis.patch.yml（应用每次同步时整体保证这一段）
+- id: llm-pi-ai
+  config:
+    providers:
+      sb-ark:                       # 渠道 ark
+        displayName: 字节 · 火山方舟  # ← 设置页渠道名
+        apiKeyEnv: SB_STUDIO_GATEWAY_KEY
+        api: openai-completions
+        baseURL: http://127.0.0.1:5273/v1   # ← 只指向应用门面
+        models:
+          - id: sb/ark-text-lite
+            name: 豆包 · lite        # ← 设置页模型显示名
+          - id: sb/ark-vision
+            name: 豆包 · 视觉
+            input: [text, image]     # ← 视觉模型才声明
+      sb-deepseek: { ... }
+      sb-minimax: { ... }
+```
+
+几条必须知道的性质：
+
+- **`sb-*` 由应用托管**。`studio-routes.json`（同目录下）记录上一次写了哪些路由，
+  同步时只增删改清单内的键；宿主「设置 → 模型」里用户自建的 provider 原样保留。
+  反过来说，在宿主设置页编辑 `sb-*` 路由不会生效 —— 下一次同步会覆盖回去。
+  不要删它来"省掉"某个分组：删掉也会被下一次同步写回。要减少分组，请在应用设置页
+  删掉渠道或把该渠道的文本模型删掉。
+- **`baseURL` 只指向门面**（`http://127.0.0.1:<port>/v1`），不写上游渠道地址。
+  宿主必须经门面才有预扣/结算；绕过门面的路由等于绕过账本。
+- **模型 id 形如 `sb/<模型键>`**，与改造前一致，因此门面、账本与截断路径零改动。
+- **兜底路由**：应用没有任何可用文本模型时写一条 `sb-app` / `sb/default`，
+  保证宿主不会回落到自己的内置官方路由。门面会把它转成可读的「未配置模型」说明。
+- **已知边界**：应用里的「DeepSeek」渠道与宿主内置的 `deepseek-official` 同名。
+  内置 provider 未配 Key 时不会出现在选择器里，当前不可见；应用不做重命名。
+
+`/v1/models` 输出与改造前逐项一致（仍是 `sb/<模型键>` 的列表），
+按渠道分组的呈现只发生在宿主侧的配置层。
+
+## 默认模型与路由迁移
+
+`agent-default-model` 是一个**配对**：`provider`（路由）+ `model`（`sb/<键>`）。
+只记模型是不够的 —— 路由退场后配对会悬空，宿主会报
+`NO_ADAPTER: no adapter registered for provider "..."`。
+
+同步时的判定顺序（`decideDefaultModel`）：
+
+| 现值 | 处置 |
+|---|---|
+| 没有 | 写应用默认配对（创意绑定 → 文本默认 → 第一个可用文本模型） |
+| `provider: storyboard` | 迁移：provider 换成该模型所属渠道，模型不变 |
+| provider 不在本次路由集合，但属于应用上一轮写过的路由 | 模型还在别的渠道就改配对，否则换回应用默认 |
+| provider 完全不属于应用（宿主内置 / 用户自建） | 保留，绝不覆盖 |
+| 模型不在任何渠道路由里 | 换回应用默认 |
+| 配对与模型所属渠道不符 | 只改 provider |
+| 配对正确且等于应用上次写入的播种值 | 跟随设置页更新 |
+| 其余（来源未知但现值有效） | 保留；见下面的 `explicit` |
+
+### `studio-default.json` 与 `explicit`
+
+```json
+{ "provider": "sb-ark", "model": "sb/ark-text-lite", "explicit": false }
+```
+
+- `explicit: false` —— 这个值是我们播种的，设置页改默认时跟着变。
+- `explicit: true, source: "host"` —— 记录在、值却和它不同，只能是在宿主模型选择器里
+  手选的。**永久保留**，设置页改默认不覆盖。
+- `explicit: true, source: "unrecorded"` —— 记录文件丢了，先保留现值（可能是宿主的
+  选择，也可能是我们上一轮的播种值）。下一轮若现值没再被改动，就当作旧播种值
+  跟随设置页，避免「默认模型永久冻结」。
+
+记录文件每次同步都会补写（哪怕没有改 patch），所以「记录缺失」这个歧义最多出现一次。
+
+### 旧路由退场
+
+升级后第一次同步会自动：删掉 `providers.storyboard`、生成各渠道路由、
+把默认模型的 provider 迁移到对应渠道。历史语义无需手工干预。
+
+**历史会话需要重选一次模型**：`session_projcache` 里记过 `storyboard/<模型>` 的会话，
+模型按钮会退回「选择模型」；不重选就发送会撞上面那个 `NO_ADAPTER` 报错，
+点一次模型即可恢复。应用不代改宿主会话存储。
+
+回滚：保留 `studio-routes.json` 与现有路由，把投影代码回退到上一版即可 ——
+旧版只覆盖 `storyboard` 段、不会删新路由，但会把默认模型改回 `storyboard`；
+再升级又会迁移回来。升级前 `cordis.patch.yml` 已自动备份为 `.bak-<ts>`。
 
 ## 反代与长连接
 
@@ -126,6 +219,25 @@ location /studio/ {
 
 宿主自身只监听 `127.0.0.1`，不对外暴露端口；所有访问都经应用这一层。
 
+### 崩溃与自动重启
+
+宿主子进程意外退出（`SIGKILL`、OOM、内部崩溃）时，应用会在 `1s × 第 N 次`
+的退避后自动拉起，最多重试 `3` 次，超过后停在 `failed` 并记录可读原因。
+
+崩溃瞬间状态会立刻离开 `ready` 进入 `starting`，因此：
+
+- `_host/status` 不会在宿主已经死掉时仍报 `ready`；
+- 崩溃期间进入创意的请求会等待这次重启（单飞，不会并行拉起第二个进程），
+  而不是被 `ready` 短路后转发到一个已经不存在的端口；
+- 重启计数在自动重启过程中保留，退避与上限才有意义（手动 `/restart` 会清零，
+  那是新的一次生命周期）。
+
+```bash
+# 验证：杀掉宿主进程后状态应离开 ready，并在数秒内恢复
+lsof -ti tcp:$(curl -s localhost:5273/studio/_host/status | jq .port) -sTCP:LISTEN | xargs kill -9
+curl -s localhost:5273/studio/_host/status | jq '{state,restarts}'
+```
+
 ## 入口开关（灰度）
 
 设置键 `studioEnabled`（环境变量 `SB_STUDIO` 只作默认值）：
@@ -148,9 +260,14 @@ curl -s -X POST http://127.0.0.1:5273/api/studio/enabled \
 通过鉴权的 `/studio/` 请求。为避免「第一次点创意要等十几秒」，
 应用监听端口成功后会在约 2 秒时主动预热一次。
 
-预热与首次请求走**同一条路径**（`startHostForRequest`：先对齐模型表与专家
-preset，再启宿主），因此不会出现"预热后配置还是旧的"。两者也共享宿主的
-单飞语义——预热尚未完成时用户进入创意，只会等待同一次启动，不会拉起第二个进程。
+桌面端没有这 2 秒：Electron 恢复上次路由时可能直接落在创意视图，那段固定延迟
+只会原样加到操作员的等待上。所以 `SB_DESKTOP_PARENT_PID` 存在时预热延迟为 0，
+`listening` 之后立刻开始拉起。
+
+预热与首次请求走**同一条路径**（`startHostForRequest`：宿主未就绪时先对齐模型表
+与专家 preset，再启宿主；已就绪时直接返回），因此不会出现"预热后配置还是旧的"。
+两者也共享宿主的单飞语义——预热尚未完成时用户进入创意，只会等待同一次启动，
+不会拉起第二个进程。
 
 触发条件是三条同时成立，任一条不成立就什么都不做：
 
@@ -158,20 +275,52 @@ preset，再启宿主），因此不会出现"预热后配置还是旧的"。两
 |---|---|
 | 创意入口启用（`studioEnabled`） | 入口关了还拉宿主，等于给回滚开关留个洞 |
 | 宿主状态为 `idle` | `failed`/`stopped` 应走错误页「重试」，不该被反复拉起 |
-| 延迟已到（默认 2 秒） | 立即预热会和首屏 bundle 与静态资源抢带宽 |
+| 延迟已到（浏览器 2 秒 / 桌面端 0） | 浏览器端立即预热会和首屏 bundle 与静态资源抢带宽 |
 
-预热**只触发一次，失败不重试**，失败原因写进日志（`[studio] 宿主预热失败：…`）。
+预热**至多两次机会，失败不重试**：
+
+- 正常情况到点即拉起，成功或失败都在这一次结束；
+- 到点时宿主正被别处拉起（`starting`，典型是用户刚点进创意），记一次**延后**
+  而不是作废；1 秒后宿主回到 `idle` 就补触发一次，已 `ready` 或 `failed` 则放手。
+  这样用户退出创意再点回来时不会又等一轮冷启动。
+- 失败原因写进日志（`[studio] 宿主预热失败：…`）。
 
 ```bash
-# 观察预热：listening 之后约 4 秒状态变 ready
+# 观察预热：listening 之后日志出现「宿主预热完成」，状态变 ready
 npm start
-curl -s localhost:5273/studio/_host/status | jq '{state,entrySource}'
+curl -s localhost:5273/studio/_host/status | jq '{state,entrySource,restarts}'
+
+# 桌面端形态（立即预热）：预热行紧跟 listening 行
+SB_DESKTOP_PARENT_PID=1 npm start
 
 # 关掉预热（排障或低配机器）
 SB_STUDIO_NO_PREWARM=1 npm start
 ```
 
 关掉预热后状态会一直是 `idle`，直到第一次进入创意页。
+
+### 专家同步是幂等的
+
+`writeExpertsPatch` / `mirrorExpertSources` / `syncExpertSkillRoot` 三个派生步骤
+都按**内容比较**落盘，而不是每次全量重写：
+
+- **比较依据**：patch（`profiles/web/creative-experts.patch.yml`）与镜像
+  （`experts/compiled/<id>/manifest.json`、`soul.md`）都先读旧文件，与待写内容
+  逐字相等就跳过写入；技能根先一次性列举目录，白名单与磁盘一致时不建也不删。
+- **写入时机**：只有专家增删改、技能安装/卸载、或宿主重启后首次生成会真正写盘。
+  一次进入创意最多产生一轮只读比对，不再产生几十个文件的 touch。
+- **日志**：`[studio-experts] 已生成 N 个专家 preset：…` 只在真正写盘时出现。
+  日志不出现就是"配置没变"，不是"同步没执行"。
+- **谁能改变配置**：设置页的模型/专家/技能保存都会经 `notifySettingsChanged`
+  主动同步一次（见「热更新边界」）。请求路径上的 `startHostForRequest`
+  只在宿主**未就绪**时对齐配置，已就绪时直接返回——那时同步对本次请求没有作用，
+  只会阻塞转发。
+
+验证幂等性（两次调用的 mtime 与日志条数都应不变）：
+
+```bash
+node tests/studio-expert-signature.mjs   # 含「内容不变时二次生成不写盘」
+```
 
 ## 外壳预热（点开即出）
 
@@ -350,7 +499,10 @@ curl -s http://127.0.0.1:5273/api/studio/enabled
 
 | 指标 | 实测 |
 |---|---|
-| `listening` → 宿主 `ready`（预热） | 约 4 秒（`t=3s starting`、`t=4s ready`） |
+| `listening` → 宿主 `ready`（预热） | 桌面端约 1.3 秒（立即开始）；浏览器端约 3.3 秒（含 2 秒延迟） |
+| 骨架 → 外壳可见（预热完成后进入，热缓存） | 385ms（`verify-studio-entry-latency.mjs`，3 次 385/386/385） |
+| 骨架 → 外壳可见（冷缓存，首次安装后第一次） | 434ms（同脚本，3 次 408–456） |
+| 转发 20 次的配置写入 | 0 次（mtime 与「已生成 / 已写入」日志条数均不变） |
 | 宿主进程 RSS（预热后常驻） | 约 320 MB |
 | 应用服务进程 RSS | 100–125 MB |
 | 切页往返的 `/studio/` 文档请求 | 仅首次 1 次（由 `resolveStudioMount` 契约保证，见人工清单第 2 条） |
@@ -404,7 +556,7 @@ k.setAttribute('data-active', 'true')
 |---|---|---|
 | 技能**正文**（含包内 `references/`、`scripts/`） | 宿主文件监听自动热更 | 否 |
 | 技能的**增删**（上传 / 市场安装 / 卸载） | 重建专家技能根，监听器看到软链增删 | 否 |
-| 专家 preset（`soul`、白名单、工具子集） | 全量重写 patch，只有重启才被读取 | 是 |
+| 专家 preset（`soul`、白名单、工具子集） | 内容有变化才重写 patch（幂等落盘），只有重启才被读取 | 是 |
 | 工具 **schema**（参数、说明） | 插件按 `version` 重新注册 | 否 |
 | 工具**实现**（`studio-tools.mjs` 里的函数体） | 重建 `server-build` 后按产物时间戳自动重载 | 否（应用与宿主都不必重启） |
 

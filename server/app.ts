@@ -30,6 +30,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { mediaPath, mediaPathFromUrl, resolveMediaRoot, resolveStaticRoot } from './paths.mjs'
+import { routeIdForProvider } from './studio-profile.mjs'
 import { openBundle, getBundle, readBundleFile, cleanupBundle, cleanupAllBundles } from './bundle.mjs'
 import {
   createProject,
@@ -2763,15 +2764,59 @@ async function buildAnimatic(
  * 宿主侧看到的 id 是 `sb/<模型键>`，避免与应用内的上游模型名混淆。
  */
 export function listStudioModels(): Array<{ id: string; key: string; label: string; vision: boolean }> {
+  return listStudioRoutes().flatMap((route) => route.models)
+}
+
+/** 一条渠道路由：宿主里一个 provider，对应设置页的一个渠道 */
+export type StudioRoute = {
+  /** 路由 id（`sb-<渠道 id>`）：宿主配置键与选择器分组标识 */
+  id: string
+  /** 应用侧渠道 id */
+  provider: string
+  /** 渠道显示名，作为宿主 provider 的 displayName */
+  label: string
+  models: Array<{ id: string; key: string; label: string; vision: boolean }>
+}
+
+/**
+ * 把可用文本模型按应用渠道分组，供创意会话宿主按渠道呈现。
+ *
+ * 顺序沿用设置页 `providers` 的顺序：用户在设置页把渠道排成什么样，宿主分组就什么样。
+ * 只保留有可用文本模型的渠道 —— 空分组在选择器里只是一个点不开的标题。
+ * 渠道已被删除（模型仍引用它）的条目丢弃并记日志，不让宿主出现无名分组。
+ */
+export function listStudioRoutes(): StudioRoute[] {
   const s = getAppSettings()
-  return s.models
-    .filter((m) => hasTextCap(m) && isRunnableModel(m))
-    .map((m) => ({
+  const order = (s.providers || []).map((p) => p.id)
+  const grouped = new Map<string, StudioRoute>()
+  const orphaned: string[] = []
+  for (const m of s.models) {
+    if (!hasTextCap(m) || !isRunnableModel(m)) continue
+    const providerId = String(m.provider || '')
+    if (!providerId || !order.includes(providerId)) {
+      orphaned.push(m.key)
+      continue
+    }
+    let route = grouped.get(providerId)
+    if (!route) {
+      const provider = (s.providers || []).find((p) => p.id === providerId)
+      route = { id: routeIdForProvider(providerId), provider: providerId, label: String(provider?.label || providerId), models: [] }
+      grouped.set(providerId, route)
+    }
+    route.models.push({
       id: `sb/${m.key}`,
       key: m.key,
       label: m.label || m.model || m.key,
       vision: modelHasCap(m, 'vision') || modelHasCap(m, 'view'),
-    }))
+    })
+  }
+  if (orphaned.length > 0) {
+    console.warn(
+      `[studio] ${orphaned.length} 个文本模型的渠道已不存在，未投给创意会话：${orphaned.slice(0, 5).join(', ')}` +
+        `${orphaned.length > 5 ? ' …' : ''}`,
+    )
+  }
+  return order.filter((id) => grouped.has(id)).map((id) => grouped.get(id)!)
 }
 
 /**
@@ -4041,6 +4086,8 @@ export function createAppHandler({ root }: { root: string }) {
             const buf = await readBody(req, 8 * 1024 * 1024)
             const rows = expertsFromZipBuffer(buf)
             mergeCustomExperts(rows)
+            // 导入同样是专家集合变化：不通知的话新导入的专家要等下一次重启才在会话里出现
+            notifySettingsChanged('experts')
             res.end(JSON.stringify({ ok: true, experts: listAllExperts(), imported: rows.length }))
           } catch (e: any) {
             res.statusCode = 400

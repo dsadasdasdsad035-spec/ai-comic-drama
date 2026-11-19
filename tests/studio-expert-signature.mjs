@@ -118,8 +118,7 @@ await check('writeExpertsPatch 返回整批签名', () => {
   assert.equal(second.signature, first.signature, '内容未变时签名必须一致')
 })
 
-await check('新增专家会改变整批签名', () => {
-  const dshHome = fs.mkdtempSync(path.join(TMP, 'dsh-add-'))
+await check('新增专家会改变整批签名', () => {  const dshHome = fs.mkdtempSync(path.join(TMP, 'dsh-add-'))
   const registeredNames = ['read_source', 'read_shots', 'list_experts', 'list_installed_skills']
   const before = writeExpertsPatch({ dshHome, root: ROOT, registeredNames })
   // 自定义专家要落在 `<状态根>/dsh/experts/<id>`，listAllExperts 才读得到
@@ -135,6 +134,108 @@ await check('新增专家会改变整批签名', () => {
     const after = writeExpertsPatch({ dshHome, root: ROOT, registeredNames })
     assert.notEqual(after.signature, before.signature, '专家增删必须改变签名')
     assert.ok(after.compiled.some((row) => row.id === 'sig-added'))
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * 设置变更必须通知宿主：既然请求路径不再顺手同步配置（见 studio-entry-latency），
+ * 「保存了却没同步」就再没有兜底了。这里用源码文本契约钉住每条写入点，
+ * 代价是一次读文件，收益是把「新加一条保存路由忘了通知」变成一次测试失败。
+ */
+const APP_SOURCE = fs.readFileSync(path.join(ROOT, 'server', 'app.ts'), 'utf8')
+
+/** 会改变创意宿主可见配置的写入动作（专家集合、技能安装/卸载/覆盖、设置整体保存） */
+const MUTATIONS = [
+  'mergeCustomExperts(',
+  'saveCustomExperts(',
+  'removeInstalledSkill(',
+  'writeInstalledSkill(',
+  'deleteSkillOverride(',
+]
+
+/** 写入点之后多少行内必须出现通知。一条安装路由里有 upsert 与响应组装，观察窗要够宽 */
+const NOTIFY_WINDOW = 30
+
+await check('每条专家与技能写入都通知宿主', () => {
+  const lines = APP_SOURCE.split('\n')
+  const missing = []
+  for (const name of MUTATIONS) {
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].includes(name)) continue
+      // 跳过函数定义本身（`export function saveCustomExperts(` / 声明）
+      if (/(export\s+)?function\s/.test(lines[i])) continue
+      const window = lines.slice(i, i + NOTIFY_WINDOW).join('\n')
+      if (!window.includes('notifySettingsChanged(')) {
+        missing.push(`${name} @ 第 ${i + 1} 行`)
+      }
+    }
+  }
+  assert.deepEqual(missing, [], `以下写入点后 ${NOTIFY_WINDOW} 行内没有 notifySettingsChanged：${missing.join('、')}`)
+})
+
+await check('设置整体保存会通知模型表变化', () => {
+  // `saveAppSettings` 是模型/渠道/输出上限的唯一落库入口，它自己必须通知
+  const at = APP_SOURCE.indexOf('function saveAppSettings(')
+  assert.ok(at > 0, '未找到 saveAppSettings')
+  const body = APP_SOURCE.slice(at, at + 8000)
+  assert.match(body, /notifySettingsChanged\('settings'\)/, '模型表变化必须通知宿主重写 profile')
+})
+
+/**
+ * 幂等落盘：内容等价时不能产生任何写入。
+ * 旧实现每次请求都把 patch 与镜像全量重写一遍，一次进创意几十个文件被 touch，
+ * 宿主的文件监听被反复触发，排查时还会以为「配置一直在变」。
+ */
+await check('内容不变时二次生成不写盘', () => {
+  const dshHome = fs.mkdtempSync(path.join(TMP, 'dsh-idem-'))
+  const registeredNames = ['read_source', 'read_shots', 'list_experts', 'list_installed_skills']
+  const logs = []
+  const first = writeExpertsPatch({ dshHome, root: ROOT, registeredNames, log: (l) => logs.push(l) })
+  assert.equal(first.written, true, '首次生成必须写盘')
+  const patchFile = first.file
+  const mirrorFile = path.join(dshHome, 'experts', 'compiled', 'expert-omni', 'manifest.json')
+  const before = {
+    patch: fs.statSync(patchFile).mtimeMs,
+    mirror: fs.statSync(mirrorFile).mtimeMs,
+    logs: logs.length,
+  }
+  const second = writeExpertsPatch({ dshHome, root: ROOT, registeredNames, log: (l) => logs.push(l) })
+  assert.equal(second.written, false, '内容等价时不应再写盘')
+  assert.equal(second.signature, first.signature, '内容等价时签名不变')
+  assert.equal(fs.statSync(patchFile).mtimeMs, before.patch, 'patch 文件 mtime 不应变化')
+  assert.equal(fs.statSync(mirrorFile).mtimeMs, before.mirror, '镜像文件 mtime 不应变化')
+  assert.equal(logs.length, before.logs, '没有真正写入时不应打「已生成」日志')
+})
+
+await check('改 soul 后重写文件并改变指纹', async () => {
+  const dshHome = fs.mkdtempSync(path.join(TMP, 'dsh-soul-'))
+  const registeredNames = ['read_source', 'read_shots', 'list_experts', 'list_installed_skills']
+  const dir = path.join(TMP, 'dsh', 'experts', 'sig-soul')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, 'manifest.json'),
+    `${JSON.stringify({ id: 'sig-soul', name: '改 soul', skillIds: [], toolIds: ['read_source'] }, null, 2)}\n`,
+    'utf8',
+  )
+  fs.writeFileSync(path.join(dir, 'soul.md'), '你是分镜助理。', 'utf8')
+  try {
+    const before = writeExpertsPatch({ dshHome, root: ROOT, registeredNames })
+    const beforeRow = before.compiled.find((row) => row.id === 'sig-soul')
+    assert.ok(beforeRow, '自定义专家必须被编译')
+    const patchMtime = fs.statSync(before.file).mtimeMs
+
+    fs.writeFileSync(path.join(dir, 'soul.md'), '你是分镜主管。', 'utf8')
+    // 文件系统时间精度有限，隔开一点再比 mtime
+    await new Promise((r) => setTimeout(r, 20))
+    const after = writeExpertsPatch({ dshHome, root: ROOT, registeredNames })
+    const afterRow = after.compiled.find((row) => row.id === 'sig-soul')
+    assert.notEqual(afterRow.fingerprint, beforeRow.fingerprint, '改 soul 必须改变指纹')
+    assert.equal(after.written, true, '内容变化必须落盘')
+    assert.notEqual(fs.statSync(after.file).mtimeMs, patchMtime, 'patch 文件必须被重写')
+    const mirrorSoul = fs.readFileSync(path.join(dshHome, 'experts', 'compiled', 'sig-soul', 'soul.md'), 'utf8')
+    assert.equal(mirrorSoul, '你是分镜主管。', '镜像必须跟上最新 soul')
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

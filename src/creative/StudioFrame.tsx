@@ -42,6 +42,32 @@ export type StudioFrameProps = {
 
 type HostState = 'loading' | 'ready' | 'error'
 
+/**
+ * 宿主阶段：由 `/studio/_host/status` 轮询得出。
+ * `unknown` 表示探针还没答复（网络慢或反代未通），此时沿用旧文案。
+ */
+export type HostPhase = 'unknown' | 'idle' | 'starting' | 'ready' | 'failed'
+
+/** 探针轮询间隔：宿主启动期用它把「启动中」推进到「加载界面」 */
+export const HOST_POLL_INTERVAL_MS = 400
+
+export const CAPTION_CONNECTING = '正在连接创意会话…'
+export const CAPTION_STARTING_HOST = '正在启动创意会话…'
+export const CAPTION_LOADING_UI = '正在加载创意界面…'
+
+/**
+ * 加载期文案：说清「卡在哪一段」。
+ *
+ * 两段耗时差别很大却长得完全一样：宿主冷启动是一到十几秒（`starting`），
+ * 外壳文档载入与插件树激活是几百毫秒（宿主已 `ready`）。只说「正在连接」，
+ * 用户无法判断该继续等还是该点重试。
+ */
+export function loadingCaption(phase: HostPhase): string {
+  if (phase === 'ready') return CAPTION_LOADING_UI
+  if (phase === 'idle' || phase === 'starting') return CAPTION_STARTING_HOST
+  return CAPTION_CONNECTING
+}
+
 /** 应用产品名：创意视图的标签页标题用它，宿主产品名不出现在外壳上 */
 export const APP_TITLE = '分镜画布 · Storyboard Canvas'
 
@@ -405,6 +431,8 @@ export default function StudioFrame({ onRetry, projectName, active = true }: Stu
   /** 失败摘要：宿主自己的日志尾部，错误页里折叠展示，不额外暴露内部细节 */
   const [detail, setDetail] = useState('')
   const [nonce, setNonce] = useState(0)
+  /** 宿主阶段：只用来选加载文案，不参与渲染分支（分支仍看 `state`） */
+  const [hostPhase, setHostPhase] = useState<HostPhase>('unknown')
 
   /** 首帧与后续主题变化都走这里：iframe 同源，直接改它的文档 */
   const syncTheme = useCallback(() => {
@@ -552,9 +580,10 @@ export default function StudioFrame({ onRetry, projectName, active = true }: Stu
     removeHostBootStyle(frameRef.current?.contentDocument)
   }, [state])
 
-  /** 宿主状态：错误态要给原因，而不是无限转圈 */
+  /** 宿主状态：错误态要给原因，而不是无限转圈；加载期顺带把阶段文案推进 */
   useEffect(() => {
     let alive = true
+    let timer = 0
     const probe = async () => {
       try {
         const res = await fetch('/studio/_host/status', { credentials: 'include' })
@@ -572,7 +601,14 @@ export default function StudioFrame({ onRetry, projectName, active = true }: Stu
           setDetail(hostFailureDetail(body))
           return
         }
-        // ready 时由 iframe 的 onLoad 收尾，避免状态先绿后白
+        if (body.state === 'ready') {
+          // 到这里宿主已热：剩下的等待是外壳文档与插件树，文案切到「加载界面」
+          setHostPhase('ready')
+          return
+        }
+        setHostPhase(body.state === 'starting' ? 'starting' : 'idle')
+        // 还在启动：继续轮询。ready 时由 iframe 的 onLoad 收尾，避免状态先绿后白
+        timer = window.setTimeout(() => void probe(), HOST_POLL_INTERVAL_MS)
       } catch (e) {
         if (!alive) return
         setState('error')
@@ -582,11 +618,13 @@ export default function StudioFrame({ onRetry, projectName, active = true }: Stu
     void probe()
     return () => {
       alive = false
+      window.clearTimeout(timer)
     }
   }, [nonce])
 
   const retry = useCallback(async () => {
     setState('loading')
+    setHostPhase('unknown')
     setMessage('')
     setDetail('')
     try {
@@ -655,7 +693,7 @@ export default function StudioFrame({ onRetry, projectName, active = true }: Stu
               <div className="studio-skeleton-composer" />
             </div>
           </div>
-          <p className="studio-skeleton-caption">正在连接创意会话…</p>
+          <p className="studio-skeleton-caption">{loadingCaption(hostPhase)}</p>
         </div>
       ) : null}
       <iframe
