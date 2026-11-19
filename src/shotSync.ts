@@ -92,6 +92,14 @@ export const SHOT_AGENT_EXTRA_FIELDS = [
   'handEdited',
 ] as const satisfies readonly (keyof ProjectShot)[]
 
+/** Agent 写回分镜：不含提示词列（走 submit_prompts）与手改正文（走 set_shot_video_override） */
+const SHOT_AGENT_PROMPT_FIELDS = new Set<string>([
+  'keyframe_prompt',
+  'video_prompt',
+  'video_prompt_override',
+  'video_prompt_rendered',
+])
+
 /**
  * 产线产物字段：只能由生成工具或画布 UI 写。
  * 导出是为了让测试能断言「两套策略都不含这些字段」，而不是靠人记。
@@ -123,7 +131,10 @@ function mergeRefIds(old: string[] | undefined, add: string[] | undefined): stri
 
 export const SHOT_FIELD_POLICY: Record<ShotFieldPolicy, readonly (keyof ProjectShot)[]> = {
   import: SHOT_IMPORT_FIELDS,
-  agent: [...SHOT_IMPORT_FIELDS, ...SHOT_AGENT_EXTRA_FIELDS],
+  agent: [
+    ...SHOT_IMPORT_FIELDS.filter((k) => !SHOT_AGENT_PROMPT_FIELDS.has(k)),
+    ...SHOT_AGENT_EXTRA_FIELDS.filter((k) => !SHOT_AGENT_PROMPT_FIELDS.has(k)),
+  ],
 }
 
 /**

@@ -3,6 +3,7 @@ import type { ProjectEpisode, ProjectShot } from '../api'
 import { formatEpisodeLabel } from '../shotRows'
 import { useVideoFirstFrame } from '../videoFirstFrame'
 import { listBoardEpisodes } from './episodeCover'
+import { episodeScriptUi } from './episodeScriptUi'
 import { BoardListToolbar } from '../BoardListToolbar'
 import { BOARD_LIST_PAGE_SIZE, boardEpisodeMatch, useBoardListFilter } from '../boardListFilter'
 import { downloadStoryboardZip, type RefIndex } from '../storyboardMarkdown'
@@ -14,12 +15,10 @@ type Props = {
   onPick: (epNo: number) => void
   onAddEpisode: () => void
   onImportScript: () => void
+  onViewEpisodeScript: (epNo: number) => void
   addBusy?: boolean
-  /** 项目标题：用于「导出全部」的 zip 文件名 */
   projectTitle?: string
-  /** 轻提示：下载本身没有界面反馈，重复点击需要一句话说明 */
   onNotice?: (msg: string) => void
-  /** 参考名字索引：素材标题只在画布节点上，导出侧只做查表 */
   refIndex?: RefIndex
 }
 
@@ -41,9 +40,6 @@ function EpisodeCardCover({ kind, src }: { kind: 'keyframe' | 'clip' | 'none'; s
   )
 }
 
-/**
- * 画布集目录：选集后再进入单集 Flow。
- */
 function EpisodeDirToolbar({
   onAddEpisode,
   onImportScript,
@@ -57,27 +53,97 @@ function EpisodeDirToolbar({
   onExportAll: () => void
 }) {
   return (
-    <div className="board-ep-actions">
-      <button type="button" className="btn" data-board-add-ep disabled={addBusy} onClick={onAddEpisode}>
-        {addBusy ? '添加中…' : '新增分集'}
-      </button>
-      <button type="button" className="btn" data-board-import-script onClick={onImportScript}>
-        导入分集剧本
-      </button>
-      <button
-        type="button"
-        className="btn"
-        data-board-export-all
-        disabled={!canExport}
-        title={exportTitle}
-        onClick={onExportAll}
-      >
-        导出全部
-      </button>
+    <div className="board-ep-toolbar">
+      <div className="board-ep-toolgroup">
+        <span className="board-ep-toollabel">分集</span>
+        <button type="button" className="btn primary" data-board-add-ep disabled={addBusy} onClick={onAddEpisode}>
+          {addBusy ? '添加中…' : '新建分集'}
+        </button>
+      </div>
+      <div className="board-ep-toolgroup" aria-label="剧本">
+        <span className="board-ep-toollabel">剧本</span>
+        <button type="button" className="btn" data-board-import-script onClick={onImportScript}>
+          导入大纲
+        </button>
+      </div>
+      <div className="board-ep-toolgroup" aria-label="分镜">
+        <span className="board-ep-toollabel">分镜</span>
+        <button
+          type="button"
+          className="btn"
+          data-board-export-all
+          disabled={!canExport}
+          title={exportTitle}
+          onClick={onExportAll}
+        >
+          导出全部
+        </button>
+      </div>
     </div>
   )
 }
 
+type CardProps = {
+  row: ReturnType<typeof listBoardEpisodes>[number]
+  episodes: ProjectEpisode[]
+  onPick: (epNo: number) => void
+  onViewEpisodeScript: (epNo: number) => void
+}
+
+function BoardEpisodeCard({ row, episodes, onPick, onViewEpisodeScript }: CardProps) {
+  const script = episodeScriptUi(episodes, row.no)
+  const displayTitle = row.title || script.title || '未命名'
+
+  return (
+    <article className="board-ep-card" data-board-ep-card={row.no}>
+      <button
+        type="button"
+        className="board-ep-enter"
+        data-board-ep={row.no}
+        onClick={() => onPick(row.no)}
+        aria-label={`${formatEpisodeLabel(row.no)} ${displayTitle}，进入分镜画布`}
+      >
+        <div className="board-ep-cover-wrap">
+          <EpisodeCardCover kind={row.cover.kind} src={row.cover.src} />
+          <span className="board-ep-cover-badge">{formatEpisodeLabel(row.no)}</span>
+        </div>
+        <div className="board-ep-body">
+          <h2 className="board-ep-title">{displayTitle}</h2>
+          <p className="board-ep-sub">
+            {row.shotCount > 0 ? `${row.shotCount} 镜` : '尚无分镜'}
+            {row.targetSeconds ? ` · 目标 ${row.targetSeconds}s` : ''}
+          </p>
+        </div>
+      </button>
+
+      <footer className="board-ep-foot">
+        <div className="board-ep-layers" aria-hidden>
+          <span className={`board-ep-pill board-ep-pill-script${script.hasScript ? ' ok' : ' miss'}`}>
+            剧本 · {script.badge}
+          </span>
+          <span className="board-ep-pill board-ep-pill-shots">{row.shotCount} 镜</span>
+        </div>
+        <div className="board-ep-foot-actions">
+          <button
+            type="button"
+            className="btn-mini board-ep-btn-script"
+            data-board-view-script={row.no}
+            onClick={() => onViewEpisodeScript(row.no)}
+          >
+            看剧本
+          </button>
+          <button type="button" className="btn-mini primary board-ep-btn-board" onClick={() => onPick(row.no)}>
+            进分镜
+          </button>
+        </div>
+      </footer>
+    </article>
+  )
+}
+
+/**
+ * 画布集目录：剧本大纲与分镜画布分层入口。
+ */
 export default function BoardEpisodeGrid({
   projectReady,
   episodes,
@@ -85,6 +151,7 @@ export default function BoardEpisodeGrid({
   onPick,
   onAddEpisode,
   onImportScript,
+  onViewEpisodeScript,
   addBusy,
   projectTitle,
   onNotice,
@@ -93,17 +160,22 @@ export default function BoardEpisodeGrid({
   const rows = useMemo(() => listBoardEpisodes(episodes, shots), [episodes, shots])
   const list = useBoardListFilter(rows, boardEpisodeMatch)
 
-  // 有镜头但没登记分集时也算有内容：导出按镜头的集号补齐，缺集不发空文件
   const canExport = projectReady && rows.length > 0
   const exportTitle = !projectReady
     ? '项目加载中'
     : rows.length === 0
       ? '还没有分集，没有可分镜表可导出'
       : `把 ${rows.length} 集各导出一份 Markdown，打包成 zip 下载`
+
   const handleExportAll = () => {
     const zip = downloadStoryboardZip({ projectName: projectTitle, episodes, shots, refIndex })
     onNotice?.(`已导出 ${zip.entries.length} 集：${zip.fileName}`)
   }
+
+  const headCopy =
+    rows.length === 0
+      ? '剧本决定场次与叙事节奏，分镜在画布里拆镜。先建分集或导入剧本大纲。'
+      : '每集两层：剧本大纲（标题与场次）与分镜镜头（画布）。封面取自本集第一条有画面的镜头。'
 
   if (!projectReady) {
     return (
@@ -113,36 +185,13 @@ export default function BoardEpisodeGrid({
     )
   }
 
-  if (rows.length === 0) {
-    return (
-      <div className="board-ep-stage" data-board-phase="episodes">
-        <header className="board-ep-head">
-          <div className="board-ep-head-row">
-            <div>
-              <h1>分集目录</h1>
-              <p>先新建分集或导入剧本，再进入单集分镜画布。</p>
-            </div>
-            <EpisodeDirToolbar
-              onAddEpisode={onAddEpisode}
-              onImportScript={onImportScript}
-              addBusy={addBusy}
-              canExport={canExport}
-              exportTitle={exportTitle}
-              onExportAll={handleExportAll}
-            />
-          </div>
-        </header>
-      </div>
-    )
-  }
-
   return (
     <div className="board-ep-stage" data-board-phase="episodes">
       <header className="board-ep-head">
         <div className="board-ep-head-row">
-          <div>
-            <h1>分集目录</h1>
-            <p>选一集进入分镜画布。封面取自该集按镜号排序后的第一条镜头。</p>
+          <div className="board-ep-head-copy">
+            <h1>分集工作台</h1>
+            <p>{headCopy}</p>
           </div>
           <EpisodeDirToolbar
             onAddEpisode={onAddEpisode}
@@ -154,43 +203,49 @@ export default function BoardEpisodeGrid({
           />
         </div>
       </header>
-      <BoardListToolbar
-        query={list.query}
-        onQueryChange={list.setQuery}
-        placeholder="搜索集号、标题、镜数、目标时长…"
-        ariaLabel="搜索分集"
-        filteredCount={list.filteredCount}
-        totalCount={list.totalCount}
-        page={list.page}
-        totalPages={list.totalPages}
-        onPageChange={list.setPage}
-        pageSize={BOARD_LIST_PAGE_SIZE}
-      />
-      <div className="board-ep-grid" role="list">
-        {list.filteredCount === 0 ? (
-          <p className="board-ep-empty">没有匹配的分集，换个关键词试试。</p>
-        ) : null}
-        {list.slice.map((row) => (
-          <button
-            type="button"
-            key={row.no}
-            role="listitem"
-            className="board-ep-card"
-            data-board-ep={row.no}
-            onClick={() => onPick(row.no)}
-          >
-            <div className="board-ep-cover-wrap">
-              <EpisodeCardCover kind={row.cover.kind} src={row.cover.src} />
-            </div>
-            <span className="board-ep-no">{formatEpisodeLabel(row.no)}</span>
-            <span className="board-ep-title">{row.title || '未命名'}</span>
-            <span className="board-ep-meta">
-              {row.shotCount} 镜
-              {row.targetSeconds ? ` · 目标 ${row.targetSeconds}s` : ''}
-            </span>
-          </button>
-        ))}
-      </div>
+
+      {rows.length === 0 ? (
+        <div className="board-ep-zero">
+          <p className="board-ep-zero-lead">还没有任何一集</p>
+          <div className="board-ep-zero-actions">
+            <button type="button" className="btn primary" disabled={addBusy} onClick={onAddEpisode}>
+              新建第一集
+            </button>
+            <button type="button" className="btn" onClick={onImportScript}>
+              导入剧本大纲
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <BoardListToolbar
+            query={list.query}
+            onQueryChange={list.setQuery}
+            placeholder="搜索集号、标题、镜数、目标时长…"
+            ariaLabel="搜索分集"
+            filteredCount={list.filteredCount}
+            totalCount={list.totalCount}
+            page={list.page}
+            totalPages={list.totalPages}
+            onPageChange={list.setPage}
+            pageSize={BOARD_LIST_PAGE_SIZE}
+          />
+          <div className="board-ep-grid" role="list">
+            {list.filteredCount === 0 ? (
+              <p className="board-ep-empty">没有匹配的分集，换个关键词试试。</p>
+            ) : null}
+            {list.slice.map((row) => (
+              <BoardEpisodeCard
+                key={row.no}
+                row={row}
+                episodes={episodes}
+                onPick={onPick}
+                onViewEpisodeScript={onViewEpisodeScript}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

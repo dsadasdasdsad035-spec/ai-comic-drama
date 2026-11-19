@@ -116,6 +116,14 @@ async function post(url, body, token = TOKEN) {
   return { status: res.status, body: await res.json() }
 }
 
+/** 经 HTTP 读项目（与工具桥同源 SQLite） */
+async function getProjectBody() {
+  const res = await fetch(`${base}/api/project?name=${encodeURIComponent(PROJECT)}`)
+  const j = await res.json()
+  assert.equal(j.ok, true, JSON.stringify(j).slice(0, 200))
+  return j.project
+}
+
 await check('没有内部令牌拒绝工具清单', async () => {
   const r = await post('/api/studio/tools', { project: PROJECT }, '')
   assert.equal(r.status, 401)
@@ -336,6 +344,152 @@ await check('专家清单带 preset 映射（会话列表据此显示专家名�
     assert.ok(row.name, '专家缺显示名')
     assert.ok(typeof row.tools === 'number' && row.tools > 0, '专家工具数不对')
   }
+})
+
+await check('连续两次读分镜反映落库改动（同一工具表）', async () => {
+  await post('/api/studio/project', { name: PROJECT })
+  const first = await post('/api/studio/tools/execute', {
+    name: 'read_shots',
+    args: { episode: 1, shotIds: ['E01-S01'] },
+    project: PROJECT,
+  })
+  assert.equal(first.body.ok, true)
+  assert.ok(JSON.stringify(first.body.details).includes('街口'), '首轮应读到夹具描述')
+  const proj = await getProjectBody()
+  const shots = (proj.shots || []).map((s) =>
+    s.id === 'E01-S01' ? { ...s, desc: '落库后的新街口' } : s,
+  )
+  const wr = await fetch(`${base}/api/project?name=${encodeURIComponent(PROJECT)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots }),
+  })
+  const saved = await wr.json()
+  assert.equal(saved.ok, true, JSON.stringify(saved).slice(0, 200))
+  const second = await post('/api/studio/tools/execute', {
+    name: 'read_shots',
+    args: { episode: 1, shotIds: ['E01-S01'] },
+    project: PROJECT,
+  })
+  assert.equal(second.body.ok, true)
+  assert.ok(JSON.stringify(second.body.details).includes('落库后的新街口'), '第二次应读到落库后的描述')
+  assert.ok(!JSON.stringify(second.body.details).includes('"desc":"街口"'), '不应再是夹具原文')
+})
+
+await check('画布实况覆盖读镜字段（未等防抖落库）', async () => {
+  await post('/api/studio/project', { name: PROJECT })
+  const projRev = Number((await getProjectBody()).revision) || 0
+  const canvasNode = {
+    id: 'canvas-live-1',
+    type: 'shot',
+    position: { x: 0, y: 0 },
+    data: {
+      shotId: 'E01-S01',
+      episode: 1,
+      no: 'E01-S01',
+      seconds: 3,
+      size: '中景',
+      move: '固定',
+      prompt: '画布实况描述',
+      videoPrompt: 'push',
+      dialogue: '',
+      cast: [],
+      refIds: [],
+    },
+  }
+  const pushed = await post('/api/studio/canvas-context', {
+    name: PROJECT,
+    episode: 1,
+    nodes: [canvasNode],
+    characters: [],
+    missingMedia: [],
+    resolution: '720p',
+    projectRevision: projRev,
+  })
+  assert.equal(pushed.status, 200, JSON.stringify(pushed.body))
+  const r = await post('/api/studio/tools/execute', {
+    name: 'read_shot_detail',
+    args: { shotId: 'E01-S01' },
+    project: PROJECT,
+  })
+  assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 200))
+  assert.ok(JSON.stringify(r.body.details).includes('画布实况描述'), '读工具未吃到画布 keyframe')
+})
+
+await check('落库后过期实况不覆盖读镜', async () => {
+  let projRev = Number((await getProjectBody()).revision) || 0
+  const staleNode = {
+    id: 'stale-1',
+    type: 'shot',
+    position: { x: 0, y: 0 },
+    data: {
+      shotId: 'E01-S01',
+      episode: 1,
+      no: 'E01-S01',
+      seconds: 3,
+      size: '中景',
+      move: '固定',
+      prompt: '旧画布应被忽略',
+      videoPrompt: 'push',
+      dialogue: '',
+      cast: [],
+      refIds: [],
+    },
+  }
+  await post('/api/studio/canvas-context', {
+    name: PROJECT,
+    episode: 1,
+    nodes: [staleNode],
+    characters: [],
+    missingMedia: [],
+    projectRevision: projRev,
+  })
+  const p = await getProjectBody()
+  const shots = (p.shots || []).map((s) =>
+    s.id === 'E01-S01' ? { ...s, desc: '仅以落库为准' } : s,
+  )
+  const wr = await fetch(`${base}/api/project?name=${encodeURIComponent(PROJECT)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shots }),
+  })
+  const saved = await wr.json()
+  assert.equal(saved.ok, true)
+  projRev = Number((await getProjectBody()).revision) || 0
+  assert.ok(projRev > 0, 'revision 应已递增')
+  const r = await post('/api/studio/tools/execute', {
+    name: 'read_shot_detail',
+    args: { shotId: 'E01-S01' },
+    project: PROJECT,
+  })
+  assert.equal(r.body.ok, true)
+  assert.ok(JSON.stringify(r.body.details).includes('仅以落库为准'), '应读落库')
+  assert.ok(!JSON.stringify(r.body.details).includes('旧画布应被忽略'), '不应被过期实况覆盖')
+})
+
+await check('画布素材卡进入 read_asset_inventory', async () => {
+  const projRev = Number((await getProjectBody()).revision) || 0
+  const assetNode = {
+    id: 'asset-only-live',
+    type: 'asset',
+    position: { x: 40, y: 40 },
+    data: { title: '仅画布素材', kind: 'image', url: 'https://example.invalid/only-live.png' },
+  }
+  await post('/api/studio/canvas-context', {
+    name: PROJECT,
+    episode: 1,
+    nodes: [assetNode],
+    characters: [],
+    missingMedia: [],
+    projectRevision: projRev,
+  })
+  const r = await post('/api/studio/tools/execute', {
+    name: 'read_asset_inventory',
+    args: { category: 'assets', includeRows: true },
+    project: PROJECT,
+  })
+  assert.equal(r.body.ok, true)
+  assert.ok(JSON.stringify(r.body.details).includes('仅画布素材'), 'inventory 应含画布素材卡')
 })
 
 server.kill('SIGTERM')

@@ -8,7 +8,7 @@
 - 短剧系列：`short-drama`、`short-drama-develop`、`short-drama-write`、`short-drama-breakdown`、`short-drama-storyboard`、`short-drama-assets`、`short-drama-image-prompts`、`short-drama-video-prompts`、`short-drama-produce`、`short-drama-edit`、`short-drama-review`、`short-drama-novel-analyze`
 - 视频提示词：`byted-sol-seedance-prompt`
 
-**平台 `read_*` / `submit_*` / `validate_contract` 为应用内置工具**，不在 SKILL 里声明。
+**平台 `read_*` / `submit_*` 为应用内置工具**，不在 SKILL 里声明；写回时宿主内建契约校验。
 
 本地验收：`node verify-skill-upload-zip.mjs`、`node verify-skills-api.mjs`、`node verify-skills-unit.mjs`
 
@@ -81,7 +81,7 @@ metadata:
 | submit_prompts | prompts-v1 |
 | submit_joins | joins-v1 |
 
-另有 read_source、read_shots、read_skill_text、read_skill_file、validate_contract 等。创意 Pi **默认绑定**；写回须顶栏已选项目。
+另有 read_source、read_shots、read_skill_text、read_skill_file 等。创意 Pi **默认绑定**；写回须顶栏已选项目。
 
 ## 3D 运行时例外
 

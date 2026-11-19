@@ -19,7 +19,6 @@ const LABELS: Record<string, string> = {
   read_skill_text: '技能原文',
   list_installed_skills: '技能目录',
   list_experts: '专家目录',
-  validate_contract: '契约校验',
   submit_characters: '角色草稿',
   submit_designs: '素材草稿',
   submit_shots: '镜头草稿',

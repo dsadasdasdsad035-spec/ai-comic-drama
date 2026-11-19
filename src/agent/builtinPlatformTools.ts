@@ -104,6 +104,8 @@ export type BuiltinPlatformCtx = {
     nodes: ShotNodeType[]
     characters: CharacterSheet[]
     missingMedia: Set<string>
+    projectRevision?: number
+    canvasRevision?: number
   }
   /** 画布当前选中的视频模型；出片沿用同一个渠道，否则两条路径会落到不同模型 */
   getSelectedVideoModel?: () => VideoModelInput | null
@@ -218,6 +220,8 @@ function createReadAdapter(input: BuiltinPlatformCtx): WorkbenchChatAdapter {
         ...(host?.nodes ? { nodes: host.nodes } : {}),
         ...(host?.characters ? { characters: host.characters } : {}),
         ...(host?.missingMedia ? { missingMedia: host.missingMedia } : {}),
+        ...(host?.projectRevision !== undefined ? { projectRevision: host.projectRevision } : {}),
+        ...(host?.canvasRevision !== undefined ? { canvasRevision: host.canvasRevision } : {}),
         model: input.getSelectedVideoModel?.() ?? null,
         resolution: input.getVideoResolution?.() ?? '',
       }
@@ -266,23 +270,6 @@ function createSubmitTool(input: BuiltinPlatformCtx, writeTool: WriteTool, contr
     },
   })
 }
-
-const validateContractTool = defineTool({
-  name: 'validate_contract',
-  description:
-    '【平台内置】仅校验 payload 是否符合指定契约（characters-v1 / shots-v1 等），不写入项目。',
-  schema: z.object({
-    contract: z.string().min(1).describe('契约 id，例如 shots-v1'),
-    payload: z.unknown().describe('待校验 JSON'),
-  }),
-  run: async ({ contract, payload }) => {
-    const id = String(contract).trim()
-    const normalized = id === 'characters-v1' ? normalizeCharactersContractPayload(payload) : payload
-    const checked = validateContract(id, normalized)
-    if (!checked.ok) return { ok: false, errors: checked.errors }
-    return { ok: true, contract: id, valid: true }
-  },
-})
 
 const SUBMIT_TOOL_NAMES = new Set(PLATFORM_WRITE_TOOLS.map((x) => x.tool))
 
@@ -664,7 +651,7 @@ function createGenerateKeyframeTool(input: BuiltinPlatformCtx): ToolDef {
       if (!text) {
         return {
           ok: false,
-          error: `镜 ${shot.no} 还没有首帧提示词。下一步：先用 submit_shots 写入 keyframe_prompt 或 desc，再出图。`,
+          error: `镜 ${shot.no} 还没有首帧提示词。下一步：先用 submit_prompts 写入 keyframe_prompt，或补全 desc 后再出图。`,
         }
       }
       // 参考解析放在成本确认之前：注定出一张没参考的图，就不该先问用户花不花这笔钱
@@ -973,7 +960,7 @@ export function createBuiltinPlatformReadTools(input: BuiltinPlatformCtx): ToolD
 
 /** 始终提供给 Pi 的平台读/写工具（不依赖 SkillHub 技能 manifest） */
 export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[] {
-  const reads = createStageToolSet(createReadAdapter(input))
+  const reads = createStageToolSet(createReadAdapter(input), { freshReads: true })
   const pi = createPiNativeToolSet({ expertAllowlist: input.expertAllowlist })
   const byName = new Map<string, ToolDef>()
   for (const t of reads.byName.values()) byName.set(t.name, t)
@@ -981,7 +968,6 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   for (const { tool, contract } of PLATFORM_WRITE_TOOLS) {
     byName.set(tool, createSubmitTool(input, tool as WriteTool, contract))
   }
-  byName.set(validateContractTool.name, validateContractTool)
   byName.set('list_projects', createListProjectsTool(input))
   byName.set('create_project', createCreateProjectTool(input))
   byName.set('update_project_meta', createUpdateProjectMetaTool(input))
@@ -1041,7 +1027,8 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   })) {
     byName.set(t.name, t)
   }
-  const tools = [...byName.values()]
+  const tools = [...byName.values()] as ToolDef[] & { resetReadSnapshot?: () => void }
+  tools.resetReadSnapshot = reads.resetSnapshot
   // 每次构造都校验：幽灵工具（名单有、注册无）必须当场暴露，不能带病启动
   assertPlatformToolConsistency(tools.map((t) => t.name))
   return tools
@@ -1075,7 +1062,6 @@ const PLATFORM_READ_TOOL_NAMES = [
 export function builtinPlatformToolNames(): string[] {
   return [
     ...PLATFORM_READ_TOOL_NAMES,
-    'validate_contract',
     ...PLATFORM_WRITE_TOOLS.map((x) => x.tool),
     ...PLATFORM_ACTION_TOOL_NAMES,
   ]

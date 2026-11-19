@@ -803,6 +803,8 @@ export type ProjectData = {
   /** 素材·镜头语言：项目级自定义白模（Blender 代码 + 渲染 MP4） */
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   shots?: ProjectShot[]
+  /** 落库单调序：每次 POST/PUT 写项目 +1，供创意读工具与画布实况对齐 */
+  revision?: number
   updated_at?: string
   /** GET /api/project 附带：本次打开迁移了几张旧图、哪些引用文件缺失 */
   media?: { migrated?: number; missing?: string[] }
@@ -936,7 +938,7 @@ export type ProjectPatch = {
 export async function patchProject(
   name: string,
   patch: ProjectPatch,
-): Promise<{ shots: ProjectShot[]; characters: unknown[]; savedAt: string }> {
+): Promise<{ shots: ProjectShot[]; characters: unknown[]; savedAt: string; revision?: number }> {
   const r = await apiFetch(`/api/project?name=${encodeURIComponent(name)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -944,7 +946,12 @@ export async function patchProject(
   })
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '保存失败')
-  return { shots: j.shots ?? [], characters: j.characters ?? [], savedAt: j.savedAt }
+  return {
+    shots: j.shots ?? [],
+    characters: j.characters ?? [],
+    savedAt: j.savedAt,
+    revision: typeof j.revision === 'number' ? j.revision : undefined,
+  }
 }
 
 export type ShotWriteMode = 'partial' | 'full'
@@ -966,7 +973,7 @@ export async function mergeProjectShots(
   name: string,
   shots: ProjectShot[],
   opts: MergeShotsOpts = {},
-): Promise<{ shots: ProjectShot[]; savedAt: string }> {
+): Promise<{ shots: ProjectShot[]; savedAt: string; revision?: number }> {
   const mode = opts.mode ?? 'partial'
   const deleteShotIds = opts.deleteShotIds
   const r = await patchProject(name, {
@@ -974,7 +981,7 @@ export async function mergeProjectShots(
     shotsMode: mode,
     ...(deleteShotIds?.length ? { deleteShotIds } : {}),
   })
-  return { shots: r.shots, savedAt: r.savedAt }
+  return { shots: r.shots, savedAt: r.savedAt, revision: r.revision }
 }
 
 /** 场景布局是独立顶层数据：整表替换，不跟 episodes 一起被剧本站覆盖 */

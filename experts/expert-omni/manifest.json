@@ -26,7 +26,6 @@
     "read_skill_text",
     "read_skill_file",
     "list_installed_skills",
-    "validate_contract",
     "submit_episodes",
     "submit_characters",
     "submit_designs",

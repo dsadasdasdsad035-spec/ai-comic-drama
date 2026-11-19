@@ -78,9 +78,18 @@ import {
 import { formatEpisodeLabel, reconcileProjectShots } from './shotRows'
 import BoardEpisodeGrid from './board/BoardEpisodeGrid'
 import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
-import { blankEpisode, nextEpisodeNo } from './board/episodeOps'
+import EpisodeScriptDetailDialog from './board/EpisodeScriptDetailDialog'
+import { episodeScriptUi } from './board/episodeScriptUi'
+import {
+  blankEpisode,
+  episodeHasScript,
+  findEpisode,
+  nextEpisodeNo,
+  planDeleteEpisodeScript,
+} from './board/episodeOps'
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import StudioFrame from './creative/StudioFrame'
+import { postStudioCanvasContext } from './creative/pushStudioCanvasContext'
 import { resolveStudioMount } from './creative/keepalive'
 import { useStudioWarmup } from './creative/useStudioWarmup'
 import { cancelTask, endTask, startTask } from './tasks'
@@ -648,11 +657,13 @@ function Shell() {
   /** 画布两阶段：集目录 → 单集 Flow；不持久化，刷新与左栏进画布回落目录 */
   const [boardPhase, setBoardPhase] = useState<'episodes' | 'canvas'>('episodes')
   const [scriptImportOpen, setScriptImportOpen] = useState(false)
+  const [episodeScriptDetailEpNo, setEpisodeScriptDetailEpNo] = useState<number | null>(null)
   const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
   const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
   const [addEpisodePromptOpen, setAddEpisodePromptOpen] = useState(false)
   /** 清空画布的二次确认：要求手打当前集号 */
   const [clearPromptOpen, setClearPromptOpen] = useState(false)
+  const [deleteEpisodeScriptEpNo, setDeleteEpisodeScriptEpNo] = useState<number | null>(null)
   const [toast, setToast] = useState('')
   const [tool, setTool] = useState<Tool>('none')
   const [guides, setGuides] = useState(true)
@@ -1008,6 +1019,43 @@ function Shell() {
     },
     [readyProject],
   )
+
+  const requestDeleteEpisodeScript = useCallback(
+    (no: number) => {
+      if (!readyProject) {
+        setToast('先在顶栏选择项目')
+        window.setTimeout(() => setToast(''), 2400)
+        return
+      }
+      if (!episodeHasScript(episodes, no)) {
+        setToast(`${formatEpisodeLabel(no)} 没有分集剧本可删`)
+        window.setTimeout(() => setToast(''), 2800)
+        return
+      }
+      setDeleteEpisodeScriptEpNo(no)
+    },
+    [readyProject, episodes],
+  )
+
+  const confirmDeleteEpisodeScript = useCallback(async () => {
+    const no = deleteEpisodeScriptEpNo
+    setDeleteEpisodeScriptEpNo(null)
+    if (!readyProject || no == null) return
+    const plan = planDeleteEpisodeScript(episodes, no)
+    if (!plan.removed) return
+    const shotCount = projectShots.filter((s) => (Number(s.episode) || 1) === no).length
+    try {
+      await patchProject(readyProject, { episodes: plan.episodes })
+      setEpisodes(plan.episodes)
+      setEpVersion((v) => v + 1)
+      const tail = shotCount > 0 ? `，${shotCount} 镜分镜仍保留` : ''
+      setToast(`已删除 ${formatEpisodeLabel(no)} 的分集剧本${tail}`)
+      window.setTimeout(() => setToast(''), 3600)
+    } catch (e) {
+      setToast((e as Error).message || '删除分集剧本失败')
+      window.setTimeout(() => setToast(''), 3600)
+    }
+  }, [deleteEpisodeScriptEpNo, readyProject, episodes, projectShots])
 
   const openScriptImport = useCallback(() => {
     setScriptHintEpNo(nextEpisodeNo(episodes, projectShots))
@@ -1664,6 +1712,78 @@ function Shell() {
       features: entry.features,
     }
   }, [modelPick.video, appSettings])
+
+  /** 无防抖：落库后立即推实况，避免旧 revision 盖住新 DB */
+  const pushStudioCanvasNow = useCallback(() => {
+    if (!projectName || readyProject !== projectName) {
+      void postStudioCanvasContext({
+        name: '',
+        episode: epNo,
+        nodes: [],
+        characters: [],
+        missingMedia: [],
+        videoModel: null,
+        resolution: '',
+        projectRevision: 0,
+      })
+      return
+    }
+    void postStudioCanvasContext({
+      name: projectName,
+      episode: epNo,
+      nodes,
+      characters,
+      missingMedia: [...missingMedia],
+      videoModel: selectedVideoModel,
+      resolution: vidRes,
+      projectRevision: Number(projectSnapRef.current?.revision) || 0,
+    })
+  }, [
+    projectName,
+    readyProject,
+    epNo,
+    nodes,
+    characters,
+    missingMedia,
+    selectedVideoModel,
+    vidRes,
+  ])
+
+  /** 画布实况推给创意宿主：读工具与出片拼装对齐当前节点与模型（防抖） */
+  useEffect(() => {
+    if (!projectName || readyProject !== projectName) {
+      void postStudioCanvasContext({
+        name: '',
+        episode: epNo,
+        nodes: [],
+        characters: [],
+        missingMedia: [],
+        videoModel: null,
+        resolution: '',
+        projectRevision: 0,
+      })
+      return
+    }
+    const timer = window.setTimeout(() => {
+      void postStudioCanvasContext({
+        name: projectName,
+        episode: epNo,
+        nodes,
+        characters,
+        missingMedia: [...missingMedia],
+        videoModel: selectedVideoModel,
+        resolution: vidRes,
+        projectRevision: Number(projectSnapRef.current?.revision) || 0,
+      })
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [projectName, readyProject, epNo, nodes, characters, missingMedia, selectedVideoModel, vidRes])
+
+  const bumpProjectRevision = useCallback((revision: number | undefined) => {
+    if (typeof revision !== 'number' || !Number.isFinite(revision)) return
+    if (projectSnapRef.current) projectSnapRef.current = { ...projectSnapRef.current, revision }
+  }, [])
+
   const reloadSettings = useCallback(() => {
     getSettings()
       .then(async ({ settings }) => {
@@ -2981,12 +3101,17 @@ function Shell() {
       }
       if (changed.length === 0) return
       // 局部写回（不标孤儿）：这里只发本次真正改过的镜，未改的必须原样保留
-      mergeProjectShots(projectName, changed).catch(() => {
-        /* 写回失败不打断画布操作，工作台「重新加载」可看到差异 */
-      })
+      mergeProjectShots(projectName, changed)
+        .then((r) => {
+          bumpProjectRevision(r.revision)
+          pushStudioCanvasNow()
+        })
+        .catch(() => {
+          /* 写回失败不打断画布操作，工作台「重新加载」可看到差异 */
+        })
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [nodes, projectName, readyProject, view])
+  }, [nodes, projectName, readyProject, view, bumpProjectRevision, pushStudioCanvasNow])
 
   const charImages = useMemo(() => {
     const m: Record<string, string> = {}
@@ -4173,6 +4298,7 @@ function Shell() {
             onPick={enterBoardEpisode}
             onAddEpisode={() => void handleAddEpisode()}
             onImportScript={openScriptImport}
+            onViewEpisodeScript={setEpisodeScriptDetailEpNo}
             addBusy={addEpisodeBusy}
             projectTitle={currentSummary.title || projectName}
             refIndex={buildShotRefIndex(characters, nodes)}
@@ -4194,10 +4320,20 @@ function Shell() {
                   >
                     ← 集列表
                   </button>
-                  <span className="wb-bar-title">画布 · 拆镜</span>
-                  <span className="ep-chip" data-board-ep-label>
-                    {formatEpisodeLabel(epNo)}
-                  </span>
+                  <span className="wb-bar-title">画布 · 分镜</span>
+                  <button
+                    type="button"
+                    className="ep-chip ep-chip-script"
+                    data-board-ep-label
+                    data-has-script={episodeScriptUi(episodes, epNo).hasScript ? 'true' : 'false'}
+                    title="查看本集剧本大纲（标题、场次）；分镜仍在画布编辑"
+                    onClick={() => setEpisodeScriptDetailEpNo(epNo)}
+                  >
+                    <span className="ep-chip-no">{formatEpisodeLabel(epNo)}</span>
+                    <span className="ep-chip-script-badge">
+                      剧本 · {episodeScriptUi(episodes, epNo).badge}
+                    </span>
+                  </button>
                 </>
               }
               scopeDetail={
@@ -4673,6 +4809,32 @@ function Shell() {
       </AppShell>
       )}
 
+        {episodeScriptDetailEpNo != null ? (
+          <EpisodeScriptDetailDialog
+            epNo={episodeScriptDetailEpNo}
+            episode={findEpisode(episodes, episodeScriptDetailEpNo)}
+            episodes={episodes}
+            shotCount={
+              projectShots.filter((s) => (Number(s.episode) || 1) === episodeScriptDetailEpNo).length
+            }
+            onClose={() => setEpisodeScriptDetailEpNo(null)}
+            onImportScript={() => {
+              setScriptHintEpNo(episodeScriptDetailEpNo)
+              setScriptImportOpen(true)
+            }}
+            onEnterBoard={() => {
+              const n = episodeScriptDetailEpNo
+              setEpisodeScriptDetailEpNo(null)
+              if (n != null) enterBoardEpisode(n)
+            }}
+            onDeleteEpisodeScript={() => {
+              const n = episodeScriptDetailEpNo
+              setEpisodeScriptDetailEpNo(null)
+              if (n != null) requestDeleteEpisodeScript(n)
+            }}
+          />
+        ) : null}
+
         {scriptImportOpen ? (
           <EpisodeScriptImportDialog
             projectName={readyProject}
@@ -4742,6 +4904,40 @@ function Shell() {
           清空画布不可撤销（服务端只留快照，界面没有恢复入口），
           所以要求手打当前集号：既拦误点，也避免清错集。
         */}
+        <PromptDialog
+          open={deleteEpisodeScriptEpNo != null}
+          title={
+            deleteEpisodeScriptEpNo != null
+              ? `删除 ${formatEpisodeLabel(deleteEpisodeScriptEpNo)} 的分集剧本`
+              : '删除分集剧本'
+          }
+          label={
+            deleteEpisodeScriptEpNo != null
+              ? `输入 ${formatEpisodeLabel(deleteEpisodeScriptEpNo)} 确认`
+              : '确认'
+          }
+          hint={
+            deleteEpisodeScriptEpNo != null
+              ? (() => {
+                  const n = deleteEpisodeScriptEpNo
+                  const cnt = projectShots.filter((s) => (Number(s.episode) || 1) === n).length
+                  return `只移除标题、钩子与场次大纲，不删分镜镜头${
+                    cnt > 0 ? `（本集仍有 ${cnt} 镜）` : ''
+                  }；与「清空画布」不同。`
+                })()
+              : ''
+          }
+          placeholder={deleteEpisodeScriptEpNo != null ? formatEpisodeLabel(deleteEpisodeScriptEpNo) : ''}
+          confirmText="删除剧本"
+          validate={(v) =>
+            deleteEpisodeScriptEpNo != null
+              ? v.trim().toUpperCase() === formatEpisodeLabel(deleteEpisodeScriptEpNo)
+              : false
+          }
+          onCancel={() => setDeleteEpisodeScriptEpNo(null)}
+          onConfirm={() => void confirmDeleteEpisodeScript()}
+        />
+
         <PromptDialog
           open={clearPromptOpen}
           title={`清空 ${formatEpisodeLabel(epNo)} 的分镜`}

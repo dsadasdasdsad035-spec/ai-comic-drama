@@ -39,6 +39,11 @@ import {
   catalogVersion,
   INTERNAL_TOKEN_HEADER as STUDIO_INTERNAL_HEADER,
 } from './studio-tool-bridge.mjs'
+import {
+  clearStudioCanvasContext,
+  getStudioCanvasContext,
+  setStudioCanvasContext,
+} from './studio-canvas-context.mjs'
 
 // 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
 if (!assertNodeVersion()) process.exit(1)
@@ -601,6 +606,7 @@ const server = http.createServer((req, res) => {
           if (!name) {
             // 空串是显式清除：前端离开项目（回大厅或卸载创意视图）时用
             studioProject = ''
+            clearStudioCanvasContext()
             res.end(JSON.stringify({ ok: true, name: studioProject }))
             return
           }
@@ -615,6 +621,45 @@ const server = http.createServer((req, res) => {
           }
           studioProject = name
           res.end(JSON.stringify({ ok: true, name: studioProject }))
+        })
+        .catch((e) => {
+          res.statusCode = 400
+          res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+        })
+      return
+    }
+    res.statusCode = 405
+    res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST' }))
+    return
+  }
+
+  // 画布实况：供创意宿主读工具与出片拼装对齐当前节点与模型选择（浏览器推送）。
+  if (reqPath === '/api/studio/canvas-context') {
+    const decision = authorizeStudioRequest(req)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    if (!decision.ok) {
+      res.statusCode = decision.status || 401
+      res.end(JSON.stringify({ ok: false, message: decision.message || '未通过认证' }))
+      return
+    }
+    if (req.method === 'GET') {
+      const ctx = getStudioCanvasContext()
+      res.end(JSON.stringify({ ok: true, context: ctx }))
+      return
+    }
+    if (req.method === 'POST') {
+      readBody(req)
+        .then((body) => {
+          const result = setStudioCanvasContext(body, {
+            listProjectNames: () => listProjects(resolveRoot(ROOT)).map((row) => row.name),
+          })
+          if (!result.ok) {
+            res.statusCode = result.status || 400
+            res.end(JSON.stringify({ ok: false, message: result.message, name: result.name }))
+            return
+          }
+          res.end(JSON.stringify({ ok: true }))
         })
         .catch((e) => {
           res.statusCode = 400

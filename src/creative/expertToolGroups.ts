@@ -38,7 +38,6 @@ const READ = new Set([
 const SKILL = new Set<string>(SKILL_READ_TOOL_NAMES)
 
 const WRITE = new Set([
-  'validate_contract',
   'submit_episodes',
   'submit_characters',
   'submit_designs',
@@ -119,7 +118,6 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'read_skill_file',
   'list_installed_skills',
   'list_projects',
-  'validate_contract',
   'submit_episodes',
   'submit_characters',
   'submit_designs',

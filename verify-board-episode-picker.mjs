@@ -42,6 +42,18 @@ unit('第二集取 keyframe', c2.kind === 'keyframe' && c2.src === '/c.png', `${
 const list = coverMod.listBoardEpisodes([{ no: 1, title: '一' }, { no: 2, title: '二' }], shots)
 unit('listBoardEpisodes 集数', list.length === 2 && list[0].shotCount === 2 && list[1].shotCount === 1)
 unit('nextEpisodeNo', epOps.nextEpisodeNo([{ no: 1 }, { no: 2 }], shots) === 3)
+unit(
+  'planDeleteEpisodeScript',
+  epOps.planDeleteEpisodeScript(
+    [{ no: 1, title: '一', scenes: [] }, { no: 2, title: '二', scenes: [] }],
+    1,
+  ).removed && epOps.planDeleteEpisodeScript([{ no: 2 }], 1).episodes.length === 1,
+)
+unit('episodeHasScript', epOps.episodeHasScript([{ no: 2 }], 2) && !epOps.episodeHasScript([{ no: 2 }], 1))
+unit(
+  'findEpisode',
+  epOps.findEpisode([{ no: 1, title: '一' }], 1)?.title === '一' && epOps.findEpisode([{ no: 1 }], 2) === null,
+)
 const planned = scriptPlan.planScriptImport([{ no: 1, title: '旧', scenes: [] }], [
   { no: 2, title: '新', scenes: [{ slug: 'a', place: 'p', time: 't', beats: 'b' }] },
 ])
@@ -81,8 +93,13 @@ try {
   await page.locator('[data-board-ep="1"]').click()
   await page.locator('[data-board-phase="canvas"]').waitFor({ timeout: 20000 })
   await page.locator('.react-flow').waitFor({ timeout: 20000 })
-  const label = await page.locator('[data-board-ep-label]').innerText()
-  unit('点卡进入单集画布', label.trim() === 'E01', label)
+  const readEpLabel = () =>
+    page.locator('[data-board-ep-label]').evaluate((el) => {
+      const no = el.querySelector('.ep-chip-no')
+      return (no?.textContent ?? el.textContent ?? '').trim().split(/\s/)[0]
+    })
+  const label = await readEpLabel()
+  unit('点卡进入单集画布', label === 'E01', label)
   unit('单集仍无顶栏集下拉', (await page.locator('.epbar-trigger').count()) === 0)
 
   await page.locator('.board-ep-back').click()
@@ -96,8 +113,8 @@ try {
   await page.locator('[data-ov-ep="2"]').click()
   await page.locator('[data-board-phase="canvas"]').waitFor({ timeout: 20000 })
   await page.locator('.react-flow').waitFor({ timeout: 20000 })
-  const label2 = await page.locator('[data-board-ep-label]').innerText()
-  unit('概览点集直达 E02', label2.trim() === 'E02', label2)
+  const label2 = await readEpLabel()
+  unit('概览点集直达 E02', label2 === 'E02', label2)
 
   const boardBtn = page.locator('nav.viewtabs button[aria-label="画布"]')
   if ((await boardBtn.count()) > 0) {

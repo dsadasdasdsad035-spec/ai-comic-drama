@@ -143,7 +143,7 @@ export default function EpisodeScriptImportDialog({
       >
         <header className="mp-head">
           <div>
-            <b id="script-intake-title">导入{INTAKE_LABEL.script}</b>
+            <b id="script-intake-title">导入剧本大纲</b>
             <span>
               项目 {projectName}
               {hintEpNo ? ` · 建议集号 E${String(hintEpNo).padStart(2, '0')}` : ''}

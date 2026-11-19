@@ -17061,7 +17061,7 @@ button.crumb:hover {
   }
 }
 
-/* 画布集目录 */
+/* 画布集目录：剧本大纲 / 分镜 两层 */
 .board-ep-stage .board-list-strip {
   margin-bottom: 12px;
 }
@@ -17076,73 +17076,134 @@ button.crumb:hover {
 .board-ep-head-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 14px 20px;
+  gap: 16px 24px;
+  margin-bottom: 8px;
 }
 
-.board-ep-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.board-ep-head h1 {
+.board-ep-head-copy h1 {
   margin: 0 0 6px;
   font-size: var(--fs-lg);
   font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
-.board-ep-head p,
+.board-ep-head-copy p,
 .board-ep-empty {
-  margin: 0 0 18px;
+  margin: 0 0 16px;
+  max-width: 52ch;
   color: var(--muted);
   font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.board-ep-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-end;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--bg-1);
+}
+
+.board-ep-toolgroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.board-ep-toolgroup:not(:last-child) {
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+}
+
+.board-ep-toollabel {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  min-width: 2.5em;
+}
+
+.board-ep-zero {
+  margin-top: 24px;
+  padding: 28px 24px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-lg);
+  text-align: center;
+  background: color-mix(in srgb, var(--bg-2) 60%, transparent);
+}
+
+.board-ep-zero-lead {
+  margin: 0 0 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.board-ep-zero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 16px;
 }
 
 .board-ep-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 16px;
 }
 
 @media (max-width: 520px) {
   .board-ep-grid {
     grid-template-columns: 1fr;
   }
-}
 
-@media (min-width: 521px) and (max-width: 960px) {
-  .board-ep-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .board-ep-toolgroup:not(:last-child) {
+    border-right: none;
+    padding-right: 0;
+    width: 100%;
   }
 }
 
 .board-ep-card {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 0;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--bg-2);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
   overflow: hidden;
   transition:
     border-color var(--dur-fast) var(--ease),
-    box-shadow var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease);
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .board-ep-card:hover {
   border-color: var(--accent-line);
   box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
+}
+
+.board-ep-enter {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-ep-enter:hover .board-ep-title {
+  color: var(--accent, var(--text));
 }
 
 .board-ep-cover-wrap {
@@ -17151,6 +17212,90 @@ button.crumb:hover {
   background: var(--bg-3);
   position: relative;
   overflow: hidden;
+}
+
+.board-ep-cover-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.board-ep-body {
+  padding: 10px 12px 8px;
+}
+
+.board-ep-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-ep-sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-ep-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-1) 55%, var(--bg-2));
+}
+
+.board-ep-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.board-ep-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  font-family: var(--font-mono);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.board-ep-pill-script.ok {
+  border-color: color-mix(in srgb, var(--accent-line, var(--line)) 65%, var(--line));
+}
+
+.board-ep-pill-script.miss {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.board-ep-pill-shots {
+  color: var(--muted);
+}
+
+.board-ep-foot-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.board-ep-btn-script,
+.board-ep-btn-board {
+  width: 100%;
+  justify-content: center;
 }
 
 .board-ep-cover-img,
@@ -17168,37 +17313,273 @@ button.crumb:hover {
   place-items: center;
   color: var(--muted);
   font-size: var(--fs-2xs);
-  background: linear-gradient(135deg, var(--bg-3), var(--bg-1));
-}
-
-.board-ep-no {
-  padding: 10px 12px 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-}
-
-.board-ep-title {
-  padding: 0 12px;
-  font-size: var(--fs-sm);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.board-ep-meta {
-  padding: 0 12px 12px;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  font-variant-numeric: tabular-nums;
+  background: linear-gradient(145deg, var(--bg-3), var(--bg-1));
 }
 
 .board-ep-back {
   flex-shrink: 0;
   margin-right: 4px;
   font-size: var(--fs-sm);
+}
+
+/* 画布顶栏：集号 + 剧本状态 */
+.ep-chip-script {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 10px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  line-height: 1.2;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.ep-chip-script:hover {
+  border-color: var(--accent-line);
+  background: var(--bg-1);
+}
+
+.ep-chip-script[data-has-script='false'] {
+  border-style: dashed;
+}
+
+.ep-chip-no {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+}
+
+.ep-chip-script-badge {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+/* 分集剧本详情 */
+.ep-script-backdrop {
+  backdrop-filter: blur(4px);
+}
+
+.ep-script-detail {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.ep-script-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 18px 12px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 90%, var(--bg-1)), var(--bg-2));
+}
+
+.ep-script-head .mp-close {
+  flex-shrink: 0;
+}
+
+.ep-script-kicker {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ep-script-hero-title {
+  margin: 0 0 10px;
+  font-size: clamp(1.05rem, 2.5vw, 1.35rem);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.ep-script-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ep-script-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--fs-2xs);
+  font-family: var(--font-mono);
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.ep-script-chip.warn {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.ep-script-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 18px 18px;
+}
+
+.ep-script-hook {
+  margin: 0 0 16px;
+  padding: 10px 12px 10px 14px;
+  border-left: 3px solid var(--accent-line, var(--line));
+  background: color-mix(in srgb, var(--bg-1) 70%, var(--bg-2));
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.ep-script-hook-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ep-script-empty {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.ep-script-empty-state {
+  padding: 8px 0 4px;
+}
+
+.ep-script-empty-lead {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+
+.ep-script-empty-copy,
+.ep-script-empty-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+}
+
+.ep-script-timeline {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.ep-script-timeline-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  padding-bottom: 14px;
+  position: relative;
+}
+
+.ep-script-timeline-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+.ep-script-timeline-marker {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-line, var(--line));
+  background: var(--bg-2);
+}
+
+.ep-script-scene {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  background: var(--bg-1);
+}
+
+.ep-script-scene-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ep-script-scene-no {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+}
+
+.ep-script-scene-slug {
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+}
+
+.ep-script-line {
+  margin: 0 0 6px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.ep-script-muted {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.ep-script-beats {
+  margin: 8px 0 0;
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.ep-script-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.ep-script-foot-start,
+.ep-script-foot-end {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn-ghost.danger {
+  color: var(--danger);
+}
+
+.btn-ghost.danger:hover:not(:disabled) {
+  background: var(--danger-dim);
 }
 
 /* =================================================================

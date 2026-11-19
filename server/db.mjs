@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS projects (
   aspect     TEXT DEFAULT '16:9',
   source     TEXT DEFAULT '',
   logline    TEXT DEFAULT '',
+  revision   INTEGER DEFAULT 0,
   created_at TEXT,
   updated_at TEXT
 );
@@ -1555,6 +1556,7 @@ function assemble(p) {
     .prepare('SELECT node_key, x, y FROM canvas_layouts WHERE project_id = ? ORDER BY node_key')
     .all(pid)
     .map((row) => ({ key: row.node_key, x: Number(row.x), y: Number(row.y) }))
+  const rev = Number(p.revision)
   return {
     schema: 1,
     name: p.title || p.name,
@@ -1562,6 +1564,7 @@ function assemble(p) {
     aspect: p.aspect,
     source: p.source,
     logline: p.logline,
+    revision: Number.isFinite(rev) && rev >= 0 ? Math.floor(rev) : 0,
     created_at: p.created_at,
     updated_at: p.updated_at,
     characters,
@@ -1829,8 +1832,11 @@ export function writeProject(root, name, data = {}) {
   }
 
   const p = readProjectRow(db, n)
-  db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now, pid)
-  return assemble({ ...p, updated_at: now })
+  const prevRev = Number(cur.revision)
+  const baseRev = Number.isFinite(prevRev) && prevRev >= 0 ? Math.floor(prevRev) : 0
+  const nextRev = baseRev + 1
+  db.prepare('UPDATE projects SET updated_at = ?, revision = ? WHERE id = ?').run(now, nextRev, pid)
+  return assemble({ ...p, updated_at: now, revision: nextRev })
 }
 
 /** 新建项目。已存在则报错（不覆盖） */

@@ -4,7 +4,7 @@
     {
       "id": "storyboard-platform",
       "name": "分镜平台能力",
-      "description": "内置：read_* / submit_* / validate_contract。Pi 创意聊天默认绑定；此处仅作已安装记录，无需 URL。",
+      "description": "内置：read_* / submit_*（写回含契约校验）。Pi 创意聊天默认绑定；此处仅作已安装记录，无需 URL。",
       "category": "platform",
       "tags": ["builtin", "submit", "read"],
       "url": "",

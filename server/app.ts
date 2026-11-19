@@ -4706,6 +4706,7 @@ export function createAppHandler({ root }: { root: string }) {
                   ok: true,
                   shots: saved.shots ?? [],
                   characters: saved.characters ?? [],
+                  revision: Number(saved.revision) || 0,
                   ...(removedShots ? { removedShots } : {}),
                   savedAt: saved.updated_at,
                 }),
@@ -4715,7 +4716,14 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (req.method === 'PUT') {
               const saved = writeProject(rootDir, name, body.project || body)
-              res.end(JSON.stringify({ ok: true, savedAt: saved.updated_at, shots: saved.shots?.length ?? 0 }))
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  savedAt: saved.updated_at,
+                  shots: saved.shots?.length ?? 0,
+                  revision: Number(saved.revision) || 0,
+                }),
+              )
               return
             }
 

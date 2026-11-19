@@ -309,7 +309,7 @@ check('契约校验：合法镜头表', () => {
   assert.equal(r.ok, true)
 })
 
-check('契约校验：镜头表含提示词列', () => {
+check('契约校验：shots-v1 不得含提示词列', () => {
   const r = validateContract('shots-v1', {
     shots: [
       {
@@ -325,7 +325,7 @@ check('契约校验：镜头表含提示词列', () => {
       },
     ],
   })
-  assert.equal(r.ok, true)
+  assert.equal(r.ok, false, '提示词须走 prompts-v1')
 })
 
 check('契约校验：合法提示词', () => {
@@ -344,6 +344,7 @@ check('分镜写回提示带分批参数与下一步', () => {
   const hint = contractWriteHint('shots-v1')
   assert.match(hint, /cursor/)
   assert.match(hint, /limit/)
+  assert.match(hint, /submit_prompts/)
   assert.match(hint, /未提交的条目不会被删除|按业务键合并/)
 })
 

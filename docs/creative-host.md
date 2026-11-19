@@ -574,6 +574,8 @@ preset——专家只在空白会话里可切换。
 - `list_installed_skills` **不再**强制注入，必须在「工具 → 技能」组里勾选才进可见集；
 - `read_skill*` 同样只按 `toolIds` 进入，且执行时还要过技能 id 白名单。
 
+细粒度读工具（`read_characters`、`read_designs`、`read_shots` 等）在创意会话里读**当前项目的已保存快照**；适配器没有提供活草稿（`ownDraft` 非数组）时必须回退快照，不能把「无草稿」当成「数据为空」。工作台技能会话若真有草稿数组则仍优先草稿（含空数组）。
+
 技能列举与读取（专家 preset 会话）：
 
 - DSH 侧：`dsh-skill-filesystem` 只挂 `dsh/experts/<id>/skills`（`includeDefaultRoots: false`），不扫全局内置根；
@@ -603,6 +605,19 @@ preset——专家只在空白会话里可切换。
 返回 `{ current, projects[] }`（目录名、标题、画风、画幅、集数、镜头数、更新时间），
 模型据此先问「你有 A、B、C，要读哪个」，而不是把「请先选项目」原样转述给用户。
 平台工具的无项目报错文案也统一附带 `；可用 list_projects 查看已有项目`。
+
+### 画布实况（读工具与出片拼装）
+
+浏览器在画布上（`App.tsx`，约 400ms 防抖，落库后另有一次**无防抖**推送）向
+`POST /api/studio/canvas-context` 推送当前项目的节点、角色、坏链集合、出片模型与分辨率，
+并携带与 `GET /api/project` 一致的 **`projectRevision`**（每次写项目 +1）。服务端为每次
+成功 POST 分配单调 **`canvasRevision`**。读工具仅在实况 `projectRevision` 与本次落库加载
+得到的 revision **相等**时，才用画布节点覆盖镜头 / 素材 / 角色字段；否则只返回落库数据，
+避免专家写回后旧实况盖住新 DB。
+
+服务端按**单槽位**保存实况，与 `studioProject` 同名时工具桥才注入 `getCanvasContext`；
+未推送时仍从项目快照重建节点。创意读路径**每次** `read_*` 重新 `GET` 项目，不在读工具之间
+复用内存快照。
 
 ### 技能根为什么用软链
 

@@ -21,6 +21,7 @@ import {
   SKILL_READ_TOOLS,
 } from './dsh-experts.mjs'
 import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
+import { canvasContextForProject } from './studio-canvas-context.mjs'
 
 const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
@@ -83,6 +84,28 @@ export class StudioToolBridge {
     this.catalogBuilds = 0
     /** 当前 invoke 的专家技能白名单（供 stageTools 闭包读取） */
     this.invokeExpertAllowlist = null
+    /** 读工具快照重置：跨 invoke 前清空，避免进程级工具表钉死旧项目 */
+    this.resetReadSnapshot = null
+  }
+
+  canvasHooks(projectName) {
+    const want = String(projectName || '').trim()
+    if (!want) return {}
+    return {
+      getCanvasContext: () => {
+        const ctx = canvasContextForProject(want)
+        if (!ctx) return undefined
+        return {
+          nodes: ctx.nodes,
+          characters: ctx.characters,
+          missingMedia: new Set(ctx.missingMedia || []),
+          projectRevision: Number(ctx.projectRevision) || 0,
+          canvasRevision: Number(ctx.canvasRevision) || 0,
+        }
+      },
+      getSelectedVideoModel: () => canvasContextForProject(want)?.videoModel ?? null,
+      getVideoResolution: () => String(canvasContextForProject(want)?.resolution || ''),
+    }
   }
 
   /** 当前调用上下文（会话令牌随每次调用更新，供垫片使用） */
@@ -123,7 +146,10 @@ export class StudioToolBridge {
       epNo: epNo || 1,
       onProjectDataChanged: () => {},
       expertAllowlist: () => this.invokeExpertAllowlist,
+      ...this.canvasHooks(projectName),
     })
+    this.resetReadSnapshot =
+      typeof platform.resetReadSnapshot === 'function' ? platform.resetReadSnapshot : null
     const pi = [
       ...this.module.createPiNativeToolSet({ expertAllowlist: () => this.invokeExpertAllowlist }).byName.values(),
     ]
@@ -159,6 +185,7 @@ export class StudioToolBridge {
    */
   async invoke(name, args, { projectName, epNo, sessionToken, expertId } = {}) {
     const tools = await this.ensureLoaded(projectName, epNo)
+    if (typeof this.resetReadSnapshot === 'function') this.resetReadSnapshot()
     const tool = tools.get(name)
     if (!tool) {
       return { ok: false, error: `没有名为「${name}」的工具` }

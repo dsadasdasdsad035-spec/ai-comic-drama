@@ -144,8 +144,14 @@ async function main() {
     assert.deepEqual(s.transition_out, { kind: 'dissolve' })
     assert.equal(s.prod_kind, 'video')
     assert.equal(s.motion_note, '横移跟拍')
-    assert.deepEqual(s.video_prompt_override, { text: '新手改', fingerprint: 'fp-new', createdAt: 't2' })
-    assert.equal(s.video_prompt_rendered, '新渲染正文')
+  })
+
+  await check('agent 策略不得经 submit_shots 改写提示词字段', () => {
+    const s = run('agent')
+    const old = OLD as unknown as Record<string, unknown>
+    for (const k of ['keyframe_prompt', 'video_prompt', 'video_prompt_override', 'video_prompt_rendered']) {
+      assert.deepEqual(s[k], old[k], `agent 不应写 ${k}`)
+    }
   })
 
   await check('agent 策略禁写产线产物：载荷里给了也不许改', () => {
@@ -176,16 +182,25 @@ async function main() {
     assert.deepEqual(s.handEdited, ['seconds'])
   })
 
-  await check('策略表是唯一真相：agent = import + 扩展，且不含任何产物字段', () => {
+  await check('策略表是唯一真相：agent = import（无提示词）+ 扩展（无提示词），且不含任何产物字段', () => {
     const pipeline = new Set<string>(SHOT_PIPELINE_FIELDS)
+    const promptOnly = new Set(['keyframe_prompt', 'video_prompt', 'video_prompt_override', 'video_prompt_rendered'])
     for (const k of SHOT_FIELD_POLICY.agent) {
       assert.ok(!pipeline.has(String(k)), `agent 策略不该包含产线字段 ${String(k)}`)
+      assert.ok(!promptOnly.has(String(k)), `agent 策略不该包含提示词字段 ${String(k)}`)
     }
     for (const k of SHOT_IMPORT_FIELDS) {
+      if (promptOnly.has(String(k))) continue
       assert.ok(SHOT_FIELD_POLICY.agent.includes(k), `agent 策略应包含 import 字段 ${String(k)}`)
       assert.ok(!pipeline.has(String(k)), `import 策略不该包含产线字段 ${String(k)}`)
     }
-    assert.equal(SHOT_FIELD_POLICY.agent.length, SHOT_IMPORT_FIELDS.length + SHOT_AGENT_EXTRA_FIELDS.length)
+    const agentPromptSkipped =
+      SHOT_IMPORT_FIELDS.filter((k) => promptOnly.has(String(k))).length +
+      SHOT_AGENT_EXTRA_FIELDS.filter((k) => promptOnly.has(String(k))).length
+    assert.equal(
+      SHOT_FIELD_POLICY.agent.length,
+      SHOT_IMPORT_FIELDS.length + SHOT_AGENT_EXTRA_FIELDS.length - agentPromptSkipped,
+    )
   })
 
   await check('不同集的镜头不受影响', () => {

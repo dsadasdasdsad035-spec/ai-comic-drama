@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import type { ProjectAsset, ProjectData, ProjectShot, Stage } from '../api'
 import type { CharacterSheet } from '../characters'
-import { readCharacters } from '../charMap'
+import { readCharacters, toProject } from '../charMap'
 import { assetNodesFromAssets, composeShotCanvasNodes } from '../canvasShots'
+import { nodeToShot } from '../shotSync'
 import type { ShotNodeType } from '../data'
 import { buildShotVideoRequest, type VideoModelInput } from '../videoPrompt'
 import { buildTransitionVideoPreview, transitionNativeAudioReadiness, transitionRefCandidateView } from '../transitionGen'
@@ -56,6 +57,8 @@ export type StageToolSet = {
   read: Map<string, ToolDef>
   submit?: ToolDef
   byName: Map<string, ToolDef>
+  /** 跨工具调用前清空，避免宿主桥复用工具表时读到陈旧项目快照 */
+  resetSnapshot?: () => void
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -176,7 +179,7 @@ export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideo
     text: null,
     source: 'blocked',
     stale: false,
-    note: '该镜没有出片正文：画布会阻断出片。下一步：用 submit_prompts / submit_shots 写入 video_prompt，或让用户在「运动提示词」里填写',
+    note: '该镜没有出片正文：画布会阻断出片。下一步：用 submit_prompts 写入 video_prompt，或让用户在「运动提示词」里填写',
   }
 }
 
@@ -259,6 +262,88 @@ const MATERIAL_ROW_LIMIT = 200
  * 读工具据此把 Agent 手里的 token 反查成素材卡记录。
  */
 const ASSET_TOKEN_PREFIX = 'asset-'
+
+type LiveReadContext = ReturnType<NonNullable<WorkbenchChatAdapter['shotVideoContext']>>
+
+function projectRevisionOf(p: ProjectData): number {
+  const n = Number(p.revision)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0
+}
+
+/** 实况 projectRevision 与落库一致才允许 overlay（避免旧画布盖住新 DB） */
+function canvasShotOverlayAllowed(live: LiveReadContext | undefined, project: ProjectData): boolean {
+  if (!live?.nodes?.length) return false
+  if (live.projectRevision === undefined || live.projectRevision === null) return false
+  return Number(live.projectRevision) === projectRevisionOf(project)
+}
+
+function isAssetCanvasNode(n: ShotNodeType): boolean {
+  return (n as { type?: string }).type === 'asset'
+}
+
+function mergeAssetMaterialRows(project: ProjectData, nodes: ShotNodeType[]): MaterialRow[] {
+  const rows = materialRowsOf(project, 'assets')
+  const byUrl = new Map(rows.map((r) => [r.key, { ...r }]))
+  const byCanvasId = new Map<string, MaterialRow>()
+  for (const r of rows) {
+    if (r.canvasId) byCanvasId.set(r.canvasId, r)
+  }
+  for (const n of nodes) {
+    if (!isAssetCanvasNode(n)) continue
+    const d = (n.data || {}) as Record<string, unknown>
+    const nodeId = String(n.id || '')
+    const canvasId = nodeId.startsWith(ASSET_TOKEN_PREFIX) ? nodeId.slice(ASSET_TOKEN_PREFIX.length) : nodeId
+    const url = String(d.url || '').trim() || (canvasId ? `canvas:${canvasId}` : '')
+    if (!url) continue
+    const prev = byUrl.get(url) ?? (canvasId ? byCanvasId.get(canvasId) : undefined)
+    const merged: MaterialRow = {
+      category: 'assets',
+      key: url,
+      title: String(d.title || prev?.title || url),
+      kind: String(d.kind || prev?.kind || 'image'),
+      url,
+      ...(canvasId ? { canvasId } : {}),
+      ...(d.designId
+        ? { designId: String(d.designId) }
+        : prev?.designId
+          ? { designId: prev.designId }
+          : {}),
+      ...(d.characterName
+        ? { characterName: String(d.characterName) }
+        : prev?.characterName
+          ? { characterName: prev.characterName }
+          : {}),
+    }
+    byUrl.set(url, merged)
+    if (canvasId) byCanvasId.set(canvasId, merged)
+  }
+  return [...byUrl.values()]
+}
+
+function mergeCharactersFromCanvas(project: ProjectData, live: LiveReadContext | undefined): unknown[] {
+  const base = Array.isArray(project.characters) ? project.characters.map((c) => ({ ...asRecord(c) })) : []
+  const liveChars = live?.characters
+  if (!liveChars?.length) return base
+  const byName = new Map<string, Record<string, unknown>>()
+  for (const raw of base) {
+    const name = String(raw.name || '').trim()
+    if (name) byName.set(name, raw)
+  }
+  for (const sheet of liveChars) {
+    const mapped = toProject(sheet as CharacterSheet)
+    const name = String(mapped.name || '').trim()
+    if (!name) continue
+    const prev = byName.get(name) || {}
+    byName.set(name, { ...prev, ...mapped })
+  }
+  return [...byName.values()]
+}
+
+function assetMaterialRows(project: ProjectData, adapter: WorkbenchChatAdapter): MaterialRow[] {
+  const live = adapter.shotVideoContext?.()
+  if (!canvasShotOverlayAllowed(live, project)) return materialRowsOf(project, 'assets')
+  return mergeAssetMaterialRows(project, live!.nodes!)
+}
 
 /**
  * 读工具的字符预算，按「装整条」生效（见 readBudget.ts）。
@@ -368,9 +453,26 @@ function materialRowsOf(project: ProjectData, category: MaterialCategory): Mater
  * 工具集只通过 adapter 取数/写草稿：
  * 自己的产物读活草稿，上游产物读已保存项目；提交只产生草稿，合并交给宿主。
  */
-export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet {
+export function createStageToolSet(
+  adapter: WorkbenchChatAdapter,
+  options?: { freshReads?: boolean },
+): StageToolSet {
   let snapshotPromise: Promise<ProjectData> | null = null
-  const snapshot = () => (snapshotPromise ??= adapter.projectSnapshot())
+  const snapshot = () =>
+    options?.freshReads ? adapter.projectSnapshot() : (snapshotPromise ??= adapter.projectSnapshot())
+
+  /** 有活草稿用数组（含空数组）；非数组则读已保存项目，避免创意等平台 adapter 未填草稿时误返回 [] */
+  const listForArtifact = async (
+    ownArtifact: boolean,
+    pickFromProject: (p: ProjectData) => unknown[],
+  ): Promise<unknown[]> => {
+    if (ownArtifact) {
+      const own = adapter.ownDraft()
+      if (Array.isArray(own)) return own
+    }
+    const p = await snapshot()
+    return pickFromProject(p)
+  }
 
   const scriptData = async (): Promise<{
     title: string
@@ -392,31 +494,42 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
   }
 
   const charactersData = async (): Promise<unknown[]> => {
-    if (adapter.artifact === 'characters') {
-      const own = adapter.ownDraft()
-      return Array.isArray(own) ? own : []
-    }
     const p = await snapshot()
-    // 透传原始形状：这些数据原样回给模型，不需要转成界面模型
-    return Array.isArray(p.characters) ? p.characters : []
+    const base = await listForArtifact(adapter.artifact === 'characters', (proj) =>
+      Array.isArray(proj.characters) ? proj.characters : [],
+    )
+    const live = adapter.shotVideoContext?.()
+    if (!canvasShotOverlayAllowed(live, p)) return base
+    return mergeCharactersFromCanvas(p, live)
   }
 
-  const designsData = async (): Promise<unknown[]> => {
-    if (adapter.artifact === 'designs') {
-      const own = adapter.ownDraft()
-      return Array.isArray(own) ? own : []
-    }
-    const p = await snapshot()
-    return Array.isArray(p.designs) ? p.designs : []
-  }
+  const designsData = async (): Promise<unknown[]> =>
+    listForArtifact(adapter.artifact === 'designs', (p) =>
+      Array.isArray(p.designs) ? p.designs : [],
+    )
 
   const shotsData = async (): Promise<Array<Record<string, unknown>>> => {
-    if (adapter.artifact === 'shots' || adapter.artifact === 'prompts') {
-      const own = adapter.ownDraft()
-      return Array.isArray(own) ? (own as Array<Record<string, unknown>>) : []
-    }
     const p = await snapshot()
-    return Array.isArray(p.shots) ? (p.shots as Array<Record<string, unknown>>) : []
+    const base = (await listForArtifact(adapter.artifact === 'shots' || adapter.artifact === 'prompts', (proj) =>
+      Array.isArray(proj.shots) ? proj.shots : [],
+    )) as Array<Record<string, unknown>>
+    const live = adapter.shotVideoContext?.()
+    const nodes = live?.nodes
+    if (!nodes?.length || !canvasShotOverlayAllowed(live, p)) return base
+    const byId = new Map<string, Record<string, unknown>>()
+    for (const row of base) {
+      const id = String(row.id ?? '')
+      if (id) byId.set(id, row)
+    }
+    for (const n of nodes) {
+      const data = n.data
+      const shotId = data?.shotId ? String(data.shotId) : ''
+      if (!shotId) continue
+      const fromCanvas = nodeToShot(data, shotId) as unknown as Record<string, unknown>
+      const prev = byId.get(shotId)
+      byId.set(shotId, prev ? { ...prev, ...fromCanvas } : fromCanvas)
+    }
+    return [...byId.values()]
   }
 
   const readSource = defineTool({
@@ -468,7 +581,12 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       names: z.array(z.string()).max(50).optional().describe('只读这些角色名'),
     }),
     run: async ({ names }) => {
-      const list = await charactersData()
+      let list: unknown[]
+      try {
+        list = await charactersData()
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || '读取项目失败' }
+      }
       const filtered = names?.length
         ? list.filter((x) => names.includes(String(asRecord(x).name || '')))
         : list
@@ -491,7 +609,12 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
       names: z.array(z.string()).max(50).optional().describe('只读这些名称'),
     }),
     run: async ({ kind, names }) => {
-      const list = await designsData()
+      let list: unknown[]
+      try {
+        list = await designsData()
+      } catch (e) {
+        return { ok: false, error: (e as Error).message || '读取项目失败' }
+      }
       const filtered = list.filter((x) => {
         const o = asRecord(x)
         if (kind && o.kind !== kind) return false
@@ -1016,7 +1139,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         return { ok: false, error: (e as Error).message || '读取项目失败' }
       }
 
-      const assetRows = materialRowsOf(project, 'assets')
+      const assetRows = assetMaterialRows(project, adapter)
       const assetsByKind: Record<string, number> = {}
       for (const row of assetRows) {
         const k = row.kind || 'image'
@@ -1052,7 +1175,7 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         }
       }
 
-      let rows = materialRowsOf(project, category)
+      let rows = category === 'assets' ? assetMaterialRows(project, adapter) : materialRowsOf(project, category)
       if (category === 'assets' && kind) {
         const want = String(kind).trim()
         rows = rows.filter((r) => r.kind === want)
@@ -1102,7 +1225,8 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         return { ok: false, error: (e as Error).message || '读取项目失败' }
       }
       const wanted = String(key).trim()
-      const rows = materialRowsOf(project, category)
+      const rows =
+        category === 'assets' ? assetMaterialRows(project, adapter) : materialRowsOf(project, category)
       // 素材卡有三种等价写法：inventory 的 key（url）、裸 canvasId、`asset-<canvasId>`
       const wantedCanvasId =
         category === 'assets' ? (wanted.startsWith(ASSET_TOKEN_PREFIX) ? wanted.slice(ASSET_TOKEN_PREFIX.length) : wanted) : ''
@@ -1154,8 +1278,30 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
           const cid = String(o.canvasId || '').trim()
           return Boolean(cid) && (cid === wanted || cid === wantedCanvasId)
         })
-        if (!hit) return { ok: false, error: `素材卡「${wanted}」读取失败` }
-        return { ok: true, category, key: wanted, ...singleRecord(hit) }
+        const row = rows.find(
+          (r) =>
+            r.key === wanted ||
+            Boolean(r.canvasId) &&
+              (r.canvasId === wanted || r.canvasId === wantedCanvasId || r.key === wanted),
+        )
+        if (hit) return { ok: true, category, key: wanted, ...singleRecord(hit) }
+        if (row) {
+          return {
+            ok: true,
+            category,
+            key: row.key,
+            record: {
+              title: row.title,
+              kind: row.kind,
+              url: row.url ?? row.key,
+              ...(row.canvasId ? { canvasId: row.canvasId } : {}),
+              ...(row.characterName ? { characterName: row.characterName } : {}),
+              ...(row.designId ? { designId: row.designId } : {}),
+            },
+            note: '该素材卡可能尚未落库，字段来自画布实况',
+          }
+        }
+        return { ok: false, error: `素材卡「${wanted}」读取失败` }
       }
 
       // whitebox：代码必须显式请求
@@ -1391,7 +1537,14 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
     byName.set(readBundle.name, readBundle)
   }
 
-  return { read: readByName, submit, byName }
+  return {
+    read: readByName,
+    submit,
+    byName,
+    resetSnapshot: () => {
+      snapshotPromise = null
+    },
+  }
 }
 
 /**

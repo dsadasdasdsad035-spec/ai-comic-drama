@@ -53,7 +53,6 @@ export const KNOWN_TOOL_IDS = new Set([
   'list_installed_skills',
   'list_experts',
   'list_projects',
-  'validate_contract',
   // 项目与分镜管理（需用户确认）：新建项目、改项目设定、删分镜
   'create_project',
   'update_project_meta',

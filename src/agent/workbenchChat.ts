@@ -305,6 +305,8 @@ export type WorkbenchChatAdapter = {
     nodes?: import('../data').ShotNodeType[]
     characters?: import('../characters').CharacterSheet[]
     missingMedia?: Set<string>
+    projectRevision?: number
+    canvasRevision?: number
     model?: import('../videoPrompt').VideoModelInput | null
     resolution?: string
   }

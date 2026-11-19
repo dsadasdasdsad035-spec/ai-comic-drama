@@ -172,34 +172,55 @@ const joinsV1 = passthrough({
   joins: z.array(joinItemV1).min(1),
 })
 
+/** shots-v1 只承载分镜结构；提示词走 prompts-v1（passthrough 单靠删字段拦不住，须显式拒绝） */
+const SHOTS_V1_FORBIDDEN_PROMPT_KEYS = [
+  'keyframe_prompt',
+  'video_prompt',
+  'video_prompt_override',
+  'video_prompt_rendered',
+] as const
+
+function forbidShotPromptKeys<T extends z.ZodObject<z.ZodRawShape>>(rowSchema: T) {
+  return rowSchema.superRefine((row, ctx) => {
+    const o = row as Record<string, unknown>
+    for (const k of SHOTS_V1_FORBIDDEN_PROMPT_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${k} 须用 submit_prompts（prompts-v1）或专用写工具，不得出现在 submit_shots`,
+          path: [k],
+        })
+      }
+    }
+  })
+}
+
+const shotRowV1 = forbidShotPromptKeys(
+  passthrough({
+    no: noLike,
+    // 必填的理由同 script-v1：缺这些字段的镜头不可生产，宽松 schema 会让模型只回镜号。
+    scene_no: z.union([z.number(), z.string()]),
+    scene_slug: z.string(),
+    seconds: z.number(),
+    size: z.string(),
+    move: z.string(),
+    desc: z.string(),
+    dialogue: z
+      .array(
+        passthrough({
+          speaker: z.string().optional(),
+          text: z.string().optional(),
+          ...dialogueDelivery.shape,
+        }),
+      )
+      .optional(),
+    performance: z.array(performanceEntry).optional(),
+    cast: z.array(z.string()).optional(),
+  }),
+)
+
 const shotsV1 = passthrough({
-  shots: z
-    .array(
-      passthrough({
-        no: noLike,
-        // 必填的理由同 script-v1：缺这些字段的镜头不可生产，宽松 schema 会让模型只回镜号。
-        scene_no: z.union([z.number(), z.string()]),
-        scene_slug: z.string(),
-        seconds: z.number(),
-        size: z.string(),
-        move: z.string(),
-        desc: z.string(),
-        dialogue: z
-          .array(
-            passthrough({
-              speaker: z.string().optional(),
-              text: z.string().optional(),
-              ...dialogueDelivery.shape,
-            }),
-          )
-          .optional(),
-        performance: z.array(performanceEntry).optional(),
-        cast: z.array(z.string()).optional(),
-        keyframe_prompt: z.string().min(1).optional(),
-        video_prompt: z.string().min(1).optional(),
-      }),
-    )
-    .min(1),
+  shots: z.array(shotRowV1).min(1),
 })
 
 const promptsV1 = passthrough({
@@ -361,6 +382,8 @@ export function getContract(id: string): SkillContract | undefined {
  * 只有合并语义的契约需要——整表替换的契约不写提示，免得把默认行为说反。
  */
 export const CONTRACT_WRITE_HINTS: Record<string, string> = {
+  'shots-v1':
+    '只写分镜结构（镜号、场次、景别、运镜、描述、台词、表演、选角等）；不得包含 keyframe_prompt / video_prompt，首帧与视频提示词须用 submit_prompts（prompts-v1）。',
   'designs-v1':
     '按类型与名称合并写回：同名卡只补空字段，已有图片、候选图与手工锚点保留；本次未提交的卡不会被删除，删除请走素材页的人工卡片操作。',
   'assets-v1':

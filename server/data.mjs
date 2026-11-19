@@ -71,6 +71,8 @@ export function readProject(root, name) {
   if (!Array.isArray(data.shots)) data.shots = []
   if (!Array.isArray(data.characters)) data.characters = []
   if (!Array.isArray(data.episodes)) data.episodes = []
+  const rev = Number(data.revision)
+  data.revision = Number.isFinite(rev) && rev >= 0 ? Math.floor(rev) : 0
   return data
 }
 
@@ -105,6 +107,9 @@ export function writeProject(root, name, data) {
   if (!Array.isArray(payload.shots)) {
     throw new Error('shots 必须是数组 —— 拒绝写入会丢掉镜头列表的内容')
   }
+  const prevRev = Number(cur.revision)
+  const baseRev = Number.isFinite(prevRev) && prevRev >= 0 ? Math.floor(prevRev) : 0
+  payload.revision = baseRev + 1
   payload.created_at = cur.created_at || new Date().toISOString()
   payload.updated_at = new Date().toISOString()
 

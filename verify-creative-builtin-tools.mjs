@@ -206,15 +206,6 @@ const toolSpecs = {
       }),
   get_camera_lexicon: { args: { key: 'push' }, expect: 'ok' },
 
-  // ---- 校验 ----
-  validate_contract: {
-    args: {
-      contract: 'characters-v1',
-      payload: { version: 1, characters: [{ name: '验收', lookEn: 'test' }] },
-    },
-    expect: 'ok',
-  },
-
   // ---- 写回 ----
   submit_episodes: {
     args: {

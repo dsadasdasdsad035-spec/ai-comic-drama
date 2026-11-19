@@ -23,6 +23,7 @@ const TESTS = [
   'tests/agent-notices.ts',
   'tests/read-budget.ts',
   'tests/shot-read.ts',
+  'tests/creative-read-snapshot.ts',
   'tests/creative-contract.ts',
   'tests/platform-tool-coverage.ts',
   'tests/shot-field-policy.ts',

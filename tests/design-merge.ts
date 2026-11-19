@@ -247,9 +247,6 @@ async function main() {
     assert.ok(submit)
     assert.match(submit.description, /合并/)
     assert.match(submit.description, /未提交的卡不会被删除/)
-    const validate = byName.get('validate_contract')
-    assert.ok(validate)
-    assert.ok(!/替换/.test(validate.description), 'validate_contract 不该暗示整体替换')
   })
 
   console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

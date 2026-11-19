@@ -99,7 +99,7 @@ flowchart TB
 2. **平台内置**（默认 **全开**，可逐项去掉）  
    - 读：`read_source` … `list_camera_lexicon` …  
    - 写：`submit_*`  
-   - `validate_contract`、`read_skill`、`read_skill_text`  
+   - `read_skill`、`read_skill_text`  
    - 组头操作：**「恢复平台默认」**（全选内置组）
 
 3. **MCP（创意聊天）**  
