@@ -361,23 +361,35 @@ export function apply(ctx, config) {
     ctx.logger?.warn?.(`[creative-tools] 工具清单加载失败，本次不注册工具：${e?.message || String(e)}`)
   })
 
-  // 审批闸门：在工具体之前拦截，拒绝时工具不执行
-  ctx.on('tools/pre-execute', async (exec, next) => {
+  /** 写库/付费须先弹确认卡；prepend 确保优先于 Auto 预审（否则会按 low risk 直接执行） */
+  async function gateDestructive(exec, next) {
     await ready.catch(() => {})
     const toolName = exec?.name
     if (!toolName) return next()
+  // 不依赖 registered：清单热更新瞬间表为空时也不能裸奔；Auto 权限会把 allow 当终审
+    if (DESTRUCTIVE_TOOLS.has(toolName)) {
+      return {
+        kind: 'ask',
+        reason: `工具 ${toolName} 会写入项目数据，需要确认后执行`,
+        displayReason: { en: `Approve ${toolName}?` },
+      }
+    }
+    if (COSTLY_TOOLS.has(toolName)) {
+      return {
+        kind: 'ask',
+        reason: `工具 ${toolName} 会产生上游费用，需要确认后执行`,
+        displayReason: { en: `Approve ${toolName}?` },
+      }
+    }
     if (registered.length === 0) return next()
     // 每次调用前比对一次清单版本：schema 改完不必重启宿主。
     // 失败只记日志不阻断调用——刷新是增强，不是前置条件。
     await reconcile().catch(() => {})
-    if (DESTRUCTIVE_TOOLS.has(toolName)) {
-      return { kind: 'ask', reason: `工具 ${toolName} 会写入项目数据，需要确认后执行`, displayReason: { en: `Approve ${toolName}?` } }
-    }
-    if (COSTLY_TOOLS.has(toolName)) {
-      return { kind: 'ask', reason: `工具 ${toolName} 会产生上游费用，需要确认后执行`, displayReason: { en: `Approve ${toolName}?` } }
-    }
     return next()
-  })
+  }
+
+  // 审批闸门：在工具体之前拦截，拒绝时工具不执行
+  ctx.on('tools/pre-execute', gateDestructive, true)
 
   ctx.effect?.(() => () => {
     if (disposed) return

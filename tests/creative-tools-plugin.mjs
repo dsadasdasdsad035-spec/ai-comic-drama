@@ -274,6 +274,16 @@ await check('未注册的工具不会误触发审批', async () => {
   assert.equal(delegated, true)
 })
 
+await check('清单未注册时写库工具仍要求确认', async () => {
+  const { ctx: bareCtx, listeners: bareListeners } = makeCtx()
+  plugin.apply(bareCtx, { baseUrl: 'http://127.0.0.1:1', internalToken: TOKEN })
+  await new Promise((r) => setTimeout(r, 80))
+  const pre = bareListeners.get('tools/pre-execute')
+  assert.ok(pre, '应有审批闸门')
+  const decision = await pre({ name: 'submit_episodes' }, async () => ({ kind: 'allow' }))
+  assert.equal(decision.kind, 'ask', '表为空时写库也不能放行')
+})
+
 app.close()
 if (bad) {
   console.error(`\n${bad} 项未通过`)
