@@ -7,7 +7,7 @@
 创意会话是 **Pi 纯聊天**：多会话列表保留，消息写入 `creative_threads`。
 
 - **默认（无专家）**：Pi 用 **`list_installed_skills`** 发现 Agent 包，再用 **`read_skill_text`** 读 SKILL；顶栏「偏好」可指定默认包。
-- **专家模式**（顶栏「专家」下拉）：system **仅**专家 `soul`（支持 `{{projectName}}` 等占位符），工具/技能受专家白名单约束；系统始终注入 **`list_experts`**。专家定义在 **设置 → 创意专家**（内置 + 自定义，可 JSON/zip 导入导出）。会话可绑定 `expert_id`，列表侧栏显示专家名。
+- **专家模式**（顶栏「专家」下拉）：system **仅**专家 `soul`（编译进 DSH 前会去掉旧版 `{{…}}` 占位符），工具/技能受专家白名单约束；系统始终注入 **`list_experts`**。专家定义在 **设置 → 创意专家**（内置 + 自定义，可 JSON/zip 导入导出）。会话可绑定 `expert_id`，列表侧栏显示专家名。
 
 模型在 **默认路由 · 创意（对话助手）**。勾选「创意聊天」的 **HTTP MCP** 经 `/api/mcp` 进入专家工具白名单（stdio 暂不支持）。
 
@@ -38,7 +38,12 @@
 | `generate_character_views` | 生成角色三视图（有成本，先确认） | 未确认成本、没有确认通道 |
 | `generate_expression_sheet` | 生成 4×2 表情总图并八格裁剪（有成本，先确认） | 同上；无外观锚点也无参考图 |
 | `generate_keyframe` | 出首帧：参考图来自该镜画布连线（角色三视图 / 素材图 / 表情，上限 10 张），并在提示词追加参考图说明 | 工位是出片；没有首帧提示词；连线角色没有三视图、素材卡不在画布上（均在成本确认前失败） |
-| `generate_clip` | 提交出片任务：参考图 / 参考视频 / 音频 / 首帧与正文由 `buildShotVideoRequest` 统一拼装，沿用画布当前模型与分辨率 | 拼装出阻塞项（如无首帧且无连线参考）；工具只回 jobId，不写成片 |
+| `generate_clip` | 提交出片：`no`、可选 `prompt`（无手改时本次正文）、`modelKey`、`resolution`（480p/720p，仅本次）；参考由 `buildShotVideoRequest`；正文：手改 → 参数 prompt → `video_prompt` | blocking；只回 jobId |
+| `set_shot_video_options` | 写表情参考 / 原生音频 / 工位 | 原生音频未就绪 |
+| `set_shot_video_override` | 手改正文保存或清除（须 `read_shot_video_inputs.fingerprint`） | 指纹不符 |
+| `set_shot_ref_extras` | 手工参考 URL 增删 | 非项目媒体 |
+| `set_shot_neighbor_refs` | 邻镜 `shot-prev`/`shot-next` | 镜不存在 |
+| `read_shot_video_inputs` | 出片模式、参考顺序、`fingerprint` | 镜不在画布 |
 | `submit_assets` | `assets-v1` 契约批量写素材卡（按 `designId` 或「角色 + 表情总图」去重） | 地址不在项目媒体里（整批拒绝）、空数组 |
 
 格位、裁剪坐标与 `identityFingerprint` 由系统计算，调用方给的坐标与指纹一律忽略。单格裁剪失败不会丢总图，结果里点名失败情绪。

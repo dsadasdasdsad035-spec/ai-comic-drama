@@ -573,6 +573,13 @@ preset——专家只在空白会话里可切换。
 - `list_installed_skills` **不再**强制注入，必须在「工具 → 技能」组里勾选才进可见集；
 - `read_skill*` 同样只按 `toolIds` 进入，且执行时还要过技能 id 白名单。
 
+技能列举与读取（专家 preset 会话）：
+
+- DSH 侧：`dsh-skill-filesystem` 只挂 `dsh/experts/<id>/skills`（`includeDefaultRoots: false`），不扫全局内置根；
+- 宿主侧：`dsh-plugin-creative-expert` 在 `tools/pre-execute` 给每次调用打上 `studioExpertId`，并在 `skillIds`（含 `*` 编译展开后的列表）上拦截 `read_skill*`；
+- 应用侧：`creative-tools` 把 `expertId` 带进 `/api/studio/tools/execute`；`StudioToolBridge` 再次校验工具名与技能 id，并对 `list_installed_skills` **只返回白名单内技能**（可有 `restrictedCount` 说明未列出的已安装技能数）。
+- `skillIds: ["*"]` 表示「专家技能根内全部已安装技能」，不是跳过闸门。
+
 ### 创意会话的项目上下文
 
 宿主是**一个进程服务所有创意会话**，它看不到浏览器顶栏选了哪个项目。所以「当前项目」

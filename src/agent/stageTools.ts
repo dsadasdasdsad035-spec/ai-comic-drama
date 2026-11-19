@@ -831,8 +831,9 @@ export function createStageToolSet(adapter: WorkbenchChatAdapter): StageToolSet 
         // 有 blocking 时这份输入还发不出去：先按提示补正文或补连线
         blocking: request.blocking.map((b) => ({ code: b.code, message: b.message })),
         warnings: request.warnings.map((w) => ({ code: w.code, message: w.message })),
+        fingerprint: request.fingerprint,
         promptEmpty: !request.prompt.trim(),
-        note: '正文由人或 Agent 写入（video_prompt / submit_prompts），运行时不再追加任何段落。',
+        note: '正文由人或 Agent 写入（video_prompt / submit_prompts / set_shot_video_override），运行时不再追加任何段落。',
       }
     },
   })
@@ -1448,7 +1449,11 @@ export function skillSummaryRow(s: Skill) {
   }
 }
 
-function createListInstalledSkillsTool(): ToolDef {
+type PiNativeToolDeps = {
+  expertAllowlist?: () => readonly string[] | null | undefined
+}
+
+function createListInstalledSkillsTool(deps?: PiNativeToolDeps): ToolDef {
   return defineTool({
     name: 'list_installed_skills',
     description:
@@ -1474,12 +1479,26 @@ function createListInstalledSkillsTool(): ToolDef {
       if (hostsOnly) {
         list = list.filter(isCreativeHostSkill)
       }
+      const allowIds = deps?.expertAllowlist?.()
+      let restrictedCount = 0
+      if (allowIds && allowIds.length > 0) {
+        const allow = new Set(allowIds.map((id) => String(id)))
+        const before = list.length
+        list = list.filter((s) => allow.has(s.id))
+        restrictedCount = before - list.length
+      }
       list.sort((a, b) => (a.manifest.name || a.id).localeCompare(b.manifest.name || b.id, 'zh'))
       return {
         ok: true,
         count: list.length,
         skills: list.map((s) => skillSummaryRow(s)),
         loadIssues: issues.map((x) => ({ id: x.id, message: x.message })),
+        ...(restrictedCount > 0
+          ? {
+              restrictedCount,
+              summary: `共 ${list.length} 个技能在本专家白名单内（另有 ${restrictedCount} 个已安装技能未列出）`,
+            }
+          : {}),
       }
     },
   })
@@ -1531,7 +1550,7 @@ function createReadSkillTextTool(): ToolDef {
     description:
       '读取任意已安装技能的 SKILL.md 原文（含 SkillHub / Agent 包）。宿主为 agent-pack 时应用此工具读宿主与其它技能。',
     schema: z.object({
-      id: z.string().min(1).describe('技能 id，例如 character-refs、creative-plan'),
+      id: z.string().min(1).describe('技能 id，例如 short-drama、byted-sol-seedance-prompt'),
     }),
     run: async ({ id }) => {
       try {
@@ -1601,11 +1620,11 @@ function createReadSkillFileTool(): ToolDef {
   })
 }
 
-export function createPiNativeToolSet(): StageToolSet {
+export function createPiNativeToolSet(deps?: PiNativeToolDeps): StageToolSet {
   const readSkill = createReadSkillTool()
   const readSkillText = createReadSkillTextTool()
   const readSkillFile = createReadSkillFileTool()
-  const listSkills = createListInstalledSkillsTool()
+  const listSkills = createListInstalledSkillsTool(deps)
   const listExperts = createListExpertsTool()
   const byName = new Map<string, ToolDef>([
     [readSkill.name, readSkill],

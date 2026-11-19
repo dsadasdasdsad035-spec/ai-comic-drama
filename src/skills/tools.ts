@@ -70,6 +70,10 @@ export const KNOWN_TOOL_IDS = new Set([
   'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
+  'set_shot_video_options',
+  'set_shot_video_override',
+  'set_shot_ref_extras',
+  'set_shot_neighbor_refs',
   'submit_assets',
   // 创意会话：会话读、媒体摄取/分析、产物与生成
   'read_creative_session',

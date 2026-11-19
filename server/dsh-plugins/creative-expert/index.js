@@ -30,16 +30,20 @@ export function apply(ctx, config) {
     }
   }
 
-  if (skillIds.length) {
-    const allowed = new Set(skillIds)
+  const allowedSkills = skillIds.length ? new Set(skillIds) : null
+  if (expertId || allowedSkills) {
     ctx.on('tools/pre-execute', (exec, next) => {
-      if (!SKILL_ID_TOOLS.has(exec?.name)) return next()
-      const id = String(exec.args?.id || exec.args?.skillId || '')
-      if (!id || allowed.has(id)) return next()
-      return {
-        kind: 'deny',
-        reason: `专家「${expertId}」的技能白名单不含「${id}」，请改用白名单内的技能。`,
+      if (expertId && exec && typeof exec === 'object') exec.studioExpertId = expertId
+      if (allowedSkills && SKILL_ID_TOOLS.has(exec?.name)) {
+        const id = String(exec.args?.id || exec.args?.skillId || '')
+        if (id && !allowedSkills.has(id)) {
+          return {
+            kind: 'deny',
+            reason: `专家「${expertId}」的技能白名单不含「${id}」，请改用白名单内的技能。`,
+          }
+        }
       }
+      return next()
     })
   }
 }

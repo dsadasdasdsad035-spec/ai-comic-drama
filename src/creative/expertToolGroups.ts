@@ -52,6 +52,10 @@ const PROJECT = new Set([
   'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
+  'set_shot_video_options',
+  'set_shot_video_override',
+  'set_shot_ref_extras',
+  'set_shot_neighbor_refs',
 ])
 const GENERATE = new Set([
   'generate_keyframe',
@@ -119,6 +123,10 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
+  'set_shot_video_options',
+  'set_shot_video_override',
+  'set_shot_ref_extras',
+  'set_shot_neighbor_refs',
   'generate_character_views',
   'generate_expression_sheet',
 ]

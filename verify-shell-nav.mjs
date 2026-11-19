@@ -54,6 +54,8 @@ try {
   const ariaStill = await page.getByRole('button', { name: '画布', exact: true }).getAttribute('aria-label')
   check('折叠后标签退出布局', labelsHidden === 'none', labelsHidden)
   check('折叠后仍保留可访问名', ariaStill === '画布', String(ariaStill))
+  const themeOverflow = await page.locator('.rail-foot .theme-toggle').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)
+  check('折叠后主题开关不溢出轨道', themeOverflow)
 
   await page.locator('body').click({ position: { x: 700, y: 500 } })
   await page.keyboard.press('[')

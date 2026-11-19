@@ -16238,7 +16238,25 @@ body,
 
 /* 主题开关在左栏底部时收成图标条 */
 .rail-foot .theme-toggle {
+  width: 100%;
   justify-content: center;
+}
+
+/* 折叠轨 64px：双钮文案会挤出轨道，只保留 orb（文案仍在 DOM 供读屏） */
+.rail[data-collapsed='true'] .rail-foot .theme-toggle {
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px;
+}
+
+.rail[data-collapsed='true'] .rail-foot .theme-toggle button {
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 0;
+  justify-content: center;
+  gap: 0;
+  font-size: 0;
+  line-height: 0;
 }
 
 /* ---------------------------------------------------------------- 面包屑与头部 */

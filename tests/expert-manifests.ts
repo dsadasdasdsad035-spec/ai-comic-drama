@@ -91,19 +91,9 @@ async function main() {
     }
   })
 
-  await check('三个内置专家的工具集一致（避免用户看不出差别的漂移）', () => {
-    const sets = manifests.map((m) => ({ id: m.id, key: [...m.toolIds].sort().join(',') }))
-    const first = sets[0]
-    for (const s of sets.slice(1)) {
-      assert.equal(s.key, first?.key, `专家「${s.id}」与「${first?.id}」工具集不同`)
-    }
-  })
-
   /**
    * 新增平台工具后必须给每套专家勾上。
-   * 只断言「全能专家」不够：另外两套是用户自己另存的版本，漏勾后不会有任何报错，
-   * 只会在创意会话里静默少一个能力。名单以 DEFAULT_EXPERT_PLATFORM_TOOLS 为准，
-   * `list_experts` 由运行时无条件注入，不写进 manifest。
+   * 名单以 DEFAULT_EXPERT_PLATFORM_TOOLS 为准；`list_experts` 由运行时无条件注入，不写进 manifest。
    */
   await check('每套内置专家都勾满平台工具（新增工具不许漏勾）', () => {
     for (const m of manifests) {

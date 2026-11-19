@@ -68,7 +68,7 @@ function emptyCustom(): CreativeExpert {
     description: '',
     iconUrl: '',
     imageDescription: '',
-    soul: '你是创意助手。\n\n可用占位符：{{projectName}}、{{epNo}}、{{skillIds}}。',
+    soul: '你是创意助手。\n\n协助用户在创意工作室完成当前项目的分镜与素材流程；正文勿写双花括号模板（DSH 会当成 prompt 变量并拒跑）。',
     skillIds: [],
     toolIds: [...DEFAULT_TOOLS],
     source: 'custom',
@@ -553,7 +553,7 @@ export function ExpertSettingsPanel({ toast }: Props) {
             {tab === 'soul' ? (
               <SkillDetailPanel
                 title="Soul（= 专家模式的完整 system）"
-                hint="占位符：{{projectName}}、{{epNo}}、{{expertName}}、{{expertId}}、{{skillIds}}"
+                hint="勿在 soul 里写双花括号模板；项目名称与集号由运行时上下文与工具提供。"
               >
                 {soulHints.missingTools.length ? (
                   <p className="creative-header-alert" role="status" data-expert-soul-tool-hint>

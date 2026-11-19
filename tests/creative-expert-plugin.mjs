@@ -101,10 +101,22 @@ await check('非技能工具不参与白名单判断', async () => {
   assert.equal(delegated, true)
 })
 
-await check('通配专家不注册技能闸门', async () => {
+await check('通配专家展开 ids 后仍注册技能闸门', async () => {
   const { ctx, listeners } = makeCtx()
-  plugin.apply(ctx, { expertId: 'e1', toolIds: ['read_skill'], skillIds: [] })
-  assert.equal(listeners.get('tools/pre-execute'), undefined)
+  plugin.apply(ctx, { expertId: 'e1', toolIds: ['read_skill'], skillIds: ['short-drama', 'short-drama-write'] })
+  const pre = listeners.get('tools/pre-execute')
+  assert.ok(pre, '应有 pre-execute 闸门')
+  const denied = await pre({ name: 'read_skill_text', args: { id: 'other' } }, async () => ({ kind: 'allow' }))
+  assert.equal(denied.kind, 'deny')
+})
+
+await check('pre-execute 为工具调用打上 studioExpertId', async () => {
+  const { ctx, listeners } = makeCtx()
+  plugin.apply(ctx, { expertId: 'e1', toolIds: ['read_source'] })
+  const pre = listeners.get('tools/pre-execute')
+  const exec = { name: 'read_source', args: {} }
+  await pre(exec, async () => ({ kind: 'allow' }))
+  assert.equal(exec.studioExpertId, 'e1')
 })
 
 if (bad) {

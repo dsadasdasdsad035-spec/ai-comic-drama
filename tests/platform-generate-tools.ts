@@ -233,6 +233,30 @@ async function main() {
     }
   })
 
+  await check('出片无 override 时参数 prompt 覆盖镜上正文提交', async () => {
+    const { calls, restore } = stubFetch((url) => {
+      if (url.includes('/api/seedance')) return { ok: true, id: 'job-prompt', mode: 'ref' }
+      return { ok: true }
+    })
+    try {
+      let snap = project()
+      snap.shots[0] = { ...snap.shots[0], video_prompt: '旧正文' }
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示项目',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        askCost: async () => true,
+      })
+      const r = await toolOf(tools, 'generate_clip').invoke({ no: 'S01', prompt: 'Agent 一次性正文' })
+      assert.equal(r.ok, true, String(r.error ?? ''))
+      const body = JSON.parse(String(calls.find((c) => c.url.includes('/api/seedance'))?.init?.body))
+      assert.equal(body.prompt, 'Agent 一次性正文')
+    } finally {
+      restore()
+    }
+  })
+
   await check('出片任务只提交不等待，返回 jobId 且不写 clip', async () => {
     const { calls, restore } = stubFetch((url) => {
       if (url.includes('/api/seedance')) return { ok: true, id: 'job-123', mode: 'ref' }

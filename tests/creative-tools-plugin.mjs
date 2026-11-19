@@ -180,6 +180,13 @@ await check('执行转发到应用并带令牌', async () => {
   assert.equal(value.details.full.length, 500, '界面详情应保留完整结果')
 })
 
+await check('转发 execute 时带 studioExpertId', async () => {
+  calls.length = 0
+  await registered.get('read_source').execute({}, { studioExpertId: 'expert-omni' })
+  const call = calls.find((c) => c.url === '/api/studio/tools/execute')
+  assert.equal(call.payload.expertId, 'expert-omni')
+})
+
 await check('模型只看到摘要，界面能拿到详情', async () => {
   const def = registered.get('generate_keyframe')
   const value = await def.execute({ no: 'E01-S01' }, {})

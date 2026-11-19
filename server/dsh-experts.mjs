@@ -91,6 +91,25 @@ export function resolveToolSubset(toolIds, registeredNames) {
   return [...out].sort()
 }
 
+/** 专家 id → 技能白名单（与 syncExpertSkillRoot / preset 闸门同源） */
+export function resolveExpertSkillAllowlist(expertId, root) {
+  const id = String(expertId || '').trim()
+  if (!id) return { wildcard: false, ids: [] }
+  const expert = listAllExperts().find((e) => e.id === id)
+  if (!expert) return { wildcard: false, ids: [] }
+  const available = listSkillFiles(root).skills.map((s) => s.id)
+  return resolveSkillWhitelist(expert.skillIds, available)
+}
+
+/** 专家 id → 允许调用的工具名集合；无专家或未知专家返回 null（不限制） */
+export function resolveExpertToolNames(expertId, registeredNames) {
+  const id = String(expertId || '').trim()
+  if (!id) return null
+  const expert = listAllExperts().find((e) => e.id === id)
+  if (!expert) return null
+  return new Set(resolveToolSubset(expert.toolIds, registeredNames))
+}
+
 /**
  * 为某专家生成 per-expert 技能根。
  *
@@ -171,6 +190,32 @@ export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {}, ava
   return { dir: base, wildcard: whitelist.wildcard, ids: whitelist.ids, linked, removed }
 }
 
+/** 旧版 soul 占位符 → 编译进 DSH 时的静态文案（DSH 只接受小写 snake_case 的 `{{var}}`，且须注册变量） */
+function formatSkillIdsForSoul(skillIds) {
+  const list = Array.isArray(skillIds) ? skillIds.map(String).filter(Boolean) : []
+  if (list.includes('*')) return '全部已安装技能（*）'
+  if (list.length === 0) return '（无）'
+  return list.join('、')
+}
+
+/**
+ * 去掉 soul 中的 `{{…}}` 占位符，避免 dsh-system-prompt 在 `deployment:persona-prefix` 渲染失败。
+ * 自定义专家若仍保留旧模板，也会在编译 preset 时生效。
+ */
+export function materializeExpertSoul(expert) {
+  const row = expert && typeof expert === 'object' ? expert : {}
+  let soul = String(row.soul || '')
+  const replacements = [
+    ['{{expertName}}', String(row.name || row.id || '创意专家')],
+    ['{{expertId}}', String(row.id || '')],
+    ['{{projectName}}', '当前项目'],
+    ['{{epNo}}', '当前集'],
+    ['{{skillIds}}', formatSkillIdsForSoul(row.skillIds)],
+  ]
+  for (const [token, value] of replacements) soul = soul.split(token).join(value)
+  return soul.replace(/\{\{[^{}]*\}\}/g, '')
+}
+
 /**
  * 编译单个专家 → preset 插件行。
  * persona 用 `complete: true`：专家的 soul 就是完整 system，
@@ -183,7 +228,7 @@ export function compileExpertPreset({ expert, registeredNames, skillRoot, skillI
   const plugins = [
     {
       name: '@deepseek-ai/dsh-persona',
-      config: { prefix: String(expert.soul || ''), complete: true },
+      config: { prefix: materializeExpertSoul(expert), complete: true },
     },
     // 时间与压缩是会话能长期用下去的前提：不挂这两行，长对话不会自动压缩，
     // 模型也不知道「今天」是哪天。技能读工具由工具桥提供，因此不挂 dsh-tool-skill。
@@ -203,7 +248,8 @@ export function compileExpertPreset({ expert, registeredNames, skillRoot, skillI
       config: {
         expertId,
         toolIds: tools,
-        ...(Array.isArray(skillIds) && !skillIds.includes('*') ? { skillIds } : {}),
+        // 通配 * 在编译时已展开为 ids，闸门始终按列表校验（与工具桥同源）
+        ...(Array.isArray(skillIds) && skillIds.length ? { skillIds: skillIds.map(String) } : {}),
       },
     },
   ]
@@ -323,7 +369,7 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
         expert,
         registeredNames,
         skillRoot: rootInfo.dir,
-        skillIds: whitelist.wildcard ? ['*'] : whitelist.ids,
+        skillIds: whitelist.ids,
       })
       compiled.push({
         id: expert.id,

@@ -16,15 +16,18 @@ import {
   expertIdFromPreset,
   expertNameForPreset,
   expertsPatchPath,
+  materializeExpertSoul,
   mirrorExpertSources,
   presetIdForExpert,
   readCompiledExperts,
+  resolveExpertSkillAllowlist,
   resolveSkillWhitelist,
   resolveToolSubset,
   syncExpertSkillRoot,
   writeExpertsPatch,
 } from '../server/dsh-experts.mjs'
 import { listAllExperts, mergeCustomExperts, saveCustomExperts } from '../server/experts.mjs'
+import { listSkillFiles } from '../server/skills.mjs'
 import { dbPath } from '../server/db.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -65,6 +68,24 @@ await check('soul 编译成 complete persona（不叠加默认说明）', async 
   assert.ok(persona, '没有 persona 行')
   assert.equal(persona.config.prefix, '你是演示专家。')
   assert.equal(persona.config.complete, true, 'persona 必须是完整系统提示词')
+})
+
+await check('soul 占位符编译为静态文案且不残留 {{', async () => {
+  const soul = '你是「{{expertName}}」，项目「{{projectName}}」，技能 {{skillIds}}，其它 {{badVar}}'
+  const out = materializeExpertSoul({
+    id: 'demo',
+    name: '演示',
+    soul,
+    skillIds: ['short-drama'],
+  })
+  assert.equal(out, '你是「演示」，项目「当前项目」，技能 short-drama，其它 ')
+  const preset = compileExpertPreset({
+    expert: { id: 'demo', name: '演示', soul, skillIds: ['short-drama'], toolIds: [] },
+    registeredNames,
+  })
+  const persona = preset.plugins.find((p) => p.name === '@deepseek-ai/dsh-persona')
+  assert.ok(persona)
+  assert.ok(!persona.config.prefix.includes('{{'), 'persona 不得含未解析占位符')
 })
 
 await check('toolIds 收窄成真实工具，并只补上 list_experts', async () => {
@@ -111,19 +132,45 @@ await check('技能白名单：* 视为全部', async () => {
   assert.deepEqual(r.ids, ['a', 'b'])
 })
 
-await check('野生 * 时 preset 不写 skillIds（等于不额外限制）', async () => {
+await check('resolveExpertSkillAllowlist 与专家 skillIds 同源', async () => {
+  const omni = listAllExperts().find((e) => e.id === 'expert-omni')
+  assert.ok(omni, '缺少 expert-omni')
+  const r = resolveExpertSkillAllowlist('expert-omni', ROOT)
+  assert.equal(r.wildcard, true)
+  assert.ok(r.ids.length > 0)
+  saveCustomExperts([
+    {
+      id: 'finite-test',
+      name: '有限测',
+      description: '',
+      soul: '测',
+      skillIds: ['short-drama', 'short-drama-write'],
+      toolIds: ['read_source'],
+    },
+  ])
+  const c = resolveExpertSkillAllowlist('finite-test', ROOT)
+  assert.equal(c.wildcard, false)
+  assert.deepEqual([...c.ids].sort(), ['short-drama', 'short-drama-write'].sort())
+  const available = new Set(listSkillFiles(ROOT).skills.map((s) => s.id))
+  assert.ok(c.ids.every((id) => available.has(id)))
+})
+
+await check('通配 * 编译进 preset 技能闸门（展开 ids）', async () => {
   const preset = compileExpertPreset({
     expert: { id: 'demo', name: '演示', soul: 'x', toolIds: [], skillIds: ['*'] },
     registeredNames,
-    skillIds: ['*'],
+    skillIds: ['a', 'b'],
   })
   const gate = preset.plugins.find((p) => p.name === 'dsh-plugin-creative-expert')
-  assert.equal(gate.config.skillIds, undefined, '通配时不该写死白名单')
+  assert.deepEqual(gate.config.skillIds, ['a', 'b'])
 })
 
 await check('per-expert 技能根只挂白名单内的技能', async () => {
-  const expert = listAllExperts().find((e) => e.id === 'expert-omni-custom') || { id: 'root-test', skillIds: ['short-drama'] }
-  const info = syncExpertSkillRoot({ dshHome: TMP, expert: { ...expert, id: 'root-test' }, root: ROOT })
+  const info = syncExpertSkillRoot({
+    dshHome: TMP,
+    expert: { id: 'root-test', skillIds: ['short-drama', 'short-drama-write'] },
+    root: ROOT,
+  })
   const entries = fs.readdirSync(info.dir)
   assert.ok(entries.length > 0, '技能根是空的')
   if (!info.wildcard) {

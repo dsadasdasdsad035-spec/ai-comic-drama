@@ -532,6 +532,7 @@ const server = http.createServer((req, res) => {
           projectName: project,
           epNo: episode,
           sessionToken: studioSessionToken,
+          expertId: String(body.expertId || ''),
         })
         // 业务失败也用 200 返回：宿主据此得到「可读失败」而不是传输错误
         res.end(JSON.stringify(result))

@@ -28,6 +28,7 @@ const TESTS = [
   'tests/shot-field-policy.ts',
   'tests/shot-write-mode.ts',
   'tests/platform-generate-tools.ts',
+  'tests/shot-video-harness-tools.ts',
   'tests/project-lifecycle.ts',
   'tests/script-writeback.ts',
   'tests/storyboard-markdown.ts',

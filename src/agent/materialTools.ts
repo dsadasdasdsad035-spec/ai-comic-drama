@@ -21,6 +21,14 @@ import { resolveCameraLexiconByName } from '../cameraLexicon'
 import { isProjectMediaUrl } from '../assetCards'
 import { readCharacters, toProject, type ProjectChar } from '../charMap'
 import { applyRefTokens, resolveRefTargets } from './refResolve'
+import type { ShotNodeType } from '../data'
+import type { VideoModelInput } from '../videoPrompt'
+import {
+  createSetShotNeighborRefsTool,
+  createSetShotRefExtrasTool,
+  createSetShotVideoOptionsTool,
+  createSetShotVideoOverrideTool,
+} from './shotVideoHarnessTools'
 
 /**
  * 素材/画布类动作工具。
@@ -62,6 +70,11 @@ export type MaterialToolDeps = {
    * 外部调用（HTTP）。默认走真实接口；回归脚本据此把网络挡在外面，
    * 也让「地址校验失败」「生图失败」这类分支不必真发请求就能验。
    */
+  /** 画布镜头节点；缺省时按项目快照重建 */
+  getCanvasNodes?: () => ShotNodeType[] | undefined
+  getMissingMedia?: () => Set<string>
+  getSelectedVideoModel?: () => VideoModelInput | null
+  getVideoResolution?: () => string
   io?: {
     mediaUrls?: (project: string) => Promise<string[]>
     importLexicon?: (project: string, key: string) => Promise<{ url: string }>
@@ -617,6 +630,10 @@ export function createMaterialTools(deps: MaterialToolDeps): ToolDef[] {
     createLinkShotRefsTool(deps),
     createSetShotCameraLexiconTool(deps),
     createSetCharacterVisualTool(deps),
+    createSetShotVideoOptionsTool(deps),
+    createSetShotVideoOverrideTool(deps),
+    createSetShotRefExtrasTool(deps),
+    createSetShotNeighborRefsTool(deps),
     createGenerateCharacterViewsTool(deps),
     createGenerateExpressionSheetTool(deps),
   ]

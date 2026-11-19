@@ -17,6 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { StudioToolBridge, INTERNAL_TOKEN_HEADER, catalogFromTools } from '../server/studio-tool-bridge.mjs'
+import { resolveExpertSkillAllowlist } from '../server/dsh-experts.mjs'
 import { z as zod } from 'zod'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
@@ -424,6 +425,25 @@ await check('同一工具表连续取声明只推导一轮', async () => {
   }
   assert.equal(bridge.catalogBuilds, 1, '连续 20 次只允许推导一轮')
   assert.ok(first.length >= EXPECTED_TOOL_COUNT, '缓存不能把工具漏掉')
+})
+
+await check('专家 expertId 过滤技能列表与读取', async () => {
+  const bridge = new StudioToolBridge({ root: ROOT, baseUrl: base, internalToken: TOKEN })
+  const expertId = 'expert-omni'
+  const list = await bridge.invoke('list_installed_skills', {}, { projectName: PROJECT, epNo: 1, expertId })
+  assert.equal(list.ok, true)
+  const allow = new Set(resolveExpertSkillAllowlist(expertId, ROOT).ids)
+  assert.ok(allow.size > 0)
+  for (const row of list.details?.skills || []) {
+    assert.ok(allow.has(String(row.id)), `列表出现白名单外技能：${row.id}`)
+  }
+  const denied = await bridge.invoke(
+    'read_skill_text',
+    { id: '__not_in_expert_whitelist__' },
+    { projectName: PROJECT, epNo: 1, expertId },
+  )
+  assert.notEqual(denied.ok, true)
+  assert.match(String(denied.error || ''), /白名单/)
 })
 
 await check('项目上下文变化后工具表重建且声明重新推导', async () => {

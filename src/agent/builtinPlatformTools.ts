@@ -109,11 +109,18 @@ export type BuiltinPlatformCtx = {
   getSelectedVideoModel?: () => VideoModelInput | null
   /** 画布当前出片分辨率 */
   getVideoResolution?: () => string
+  /** 按 modelKey 解析视频模型；generate_clip 单次覆盖用 */
+  getVideoModelByKey?: (key: string) => VideoModelInput | null
   /**
    * Agent 写转场参考后的内存标记：宿主据此在出片区标「本轮 Agent 写入」。
    * 刻意不落盘——标记语义是「这一轮改的」，落盘后无法随用户手改撤销。
    */
   onTransitionRefsWritten?: (info: { afterShotId: string; toShotId: string; tokens: string[] }) => void
+  /**
+   * 专家会话可选：返回当前允许列举的技能 id 集；null/空表示不过滤（非专家或桥未注入）。
+   * 由 StudioToolBridge 在 invoke 前通过闭包注入，不扩展工具对外 schema。
+   */
+  expertAllowlist?: () => readonly string[] | null | undefined
 }
 
 function resolveEpNo(input: BuiltinPlatformCtx): number {
@@ -296,6 +303,10 @@ export const PLATFORM_ACTION_TOOL_NAMES = [
   'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
+  'set_shot_video_options',
+  'set_shot_video_override',
+  'set_shot_ref_extras',
+  'set_shot_neighbor_refs',
   'generate_character_views',
   'generate_expression_sheet',
 ] as const
@@ -735,15 +746,21 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
     name: 'generate_clip',
     description:
       '【平台内置】为一个分镜提交出片任务，提交成功立刻返回 jobId，不等成片。' +
-      '参考图、参考视频、音频与首帧由该镜画布连线经统一拼装决定，并沿用画布当前视频模型与分辨率；' +
-      '既没有首帧也没有连线参考时会拒绝提交。' +
+      '参考图、参考视频、音频由画布连线经统一拼装决定。' +
+      '正文优先级：手改 override → 本次参数 prompt → 镜上运动提示词 video_prompt。' +
+      '既没有首帧也没有连线参考时会拒绝提交。可选 modelKey/resolution 仅作用于本次提交，不改顶栏默认。' +
       '生成前必须取得成本确认。成片由任务中心轮询落库，这里不会写 clip 字段。',
     schema: z.object({
       no: z.string().min(1).describe('镜号，例如 S03'),
-      prompt: z.string().optional().describe('出片提示词；省略用该镜已存的视频提示词'),
+      prompt: z
+        .string()
+        .optional()
+        .describe('出片正文；无手改 override 时用于本次提交（不写回镜头）'),
       episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+      modelKey: z.string().optional().describe('本次出片模型 key；省略用画布当前选择'),
+      resolution: z.enum(['480p', '720p']).optional().describe('本次分辨率；省略用画布当前选择'),
     }),
-    run: async ({ no, prompt, episode }) => {
+    run: async ({ no, prompt, episode, modelKey: modelKeyArg, resolution: resolutionArg }) => {
       const name = input.projectName.trim()
       if (!name) return { ok: false, error: '请先在顶栏选择项目；可用 list_projects 查看已有项目' }
       let project: ProjectData
@@ -755,42 +772,65 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
       const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
       const shot = findShot(project, ep, no)
       if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
-      const text =
-        String(prompt ?? '').trim() ||
-        String(shot.video_prompt_rendered ?? '').trim() ||
-        String(shot.video_prompt ?? '').trim() ||
-        String(shot.keyframe_prompt ?? '').trim() ||
-        String(shot.desc ?? '').trim()
-      if (!text) {
-        return {
-          ok: false,
-          error: `镜 ${shot.no} 还没有出片提示词。下一步：先用 submit_prompts 或 submit_shots 写入视频提示词。`,
-        }
-      }
+      const paramPrompt = String(prompt ?? '').trim()
       const ratio = String(project.aspect || '').trim() || '16:9'
       const ctx = generationContext(input, project)
       const node = shotNodeOf(ctx.nodes, shot)
       if (!node) {
         return { ok: false, error: `镜 ${shot.no} 不在画布上，无法解析参考连线。下一步：刷新画布后重试` }
       }
+      const wantKey = String(modelKeyArg ?? '').trim()
+      let videoModel = input.getSelectedVideoModel?.() ?? null
+      if (wantKey) {
+        const resolved =
+          input.getVideoModelByKey?.(wantKey) ??
+          (videoModel?.key === wantKey ? videoModel : null)
+        if (!resolved) {
+          return { ok: false, error: `未知的出片模型 key「${wantKey}」；请在设置页核对可用视频模型` }
+        }
+        videoModel = resolved
+      }
+      const resolutionForBuild =
+        resolutionArg === '480p' || resolutionArg === '720p'
+          ? resolutionArg
+          : input.getVideoResolution?.() ?? ''
+      const requestData =
+        !node.data.videoPromptOverride?.text && paramPrompt
+          ? { ...node.data, videoPrompt: paramPrompt }
+          : node.data
       // 与画布出片同一个拼装入口：参考图/参考视频/音频/首帧/正文全部由它决定
-      const videoModel = input.getSelectedVideoModel?.() ?? null
       const request = buildShotVideoRequest({
-        data: node.data,
+        data: requestData,
         nodeId: node.id,
         nodes: ctx.nodes,
         characters: ctx.characters,
         missingMedia: ctx.missingMedia,
         model: videoModel,
-        resolution: input.getVideoResolution?.() ?? '',
+        resolution: resolutionForBuild,
       })
-      const blocked = request.blocking[0]
-      if (blocked) return { ok: false, error: `${blocked.message}（镜 ${shot.no}）` }
+      const hardBlock = request.blocking.find((b) => b.code !== 'shot-prompt-empty')
+      if (hardBlock) return { ok: false, error: `${hardBlock.message}（镜 ${shot.no}）` }
       const effective = effectiveVideoPrompt(request, node.data.videoPromptOverride)
+      let submitPrompt = effective.text
+      if (effective.source !== 'override' && paramPrompt) submitPrompt = paramPrompt
+      if (!submitPrompt.trim()) {
+        return {
+          ok: false,
+          error: `镜 ${shot.no} 还没有出片正文。下一步：submit_prompts 写入 video_prompt，或传 prompt 参数，或 set_shot_video_override 保存手改。`,
+        }
+      }
       const seconds = request.seconds || Math.max(1, Number(shot.seconds) || 5)
       const imageUrls = request.refs.map((r) => r.url)
-      const resolution = request.resolution === '480p' || request.resolution === '720p' ? request.resolution : undefined
+      const resolution =
+        resolutionArg === '480p' || resolutionArg === '720p'
+          ? resolutionArg
+          : request.resolution === '480p' || request.resolution === '720p'
+            ? request.resolution
+            : undefined
       const modelKey = videoModel?.key || ''
+      if (request.video && videoModel && !videoModel.supportsVideoRef) {
+        return { ok: false, error: '当前出片模型不支持视频参考，请换模型或取消视频素材连线' }
+      }
       const omitted = videoOmitToastMessages(request)
       const gate = await requireCost(input, {
         action: 'generate_clip',
@@ -826,7 +866,7 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
               : imageUrls.length > 0
                 ? { refImages: imageUrls }
                 : { image: request.firstFrame?.url || '' }),
-          prompt: effective.text,
+          prompt: submitPrompt,
           seconds,
           ratio,
           ...(resolution ? { resolution } : {}),
@@ -835,7 +875,8 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
         })
         return {
           ok: true,
-          summary: `镜 ${shot.no} 出片任务已受理，成片由任务中心轮询落库`,
+          summary:
+            `镜 ${shot.no} 出片任务已受理${modelKey ? `（模型 ${modelKey}）` : ''}，成片由任务中心轮询落库`,
           no: shot.no,
           jobId: submitted.id,
           ...(submitted.mode ? { mode: submitted.mode } : {}),
@@ -933,7 +974,7 @@ export function createBuiltinPlatformReadTools(input: BuiltinPlatformCtx): ToolD
 /** 始终提供给 Pi 的平台读/写工具（不依赖 SkillHub 技能 manifest） */
 export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[] {
   const reads = createStageToolSet(createReadAdapter(input))
-  const pi = createPiNativeToolSet()
+  const pi = createPiNativeToolSet({ expertAllowlist: input.expertAllowlist })
   const byName = new Map<string, ToolDef>()
   for (const t of reads.byName.values()) byName.set(t.name, t)
   for (const t of pi.byName.values()) byName.set(t.name, t)
@@ -991,6 +1032,10 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
         }
       : undefined,
     getCanvasAssets: input.getCanvasAssets,
+    getCanvasNodes: () => input.getCanvasContext?.()?.nodes,
+    getMissingMedia: () => input.getCanvasContext?.()?.missingMedia ?? new Set(),
+    getSelectedVideoModel: input.getSelectedVideoModel,
+    getVideoResolution: input.getVideoResolution,
     commitCharacters: input.commitCharacters,
     cropSheet: input.cropSheet,
   })) {

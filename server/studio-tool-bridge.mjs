@@ -15,6 +15,13 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
+import {
+  resolveExpertSkillAllowlist,
+  resolveExpertToolNames,
+  SKILL_READ_TOOLS,
+} from './dsh-experts.mjs'
+
+const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
 /** 内部令牌请求头：宿主进程是唯一持有者，浏览器请求带不上它 */
 export const INTERNAL_TOKEN_HEADER = 'x-studio-internal'
@@ -73,6 +80,8 @@ export class StudioToolBridge {
     this.catalogCache = { generation: -1, list: null }
     /** 真正跑过 schema 推导的轮数（测试断言缓存生效，排障也能一眼看到） */
     this.catalogBuilds = 0
+    /** 当前 invoke 的专家技能白名单（供 stageTools 闭包读取） */
+    this.invokeExpertAllowlist = null
   }
 
   /** 当前调用上下文（会话令牌随每次调用更新，供垫片使用） */
@@ -112,8 +121,11 @@ export class StudioToolBridge {
       projectName: projectName || '',
       epNo: epNo || 1,
       onProjectDataChanged: () => {},
+      expertAllowlist: () => this.invokeExpertAllowlist,
     })
-    const pi = [...this.module.createPiNativeToolSet().byName.values()]
+    const pi = [
+      ...this.module.createPiNativeToolSet({ expertAllowlist: () => this.invokeExpertAllowlist }).byName.values(),
+    ]
     const all = this.module.mergeBuiltinWithSkillTools(platform, pi)
     this.tools = new Map(all.map((tool) => [tool.name, tool]))
     this.toolsGeneration += 1
@@ -144,11 +156,32 @@ export class StudioToolBridge {
    * 参数先按同一份 zod schema 校验：缺必填字段时抛错且**不执行**工具体，
    * 错误文本里带字段名，模型据此补齐后重试。
    */
-  async invoke(name, args, { projectName, epNo, sessionToken } = {}) {
+  async invoke(name, args, { projectName, epNo, sessionToken, expertId } = {}) {
     const tools = await this.ensureLoaded(projectName, epNo)
     const tool = tools.get(name)
     if (!tool) {
       return { ok: false, error: `没有名为「${name}」的工具` }
+    }
+    const expert = String(expertId || '').trim()
+    this.invokeExpertAllowlist = expert ? resolveExpertSkillAllowlist(expert, this.root).ids : null
+    if (expert) {
+      const allowedTools = resolveExpertToolNames(expert, [...tools.keys()])
+      if (allowedTools && !allowedTools.has(name)) {
+        return {
+          ok: false,
+          error: `专家「${expert}」不允许使用工具「${name}」`,
+        }
+      }
+      const skillAllow = resolveExpertSkillAllowlist(expert, this.root)
+      if (SKILL_ID_READ_TOOLS.has(name)) {
+        const sid = String((args && typeof args === 'object' && (args.id || args.skillId)) || '').trim()
+        if (sid && !skillAllow.ids.includes(sid)) {
+          return {
+            ok: false,
+            error: `专家「${expert}」的技能白名单不含「${sid}」，请改用白名单内的技能。`,
+          }
+        }
+      }
     }
     if (sessionToken) this.setSessionToken(sessionToken)
     let parsed
@@ -164,7 +197,29 @@ export class StudioToolBridge {
       }
     }
     try {
-      const result = await tool.run(parsed)
+      let result = await tool.run(parsed)
+      if (
+        expert &&
+        name === 'list_installed_skills' &&
+        result &&
+        typeof result === 'object' &&
+        result.ok !== false &&
+        Array.isArray(result.skills)
+      ) {
+        const allow = new Set(resolveExpertSkillAllowlist(expert, this.root).ids)
+        const before = result.skills.length
+        const skills = result.skills.filter((row) => allow.has(String(row?.id || '')))
+        const restrictedCount = before - skills.length
+        result = {
+          ...result,
+          count: skills.length,
+          skills,
+          ...(restrictedCount > 0 ? { restrictedCount } : {}),
+          summary: restrictedCount
+            ? `共 ${skills.length} 个技能在本专家白名单内（另有 ${restrictedCount} 个已安装技能未列出）`
+            : result.summary || `共 ${skills.length} 个技能`,
+        }
+      }
       const failed = Boolean(result && typeof result === 'object' && result.ok === false)
       return {
         ok: !failed,

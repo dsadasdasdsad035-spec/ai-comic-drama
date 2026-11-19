@@ -3,11 +3,9 @@
 仓库**附带平台默认技能**，位于 `skills/<id>/SKILL.md`，随安装自动可用（`source: builtin`，只读）。
 安装 SkillHub / 本地上传的同名技能包会覆盖内置版本，卸载后回退到内置正文。
 
-当前内置技能（共 20 个，含 `byted-sol-seedance-prompt`）：
+当前内置技能（共 13 个，含 `byted-sol-seedance-prompt`）：
 
 - 短剧系列：`short-drama`、`short-drama-develop`、`short-drama-write`、`short-drama-breakdown`、`short-drama-storyboard`、`short-drama-assets`、`short-drama-image-prompts`、`short-drama-video-prompts`、`short-drama-produce`、`short-drama-edit`、`short-drama-review`、`short-drama-novel-analyze`
-- 小说系列：`novel-outline`、`novel-characters`、`novel-script`、`novel-staging`、`novel-storyboard`、`novel-art`
-- 角色参考：`character-refs`
 - 视频提示词：`byted-sol-seedance-prompt`
 
 **平台 `read_*` / `submit_*` / `validate_contract` 为应用内置工具**，不在 SKILL 里声明。

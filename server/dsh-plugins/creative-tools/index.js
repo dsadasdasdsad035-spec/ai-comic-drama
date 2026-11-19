@@ -195,7 +195,13 @@ export function apply(ctx, config) {
                     baseUrl,
                     internalToken,
                     '/api/studio/tools/execute',
-                    { name: tool.name, args, project: callProject, episode: callEpisode },
+                    {
+                      name: tool.name,
+                      args,
+                      project: callProject,
+                      episode: callEpisode,
+                      expertId: String(exec?.studioExpertId || ''),
+                    },
                     exec?.signal,
                   )
                   // 缺参数不是「失败到结束」：把它变成一次结构化追问，
