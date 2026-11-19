@@ -32,7 +32,7 @@
 ## Impact
 
 - 前端 Agent 层：`src/agent/stageTools.ts`（读工具返回、submit 注册）、`src/agent/builtinPlatformTools.ts`（平台工具清单与注册）、`src/platform/projectDraft.ts`（新增契约的合并分支）、`src/shotSync.ts`（`mergeShotsDraft` 的字段白名单）、`src/creative/expertToolGroups.ts`（分组与默认白名单一致性）、`src/skills/tools.ts`（`KNOWN_TOOL_IDS`）。
-- 契约层：`src/skills/contracts.ts` 新增 `project-meta-v1`（标题、logline、画风、画幅）；`submit_episodes` 复用既有 `script-v1`，并同步 `validate_contract` 可校验范围。
+- 契约层：`src/skills/contracts.ts` 新增 `project-meta-v1`（标题、logline、画风、画幅）；`submit_episodes` 复用既有 `script-v1`，写回时在 `submit_*` 路径内校验。
 - 服务端：`createProject` / `patchProject` 已有接口直接复用，不需要新 HTTP 端点；删除镜头复用 `mergeProjectShots(deleteShotIds)`。
 - 生成工具：复用 `generateImage` / `startVideo` / `generateVoice` 与既有成本确认组件，不新增模型调用路径。
 - 测试：`tests/` 补「清单与注册一致」「已存在镜头全字段写回」「剧本写回」「幽灵工具加载即报错」四类断言；`tsc --noEmit` 与现有 verify 脚本保持全绿。

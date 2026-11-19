@@ -4,7 +4,7 @@
 
 见 `proposal.md - Why`。当前状态的关键事实：
 
-- 平台内置工具清单由 `builtinPlatformToolNames()` 派生：17 个读工具名 + `validate_contract` + 7 个 `submit_*`（来自 `PLATFORM_WRITE_TOOLS`）+ 11 个动作工具，共 36 个。真实注册集合由 `createBuiltinPlatformTools(ctx)` 产生。
+- 平台内置工具清单由 `builtinPlatformToolNames()` 派生：读工具名 + 7 个 `submit_*`（来自 `PLATFORM_WRITE_TOOLS`）+ 动作/生成工具；契约校验仅在 `submit_*` 执行路径内完成，不单独暴露工具。真实注册集合由 `createBuiltinPlatformTools(ctx)` 产生。
 - 三方一致性比较已存在但只在单元测试里：`platformToolNameDiff()` / `assertPlatformToolConsistency()`（`src/agent/builtinPlatformTools.ts`），由 `tests/platform-tool-coverage.ts` 驱动，并含「少一个名字」「多一个名字」两个否定用例。
 - 逐工具冒烟已存在：`verify-creative-builtin-tools.mjs` 自起临时库，构造一个**没有 `confirm` 也没有 `askCost`** 的 ctx，遍历全部工具逐个 `invoke`，用 `staticArgs` 表提供最小参数。
 - 八个工具只有弱断言（清单见 proposal）。它们的强断言要落在别处：读取类已有 `tests/shot-read.ts`（游标续读、截断、钻取），写回类已有 `verify-tool-contracts.mjs`（契约层）与 `verify-joins.mjs`（底层 `applyJoinsToShots`），缺的是**工具层到落库**这一段的断言。

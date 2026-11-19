@@ -41,7 +41,7 @@
 - `applyProjectDraft` 新增 `script-v1` 分支：`mergeScriptDraft(current, incoming, 'merge')` → `patchProject({ episodes })`。
 - 顶层 `logline` 一并写回（契约本来就有该字段）。
 - 理由：两套剧本 schema 必然漂移；导入与 agent 用同一契约，校验与合并只有一份。
-- 替代（否决）：新增 `episodes-v1`——与 `script-v1` 内容重复，`validate_contract` 会同时认识两个近义契约。
+- 替代（否决）：新增 `episodes-v1`——与 `script-v1` 内容重复，会制造两套近义契约。
 
 ### 3. 项目创建与元信息写：两个工具 + 强制确认 + 不自行切项目
 
