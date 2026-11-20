@@ -223,6 +223,21 @@ async function installBlender({ force }) {
   log(`blender 就绪：${binPath}`)
 }
 
+/** 随包 DSH Blender Bridge 扩展（与 npm dsh-blender-plugin 同源） */
+function installBlenderBridgeZip() {
+  const src = path.join(ROOT, 'node_modules', 'dsh-blender-plugin', 'extension', 'dsh_blender_bridge.zip')
+  const destDir = path.join(BIN, 'blender-bridge')
+  const dest = path.join(destDir, 'dsh_blender_bridge.zip')
+  if (!fs.existsSync(src)) {
+    log('dsh_blender_bridge.zip 缺失（先 npm install dsh-blender-plugin），跳过随包扩展')
+    return false
+  }
+  ensureDir(destDir)
+  fs.copyFileSync(src, dest)
+  log(`Blender Bridge 扩展 zip 就绪：${dest}`)
+  return true
+}
+
 function writeManifest() {
   ensureDir(BIN)
   fs.writeFileSync(
@@ -235,6 +250,7 @@ function writeManifest() {
         ffmpeg: RUNTIMES.ffmpeg.version,
         ffprobe: RUNTIMES.ffprobe.version,
         blender: RUNTIMES.blender.version,
+        blenderBridge: fs.existsSync(path.join(BIN, 'blender-bridge', 'dsh_blender_bridge.zip')),
       },
       null,
       2,
@@ -266,7 +282,11 @@ try {
   if (wants('node')) await installNode({ force })
   if (wants('ffmpeg')) await installFlat({ name: 'ffmpeg', force })
   if (wants('ffprobe')) await installFlat({ name: 'ffprobe', force })
-  if (wants('blender')) await installBlender({ force })
+  if (wants('blender')) {
+    await installBlender({ force })
+    installBlenderBridgeZip()
+  }
+  if (wants('bridge') && !wants('blender')) installBlenderBridgeZip()
   writeManifest()
   log('全部完成')
 } catch (e) {

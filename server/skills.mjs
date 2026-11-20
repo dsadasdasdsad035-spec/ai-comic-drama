@@ -40,6 +40,12 @@ export function installedSkillDir(appRoot, id) {
   return path.join(installedSkillsDir(appRoot), safeSkillId(id))
 }
 
+/** `dsh-blender-plugin` 自带的技能目录（未安装包时返回 null） */
+export function blenderPluginSkillsDir(appRoot) {
+  const dir = path.join(appRoot, 'node_modules', 'dsh-blender-plugin', 'skills')
+  return isDir(dir) ? dir : null
+}
+
 /**
  * 解析某技能该用哪个目录：安装目录存在就用它，否则回落到内置目录。
  * 两个都不存在时返回 null，由调用方决定错误文案。
@@ -50,6 +56,11 @@ export function resolveSkillDir(appRoot, id) {
   if (isDir(installed)) return { dir: installed, source: 'installed' }
   const builtin = path.join(skillsDir(appRoot), safe)
   if (isDir(builtin)) return { dir: builtin, source: 'builtin' }
+  const blenderRoot = blenderPluginSkillsDir(appRoot)
+  if (blenderRoot) {
+    const fromPlugin = path.join(blenderRoot, safe)
+    if (isDir(fromPlugin)) return { dir: fromPlugin, source: 'builtin' }
+  }
   return null
 }
 
@@ -140,6 +151,11 @@ export function readSkillSubFile(appRoot, id, relPath) {
   if (isDir(installed)) candidates.push({ dir: installed, source: 'installed' })
   const builtin = path.join(skillsDir(appRoot), safe)
   if (isDir(builtin)) candidates.push({ dir: builtin, source: 'builtin' })
+  const blenderRoot = blenderPluginSkillsDir(appRoot)
+  if (blenderRoot) {
+    const fromPlugin = path.join(blenderRoot, safe)
+    if (isDir(fromPlugin)) candidates.push({ dir: fromPlugin, source: 'builtin' })
+  }
   if (!candidates.length) throw new Error(`技能不存在：${safe}`)
 
   for (const c of candidates) {
@@ -254,7 +270,10 @@ export function listSkillFiles(appRoot) {
   const errors = []
   const ids = new Set()
 
-  for (const dir of [installedSkillsDir(appRoot), skillsDir(appRoot)]) {
+  const pluginSkills = blenderPluginSkillsDir(appRoot)
+  const scanRoots = [installedSkillsDir(appRoot), skillsDir(appRoot)]
+  if (pluginSkills) scanRoots.push(pluginSkills)
+  for (const dir of scanRoots) {
     let entries = []
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true })

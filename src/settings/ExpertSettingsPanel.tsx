@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_EXPERT_PLATFORM_TOOLS,
   EXPERT_TOOL_GROUP_LABEL,
+  BLENDER_HOST_TOOLS,
   HOST_NATIVE_TOOLS,
   groupExpertPlatformTools,
 } from '../creative/expertToolGroups'
@@ -40,6 +41,7 @@ import {
 const ALL_PLATFORM_TOOLS = [
   ...builtinPlatformToolNames().filter((n) => n !== 'list_experts'),
   ...HOST_NATIVE_TOOLS,
+  ...BLENDER_HOST_TOOLS,
 ].sort()
 const DEFAULT_TOOLS = DEFAULT_EXPERT_PLATFORM_TOOLS.filter((n) => ALL_PLATFORM_TOOLS.includes(n))
 const GROUPED_TOOLS = groupExpertPlatformTools(ALL_PLATFORM_TOOLS)

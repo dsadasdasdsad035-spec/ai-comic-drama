@@ -19,6 +19,8 @@ import path from 'node:path'
 export const CREATIVE_TOOLS_BUNDLE = 'dsh-plugin-creative-tools'
 /** 专家闸门插件：被 preset 子插件列表按包名引用，必须能从 profile 目录解析到 */
 export const CREATIVE_EXPERT_PLUGIN = 'dsh-plugin-creative-expert'
+/** 上游 Blender 直连 bundle（npm 包 `dsh-blender-plugin`） */
+export const BLENDER_PLUGIN_BUNDLE = 'dsh-blender-plugin'
 
 /**
  * web profile 的基础层。必须完整保留：`dsh.profile.bundles` 是**全量选择**，
@@ -30,6 +32,11 @@ const BASE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
 /** bundle 源目录（随应用分发的插件源码） */
 export function bundleSourceDir(root) {
   return path.join(root, 'server', 'dsh-plugins', 'creative-tools')
+}
+
+/** `dsh-blender-plugin` 安装路径（缺失时跳过 bundle 登记） */
+export function blenderPluginDir(root) {
+  return path.join(root, 'node_modules', BLENDER_PLUGIN_BUNDLE)
 }
 
 /** 专家闸门插件源目录 */
@@ -97,7 +104,12 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
     throw new Error(`工具桥插件源码缺失：${source}`)
   }
 
-  let changed = copyPluginPackage(source, dest, ['index.js', 'package.json', 'cordis.patch.yml'], log)
+  let changed = copyPluginPackage(
+    source,
+    dest,
+    ['index.js', 'package.json', 'cordis.patch.yml', 'shell-sync-tools.mjs'],
+    log,
+  )
 
   // 专家闸门插件不是 bundle（它只被 preset 子插件列表按包名引用），
   // 但同样必须能被 profile 目录解析到，否则 preset 加载时会报找不到插件。
@@ -130,6 +142,16 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
     if (!bundles.includes(base)) bundles.unshift(base)
   }
   if (!bundles.includes(CREATIVE_TOOLS_BUNDLE)) bundles.push(CREATIVE_TOOLS_BUNDLE)
+  const blenderPkg = blenderPluginDir(root)
+  const blenderEntry = path.join(blenderPkg, 'lib', 'index.js')
+  if (fs.existsSync(blenderEntry)) {
+    manifest.dependencies[BLENDER_PLUGIN_BUNDLE] = `file:${blenderPkg}`
+    if (!bundles.includes(BLENDER_PLUGIN_BUNDLE)) bundles.push(BLENDER_PLUGIN_BUNDLE)
+  } else {
+    log(
+      `[studio-bundle] 未找到 ${BLENDER_PLUGIN_BUNDLE}，跳过 Blender bundle（npm install dsh-blender-plugin@3.1.0-alpha.1 --legacy-peer-deps）`,
+    )
+  }
   manifest.dsh = { ...(manifest.dsh || {}), profile: { ...(manifest.dsh?.profile || {}), bundles } }
 
   const serialized = `${JSON.stringify(manifest, null, 2)}\n`

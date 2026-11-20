@@ -744,6 +744,46 @@ export type ProjectEpisode = {
   }[]
 }
 
+export type Cc0PropEntry = {
+  id: string
+  title: string
+  source: string
+  license?: string
+  categories?: string[]
+  url: string
+}
+
+export type Cc0PropManifest = {
+  schemaVersion: number
+  source?: string
+  license?: string
+  updatedAt?: string
+  vendorReady?: boolean
+  samples: Cc0PropEntry[]
+}
+
+export async function fetchCc0PropsManifest(): Promise<Cc0PropManifest> {
+  const res = await apiFetch('/api/cc0-props')
+  const j = (await res.json()) as Cc0PropManifest & { ok?: boolean }
+  if (!j.ok) return { schemaVersion: 1, samples: [] }
+  return j
+}
+
+export async function importCc0PropToProject(opts: {
+  project: string
+  url: string
+  title?: string
+}): Promise<{ url: string; title: string; kind: string; note?: string }> {
+  const res = await apiFetch('/api/cc0-props/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  const j = (await res.json()) as { ok?: boolean; message?: string; url?: string; title?: string; kind?: string; note?: string }
+  if (!j.ok || !j.url) throw new Error(j.message || '导入 CC0 道具失败')
+  return { url: j.url, title: j.title || opts.title || 'CC0 道具', kind: j.kind || 'model', note: j.note }
+}
+
 export type ProjectAsset = {
   kind: string
   title: string
@@ -802,6 +842,8 @@ export type ProjectData = {
   designs?: DesignSheet[]
   /** 素材·镜头语言：项目级自定义白模（Blender 代码 + 渲染 MP4） */
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
+  /** 素材·场景三维：Babylon 编排场景（立板 / GLB / 机位书签） */
+  material3dScenes?: import('./material3d/material3dTypes').Material3dScene[]
   shots?: ProjectShot[]
   /** 落库单调序：每次 POST/PUT 写项目 +1，供创意读工具与画布实况对齐 */
   revision?: number
@@ -925,6 +967,7 @@ export type ProjectPatch = {
   canvasDelete?: string[]
   designs?: DesignSheet[]
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
+  material3dScenes?: import('./material3d/material3dTypes').Material3dScene[]
   episodes?: unknown[]
   source?: string
   logline?: string

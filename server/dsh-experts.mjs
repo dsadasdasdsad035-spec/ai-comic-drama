@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto'
 import { stringify as stringifyYaml } from 'yaml'
 import { listAllExperts } from './experts.mjs'
 import { listSkillFiles, resolveSkillDir } from './skills.mjs'
-import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
+import { BLENDER_HOST_TOOLS, HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
 
 /**
  * Web profile 在 `@deepseek-ai/dsh-web-app` 里关闭了全局 `tool-bash`；
@@ -108,7 +108,7 @@ export function resolveSkillWhitelist(skillIds, availableIds) {
 /** 工具子集：`toolIds` ∩ 运行时真实存在的工具，再加始终可用的那几个 */
 export function resolveToolSubset(toolIds, registeredNames) {
   const registered = new Set(registeredNames)
-  const hostNative = new Set(HOST_NATIVE_TOOLS)
+  const hostNative = new Set([...HOST_NATIVE_TOOLS, ...BLENDER_HOST_TOOLS])
   const list = Array.isArray(toolIds) ? toolIds.map((t) => String(t).trim()).filter(Boolean) : []
   const out = new Set()
   for (const name of list) {
@@ -156,8 +156,14 @@ export function syncExpertSkillRoot({ dshHome, expert, root, log = () => {}, ava
 
   // 技能清单由调用方给：一次进创意会为每个专家各同步一次，
   // 每次重新扫技能根等于把「读全部 SKILL.md + 附件」重复几十遍。
-  const available = availableIds || listSkillFiles(root).skills.map((s) => s.id)
-  const whitelist = resolveSkillWhitelist(expert.skillIds, available)
+  const available = new Set(availableIds || listSkillFiles(root).skills.map((s) => s.id))
+  // 插件技能（如 blender-modeling）的 SKILL.md 可能超过 listSkillFiles 的字节上限，但仍须能挂载
+  for (const raw of Array.isArray(expert.skillIds) ? expert.skillIds : []) {
+    const id = String(raw).trim()
+    if (!id || id === '*') continue
+    if (resolveSkillDir(root, id)) available.add(id)
+  }
+  const whitelist = resolveSkillWhitelist(expert.skillIds, [...available])
 
   /** 白名单内、且磁盘上真的存在的技能 → 真实目录 */
   const desired = new Map()
@@ -393,20 +399,19 @@ export function writeExpertsPatch({ dshHome, root, registeredNames, log = () => 
   for (const expert of experts) {
     try {
       const rootInfo = syncExpertSkillRoot({ dshHome, expert, root, log, available })
-      const whitelist = resolveSkillWhitelist(expert.skillIds, available)
       const preset = compileExpertPreset({
         expert,
         registeredNames,
         skillRoot: rootInfo.dir,
-        skillIds: whitelist.ids,
+        skillIds: rootInfo.ids,
       })
       compiled.push({
         id: expert.id,
         presetId: preset.id,
         name: preset.name,
         tools: resolveToolSubset(expert.toolIds, registeredNames).length,
-        skills: whitelist.ids.length,
-        wildcard: whitelist.wildcard,
+        skills: rootInfo.ids.length,
+        wildcard: rootInfo.wildcard,
         // 内容指纹：调用方用它判断「这次编译结果和上一次是否等价」，
         // 计数逐项保留是为了排障时能一眼看到专家规模
         fingerprint: expertFingerprint(expert),

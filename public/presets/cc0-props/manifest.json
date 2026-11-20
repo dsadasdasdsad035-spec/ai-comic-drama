@@ -1,0 +1,1062 @@
+{
+  "schemaVersion": 1,
+  "source": "https://polyhaven.com/models",
+  "license": "CC0 (Poly Haven)",
+  "updatedAt": "2026-11-20T10:22:06.449Z",
+  "samples": [
+    {
+      "id": "alarm_clock_01",
+      "title": "Alarm Clock 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative",
+        "rigged"
+      ],
+      "url": "/cc0-props/polyhaven/alarm_clock_01/alarm_clock_01_1k.gltf"
+    },
+    {
+      "id": "american_football",
+      "title": "American Football",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/american_football/american_football_1k.gltf"
+    },
+    {
+      "id": "antique_ceramic_vase_01",
+      "title": "Antique Ceramic Vase 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "containers",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/antique_ceramic_vase_01/antique_ceramic_vase_01_1k.gltf"
+    },
+    {
+      "id": "antique_estoc",
+      "title": "Antique Estoc",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/antique_estoc/antique_estoc_1k.gltf"
+    },
+    {
+      "id": "antique_katana_01",
+      "title": "Antique Katana 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/antique_katana_01/antique_katana_01_1k.gltf"
+    },
+    {
+      "id": "ArmChair_01",
+      "title": "Arm Chair 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/ArmChair_01/ArmChair_01_1k.gltf"
+    },
+    {
+      "id": "bar_chair_round_01",
+      "title": "Bar Chair Round 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "seating",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/bar_chair_round_01/bar_chair_round_01_1k.gltf"
+    },
+    {
+      "id": "BarberShopChair_01",
+      "title": "Barber Shop Chair 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/BarberShopChair_01/BarberShopChair_01_1k.gltf"
+    },
+    {
+      "id": "barrel_03",
+      "title": "Barrel 03",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "industrial",
+        "containers"
+      ],
+      "url": "/cc0-props/polyhaven/barrel_03/barrel_03_1k.gltf"
+    },
+    {
+      "id": "Barrel_01",
+      "title": "Barrel_01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "industrial",
+        "containers"
+      ],
+      "url": "/cc0-props/polyhaven/Barrel_01/Barrel_01_1k.gltf"
+    },
+    {
+      "id": "baseball_01",
+      "title": "Baseball 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/baseball_01/baseball_01_1k.gltf"
+    },
+    {
+      "id": "book_encyclopedia_set_01",
+      "title": "Book Encyclopedia Set 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative",
+        "books"
+      ],
+      "url": "/cc0-props/polyhaven/book_encyclopedia_set_01/book_encyclopedia_set_01_1k.gltf"
+    },
+    {
+      "id": "brass_blowtorch",
+      "title": "Brass Blowtorch",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "tools"
+      ],
+      "url": "/cc0-props/polyhaven/brass_blowtorch/brass_blowtorch_1k.gltf"
+    },
+    {
+      "id": "brass_candleholders",
+      "title": "Brass Candleholders",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/brass_candleholders/brass_candleholders_1k.gltf"
+    },
+    {
+      "id": "brass_diya_lantern",
+      "title": "Brass Diya Lantern",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/brass_diya_lantern/brass_diya_lantern_1k.gltf"
+    },
+    {
+      "id": "brass_goblets",
+      "title": "Brass Goblets",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "dishes",
+        "decorative",
+        "containers"
+      ],
+      "url": "/cc0-props/polyhaven/brass_goblets/brass_goblets_1k.gltf"
+    },
+    {
+      "id": "brass_pan_01",
+      "title": "Brass Pan 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "containers",
+        "decorative",
+        "dishes"
+      ],
+      "url": "/cc0-props/polyhaven/brass_pan_01/brass_pan_01_1k.gltf"
+    },
+    {
+      "id": "brass_pot_01",
+      "title": "Brass Pot 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "containers",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/brass_pot_01/brass_pot_01_1k.gltf"
+    },
+    {
+      "id": "brass_pot_02",
+      "title": "Brass Pot 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "dishes",
+        "containers",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/brass_pot_02/brass_pot_02_1k.gltf"
+    },
+    {
+      "id": "brass_vase_01",
+      "title": "Brass Vase 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/brass_vase_01/brass_vase_01_1k.gltf"
+    },
+    {
+      "id": "brass_vase_02",
+      "title": "Brass Vase 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/brass_vase_02/brass_vase_02_1k.gltf"
+    },
+    {
+      "id": "brass_vase_03",
+      "title": "Brass Vase 03",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "containers",
+        "props",
+        "decorative",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/brass_vase_03/brass_vase_03_1k.gltf"
+    },
+    {
+      "id": "brass_vase_04",
+      "title": "Brass Vase 04",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "containers",
+        "props",
+        "vases",
+        "dishes"
+      ],
+      "url": "/cc0-props/polyhaven/brass_vase_04/brass_vase_04_1k.gltf"
+    },
+    {
+      "id": "bull_head",
+      "title": "Bull Head",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/bull_head/bull_head_1k.gltf"
+    },
+    {
+      "id": "Camera_01",
+      "title": "Camera 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "electronics"
+      ],
+      "url": "/cc0-props/polyhaven/Camera_01/Camera_01_1k.gltf"
+    },
+    {
+      "id": "carrot_cake",
+      "title": "Carrot Cake",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "food",
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/carrot_cake/carrot_cake_1k.gltf"
+    },
+    {
+      "id": "carved_wooden_elephant",
+      "title": "Carved Wooden Elephant",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/carved_wooden_elephant/carved_wooden_elephant_1k.gltf"
+    },
+    {
+      "id": "carved_wooden_plate",
+      "title": "Carved Wooden Plate",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative",
+        "dishes"
+      ],
+      "url": "/cc0-props/polyhaven/carved_wooden_plate/carved_wooden_plate_1k.gltf"
+    },
+    {
+      "id": "CashRegister_01",
+      "title": "Cash Register 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "appliances",
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/CashRegister_01/CashRegister_01_1k.gltf"
+    },
+    {
+      "id": "cassette_player",
+      "title": "Cassette Player",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "electronics"
+      ],
+      "url": "/cc0-props/polyhaven/cassette_player/cassette_player_1k.gltf"
+    },
+    {
+      "id": "ceiling_fan",
+      "title": "Ceiling Fan",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "appliances",
+        "electronics"
+      ],
+      "url": "/cc0-props/polyhaven/ceiling_fan/ceiling_fan_1k.gltf"
+    },
+    {
+      "id": "ceramic_vase_01",
+      "title": "Ceramic Vase 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "vases",
+        "containers",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/ceramic_vase_01/ceramic_vase_01_1k.gltf"
+    },
+    {
+      "id": "ceramic_vase_02",
+      "title": "Ceramic Vase 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "containers",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/ceramic_vase_02/ceramic_vase_02_1k.gltf"
+    },
+    {
+      "id": "ceramic_vase_03",
+      "title": "Ceramic Vase 03",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "containers",
+        "decorative",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/ceramic_vase_03/ceramic_vase_03_1k.gltf"
+    },
+    {
+      "id": "ceramic_vase_04",
+      "title": "Ceramic Vase 04",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "containers",
+        "decorative",
+        "vases"
+      ],
+      "url": "/cc0-props/polyhaven/ceramic_vase_04/ceramic_vase_04_1k.gltf"
+    },
+    {
+      "id": "Chandelier_01",
+      "title": "Chandelier 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/Chandelier_01/Chandelier_01_1k.gltf"
+    },
+    {
+      "id": "Chandelier_02",
+      "title": "Chandelier 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/Chandelier_02/Chandelier_02_1k.gltf"
+    },
+    {
+      "id": "Chandelier_03",
+      "title": "Chandelier 03",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/Chandelier_03/Chandelier_03_1k.gltf"
+    },
+    {
+      "id": "chess_set",
+      "title": "Chess Set",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/chess_set/chess_set_1k.gltf"
+    },
+    {
+      "id": "chinese_armchair",
+      "title": "Chinese Armchair",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_armchair/chinese_armchair_1k.gltf"
+    },
+    {
+      "id": "chinese_cabinet",
+      "title": "Chinese Cabinet",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "shelves",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_cabinet/chinese_cabinet_1k.gltf"
+    },
+    {
+      "id": "chinese_chandelier",
+      "title": "Chinese Chandelier",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_chandelier/chinese_chandelier_1k.gltf"
+    },
+    {
+      "id": "chinese_commode",
+      "title": "Chinese Commode",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "shelves"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_commode/chinese_commode_1k.gltf"
+    },
+    {
+      "id": "chinese_console_table",
+      "title": "Chinese Console Table",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "table",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_console_table/chinese_console_table_1k.gltf"
+    },
+    {
+      "id": "chinese_screen_panels",
+      "title": "Chinese Screen Panels",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_screen_panels/chinese_screen_panels_1k.gltf"
+    },
+    {
+      "id": "chinese_sofa",
+      "title": "Chinese Sofa",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_sofa/chinese_sofa_1k.gltf"
+    },
+    {
+      "id": "chinese_stool",
+      "title": "Chinese Stool",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "seating",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_stool/chinese_stool_1k.gltf"
+    },
+    {
+      "id": "chinese_tea_table",
+      "title": "Chinese Tea Table",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "table",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/chinese_tea_table/chinese_tea_table_1k.gltf"
+    },
+    {
+      "id": "ClassicConsole_01",
+      "title": "Classic Console 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/ClassicConsole_01/ClassicConsole_01_1k.gltf"
+    },
+    {
+      "id": "ClassicNightstand_01",
+      "title": "Classic Nightstand 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/ClassicNightstand_01/ClassicNightstand_01_1k.gltf"
+    },
+    {
+      "id": "CoffeeCart_01",
+      "title": "Coffee Cart 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "appliances",
+        "props",
+        "furniture",
+        "office"
+      ],
+      "url": "/cc0-props/polyhaven/CoffeeCart_01/CoffeeCart_01_1k.gltf"
+    },
+    {
+      "id": "CoffeeTable_01",
+      "title": "Coffee Table 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/CoffeeTable_01/CoffeeTable_01_1k.gltf"
+    },
+    {
+      "id": "coffee_table_round_01",
+      "title": "Coffee Table Round 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/coffee_table_round_01/coffee_table_round_01_1k.gltf"
+    },
+    {
+      "id": "concrete_cat_statue",
+      "title": "Concrete Cat Statue",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/concrete_cat_statue/concrete_cat_statue_1k.gltf"
+    },
+    {
+      "id": "croissant",
+      "title": "Croissant",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "food"
+      ],
+      "url": "/cc0-props/polyhaven/croissant/croissant_1k.gltf"
+    },
+    {
+      "id": "dining_chair_02",
+      "title": "Dining Chair 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/dining_chair_02/dining_chair_02_1k.gltf"
+    },
+    {
+      "id": "dirty_football",
+      "title": "Dirty Football",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/dirty_football/dirty_football_1k.gltf"
+    },
+    {
+      "id": "drain_cleaner",
+      "title": "Drain Cleaner",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "industrial",
+        "props",
+        "tools"
+      ],
+      "url": "/cc0-props/polyhaven/drain_cleaner/drain_cleaner_1k.gltf"
+    },
+    {
+      "id": "drawer_cabinet",
+      "title": "Drawer Cabinet",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/drawer_cabinet/drawer_cabinet_1k.gltf"
+    },
+    {
+      "id": "electric_stove",
+      "title": "Electric Stove",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "electronics",
+        "appliances",
+        "rigged",
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/electric_stove/electric_stove_1k.gltf"
+    },
+    {
+      "id": "fancy_picture_frame_01",
+      "title": "Fancy Picture Frame 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "wall decoration"
+      ],
+      "url": "/cc0-props/polyhaven/fancy_picture_frame_01/fancy_picture_frame_01_1k.gltf"
+    },
+    {
+      "id": "fancy_picture_frame_02",
+      "title": "Fancy Picture Frame 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "wall decoration"
+      ],
+      "url": "/cc0-props/polyhaven/fancy_picture_frame_02/fancy_picture_frame_02_1k.gltf"
+    },
+    {
+      "id": "flood_lights",
+      "title": "Flood Lights",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting",
+        "industrial",
+        "electronics"
+      ],
+      "url": "/cc0-props/polyhaven/flood_lights/flood_lights_1k.gltf"
+    },
+    {
+      "id": "folding_wooden_stool",
+      "title": "Folding Wooden Stool",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "seating",
+        "furniture"
+      ],
+      "url": "/cc0-props/polyhaven/folding_wooden_stool/folding_wooden_stool_1k.gltf"
+    },
+    {
+      "id": "gallinera_chair",
+      "title": "Gallinera Chair",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/gallinera_chair/gallinera_chair_1k.gltf"
+    },
+    {
+      "id": "gallinera_table",
+      "title": "Gallinera Table",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/gallinera_table/gallinera_table_1k.gltf"
+    },
+    {
+      "id": "gamepad",
+      "title": "Gamepad",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/gamepad/gamepad_1k.gltf"
+    },
+    {
+      "id": "gaming_console",
+      "title": "Gaming Console",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "appliances",
+        "electronics"
+      ],
+      "url": "/cc0-props/polyhaven/gaming_console/gaming_console_1k.gltf"
+    },
+    {
+      "id": "GothicBed_01",
+      "title": "Gothic Bed 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "bed"
+      ],
+      "url": "/cc0-props/polyhaven/GothicBed_01/GothicBed_01_1k.gltf"
+    },
+    {
+      "id": "GothicCabinet_01",
+      "title": "Gothic Cabinet 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "shelves"
+      ],
+      "url": "/cc0-props/polyhaven/GothicCabinet_01/GothicCabinet_01_1k.gltf"
+    },
+    {
+      "id": "gothic_coffee_table",
+      "title": "Gothic Coffee Table",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/gothic_coffee_table/gothic_coffee_table_1k.gltf"
+    },
+    {
+      "id": "GothicCommode_01",
+      "title": "Gothic Commode 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "shelves"
+      ],
+      "url": "/cc0-props/polyhaven/GothicCommode_01/GothicCommode_01_1k.gltf"
+    },
+    {
+      "id": "GreenChair_01",
+      "title": "Green Chair 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "seating"
+      ],
+      "url": "/cc0-props/polyhaven/GreenChair_01/GreenChair_01_1k.gltf"
+    },
+    {
+      "id": "hanging_industrial_lamp",
+      "title": "Hanging Industrial Lamp",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/hanging_industrial_lamp/hanging_industrial_lamp_1k.gltf"
+    },
+    {
+      "id": "hanging_picture_frame_01",
+      "title": "Hanging Picture Frame 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "wall decoration"
+      ],
+      "url": "/cc0-props/polyhaven/hanging_picture_frame_01/hanging_picture_frame_01_1k.gltf"
+    },
+    {
+      "id": "hanging_picture_frame_02",
+      "title": "Hanging Picture Frame 02",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "wall decoration"
+      ],
+      "url": "/cc0-props/polyhaven/hanging_picture_frame_02/hanging_picture_frame_02_1k.gltf"
+    },
+    {
+      "id": "hanging_picture_frame_03",
+      "title": "Hanging Picture Frame 03",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "wall decoration",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/hanging_picture_frame_03/hanging_picture_frame_03_1k.gltf"
+    },
+    {
+      "id": "horse_head",
+      "title": "Horse Head",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/horse_head/horse_head_1k.gltf"
+    },
+    {
+      "id": "horse_statue_01",
+      "title": "Horse Statue 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/horse_statue_01/horse_statue_01_1k.gltf"
+    },
+    {
+      "id": "industrial_coffee_table",
+      "title": "Industrial Coffee Table",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "furniture",
+        "table"
+      ],
+      "url": "/cc0-props/polyhaven/industrial_coffee_table/industrial_coffee_table_1k.gltf"
+    },
+    {
+      "id": "industrial_wall_lamp",
+      "title": "Industrial Wall Lamp",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/industrial_wall_lamp/industrial_wall_lamp_1k.gltf"
+    },
+    {
+      "id": "industrial_wall_sconce",
+      "title": "Industrial Wall Sconce",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/industrial_wall_sconce/industrial_wall_sconce_1k.gltf"
+    },
+    {
+      "id": "jug_01",
+      "title": "Jug 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative",
+        "dishes",
+        "containers"
+      ],
+      "url": "/cc0-props/polyhaven/jug_01/jug_01_1k.gltf"
+    },
+    {
+      "id": "katana_stand_01",
+      "title": "Katana Stand 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/katana_stand_01/katana_stand_01_1k.gltf"
+    },
+    {
+      "id": "korean_fire_extinguisher_01",
+      "title": "Korean Fire Extinguisher 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "industrial",
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/korean_fire_extinguisher_01/korean_fire_extinguisher_01_1k.gltf"
+    },
+    {
+      "id": "korean_public_payphone_01",
+      "title": "Korean Public Payphone 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/korean_public_payphone_01/korean_public_payphone_01_1k.gltf"
+    },
+    {
+      "id": "lambis_shell",
+      "title": "Lambis Shell",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "nature"
+      ],
+      "url": "/cc0-props/polyhaven/lambis_shell/lambis_shell_1k.gltf"
+    },
+    {
+      "id": "Lantern_01",
+      "title": "Lantern 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/Lantern_01/Lantern_01_1k.gltf"
+    },
+    {
+      "id": "lantern_chandelier_01",
+      "title": "Lantern Chandelier 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "lighting"
+      ],
+      "url": "/cc0-props/polyhaven/lantern_chandelier_01/lantern_chandelier_01_1k.gltf"
+    },
+    {
+      "id": "lateral_sea_marker",
+      "title": "Lateral Sea Marker",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props"
+      ],
+      "url": "/cc0-props/polyhaven/lateral_sea_marker/lateral_sea_marker_1k.gltf"
+    },
+    {
+      "id": "lemon",
+      "title": "Lemon",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "food"
+      ],
+      "url": "/cc0-props/polyhaven/lemon/lemon_1k.gltf"
+    },
+    {
+      "id": "lion_head",
+      "title": "Lion Head",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/lion_head/lion_head_1k.gltf"
+    },
+    {
+      "id": "magnifying_glass_01",
+      "title": "Magnifying Glass 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "props",
+        "tools"
+      ],
+      "url": "/cc0-props/polyhaven/magnifying_glass_01/magnifying_glass_01_1k.gltf"
+    },
+    {
+      "id": "mantel_clock_01",
+      "title": "Mantel Clock 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative",
+        "appliances",
+        "rigged"
+      ],
+      "url": "/cc0-props/polyhaven/mantel_clock_01/mantel_clock_01_1k.gltf"
+    },
+    {
+      "id": "marble_bust_01",
+      "title": "Marble Bust 01",
+      "source": "polyhaven",
+      "license": "CC0",
+      "categories": [
+        "decorative"
+      ],
+      "url": "/cc0-props/polyhaven/marble_bust_01/marble_bust_01_1k.gltf"
+    }
+  ]
+}

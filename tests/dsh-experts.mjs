@@ -88,6 +88,25 @@ await check('soul 占位符编译为静态文案且不残留 {{', async () => {
   assert.ok(!persona.config.prefix.includes('{{'), 'persona 不得含未解析占位符')
 })
 
+await check('Blender 宿主工具可进专家 preset（不经平台工具桥）', async () => {
+  const subset = resolveToolSubset(['blender_session', 'blender_py', 'read_source'], registeredNames)
+  assert.ok(subset.includes('blender_session'))
+  assert.ok(subset.includes('blender_py'))
+  assert.ok(subset.includes('read_source'))
+})
+
+await check('内置 Blender 专家可编译', async () => {
+  const row = listAllExperts().find((e) => e.id === 'expert-blender')
+  assert.ok(row, '缺少 expert-blender')
+  const preset = compileExpertPreset({
+    expert: row,
+    registeredNames,
+    skillIds: [],
+  })
+  const gate = preset.plugins.find((p) => p.name === 'dsh-plugin-creative-expert')
+  assert.ok(gate?.config?.toolIds?.includes('blender_session'))
+})
+
 await check('toolIds 收窄成真实工具，并只补上 list_experts', async () => {
   const preset = compileExpertPreset({
     expert: { id: 'demo', name: '演示', soul: 'x', toolIds: ['read_source', 'no_such_tool'], skillIds: [] },

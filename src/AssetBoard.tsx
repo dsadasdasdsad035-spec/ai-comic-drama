@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   generateImage,
   getProject,
@@ -22,9 +22,7 @@ import {
 } from './materialImageGate'
 import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import CameraLexiconBrowser from './CameraLexiconBrowser'
-import LexiconWhiteboxStudio from './LexiconWhiteboxStudio'
 import { getCameraLexiconCatalog } from './cameraLexicon'
-import { listLexiconWhitebox, type LexiconWhiteboxSheet } from './lexiconWhitebox'
 import OnlineStockList from './stock/OnlineStockList'
 import type { StockImportResult, StockImportTarget, StockItem } from './stock/types'
 import AssetVideoBoard from './AssetVideoBoard'
@@ -38,7 +36,9 @@ import { BOARD_LIST_PAGE_SIZE, designListMatch, useBoardListFilter } from './boa
 import CharacterBoard, { type CharacterBoardProps } from './CharacterBoard'
 import { MATERIAL_TAB_CHARACTER_KEY } from './shell/route'
 
-type MaterialTab = DesignKind | 'video' | 'character'
+const LazyMaterial3dStudio = lazy(() => import('./material3d/Material3dStudio'))
+
+type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d'
 
 function readInitialMaterialTab(): MaterialTab {
   try {
@@ -70,10 +70,8 @@ type Props = {
   missing: Set<string>
   /** <img> 加载失败时补记缺失 */
   onImageMissing: (ref: string) => void
-  /** 镜头语言「自定义白模」工作台需要的项目画幅与未保存回调 */
-  projectAspect: string
-  onEditorDirtyChange?: (dirty: boolean) => void
   /** 侧栏「素材」徽标：设定卡条数 */
+  projectAspect?: string
   onDesignCountChange?: (count: number) => void
 } & Omit<
   CharacterBoardProps,
@@ -100,8 +98,6 @@ export default function AssetBoard({
   price,
   missing,
   onImageMissing,
-  projectAspect,
-  onEditorDirtyChange,
   onDesignCountChange,
   ...characterProps
 }: Props) {
@@ -110,12 +106,9 @@ export default function AssetBoard({
   const [tab, setTab] = useState<MaterialTab>(readInitialMaterialTab)
   const { characters } = characterProps
   const [lexiconOpen, setLexiconOpen] = useState(false)
-  const [lexiconView, setLexiconView] = useState<'preset' | 'custom'>('preset')
-  const [whiteboxSheets, setWhiteboxSheets] = useState<LexiconWhiteboxSheet[]>([])
   const [loading, setLoading] = useState(false)
   const [stockOpen, setStockOpen] = useState(false)
   const [videoAddOpen, setVideoAddOpen] = useState(false)
-
   useEffect(() => {
     if (tab !== 'video') setVideoAddOpen(false)
   }, [tab])
@@ -148,7 +141,6 @@ export default function AssetBoard({
     setReady('')
     setProject(null)
     setDesigns([])
-    setWhiteboxSheets([])
     setErrors({})
     if (!projectName) {
       setLoading(false)
@@ -163,7 +155,6 @@ export default function AssetBoard({
         const ds = (p.designs ?? []) as DesignSheet[]
         setProject(p)
         setDesigns(ds)
-        setWhiteboxSheets(listLexiconWhitebox(p))
         savedSigRef.current = JSON.stringify(ds)
         setReady(projectName)
         setLoading(false)
@@ -478,15 +469,22 @@ export default function AssetBoard({
       ).length,
     [project?.assets],
   )
+  const [studio3dCount, setStudio3dCount] = useState(0)
+  useEffect(() => {
+    setStudio3dCount((project?.material3dScenes || []).length)
+  }, [project?.material3dScenes])
   const shown = useMemo(
-    () => (tab === 'video' || tab === 'character' ? [] : designs.filter((d) => d.kind === tab)),
+    () =>
+      tab === 'video' || tab === 'character' || tab === 'studio3d'
+        ? []
+        : designs.filter((d) => d.kind === tab),
     [designs, tab],
   )
   const designList = useBoardListFilter(
     shown,
     designListMatch,
     BOARD_LIST_PAGE_SIZE,
-    tab === 'character' || tab === 'video' ? 'scene' : tab,
+    tab === 'character' || tab === 'video' || tab === 'studio3d' ? 'scene' : tab,
   )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -501,9 +499,7 @@ export default function AssetBoard({
           <span className="board-hint">
             {lexiconOpen
               ? projectName
-                ? lexiconView === 'preset'
-                  ? `镜头语言 · ${getCameraLexiconCatalog().count} 段预置运镜（非场景/道具设定）`
-                  : `镜头语言 · 自定义白模 ${whiteboxSheets.length} 条`
+                ? `镜头语言 · ${getCameraLexiconCatalog().count} 段预置运镜（编排见场景三维；成片见 Blender 专家）`
                 : '镜头语言 · 先选择项目再导入'
               : tab === 'character'
                 ? (
@@ -518,13 +514,17 @@ export default function AssetBoard({
                 ? projectName
                   ? `视频库 ${videoCount} 条`
                   : '视频 · 先选择项目'
+              : tab === 'studio3d'
+                ? projectName
+                  ? `场景三维 ${studio3dCount} 个`
+                  : '场景三维 · 先选择项目'
               : projectName
                 ? `场景 ${sceneCount} · 道具 ${propCount} · 项目级设定`
                 : '先选择项目'}
           </span>
         }
         settings={
-          lexiconOpen || tab === 'video' ? null : tab === 'character' ? (
+          lexiconOpen || tab === 'video' || tab === 'studio3d' ? null : tab === 'character' ? (
             <>
               <StageModelSelect
                 stage={'character' as Stage}
@@ -674,65 +674,35 @@ export default function AssetBoard({
         >
           视频 <span>{videoCount}</span>
         </button>
+        <button
+          type="button"
+          className={!lexiconOpen && tab === 'studio3d' ? 'on' : ''}
+          data-asset-studio3d-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('studio3d')
+          }}
+        >
+          场景三维 <span>{studio3dCount}</span>
+        </button>
         <button className={lexiconOpen ? 'on' : ''} onClick={() => setLexiconOpen(true)}>
           镜头语言
         </button>
         <span className="asset-tabs-hint">
           {lexiconOpen
-            ? lexiconView === 'preset'
-              ? '镜头语言：先预览再发布素材卡 · 白膜仅供运镜参照'
-              : '自定义白模：用 3D 工作台写代码并渲染 MP4，再发布为素材卡'
+            ? '镜头语言：运镜参照与白模 · 浏览器编排请用「场景三维」Tab；成片 MP4 用创意 Blender 三维专家'
             : tab === 'character'
               ? '角色为项目级设定；在画布选中镜头后可在角色卡上注入 lookEn'
               : tab === 'video'
-              ? '参考片与平台下载统一进视频库；几何分析在白模工作台选用'
+              ? '参考片与平台下载统一进视频库'
+              : tab === 'studio3d'
+                ? '场景三维：立板/CC0 道具/Poly Haven · 成片仍在 Blender 专家'
               : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
       </div>
 
       {lexiconOpen ? (
-        <>
-          <div className="lex-mode-tabs" role="tablist" aria-label="镜头语言来源">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={lexiconView === 'preset'}
-              className={lexiconView === 'preset' ? 'on' : ''}
-              onClick={() => setLexiconView('preset')}
-            >
-              预置库
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={lexiconView === 'custom'}
-              className={lexiconView === 'custom' ? 'on' : ''}
-              onClick={() => setLexiconView('custom')}
-            >
-              自定义白模 <span>{whiteboxSheets.length}</span>
-            </button>
-          </div>
-          {lexiconView === 'preset' ? (
-            <CameraLexiconBrowser
-              projectName={projectName}
-              onPublishAsset={onAddAssetCard}
-              toast={toast}
-            />
-          ) : (
-            <LexiconWhiteboxStudio
-              projectName={projectName}
-              projectAspect={projectAspect}
-              sheets={whiteboxSheets}
-              onSheetsChange={setWhiteboxSheets}
-              settings={settings}
-              stagePick={stagePick}
-              onPickStage={onPickStage}
-              onPublishAsset={onAddAssetCard}
-              onEditorDirtyChange={onEditorDirtyChange}
-              toast={toast}
-            />
-          )}
-        </>
+        <CameraLexiconBrowser projectName={projectName} onPublishAsset={onAddAssetCard} toast={toast} />
       ) : tab === 'character' ? (
         <CharacterBoard
           embedded
@@ -762,6 +732,16 @@ export default function AssetBoard({
           onAddAssetCard={onAddAssetCard}
           toast={toast}
         />
+      ) : tab === 'studio3d' ? (
+        <Suspense fallback={<div className="char-empty-board">正在加载三维引擎…</div>}>
+          <LazyMaterial3dStudio
+            projectName={projectName}
+            designs={designs}
+            missing={missing}
+            onScenesCountChange={setStudio3dCount}
+            toast={toast}
+          />
+        </Suspense>
       ) : (
       <>
       {shown.length > 0 ? (

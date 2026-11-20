@@ -22,6 +22,7 @@ import {
 } from './dsh-experts.mjs'
 import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
 import { canvasContextForProject } from './studio-canvas-context.mjs'
+import { isStudioShellSyncTool } from './dsh-plugins/creative-tools/shell-sync-tools.mjs'
 
 const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
@@ -62,10 +63,13 @@ function installFetchShim(baseUrl, getContext) {
 }
 
 export class StudioToolBridge {
-  constructor({ root, baseUrl, internalToken, log = () => {} }) {
+  constructor({ root, baseUrl, internalToken, onProjectWrite, log = () => {} }) {
     this.root = root
     this.baseUrl = baseUrl.replace(/\/+$/, '')
     this.internalToken = internalToken
+    /** 写库成功后登记 revision，供浏览器壳轮询 */
+    this.onProjectWrite =
+      typeof onProjectWrite === 'function' ? onProjectWrite : () => {}
     this.log = log
     this.context = { internalToken, sessionToken: '' }
     this.module = null
@@ -141,10 +145,14 @@ export class StudioToolBridge {
     const key = `${projectName || ''}\u0000${epNo || 1}`
     if (key === this.loadedProject && this.tools.size) return this.tools
 
+    const notifyWrite = () => {
+      const pn = String(projectName || '').trim()
+      if (pn) this.onProjectWrite(pn)
+    }
     const platform = this.module.createBuiltinPlatformTools({
       projectName: projectName || '',
       epNo: epNo || 1,
-      onProjectDataChanged: () => {},
+      onProjectDataChanged: notifyWrite,
       expertAllowlist: () => this.invokeExpertAllowlist,
       ...this.canvasHooks(projectName),
     })
@@ -249,6 +257,13 @@ export class StudioToolBridge {
         }
       }
       const failed = Boolean(result && typeof result === 'object' && result.ok === false)
+      if (!failed && isStudioShellSyncTool(name)) {
+        const written =
+          parsed && typeof parsed === 'object' && parsed.project !== undefined
+            ? String(parsed.project || '').trim()
+            : String(projectName || '').trim()
+        if (written) this.onProjectWrite(written)
+      }
       return {
         ok: !failed,
         ...(failed ? { error: String(result.error || result.message || '工具返回失败') } : {}),

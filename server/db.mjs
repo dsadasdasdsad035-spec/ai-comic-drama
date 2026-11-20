@@ -123,6 +123,15 @@ CREATE TABLE IF NOT EXISTS lexicon_whitebox (
   updated_at TEXT,
   UNIQUE(project_id, sheet_id)
 );
+CREATE TABLE IF NOT EXISTS material3d_scenes (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  scene_id   TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  sort       INTEGER DEFAULT 0,
+  updated_at TEXT,
+  UNIQUE(project_id, scene_id)
+);
 CREATE TABLE IF NOT EXISTS scene_layouts (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -700,6 +709,15 @@ function importDesignsAssetsExtras(d, pid, data, now) {
     const payload = { ...row, id, title }
     d.prepare(
       `INSERT INTO lexicon_whitebox (project_id,sheet_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
+    ).run(pid, id, JSON.stringify(payload), i, now)
+  }
+  for (const [i, row] of (data.material3dScenes || []).entries()) {
+    const id = String(row?.id || `m3d-${i}`).trim()
+    if (!id) continue
+    const name = String(row?.name || id).trim()
+    const payload = { ...row, id, name }
+    d.prepare(
+      `INSERT INTO material3d_scenes (project_id,scene_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
     ).run(pid, id, JSON.stringify(payload), i, now)
   }
   for (const [i, raw] of (data.sceneLayouts || []).entries()) {
@@ -1536,6 +1554,19 @@ function assemble(p) {
       }
     })
     .filter(Boolean)
+  const material3dScenes = db
+    .prepare('SELECT * FROM material3d_scenes WHERE project_id = ? ORDER BY sort, id')
+    .all(pid)
+    .map((row) => {
+      try {
+        const parsed = JSON.parse(row.payload || '{}')
+        if (!parsed || typeof parsed !== 'object') return null
+        return { ...parsed, id: String(parsed.id || row.scene_id) }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
   const sceneLayouts = db
     .prepare('SELECT * FROM scene_layouts WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
@@ -1571,6 +1602,7 @@ function assemble(p) {
     assets,
     designs,
     lexiconWhitebox,
+    material3dScenes,
     sceneLayouts,
     episodes,
     shots,
@@ -1721,6 +1753,24 @@ export function writeProject(root, name, data = {}) {
     for (const [i, { id, payload }] of clean.entries()) {
       db.prepare(
         `INSERT INTO lexicon_whitebox (project_id,sheet_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
+      ).run(pid, id, JSON.stringify(payload), i, now)
+    }
+  }
+
+  if (data.material3dScenes !== undefined) {
+    if (!Array.isArray(data.material3dScenes)) throw new Error('material3dScenes 必须是数组')
+    const clean = data.material3dScenes.map((d, i) => {
+      const id = String(d?.id || '').trim()
+      if (!id) throw new Error(`场景三维第 ${i + 1} 项缺少 id`)
+      const name = String(d?.name || id).trim()
+      const payload = { ...d, id, name }
+      if (JSON.stringify(payload).length > 2_000_000) throw new Error(`三维场景 ${id} 数据过大`)
+      return { id, payload }
+    })
+    db.prepare('DELETE FROM material3d_scenes WHERE project_id = ?').run(pid)
+    for (const [i, { id, payload }] of clean.entries()) {
+      db.prepare(
+        `INSERT INTO material3d_scenes (project_id,scene_id,payload,sort,updated_at) VALUES (?,?,?,?,?)`,
       ).run(pid, id, JSON.stringify(payload), i, now)
     }
   }

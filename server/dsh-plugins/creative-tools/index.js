@@ -10,28 +10,10 @@
  * 之所以把执行留在应用进程：工具要读写项目库、媒体目录与账本，
  * 这些都在应用侧；宿主只负责模型循环与会话。
  */
+import { STUDIO_SHELL_SYNC_TOOLS as DESTRUCTIVE_TOOLS } from './shell-sync-tools.mjs'
 
 /** 与 server/studio-tool-bridge.mjs 的 INTERNAL_TOKEN_HEADER 保持一致 */
 const INTERNAL_TOKEN_HEADER = 'x-studio-internal'
-
-/** 需要用户确认才能执行的工具：写库类（破坏性） */
-const DESTRUCTIVE_TOOLS = new Set([
-  'create_project',
-  'update_project_meta',
-  'delete_shots',
-  'submit_episodes',
-  'submit_characters',
-  'submit_designs',
-  'submit_prompts',
-  'submit_shots',
-  'submit_assets',
-  'submit_joins',
-  'set_character_visual',
-  'set_shot_camera_lexicon',
-  'attach_transition_refs',
-  'link_shot_refs',
-  'set_transition_audio',
-])
 
 /** 需要用户确认才能执行的工具：会产生上游费用（生图/生片/配音/渲染） */
 const COSTLY_TOOLS = new Set([

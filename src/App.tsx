@@ -90,6 +90,7 @@ import {
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import StudioFrame from './creative/StudioFrame'
 import { postStudioCanvasContext } from './creative/pushStudioCanvasContext'
+import { useStudioProjectSync } from './creative/useStudioProjectSync'
 import { resolveStudioMount } from './creative/keepalive'
 import { useStudioWarmup } from './creative/useStudioWarmup'
 import { cancelTask, endTask, startTask } from './tasks'
@@ -634,8 +635,6 @@ function Shell() {
   const [projectsLoaded, setProjectsLoaded] = useState(false)
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
   const [readyProject, setReadyProject] = useState('')
-  /** 素材页「镜头语言」白模工作台有未保存代码 */
-  const [assetsEditorDirty, setAssetsEditorDirty] = useState(false)
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsInitialSection | undefined>(
     undefined,
   )
@@ -831,17 +830,10 @@ function Shell() {
   const changeProject = useCallback(
     (next: string) => {
       if (next === projectName) return
-      if (
-        assetsEditorDirty &&
-        !window.confirm('白模工作台有未保存的代码修改，切换项目会丢失。继续？')
-      ) {
-        return
-      }
-      setAssetsEditorDirty(false)
       setReadyProject('')
       navigate(projectHash(next, readLastView(next)))
     },
-    [projectName, assetsEditorDirty],
+    [projectName],
   )
 
   /** 打开项目：有上次视图就恢复，没有落概览 */
@@ -870,7 +862,6 @@ function Shell() {
       }
       await reloadProjects()
       if (gone.has(projectName)) {
-        setAssetsEditorDirty(false)
         setEpNo(1)
         setNodes([])
         setEdges([])
@@ -912,14 +903,6 @@ function Shell() {
         if (next === 'board') setBoardPhase('episodes')
         return
       }
-      if (
-        view === 'assets' &&
-        assetsEditorDirty &&
-        !window.confirm('素材页的白模工作台有未保存的代码修改，离开会丢失。继续？')
-      ) {
-        return
-      }
-      setAssetsEditorDirty(false)
       if (next === 'settings') {
         setSettingsInitialSection(opts?.settingsSection)
       } else {
@@ -931,7 +914,7 @@ function Shell() {
       if (route.kind !== 'project') return
       navigate(projectHash(route.project, next))
     },
-    [view, assetsEditorDirty, route],
+    [view, route],
   )
 
   /**
@@ -1748,6 +1731,15 @@ function Shell() {
     selectedVideoModel,
     vidRes,
   ])
+
+  useStudioProjectSync({
+    projectName: readyProject,
+    studioMounted: studioMounted && studioEnabled,
+    studioVisible: studioMount.visible,
+    getLocalRevision: () => Number(projectSnapRef.current?.revision) || 0,
+    onRefresh: () => refreshProjectSnapshot(),
+    onPushCanvas: pushStudioCanvasNow,
+  })
 
   /** 画布实况推给创意宿主：读工具与出片拼装对齐当前节点与模型（防抖） */
   useEffect(() => {
@@ -4261,7 +4253,6 @@ function Shell() {
             missing={missingMedia}
             onImageMissing={markMissing}
             projectAspect={projectAspect}
-            onEditorDirtyChange={setAssetsEditorDirty}
             characters={characters}
             patch={patchCharacter}
             selectedShot={selected ? { id: selected.id, no: selected.data.no } : null}
@@ -4840,9 +4831,6 @@ function Shell() {
             projectName={readyProject}
             episodes={episodes}
             hintEpNo={scriptHintEpNo}
-            settings={appSettings}
-            stagePick={stagePick}
-            projectStyle={projectStyle}
             toast={(m) => {
               setToast(m)
               window.setTimeout(() => setToast(''), 3000)

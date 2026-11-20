@@ -5,7 +5,21 @@
  * → 兜底自由文本（只有这种才需要「让模型整理」）。
  */
 
-export type IntakeFormat = 'json' | 'markdown-table' | 'csv' | 'tsv' | 'free-text' | 'empty'
+import { hasScriptSceneHeading } from './scriptMarkdown'
+
+export type IntakeFormat =
+  | 'json'
+  | 'script-markdown'
+  | 'markdown-table'
+  | 'csv'
+  | 'tsv'
+  | 'free-text'
+  | 'empty'
+
+export type DetectFormatOptions = {
+  /** 分集剧本导入：有场标题时优先 script-markdown，不被分镜表抢走 */
+  intake?: 'script' | 'shots'
+}
 
 export type FormatResult = {
   kind: IntakeFormat
@@ -49,16 +63,17 @@ function hasShotTableBlock(text: string): boolean {
  * 识别格式。只看前若干行做判断——整篇文本扫一遍没必要，
  * 而且剧本很长时全量扫描只会拖慢导入对话框。
  */
-export function detectFormat(text: string): FormatResult {
+export function detectFormat(text: string, opts?: DetectFormatOptions): FormatResult {
   const raw = String(text ?? '')
   if (!raw.trim()) return { kind: 'empty', reason: '没有内容' }
 
   const trimmed = raw.trim()
+  const scriptIntake = opts?.intake === 'script'
 
   // 1) JSON：允许被 ```json 围栏包着（模型和文档里都常见）
   const fenced = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/)
   const jsonText = (fenced ? fenced[1] : trimmed).trim()
-  if (jsonText.startsWith('{') || jsonText.startsWith('[')) {
+  if (!scriptIntake && (jsonText.startsWith('{') || jsonText.startsWith('['))) {
     try {
       const parsed = JSON.parse(jsonText)
       return { kind: 'json', reason: '内容是 JSON', json: parsed }
@@ -69,14 +84,19 @@ export function detectFormat(text: string): FormatResult {
 
   const lines = trimmed.split(/\r?\n/).slice(0, 40)
 
-  // 2) Markdown 表格
+  // 2) short-drama 剧本 Markdown（分集导入优先于分镜表）
+  if (scriptIntake && hasScriptSceneHeading(trimmed)) {
+    return { kind: 'script-markdown', reason: '内容是 short-drama 剧本 Markdown' }
+  }
+
+  // 3) Markdown 表格
   // 真实分镜表是「文档 + 表格」：导出文件前面还有标题、集信息与场次小节，
   // 表头不在第一行。表头在第一行时行为不变；否则按块找带镜号表头的那块。
   if (looksLikeMarkdownTable(lines) || hasShotTableBlock(trimmed)) {
     return { kind: 'markdown-table', reason: '内容是 Markdown 表格' }
   }
 
-  // 3) CSV / TSV：看前几行的分隔符一致性
+  // 4) CSV / TSV：看前几行的分隔符一致性
   const sample = lines.filter((l) => l.trim()).slice(0, 5)
   if (sample.length >= 2) {
     const tabs = sample.map((l) => delimiterScore(l, '\t'))
@@ -88,6 +108,16 @@ export function detectFormat(text: string): FormatResult {
     }
     if (minCommas >= 2 && commas.every((n) => n >= 2)) {
       return { kind: 'csv', reason: '内容是逗号分隔的表格' }
+    }
+  }
+
+  if (scriptIntake) {
+    if (jsonText.startsWith('{') || jsonText.startsWith('[')) {
+      return { kind: 'free-text', reason: '分集剧本导入仅支持 Markdown，请使用场次标题格式' }
+    }
+    return {
+      kind: 'free-text',
+      reason: '需要 short-drama 场次标题（## EP001-SC001 内 · 地点 · 时间）',
     }
   }
 

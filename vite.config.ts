@@ -5,8 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { createAppHandler, runServerShutdownTasks, runServerStartupTasks } from './server/app.ts'
 
 /**
- * 接口实现全部在 server/app.ts；这里只保留 vite 侧的装配。
- * 独立入口（server/index.mjs）调用同一个 createAppHandler，两个模式行为一致。
+ * 接口实现全部在 server/app.ts；独立入口 server/index.mjs 与 dev 共用 createAppHandler。
  */
 function appServerPlugin(): Plugin {
   return {
@@ -55,6 +54,13 @@ export default defineConfig({
     // 运行时媒体不再被拷进产物：dist 只放前端代码，媒体由 SB_MEDIA_ROOT 决定。
     // 只读资产（public/presets）由独立入口的静态层兜底。
     copyPublicDir: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@babylonjs/inspector')) return 'babylon-inspector'
+          if (id.includes('node_modules/@babylonjs/')) return 'babylon'
+        },
+      },
+    },
   },
 })
-

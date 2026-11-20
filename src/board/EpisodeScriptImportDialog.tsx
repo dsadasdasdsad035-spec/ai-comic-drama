@@ -1,12 +1,11 @@
 /**
- * 分集剧本导入：JSON 直通 script-v1，自由文本可走 script-intake 整理。
+ * 分集剧本导入：仅 Markdown，short-drama 场次标题零模型解析。
  */
 import { useMemo, useRef, useState } from 'react'
-import type { AppSettings, ProjectEpisode } from '../api'
-import { hasTextModels, stageModelKey, type StagePick } from '../ModelSelect'
+import type { ProjectEpisode } from '../api'
 import { detectFormat } from '../intake/format'
+import { parseScriptMarkdown } from '../intake/scriptMarkdown'
 import { episodesFromScriptJson, planScriptImport } from './scriptIntake'
-import { INTAKE_LABEL, runIntake } from '../intake/intakeSkill'
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 
@@ -24,9 +23,6 @@ type Props = {
   episodes: ProjectEpisode[]
   /** 从「新增分集」进入时可提示默认集号 */
   hintEpNo?: number
-  settings: AppSettings | null
-  stagePick: StagePick
-  projectStyle?: string
   toast: (m: string) => void
   onClose: () => void
   onApply: (episodes: ProjectEpisode[], summary: string) => void | Promise<void>
@@ -36,38 +32,33 @@ export default function EpisodeScriptImportDialog({
   projectName,
   episodes,
   hintEpNo,
-  settings,
-  stagePick,
-  projectStyle,
-  toast,
   onClose,
   onApply,
 }: Props) {
   const [mode, setMode] = useState<'paste' | 'file'>('paste')
   const [raw, setRaw] = useState('')
   const [fileName, setFileName] = useState('')
-  const [busy, setBusy] = useState(false)
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState('')
   const [error, setError] = useState('')
-  const [organized, setOrganized] = useState<unknown>(null)
-  const [organizedBy, setOrganizedBy] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const format = useMemo(() => detectFormat(raw), [raw])
-  const canUseModel = hasTextModels(settings)
-  const modelKey = stageModelKey(settings, 'creative', stagePick)
+  const format = useMemo(() => detectFormat(raw, { intake: 'script' }), [raw])
+
+  const parseResult = useMemo(() => {
+    if (format.kind !== 'script-markdown' || !raw.trim()) return null
+    return parseScriptMarkdown(raw, { hintEpNo })
+  }, [raw, format.kind, hintEpNo])
 
   const plan = useMemo(() => {
+    if (!parseResult?.ok) return null
     try {
-      const source = organized ?? (format.kind === 'json' ? format.json : undefined)
-      if (!source) return null
-      const incoming = episodesFromScriptJson(source)
+      const incoming = episodesFromScriptJson({ episodes: parseResult.episodes })
       return planScriptImport(episodes, incoming)
     } catch (e) {
       return { blocked: (e as Error).message } as const
     }
-  }, [raw, organized, format, episodes])
+  }, [parseResult, episodes])
 
   const pickFile = async (file: File | null) => {
     if (!file) return
@@ -75,43 +66,17 @@ export default function EpisodeScriptImportDialog({
       setError(`文件超过 4MB，请粘贴文本或拆分后再传`)
       return
     }
-    if (!/\.(json|md|markdown|txt)$/i.test(file.name)) {
-      setError('支持 .json / .md / .txt')
+    if (!/\.(md|markdown)$/i.test(file.name)) {
+      setError('分集剧本仅支持 .md / .markdown')
       return
     }
     setError('')
     try {
       setRaw(await readTextFile(file))
       setFileName(file.name)
-      setOrganized(null)
-      setOrganizedBy('')
       setMode('file')
     } catch (e) {
       setError((e as Error).message)
-    }
-  }
-
-  const organize = async () => {
-    setError('')
-    if (!canUseModel) {
-      setError('设置页还没有可用的文本模型，无法整理')
-      return
-    }
-    setBusy(true)
-    try {
-      const r = await runIntake({
-        target: 'script',
-        raw,
-        modelKey,
-        context: { style: projectStyle, epNo: hintEpNo, episodes },
-      })
-      setOrganized(r.json)
-      setOrganizedBy(r.modelLabel)
-      toast(`已整理 ${r.chunks} 块，请检查预览后再应用`)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -129,8 +94,14 @@ export default function EpisodeScriptImportDialog({
     }
   }
 
-  const needsModel = format.kind === 'free-text' && !organized
+  const parseError =
+    parseResult && !parseResult.ok
+      ? parseResult.error
+      : format.kind === 'free-text' && raw.trim()
+        ? format.reason
+        : ''
   const blocked = plan && 'blocked' in plan ? plan.blocked : ''
+  const warnings = parseResult?.ok ? parseResult.warnings : []
 
   return (
     <div className="mp-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -175,10 +146,9 @@ export default function EpisodeScriptImportDialog({
               value={raw}
               onChange={(e) => {
                 setRaw(e.target.value)
-                setOrganized(null)
-                setOrganizedBy('')
+                setError('')
               }}
-              placeholder="粘贴分集剧本（含第 N 集标题），或粘贴 script-v1 JSON（含 episodes 数组）"
+              placeholder={'# EP001 集名\n\n## EP001-SC001 内 · 地点 · 时间\n场次正文…'}
             />
           ) : (
             <div className="intake-file">
@@ -188,7 +158,7 @@ export default function EpisodeScriptImportDialog({
               <input
                 ref={fileRef}
                 type="file"
-                accept=".json,.md,.markdown,.txt"
+                accept=".md,.markdown"
                 hidden
                 onChange={(e) => {
                   void pickFile(e.target.files?.[0] ?? null)
@@ -204,17 +174,16 @@ export default function EpisodeScriptImportDialog({
             </div>
           )}
 
-          {needsModel ? (
-            <div className="intake-model-row">
-              <span>剧本原文需要整理成结构化分集（需已安装 script-intake 技能）</span>
-              <button type="button" className="btn" disabled={busy || !canUseModel} onClick={() => void organize()}>
-                {busy ? '整理中…' : canUseModel ? '让模型整理' : '未配置文本模型'}
-              </button>
-            </div>
+          {warnings.length ? (
+            <ul className="st-hint">
+              {warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
           ) : null}
-          {organizedBy ? <div className="st-hint">已由 {organizedBy} 整理，请核对下方预览</div> : null}
 
           {error ? <div className="gen-error">{error}</div> : null}
+          {parseError ? <div className="gen-error">{parseError}</div> : null}
           {applyError ? <div className="gen-error">{applyError}</div> : null}
           {blocked ? <div className="gen-error">{blocked}</div> : null}
 

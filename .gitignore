@@ -103,3 +103,10 @@ fixtures/*.zip
 # 桌面端：打包产物与随包二进制（体积大，构建时下载）
 desktop/dist/
 desktop/bin/
+
+# CC0 道具 Poly Haven 缓存（清单在 public/presets/cc0-props）
+vendor/cc0-props/
+
+# Blender Bridge 运行时 profile（见 SB_STATE_ROOT）
+.blender-profile/
+

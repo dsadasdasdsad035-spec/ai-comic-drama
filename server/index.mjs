@@ -31,6 +31,8 @@ import {
   writeStudioProfile,
 } from './studio-profile.mjs'
 import { installCreativeToolsBundle } from './dsh-bundle.mjs'
+import { ensureBlenderBridgeExtension } from './blender-bridge.mjs'
+import { resolveBlenderBin } from './blender.mjs'
 import { expertsPatchPath, readCompiledExperts, writeExpertsPatch } from './dsh-experts.mjs'
 import { isStudioEnabled, setStudioEnabled, studioFlagPayload } from './studio-flag.mjs'
 import { createStudioPrewarm } from './studio-prewarm.mjs'
@@ -44,6 +46,7 @@ import {
   getStudioCanvasContext,
   setStudioCanvasContext,
 } from './studio-canvas-context.mjs'
+import { bumpStudioProjectRevision, readProjectRevision } from './studio-project-sync.mjs'
 
 // 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
 if (!assertNodeVersion()) process.exit(1)
@@ -182,6 +185,11 @@ function serveStatic(req, res) {
 }
 
 runServerStartupTasks(ROOT)
+void ensureBlenderBridgeExtension({
+  appRoot: ROOT,
+  bin: resolveBlenderBin(),
+  log: (line) => console.log(line),
+}).catch((e) => console.warn(`[blender-bridge] 后台安装异常：${e?.message || String(e)}`))
 // 媒体根可能挂在空卷上（桌面端首次启动、容器首次挂载），子目录必须先建好，
 // 否则第一批写盘会因为父目录不存在直接失败。
 for (const dir of MEDIA_DIRS) {
@@ -231,7 +239,6 @@ let studioToolStatus = { count: 0, names: [], at: '' }
 let studioDshHome = ''
 /** @type {ReturnType<typeof createStudioPrewarm> | null} */
 let studioPrewarm = null
-
 /**
  * 读取请求体（工具桥的请求都很小，限个上限防止被塞爆内存）。
  * @param {import('node:http').IncomingMessage} req
@@ -376,6 +383,7 @@ function setupStudio(actualPort) {
     root: ROOT,
     baseUrl: `http://127.0.0.1:${actualPort}`,
     internalToken: STUDIO_INTERNAL_TOKEN,
+    onProjectWrite: (name) => bumpStudioProjectRevision(ROOT, name),
     log: (line) => console.log(line),
   })
   // 先算一遍专家 preset：首次进创意时宿主就要能读到它，不能等第一次会话
@@ -630,6 +638,39 @@ const server = http.createServer((req, res) => {
     }
     res.statusCode = 405
     res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST' }))
+    return
+  }
+
+  // 项目 revision 探针：壳轮询对齐创意宿主写库，不必拉全量 GET /api/project
+  if (reqPath === '/api/studio/project-revision') {
+    const decision = authorizeStudioRequest(req)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    if (!decision.ok) {
+      res.statusCode = decision.status || 401
+      res.end(JSON.stringify({ ok: false, message: decision.message || '未通过认证' }))
+      return
+    }
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end(JSON.stringify({ ok: false, message: '只支持 GET' }))
+      return
+    }
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+    const name = String(url.searchParams.get('name') || studioProject || '').trim()
+    if (!name) {
+      res.end(JSON.stringify({ ok: true, name: '', revision: 0 }))
+      return
+    }
+    const known = listProjects(resolveRoot(ROOT)).some((row) => row.name === name)
+    if (!known) {
+      res.statusCode = 404
+      res.end(JSON.stringify({ ok: false, message: `项目不存在：${name}` }))
+      return
+    }
+    res.end(
+      JSON.stringify({ ok: true, name, revision: readProjectRevision(ROOT, name) }),
+    )
     return
   }
 

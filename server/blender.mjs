@@ -13,6 +13,7 @@ import crypto from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
 import { parseProjectMediaUrl, resolveProjectMediaPath } from './media.mjs'
 import { mediaPath, mediaPathFromUrl, resolveMediaRoot, statePath } from './paths.mjs'
+import { blenderProcessEnv } from './blender-bridge.mjs'
 
 const JOBS_DIR = '.blender-jobs'
 const HOST_SCRIPT = path.join('scripts', 'blender', 'host.py')
@@ -475,7 +476,7 @@ function startJob(job) {
     ['--background', '--factory-startup', '--python-exit-code', '1', '--python', host, '--', job.jobJson],
     {
       cwd: job.dir,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+      env: { ...process.env, ...blenderProcessEnv(job.appRoot), PYTHONDONTWRITEBYTECODE: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )

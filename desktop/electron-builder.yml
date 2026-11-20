@@ -72,6 +72,13 @@ extraResources:
     to: bin/ffprobe
   - from: desktop/bin/blender/Blender.app
     to: blender/Blender.app
+  - from: desktop/bin/blender-bridge
+    to: app/blender-bridge
+    filter:
+      - '**/*'
+  # 创意室 Blender 三维专家：profile bundle 解析 file: 依赖
+  - from: node_modules/dsh-blender-plugin
+    to: app/node_modules/dsh-blender-plugin
 
 mac:
   category: public.app-category.graphics-design

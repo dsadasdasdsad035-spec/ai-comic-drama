@@ -4,6 +4,16 @@ import { SKILL_READ_TOOL_NAMES } from '../skills/tools'
 /** dsh-base 自带、不经应用工具桥的工具（与 server/studio-host-tools.mjs 同步） */
 export const HOST_NATIVE_TOOLS = ['bash'] as const
 
+/** dsh-blender-plugin 注册的模型工具（与 server/studio-host-tools.mjs 同步） */
+export const BLENDER_HOST_TOOLS = [
+  'blender_session',
+  'blender_op',
+  'blender_py',
+  'blender_see',
+  'blender_run',
+  'blender_inspect',
+] as const
+
 export const EXPERT_TOOL_GROUP_LABEL: Record<string, string> = {
   read: '读项目',
   skill: '技能',
@@ -11,10 +21,12 @@ export const EXPERT_TOOL_GROUP_LABEL: Record<string, string> = {
   project: '项目与分镜管理',
   generate: '生成（有成本）',
   host: '宿主 Shell',
+  blender: 'Blender',
   other: '其它',
 }
 
 const HOST = new Set<string>(HOST_NATIVE_TOOLS)
+const BLENDER = new Set<string>(BLENDER_HOST_TOOLS)
 
 const READ = new Set([
   'read_source',
@@ -76,6 +88,7 @@ export function classifyExpertTool(name: string): keyof typeof EXPERT_TOOL_GROUP
   if (WRITE.has(name)) return 'write'
   if (PROJECT.has(name)) return 'project'
   if (GENERATE.has(name)) return 'generate'
+  if (BLENDER.has(name)) return 'blender'
   if (HOST.has(name)) return 'host'
   return 'other'
 }
@@ -88,6 +101,7 @@ export function groupExpertPlatformTools(names: string[]): Record<string, string
     project: [],
     generate: [],
     host: [],
+    blender: [],
     other: [],
   }
   for (const name of names) {

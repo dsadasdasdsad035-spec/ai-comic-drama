@@ -1,0 +1,30 @@
+{
+  "id": "expert-blender",
+  "name": "Blender 三维",
+  "description": "在真实 Blender 会话中建模、验收与导出；可将运镜参考、白模 turntable 发布到分镜画布。需本机 Blender 4.2+ 与 DSH Blender Bridge 插件已连接。",
+  "imageDescription": "橙色立方体线框，表示在 Blender 中直接建模与出片",
+  "skillIds": [
+    "blender-modeling"
+  ],
+  "toolIds": [
+    "blender_session",
+    "blender_op",
+    "blender_py",
+    "blender_see",
+    "blender_run",
+    "blender_inspect",
+    "list_projects",
+    "read_shots",
+    "read_shot_detail",
+    "read_designs",
+    "read_asset_inventory",
+    "list_camera_lexicon",
+    "get_camera_lexicon",
+    "set_shot_camera_lexicon",
+    "submit_assets",
+    "generate_clip",
+    "read_skill",
+    "read_skill_text",
+    "list_installed_skills"
+  ]
+}

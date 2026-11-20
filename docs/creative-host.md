@@ -567,6 +567,21 @@ k.setAttribute('data-active', 'true')
 `profiles/web/creative-experts.patch.yml` 并让宿主重启。已开始过任务的会话不会被换
 preset——专家只在空白会话里可切换。
 
+### Blender 三维专家（`expert-blender`）
+
+内置专家 **Blender 三维** 依赖 npm 包 [`dsh-blender-plugin`](https://github.com/sixtysevenlf/dsh-blender-plugin)（应用根目录
+`npm install dsh-blender-plugin@3.1.0-alpha.1 --legacy-peer-deps`）。同步 profile 时会把该 bundle
+写入 `profiles/web/package.json` 的 `dsh.profile.bundles`。
+
+**桌面端（macOS 安装包）**：`desktop:prep` 会把 `dsh_blender_bridge.zip` 打进
+`app/blender-bridge/`，并随 `dsh-blender-plugin` 写入宿主 profile；本地服务启动时会用随包
+Blender 执行 `extension install-file`（配置落在 `SB_STATE_ROOT/.blender-profile/`）。
+
+**浏览器 / 开发态**：用户仍须在 Blender 4.2+ 从
+`node_modules/dsh-blender-plugin/extension/dsh_blender_bridge.zip` 手动安装并点 **Connect**。
+新建创意会话时选 **Blender 三维** 专家即可；
+素材页「镜头语言」下的**自定义白模**工作台已移除，3D 统一由此专家 + 宿主 Blender 工具完成。
+
 工具可见集只看专家的 `toolIds`，例外与边界：
 
 - `bash` 由宿主在 preset 内挂载 `@deepseek-ai/dsh-tool-bash` 后注册（Web profile 关闭了全局 `tool-bash`）；勾选后编译进 patch，专家闸门才会放行，默认跟随「全能专家」开启；
@@ -618,6 +633,17 @@ preset——专家只在空白会话里可切换。
 服务端按**单槽位**保存实况，与 `studioProject` 同名时工具桥才注入 `getCanvasContext`；
 未推送时仍从项目快照重建节点。创意读路径**每次** `read_*` 重新 `GET` 项目，不在读工具之间
 复用内存快照。
+
+### 专家写库后外壳自动对齐（无需重启桌面端）
+
+DSH 专家 `submit_*` 等在应用进程落库，但分镜壳（`App.tsx`）此前不自动重载。现行为：
+
+1. 写工具成功 → `StudioToolBridge` 登记项目 `revision`（`server/studio-project-sync.mjs`）。
+2. 浏览器壳经 `GET /api/studio/project-revision?name=` 轮询（创意曾进入或 keepalive 时启用），
+   revision 高于内存快照则调用 `refreshProjectSnapshot` 并**无防抖**推送 `canvas-context`。
+3. 写失败、审批拒绝、参数不合法时不刷新。
+
+名单与宿主 `creative-tools` 审批用写工具集合同源（`shell-sync-tools.mjs`，随 bundle 复制进 profile）。
 
 ### 技能根为什么用软链
 

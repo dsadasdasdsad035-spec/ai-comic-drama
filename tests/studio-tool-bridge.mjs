@@ -16,7 +16,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { StudioToolBridge, INTERNAL_TOKEN_HEADER, catalogFromTools } from '../server/studio-tool-bridge.mjs'
+import {
+  StudioToolBridge,
+  INTERNAL_TOKEN_HEADER,
+  catalogFromTools,
+} from '../server/studio-tool-bridge.mjs'
+import { readProjectRevision } from '../server/studio-project-sync.mjs'
 import { resolveExpertSkillAllowlist } from '../server/dsh-experts.mjs'
 import { z as zod } from 'zod'
 
@@ -598,6 +603,64 @@ await check('专家 expertId 过滤技能列表与读取', async () => {
   )
   assert.notEqual(denied.ok, true)
   assert.match(String(denied.error || ''), /白名单/)
+})
+
+await check('写工具成功后 revision 探针升高', async () => {
+  const pushed = await post('/api/studio/project', { name: PROJECT })
+  assert.equal(pushed.body.name, PROJECT)
+  const before = (await get(`/api/studio/project-revision?name=${encodeURIComponent(PROJECT)}`)).body.revision
+  const sub = await post('/api/studio/tools/execute', {
+    name: 'submit_episodes',
+    args: {
+      episodes: [
+        {
+          no: 1,
+          title: '第一集（改）',
+          targetSeconds: 90,
+          scenes: [{ no: 1, place: '街口', time: '夜', plot: '雨更大了' }],
+        },
+      ],
+    },
+    project: PROJECT,
+    episode: 1,
+  })
+  assert.equal(sub.body.ok, true, sub.body.error || JSON.stringify(sub.body).slice(0, 300))
+  const after = (await get(`/api/studio/project-revision?name=${encodeURIComponent(PROJECT)}`)).body.revision
+  assert.ok(after > before, `revision 未升高：${before} -> ${after}`)
+  assert.equal(after, readProjectRevision(ROOT, PROJECT))
+})
+
+await check('参数校验失败不抬高 revision', async () => {
+  const before = (await get(`/api/studio/project-revision?name=${encodeURIComponent(PROJECT)}`)).body.revision
+  const bad = await post('/api/studio/tools/execute', {
+    name: 'submit_shots',
+    args: {},
+    project: PROJECT,
+    episode: 1,
+  })
+  assert.equal(bad.body.ok, false)
+  const after = (await get(`/api/studio/project-revision?name=${encodeURIComponent(PROJECT)}`)).body.revision
+  assert.equal(after, before)
+})
+
+await check('桥接 onProjectWrite 在写工具成功时被调用', async () => {
+  const writes = []
+  const bridge = new StudioToolBridge({
+    root: TMP,
+    baseUrl: base,
+    internalToken: TOKEN,
+    onProjectWrite: (n) => writes.push(n),
+  })
+  const before = writes.length
+  await bridge.invoke(
+    'submit_episodes',
+    {
+      episodes: [{ no: 1, title: '桥回调测', scenes: [{ no: 1, place: 'a', plot: 'b' }] }],
+    },
+    { projectName: PROJECT, epNo: 1 },
+  )
+  assert.ok(writes.length > before, 'onProjectWrite 未被调用')
+  assert.equal(writes.at(-1), PROJECT)
 })
 
 await check('项目上下文变化后工具表重建且声明重新推导', async () => {

@@ -108,6 +108,14 @@ import {
   saveProjectImage,
 } from './media.mjs'
 import {
+  cc0PropsVendorReady,
+  ensurePolyHavenModel,
+  importCc0PropToProject,
+  parseCc0PropUrl,
+  readCc0PropsManifest,
+  resolveCc0PropFile,
+} from './cc0-props.mjs'
+import {
   mergeStockSettings,
   normalizeStockSettings,
   redactStockSettings,
@@ -1545,6 +1553,9 @@ export function serveFile(res: any, req: any, file: string, mime: string) {
 
 export function mimeOf(ext: string): string {
   const e = ext.toLowerCase()
+  if (e === 'glb') return 'model/gltf-binary'
+  if (e === 'gltf') return 'model/gltf+json'
+  if (e === 'bin') return 'application/octet-stream'
   if (e === 'jpg' || e === 'jpeg') return 'image/jpeg'
   if (e === 'webp') return 'image/webp'
   if (e === 'gif') return 'image/gif'
@@ -2938,6 +2949,24 @@ export function createAppHandler({ root }: { root: string }) {
     if (shouldProxyRemoteMedia(url)) {
       if (await proxyRemoteMedia(req, res, url, root)) return
     }
+
+        // CC0 道具（Poly Haven）：vendor/cc0-props/，按需拉取
+        if (url.startsWith('/cc0-props/')) {
+          try {
+            const raw = String(url).split('?')[0]
+            const rel = decodeURIComponent(raw.slice('/cc0-props/'.length))
+            const assetId = rel.split('/')[1]
+            if (rel.startsWith('polyhaven/') && assetId) {
+              await ensurePolyHavenModel(root, assetId)
+            }
+            const file = resolveCc0PropFile(root, url)
+            serveFile(res, req, file, mimeOf(path.extname(file).slice(1) || 'gltf'))
+          } catch {
+            res.statusCode = 404
+            res.end()
+          }
+          return
+        }
 
         // 项目媒体：<projects>/<项目>/assets/，和项目数据同生命周期
         if (url.startsWith('/project-assets/')) {
@@ -4512,6 +4541,45 @@ export function createAppHandler({ root }: { root: string }) {
           return
         }
 
+        if (url === '/api/cc0-props' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const manifest = readCc0PropsManifest(root)
+          res.end(
+            JSON.stringify({
+              ok: true,
+              vendorReady: cc0PropsVendorReady(root),
+              ...manifest,
+            }),
+          )
+          return
+        }
+
+        if (url === '/api/cc0-props/import' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const body = await readJson(req)
+            const projectName = String(body?.project || '').trim()
+            const propUrl = parseCc0PropUrl(body?.url)
+            const title = String(body?.title || '').trim()
+            if (!projectName) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '缺少 project' }))
+              return
+            }
+            if (!propUrl) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: 'url 须为 /cc0-props/...' }))
+              return
+            }
+            const row = await importCc0PropToProject(root, projectName, propUrl, title)
+            res.end(JSON.stringify({ ok: true, ...row }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         // ---- 项目数据：SQLite 读写（工作台与画布共用同一真相源；首次启动自动迁移 project.json）----
         if (url === '/api/project') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -4660,7 +4728,7 @@ export function createAppHandler({ root }: { root: string }) {
                 if (pruned.cleared) patch.shots = pruned.shots
               }
               // 角色 / 场景道具设定 / 集 / 素材整体替换（都是人改的结果，不是 LLM 增量）
-              for (const k of ['characters', 'designs', 'lexiconWhitebox', 'sceneLayouts', 'episodes', 'assets']) {
+              for (const k of ['characters', 'designs', 'lexiconWhitebox', 'material3dScenes', 'sceneLayouts', 'episodes', 'assets']) {
                 if (body[k] === undefined) continue
                 if (!Array.isArray(body[k])) throw new Error(`${k} 必须是数组`)
                 patch[k] = body[k]
