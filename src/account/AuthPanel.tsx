@@ -1,8 +1,7 @@
 /**
  * 未登录时的登录 / 注册面板。
  *
- * 为什么改成二选一的分段控件：原来并排两个按钮，用户会两边都点。
- * 现在先选模式再提交，注册模式额外校验确认密码，减少输错密码的账户被创建。
+ * 模式在登录/注册间切换，用底部文案链；注册模式额外校验确认密码。
  */
 import { useState } from 'react'
 import { Loader2, LogIn, UserPlus } from 'lucide-react'
@@ -69,27 +68,6 @@ export function AuthPanel({ account }: { account: BillingAccount }) {
           <img className="acct-auth-mark" src={brandMark} alt="" aria-hidden />
           <h2>{mode === 'login' ? '登录账号' : '创建账号'}</h2>
           <p>积分用于平台代调用模型；本地自有 Key 不消耗积分。</p>
-        </div>
-
-        <div className="acct-seg" role="group" aria-label="登录或注册">
-          <button
-            type="button"
-            aria-pressed={mode === 'login'}
-            className={mode === 'login' ? 'on' : ''}
-            onClick={() => switchMode('login')}
-            disabled={busy}
-          >
-            登录
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === 'register'}
-            className={mode === 'register' ? 'on' : ''}
-            onClick={() => switchMode('register')}
-            disabled={busy}
-          >
-            注册
-          </button>
         </div>
 
         <form className="acct-form" onSubmit={submit} noValidate>
