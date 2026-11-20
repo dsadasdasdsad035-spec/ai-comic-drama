@@ -2,20 +2,17 @@
 
 ## Context
 
-见 `proposal.md`。创意摄取实现在 `server/ingest.mjs`，路由绑定 `creatives/<sessionId>/sources/`（`vite.config.ts` `/api/creative/ingest`）。VGGT POC（`server/vggt.mjs`）已支持 `/project-assets/` 与 `VggtGeometryPanel`。`shot-3d-context` 原规范禁止任意外链直接进入 `videoUrls`，本变更改为 **摄取后站内 URL**。
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 3D 工作台一条龙：粘抖音/B 站链接 → 项目 assets → 加入 `videoUrls` 草稿 → 用户保存 → 可选 VGGT。
 - 零重复适配器逻辑；配置单点（`settings.creative.ingest`）。
 - 摄取失败不影响调度真相。
 
 **Non-Goals:**
 
 - 创意会话列表导入（后续 change）。
-- 自动 VGGT / 自动 `pose(t)` / 自动渲染。
 - 新平台适配器（仅复用现有四种）。
 - 把参考视频复制到 `public/videos/`（除非未来出片需要，本项目 assets 即可）。
 
@@ -45,7 +42,6 @@ POST /api/shot-3d/ingest-reference
 
 ### D4：UI 位置
 
-**选择**：`VggtGeometryPanel` 顶部或 `Shot3DContextPicker` 下方「下载参考视频」折叠区：URL 输入、上传、进度、成功后「加入本镜参考」+「分析几何」。
 
 **不**改创意工作室布局（`creative-layout` 不变）。
 
@@ -69,7 +65,6 @@ MODIFIED `shot-3d-context` 的「外部地址」场景：拒绝 **未摄取** �
 ## Migration Plan
 
 - 无数据迁移。旧镜头无新字段。
-- 功能开关：无 Worker 时仅摄取仍可用；VGGT 仍依 `VGGT_WORKER_URL`。
 
 ## Open Questions
 

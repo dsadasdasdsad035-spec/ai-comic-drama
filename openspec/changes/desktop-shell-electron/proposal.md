@@ -51,7 +51,6 @@
 
 - `package.json`：新增 `electron` / `electron-builder` 开发依赖；新增 `desktop:dev`、`desktop:build`、`desktop:dist` 脚本
 - `server/blender.mjs`、`server/ffmpeg-host.mjs`：候选路径各增加一条「应用内 resources 目录」，使未注入 env 时也能命中（env 优先级保持最高）
-- `server/paths.mjs`、`server/agentHost.mjs`、`server/blender.mjs`、`server/vggt.mjs`、`server/scene-draft.mjs`、`server/project-lifecycle.mjs`、`server/billing/db.mjs`：把 `.agent-jobs`、`.blender-jobs`、`.vggt-jobs`、`.scene-drafts`、`data/` 等运行期目录改为从状态根解析，未配置时回退原路径
 - `.gitignore`：忽略 `desktop/dist`、`desktop/bin`
 - `README.md`：新增桌面版安装与开发两节
 

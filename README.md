@@ -386,15 +386,6 @@ def dispose():
 
 选中素材通过稳定键取路径，例如 `character:<id>`、`design:<id>`、`image:<hash>`、`video:<hash>:frame:0`。视频只以关键帧进入代码运行时和聊天，不依赖视频逐帧 seek。
 
-### VGGT 参考片几何（实验）
-
-3D 工作台的「几何」页签从参考片或**只读**已渲染条目反推相对机位摘要，供复制到 Agent 聊天；**不构成调度真相**，不写入 `sceneCode` / 视频引用 / 项目库。
-
-- **VGGT 参考摄取**：在**素材页「链接下载」**粘贴抖音 / B 站链或上传 MP4，经 `POST /api/shot-3d/ingest-reference` 落成 `projects/<项目>/assets/` 并登记 **视频素材**（`/project-assets/...`）。**几何**页签从项目视频列表选片分析（高级区仍保留链接/上传）；不写 `sceneCode` / 视频引用 / 镜头 `shot_3d_context`。解析配置见 **设置 → 素材库 → 平台链接下载**（`settings.creative.ingest`）。
-- **Worker**：`VGGT_WORKER_URL` 指向 Linux GPU 上的 `POST /v1/infer`（见 `workers/vggt/README.md`）；本地 POC 可 `node workers/vggt/mock-server.mjs`，并设 `VGGT_WORKER_URL=http://127.0.0.1:8765`。可选 `VGGT_WORKER_TOKEN`、`VGGT_JOB_TTL_DAYS`（默认 7）。
-- **作业目录**：`.vggt-jobs/`（gitignore）。
-- **验收**：`node verify-vggt-poc.mjs`；参考摄取 `node verify-shot-3d-reference-ingest.mjs`；素材页 `node verify-asset-platform-ingest.mjs`；总回归可 `node verify-all.mjs vggt`。
-
 ### Agent 聊天（LangGraph + assistant-ui）
 
 - `@langchain/langgraph` 的 `StateGraph` 管状态和工具循环；JSON action 由 `ZCodeChatModel` 实现（`{content, tool_calls}`），provider 原生工具调用由 `NativeToolChatModel` 实现。
@@ -691,10 +682,9 @@ src/
   CharacterBoard.tsx 角色板
   AssetBoard.tsx     场景/道具素材设定板
   designExtract.ts   素材摘要、拆解合并、空镜/道具提示词
-  SceneCodeWorkbench.tsx 代码优先 3D/白模工作台（舞台预览 + agent 聊天/代码/几何）
+  SceneCodeWorkbench.tsx 代码优先 3D/白模工作台（舞台预览 + agent 聊天/代码）
   agent/             LangGraph agent、ZCode JSON action 模型、工具、渲染会话、视觉验收、assistant-ui runtime 适配
   chat-ui/           聊天视觉组件：消息、轮次、工具卡、帧、清单、Composer；Tailwind/shadcn 样式只在 .chat-ui 内生效
-  VggtGeometryPanel.tsx 参考片几何分析（已渲染条目 + 会话摄取）
   LegacyScenePreview.tsx 旧结构化 ShotScene/ShotBlocking 只读预览
   lexiconWhitebox.ts 素材 → 镜头语言：自定义白模条目的存取与代码/渲染映射
   LexiconWhiteboxStudio.tsx 自定义白模列表 + 打开工作台 + 发布素材卡

@@ -127,7 +127,7 @@ export function ChatThreadBody({
   attachments,
   composerTop,
   onComposerDraftChange,
-  /** 外部注入聊天草稿（例如 VGGT 摘要） */
+  /** 外部注入聊天草稿 */
   composerSeed,
   cancelLabel = '取消',
   emptyAlign = 'top',

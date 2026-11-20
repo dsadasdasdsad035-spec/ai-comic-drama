@@ -4,13 +4,11 @@
 
 - [x] 1.1 新增 `server/paths.mjs`，导出 `resolveMediaRoot` / `resolveStaticRoot` / `mediaPath`（`SB_MEDIA_ROOT` > `<root>/public`，`mediaPath` 做越界校验）；写 `verify-paths.mjs` 断言四件事：未设 env 时指向 `public/`、设 env 时指向该路径、`../` 穿越被拒、`mediaPath` 自动创建目录
 - [x] 1.2 把 `vite.config.ts` 中 21 处 `path.join(root, 'public', ...)` 全部改为 `mediaPath(root, ...)`；验证：`rg "'public'," vite.config.ts` 除静态兜底常量外无残留，且 dev 下生成一张图落在与改动前相同位置
-- [x] 1.3 把 `server/media.mjs`、`server/blender.mjs`、`server/vggt.mjs` 中 7 处 `'public'` 拼接改为 `mediaPath`；验证：`rg "'public'" server/*.mjs` 仅剩 `paths.mjs` 自身
 - [x] 1.4 把 `resolveVideoRef` 与 `localMediaFile` 的「只接受 public 下文件」改为「只接受媒体根下文件」，同步更新两条错误文案；验证：`verify-lipsync.mjs` 与 `verify-videos.mjs` 全绿
 
 ## 2. 接口实现搬移出 Vite 配置
 
 - [x] 2.1 新建 `server/app.ts`，把 `vite.config.ts` 的模块级 helper（约 1-2606 行）与巨型中间件回调（约 2631-7000 行）整体搬入，导出 `createAppHandler({ root })`、`runServerStartupTasks(root)`、`runServerShutdownTasks()`、`serveFile`、`mimeOf`；验证：`node --check` 无法用于 TS，改为 `npx tsc --noEmit` 通过，且 `node -e "import('./server/app.ts')"` 能成功加载
-- [x] 2.2 `createAppHandler` 内保留模块级 `appRoot` 注入语义（首次赋值 + 重复赋值告警），把 `configureServer` 里的启动清理（`cleanupStaleJobs`/`cleanupVggtJobs`/`sweepStaleDrafts`）与 `httpServer.on('close')` 清理移入 `runServerStartupTasks`/`runServerShutdownTasks`；验证：dev 启动后 `.blender-jobs`、`.vggt-jobs`、`.scene-drafts` 的残留仍被清理
 - [x] 2.3 `vite.config.ts` 瘦身为配置 + 插件壳（仅 `defineConfig`、插件列表、`server.port=5273`、watch.ignored、以及调用 `createAppHandler`）；验证：`wc -l vite.config.ts` 降到 100 行以内，dev 启动后 `/api/health` 返回 ok、`/api/project` 返回项目列表
 - [x] 2.4 跑行为回归：`verify-canvas.mjs`、`verify-project.mjs`、`verify-settings-db.mjs` 三个脚本全绿，确认搬移无行为漂移（顺带把三个脚本与现行外壳对齐：选集目录入口、设置页五枢纽 IA、素材页角色 Tab）
 

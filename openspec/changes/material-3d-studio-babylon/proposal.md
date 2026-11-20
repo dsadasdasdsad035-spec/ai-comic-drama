@@ -18,7 +18,7 @@
 - 嵌入 Pascal Editor 或 IFC/BIM 能力。
 - 浏览器内执行 Agent 生成的场景代码或出最终 MP4（`blender-render-host` 不变）。
 - Pi Agent 读写三维场景工具（可后续 change）。
-- 角色 GLB 绑定、骨骼动画、VGGT 自动写回。
+- 角色 GLB 绑定、骨骼动画、机位自动写回。
 
 ## Capabilities
 

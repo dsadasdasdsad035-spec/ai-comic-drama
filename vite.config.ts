@@ -39,7 +39,6 @@ export default defineConfig({
         '**/openspec/**',
         '**/verify-*.mjs',
         '**/.blender-jobs/**',
-        '**/.vggt-jobs/**',
         '**/.scene-drafts/**',
         '**/fixtures/**',
         '**/projects/**',

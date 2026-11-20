@@ -16,16 +16,10 @@
 - [x] 3.1 `SettingsPage` 将 yt-dlp/DTK 迁至「素材/媒体摄取」；创意会话区去掉重复入口并链到新材料区
 - [x] 3.2 更新 `verify-creative-settings.mjs` 选择器与摄取用例；`README.md` 下载入口描述改为素材页
 
-## 4. 几何页选项目视频
+## 4. 文案与回归
 
-- [x] 4.1 `App.tsx`/`SceneCodeWorkbench` 传 `project.assets` 视频列表至 `VggtGeometryPanel`；过滤非视频
-- [x] 4.2 几何 UI：主下拉为项目视频 + 已渲染条目；链接/上传收入「高级」；默认不强调粘贴平台链
-- [x] 4.3 扩展 `verify-shot-3d-reference-ingest.mjs` 或 `verify-vggt-poc.mjs`：几何选已登记视频提交 analyze（mock worker 即可）
-
-## 5. 文案与回归
-
-- [x] 5.1 更新 `CreativeComposerBar`、`VggtGeometryPanel` 提示指向素材页下载
-- [x] 5.2 `node verify-all.mjs` 子集（creative-settings、shot3d-ingest、asset-platform）+ `openspec validate asset-media-ingest-hub --strict`
+- [x] 4.1 更新 `CreativeComposerBar` 提示指向素材页下载
+- [x] 4.2 `node verify-all.mjs` 子集（creative-settings、shot3d-ingest、asset-platform）+ `openspec validate asset-media-ingest-hub --strict`
 
 ## Workflow follow-up
 

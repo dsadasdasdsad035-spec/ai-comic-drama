@@ -26,7 +26,6 @@
 |---|---|
 | `.agent-jobs/` | `server/agentHost.mjs` |
 | `.blender-jobs/` | `server/blender.mjs` |
-| `.vggt-jobs/` | `server/vggt.mjs` |
 | `.scene-drafts/` | `server/scene-draft.mjs`、`server/project-lifecycle.mjs` |
 | `data/billing.sqlite` | `server/billing/db.mjs` |
 

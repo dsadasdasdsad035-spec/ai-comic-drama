@@ -28,7 +28,6 @@
 
 ## Impact
 
-- **代码**：`vite.config.ts`（瘦身，7033 行中路由段迁出）、`server/index.mjs`（新）、`server/http.mjs`（新）、`server/data.mjs`、`server/media.mjs`、`server/db.mjs`、`server/blender.mjs`、`server/vggt.mjs`（全仓 28 处 `path.join(..., 'public', ...)` 指向点需逐一收敛到媒体根）。
 - **部署**：`Dockerfile`（改为静态产物 + Node 入口，去掉 dev 依赖）、`docker-compose.yml`（新增 `SB_MEDIA_ROOT` 卷）、`scripts/deploy-up.sh`。
 - **依赖**：无新增运行时依赖，入口使用 `node:http`；Node 版本下限仍为 22.13（`node:sqlite`）。
 - **兼容风险**：仓库内 100+ 个 `verify-*.mjs` 默认认为 API 在 `127.0.0.1:5273` 的 Vite 下。本次依赖「dev 复用同一 handler」保持既有脚本不改断言即可通过；个别脚本若依赖 Vite 专有行为（HMR、public 索引）需要在任务里单独确认。

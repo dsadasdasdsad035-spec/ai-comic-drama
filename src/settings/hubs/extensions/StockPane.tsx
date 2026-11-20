@@ -21,7 +21,7 @@ export function StockPane({ wb }: Props) {
       <div data-settings-media-ingest className="st-media-ingest-block">
         <h4 className="st-subhead">平台链接下载（素材页）</h4>
         <span className="st-hint">
-          配置 yt-dlp / DTK 后，在<strong>素材页 → 链接下载</strong>将抖音、B 站等链落成视频素材；白模几何页从项目视频选片分析。创意会话反推仍仅支持本地上传。
+          配置 yt-dlp / DTK 后，在<strong>素材页 → 链接下载</strong>将抖音、B 站等链落成视频素材。创意会话反推仍仅支持本地上传。
         </span>
         <div className="st-grid">
           <label className="st-field">

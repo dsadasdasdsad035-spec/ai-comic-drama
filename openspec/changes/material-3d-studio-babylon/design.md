@@ -24,7 +24,7 @@
 - Pascal Editor、BIM、IFC、点云。
 - 执行用户/Agent 任意 JS 场景代码（区别于 `sceneCodeSanitize` 链路）。
 - Blender 联机预览、浏览器 MP4。
-- Phase 2：Pi `material3d` 工具、VGGT 机位写回、角色 billboards（留后续 change）。
+- Phase 2：Pi `material3d` 工具、机位写回、角色 billboards（留后续 change）。
 
 ## Decisions
 

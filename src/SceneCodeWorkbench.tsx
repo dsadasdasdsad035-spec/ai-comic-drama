@@ -1,14 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AppSettings, ProjectAsset, ProjectData } from './api'
+import type { AppSettings, ProjectData } from './api'
 import { getProject } from './api'
-import { assetMediaType } from './mediaPick'
-import type { AssetKind } from './data'
 import type { ScheduleMeta, SceneCode, SceneCodeMeta } from './types'
 import { effectiveSeconds, isRenderableSceneCode } from './types'
 import type { StagePick } from './ModelSelect'
 import { stageModelKey, StageModelSelect } from './ModelSelect'
 import { renderSize } from './renderSize'
-import VggtGeometryPanel from './VggtGeometryPanel'
 import { prepareSceneCodeContext, type PreparedCodeContext } from './sceneCodePrepare'
 import { renderSceneCode, trialSceneCode, sceneCodeRenderError } from './sceneCodeRender'
 import { abortError, blenderHealth, type BlenderHealth } from './sceneBlender'
@@ -81,16 +78,6 @@ type PreparedInfo = {
   warnings: string[]
 }
 
-function videoAssetsFromProject(assets?: ProjectAsset[]) {
-  return (assets || [])
-    .filter((a) => assetMediaType(String(a.kind) as AssetKind, a.url) === 'video')
-    .map((a) => ({
-      title: a.title || a.url.split('/').pop() || '项目视频',
-      url: a.url.split('?')[0],
-    }))
-    .filter((v) => v.url.startsWith('/'))
-}
-
 const FALLBACK_SCENE_CODE = `let S;
 function init(ctx) {
   S = ctx;
@@ -160,21 +147,6 @@ export default function SceneCodeWorkbench({
 
   const [project, setProject] = useState<ProjectData | null>(null)
   const [loaded, setLoaded] = useState(false)
-  const [vggtSessionUrls, setVggtSessionUrls] = useState<string[]>([])
-  const [projectVideoSources, setProjectVideoSources] = useState<{ title: string; url: string }[]>([])
-
-  const reloadProjectVideoSources = useCallback(async () => {
-    if (!projectName) {
-      setProjectVideoSources([])
-      return
-    }
-    const p = await getProject(projectName)
-    setProjectVideoSources(videoAssetsFromProject(p?.assets))
-  }, [projectName])
-
-  useEffect(() => {
-    void reloadProjectVideoSources()
-  }, [reloadProjectVideoSources])
   const [savedCode, setSavedCode] = useState<SceneCode | undefined>(entry.code)
   const [draftCode, setDraftCode] = useState(entry.code?.code || '')
   const [draftMotionNote, setDraftMotionNote] = useState(entry.code?.motionNote || entry.motionNote || '')
@@ -184,8 +156,7 @@ export default function SceneCodeWorkbench({
   const [baseline, setBaseline] = useState<Snapshot | null>(null)
   const [past, setPast] = useState<Snapshot[]>([])
   const [future, setFuture] = useState<Snapshot[]>([])
-  const [sideTab, setSideTab] = useState<'chat' | 'code' | 'geom'>('chat')
-  const [composerSeed, setComposerSeed] = useState<string | undefined>()
+  const [sideTab, setSideTab] = useState<'chat' | 'code'>('chat')
   const chatScrollRef = useRef(0)
   const [previewState, setPreviewState] = useState<'idle' | 'starting' | 'ready' | 'error'>('idle')
   const [previewError, setPreviewError] = useState('')
@@ -257,7 +228,7 @@ export default function SceneCodeWorkbench({
   const legacyCode = Boolean(savedCode && !isRenderableSceneCode(savedCode))
   const readOnly3d = legacyCode
 
-  const switchSideTab = (next: 'chat' | 'code' | 'geom') => {
+  const switchSideTab = (next: 'chat' | 'code') => {
     if (next === sideTab) return
     const viewport = document.querySelector<HTMLElement>('[data-chat-viewport]')
     if (sideTab === 'chat' && viewport) chatScrollRef.current = viewport.scrollTop
@@ -909,49 +880,8 @@ export default function SceneCodeWorkbench({
     await startPreview(code, prepared)
   }
 
-  const onVggtIngested = useCallback(
-    (videoUrl: string) => {
-      const u = videoUrl.split('?')[0]
-      if (!u.startsWith('/')) return
-      setVggtSessionUrls((prev) => [...new Set([...prev, u])])
-      void reloadProjectVideoSources()
-    },
-    [reloadProjectVideoSources],
-  )
-
   const hashLabel = lastValidatedCode === draftCode && lastValidatedHash ? lastValidatedHash.slice(0, 10) : '未验证'
   const displaySource = draftCode ? codeSource : 'none'
-
-  const vggtSources = useMemo(() => {
-    const out: { kind: 'reference' | 'schedule'; label: string; url: string }[] = []
-    const seen = new Set<string>()
-    for (const v of projectVideoSources) {
-      if (!seen.has(v.url)) {
-        seen.add(v.url)
-        out.push({ kind: 'reference', label: v.title, url: v.url })
-      }
-    }
-    for (const url of vggtSessionUrls) {
-      const u = String(url || '').split('?')[0]
-      if (u.startsWith('/') && !seen.has(u)) {
-        seen.add(u)
-        out.push({ kind: 'reference', label: '参考片', url: u })
-      }
-    }
-    const sched = String(renderedVideo || entry.video || '').split('?')[0]
-    if (sched.startsWith('/')) {
-      out.push({ kind: 'schedule', label: '当前白模 MP4（只读）', url: sched })
-    }
-    return out
-  }, [projectVideoSources, vggtSessionUrls, renderedVideo, entry.video])
-
-  const injectVggtToChat = useCallback((text: string) => {
-    setComposerSeed(undefined)
-    requestAnimationFrame(() => {
-      setComposerSeed(text)
-      setSideTab('chat')
-    })
-  }, [])
 
   return (
     <div
@@ -1164,7 +1094,7 @@ export default function SceneCodeWorkbench({
               <span>
                 {readOnly3d
                   ? '旧代码只读：浏览器 Three.js 产物无法在本机 Blender 渲染。'
-                  : '白模只对齐运镜与构图意图，不进成片人物外观；渲染出的 MP4 可发布为素材卡或在分镜里当运镜参照。VGGT 几何在右侧「几何」页签摄取，不写镜级参考板。'}
+                  : '白模只对齐运镜与构图意图，不进成片人物外观；渲染出的 MP4 可发布为素材卡或在分镜里当运镜参照。'}
               </span>
               {renderError && <span className="cw-danger">{renderError}</span>}
               {saveError && <span className="cw-danger">{saveError}</span>}
@@ -1189,16 +1119,6 @@ export default function SceneCodeWorkbench({
               >
                 代码
               </button>
-              {!readOnly3d && (
-                <button
-                  role="tab"
-                  aria-selected={sideTab === 'geom'}
-                  className={sideTab === 'geom' ? 'on' : ''}
-                  onClick={() => switchSideTab('geom')}
-                >
-                  几何
-                </button>
-              )}
             </div>
             {onPickStageModel && (
               <div className="cw-model-row">
@@ -1230,7 +1150,6 @@ export default function SceneCodeWorkbench({
                   height={height}
                   aspect={projectAspect}
                   duration={duration}
-                  composerSeed={composerSeed}
                 />
               </Suspense>
             </div>
@@ -1285,28 +1204,6 @@ export default function SceneCodeWorkbench({
                 </div>
               </div>
             </div>
-            {!readOnly3d && (
-              <div
-                className="cw-side-pane cw-geom-pane"
-                hidden={sideTab !== 'geom'}
-                aria-hidden={sideTab !== 'geom'}
-                role="tabpanel"
-              >
-                <p className="cw-geom-lead">
-                  从<strong>项目视频素材</strong>或已渲染白模选片做几何分析；平台链请先在素材页下载。摘要不写入镜级参考板。
-                </p>
-                <VggtGeometryPanel
-                  projectName={projectName}
-                  projectAspect={projectAspect}
-                  effectiveSeconds={duration}
-                  sources={vggtSources}
-                  onCopyToChat={injectVggtToChat}
-                  onIngested={onVggtIngested}
-                  onToast={toast}
-                  geometryBusy={Boolean(renderBusy) || generating}
-                />
-              </div>
-            )}
           </aside>
         </div>
       </div>

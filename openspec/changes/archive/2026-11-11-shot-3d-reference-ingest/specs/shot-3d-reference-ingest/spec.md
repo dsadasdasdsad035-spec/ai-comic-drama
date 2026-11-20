@@ -2,7 +2,6 @@
 
 ## Purpose
 
-在 3D 调度工作台内将抖音/B 站等平台链接或本地上传转化为项目内参考视频，供镜头上下文选择与 VGGT 几何分析使用。
 
 ## ADDED Requirements
 
@@ -58,11 +57,8 @@
 - **WHEN** 摄取失败或中途取消
 - **THEN** 镜头已保存的 3D 字段与摄取前一致
 
-### Requirement: 与 VGGT 分析衔接
 
-摄取返回的站内 URL MUST 可作为既有 `/api/vggt/analyze` 的 `videoRef`（含 `/project-assets/`）。系统 MUST NOT 在摄取成功时自动提交 VGGT 作业，除非用户显式触发几何分析。
 
 #### Scenario: 手动串联
 
 - **WHEN** 用户摄取后点击几何分析
-- **THEN** 使用刚得到的 `videoRef` 创建 VGGT 作业，行为符合 `reference-video-geometry`

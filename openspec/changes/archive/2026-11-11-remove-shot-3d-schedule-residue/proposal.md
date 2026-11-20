@@ -11,7 +11,6 @@
 - 删除 legacy 几何栈：`resolveShotSchedule` / `ShotScheduleState`、`scheduleGeometry`（仅保留 `renderSize`）、`shotScene`、`scheduleAI`、`scheduleContext`、`layoutGen`，以及项目级 `sceneLayouts` 与 `SceneLayout` / `ShotScene` / `ShotBlocking` 类型。
 - 删除 `promptRender` 中未使用的 `schedule` 参数与 `videoPrompt` 的几何推导运镜兜底（改为只读 `motionNote`）。
 - 白模工作台改为显式条目入参（标题、时长、代码、代码元数据、视频），不再把白模伪装成 `ShotNodeType` 读取分镜字段。
-- 保留：`LexiconWhiteboxSheet` 及其 `SceneCode` / `SceneCodeMeta` / `ScheduleMeta` / 过期判定、运镜库参照（`lexiconRefKey`）、VGGT 几何页签与参考片摄取。
 - 旧项目不做迁移：读取时忽略上述字段，写入时不再产生。
 
 ## Capabilities
@@ -36,5 +35,4 @@
 - **前端**：`types.ts`、`api.ts`、`shotSync.ts`、`App.tsx`、`SceneCodeWorkbench.tsx`、`LexiconWhiteboxStudio.tsx`、`lexiconWhitebox.ts`、`AssetBoard.tsx`、`promptRender.ts`、`videoPrompt.ts`、`chat-ui` / `agent` 线程键。
 - **删除模块**：`scheduleStatus.ts`、`scheduleGeometry.ts`（拆出 `renderSize`）、`shotScene.ts`、`scheduleAI.ts`、`scheduleContext.ts`、`layoutGen.ts`。
 - **服务端**：`shot_3d_context` 不再接受；旧列保留但不再读取。无数据库结构变更。
-- **验收脚本**：删除依赖已移除模块的脚本，保留 VGGT 摄取脚本。
 - **无迁移成本**：旧项目数据留在库中但被忽略，不阻塞打开。

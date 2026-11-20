@@ -116,8 +116,16 @@ export function resolveCc0PropFile(appRoot, urlPath) {
   if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
     throw new Error('道具文件未缓存，请先从侧栏选用以下载')
   }
+  return full
+}
+
+/** 场景主 glTF URL（用于 import API 校验） */
+export function resolveCc0PropMainGltf(appRoot, urlPath) {
+  const full = resolveCc0PropFile(appRoot, urlPath)
   const lower = full.toLowerCase()
-  if (!lower.endsWith('.glb') && !lower.endsWith('.gltf')) throw new Error('仅支持 glTF')
+  if (!lower.endsWith('.glb') && !lower.endsWith('.gltf')) {
+    throw new Error('导入须指向 .gltf / .glb 主文件')
+  }
   return full
 }
 

@@ -134,7 +134,6 @@
 
 **Migration**: 见 `shot-3d-reference-ingest` 的摄取边界。
 
-### Requirement: 摄取与 VGGT 串联的界面边界
 
 **Reason**: 界面位置迁到白模工作台「几何」页签。
 

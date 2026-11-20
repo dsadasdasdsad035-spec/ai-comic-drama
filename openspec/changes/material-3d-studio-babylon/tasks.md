@@ -30,4 +30,4 @@
 ## Workflow follow-up
 
 - 归档前运行 `openspec validate material-3d-studio-babylon --strict`。
-- 实现完成后用 `/opsx-apply` 按本清单落地；Pi 工具与 VGGT 机位写回另起 change。
+- 实现完成后用 `/opsx-apply` 按本清单落地；Pi 工具与机位写回另起 change。

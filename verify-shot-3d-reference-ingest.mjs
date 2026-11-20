@@ -6,7 +6,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ingestShot3dReference } from './server/shot3d-ingest.mjs'
-import { submitVggtAnalyze, isVggtAvailable } from './server/vggt.mjs'
 import { resolveRoot, safeProjectName, readProject } from './server/db.mjs'
 import { createProject } from './server/db.mjs'
 
@@ -67,23 +66,6 @@ check(
   Boolean(videoAsset) && videoAsset.url === result.videoUrl.split('?')[0],
   JSON.stringify(projAfter?.assets || []),
 )
-
-if (isVggtAvailable()) {
-  try {
-    const job = submitVggtAnalyze(root, {
-      videoRef: result.videoUrl.split('?')[0],
-      sourceKind: 'reference',
-      projectAspect: '16:9',
-      effectiveSeconds: 4,
-      maxFrames: 4,
-    })
-    check('已登记视频可提交 VGGT', Boolean(job?.id), job?.id || '')
-  } catch (e) {
-    check('已登记视频可提交 VGGT', false, e?.message || String(e))
-  }
-} else {
-  console.log('⏭ VGGT Worker 未配置，跳过 analyze 断言')
-}
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ shot-3d 参考摄取校验通过')
 process.exit(bad ? 1 : 0)

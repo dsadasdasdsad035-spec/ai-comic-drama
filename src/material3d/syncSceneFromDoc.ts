@@ -34,6 +34,20 @@ export type SyncSceneResult = {
 
 export type SyncSceneOptions = {
   onAfterSync?: (result: SyncSceneResult) => void
+  /** 返回 true 时中止同步（场景卸载或新一代 refresh 已启动） */
+  isCancelled?: () => boolean
+}
+
+function syncAborted(scene: import('@babylonjs/core').Scene, opts?: SyncSceneOptions): boolean {
+  return scene.isDisposed || Boolean(opts?.isCancelled?.())
+}
+
+/** SceneLoader 需要目录 rootUrl + 文件名，否则 .bin / textures 会打到站点根路径 */
+function gltfLoaderParts(assetUrl: string): { rootUrl: string; sceneFilename: string } {
+  const u = assetUrl.split('?')[0]
+  const slash = u.lastIndexOf('/')
+  if (slash < 0) return { rootUrl: '/', sceneFilename: u }
+  return { rootUrl: `${u.slice(0, slash + 1)}`, sceneFilename: u.slice(slash + 1) }
 }
 
 /** 将文档对象同步到 Babylon 场景 */
@@ -46,13 +60,21 @@ export async function syncSceneFromDoc(
   const BABYLON = await import('@babylonjs/core')
   await import('@babylonjs/loaders')
 
+  if (syncAborted(scene, opts)) {
+    return { billboardCount: 0, gltfCount: 0, meshCount: 0 }
+  }
+
   await clearUserMeshes(scene)
+  if (syncAborted(scene, opts)) {
+    return { billboardCount: 0, gltfCount: 0, meshCount: 0 }
+  }
 
   const designById = new Map(ctx.designs.map((d) => [d.id, d]))
   let billboardCount = 0
   let gltfCount = 0
 
   for (const obj of doc.objects) {
+    if (syncAborted(scene, opts)) break
     if (obj.kind === 'billboard') {
       const design = designById.get(obj.designId)
       if (!design) continue
@@ -72,7 +94,20 @@ export async function syncSceneFromDoc(
     if (obj.kind === 'gltf') {
       const url = String(obj.assetUrl || '').split('?')[0]
       if (!url.startsWith('/')) continue
-      const container = await BABYLON.SceneLoader.LoadAssetContainerAsync(url, '', scene)
+      let container: import('@babylonjs/core').AssetContainer
+      try {
+        const { rootUrl, sceneFilename } = gltfLoaderParts(url)
+        container = await BABYLON.SceneLoader.LoadAssetContainerAsync(rootUrl, sceneFilename, scene)
+      } catch (e) {
+        if (syncAborted(scene, opts)) {
+          return { billboardCount, gltfCount, meshCount: 0 }
+        }
+        throw e
+      }
+      if (syncAborted(scene, opts)) {
+        container.dispose()
+        return { billboardCount, gltfCount, meshCount: 0 }
+      }
       const root = new BABYLON.TransformNode(`gltf-${obj.id}`, scene)
       root.metadata = { [MATERIAL3D_OBJECT_META]: obj.id }
       container.addAllToScene()

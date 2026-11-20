@@ -24,7 +24,6 @@
 - 不引入 Express/Koa/Hono 等框架（`node:http` + 现有 connect 风格签名足够，且换取零依赖）。
 - 不拆分巨型 handler 为多个路由模块。搬移已验证的 4000 行风险远低于重写；后续可以按 `/api/creative`、`/api/billing` 等前缀渐进拆分。
 - 不做请求体大小、鉴权、CORS 的行为调整——这些属于现有实现，保持原样。
-- 不解决 Blender/VGGT/ffmpeg 的随包分发（桌面端第二阶段议题）。
 
 ## Decisions
 
@@ -68,7 +67,6 @@ resolveStaticRoot(root)       // root/public，只读资产（presets）
 mediaPath(root, ...segments)  // 拼到媒体根并做越界校验
 ```
 
-把 28 处 `path.join(root, 'public', X)` 改为 `mediaPath(root, X)`。`server/media.mjs`、`server/blender.mjs`、`server/vggt.mjs` 通过同一模块取值，避免各自读 env。
 
 `resolveVideoRef` 与 `localMediaFile` 的「只接受 public 下文件」语义改为「只接受媒体根下文件」，错误消息同步更新——这是**唯一允许改变用户可见文案**的地方，因为原文案在自定义媒体根下会说不通。
 

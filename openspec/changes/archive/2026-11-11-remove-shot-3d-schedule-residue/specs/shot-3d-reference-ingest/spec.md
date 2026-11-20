@@ -54,14 +54,11 @@
 - **WHEN** 摄取失败或中途取消
 - **THEN** 白模条目与分镜数据都与摄取前一致
 
-### Requirement: 与 VGGT 分析衔接
 
-摄取返回的站内 URL MUST 可作为既有 `/api/vggt/analyze` 的 `videoRef`（含 `/project-assets/`）。系统 MUST NOT 在摄取成功时自动提交 VGGT 作业，除非用户显式触发几何分析。
 
 #### Scenario: 手动串联
 
 - **WHEN** 用户摄取后点击几何分析
-- **THEN** 使用刚得到的 `videoRef` 创建 VGGT 作业，行为符合 `reference-video-geometry`
 
 #### Scenario: 已渲染条目也可分析
 

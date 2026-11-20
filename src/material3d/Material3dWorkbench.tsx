@@ -64,6 +64,7 @@ export default function Material3dWorkbench({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const hostRef = useRef<BabylonHost | null>(null)
+  const meshSyncGenRef = useRef(0)
   const gizmoRef = useRef<GizmoSelectionController | null>(null)
   const selectedIdRef = useRef<string | null>(null)
   const inspectorOpenRef = useRef(false)
@@ -133,10 +134,14 @@ export default function Material3dWorkbench({
 
   const refreshMeshes = useCallback(async () => {
     const host = hostRef.current
-    if (!host) return
+    if (!host || host.scene.isDisposed) return
+    const gen = ++meshSyncGenRef.current
+    const isCancelled = () => gen !== meshSyncGenRef.current || host.scene.isDisposed
     try {
       await syncSceneFromDoc(host.scene, sceneDoc, { designs, missing }, {
+        isCancelled,
         onAfterSync: () => {
+          if (isCancelled()) return
           const id = selectedIdRef.current
           const still = id && sceneDoc.objects.some((o) => o.id === id) ? id : null
           if (still !== selectedIdRef.current) setSelectedId(still)
@@ -145,6 +150,7 @@ export default function Material3dWorkbench({
         },
       })
     } catch (e) {
+      if (isCancelled()) return
       toast((e as Error).message || '同步场景失败')
     }
   }, [sceneDoc, designs, missing, toast])
@@ -164,6 +170,7 @@ export default function Material3dWorkbench({
     })
     return () => {
       alive = false
+      meshSyncGenRef.current += 1
       void hideInspector()
       gizmoRef.current?.dispose()
       gizmoRef.current = null

@@ -3,10 +3,8 @@
 ## 1. 运行期状态根（服务端前置）
 
 - [x] 1.1 `server/paths.mjs` 新增 `resolveStateRoot(root)`、`statePath(root, rel)`、`ensureStateDir(root, rel)`，解析顺序为 `SB_STATE_ROOT` > 传入的 `root`，沿用 `mediaPath` 的越界校验写法；扩写 `verify-paths.mjs` 断言四件事：未设 env 时指向 `root`、设 env 时指向该路径、`../` 穿越被拒、`statePath` 自动创建父目录。验证：`node verify-paths.mjs` 全绿且断言数增加 4 条。
-- [x] 1.2 把六处运行期目录改为从状态根解析：`server/agentHost.mjs`（`.agent-jobs`）、`server/blender.mjs`（`.blender-jobs`）、`server/vggt.mjs`（`.vggt-jobs`）、`server/scene-draft.mjs`（`.scene-drafts`）、`server/project-lifecycle.mjs`（`.scene-drafts`）、`server/billing/db.mjs`（`data/`）。验证：`rg -n "path\.join\((appRoot|root), '\." server/*.mjs server/billing/*.mjs` 不再命中状态目录字面量。
 - [x] 1.3 定位 `.publish-profiles/` 的实际写入点并接入 `statePath`。**结论：无写入点。** 发布台与成片分发 API 已在 `0f21f45`（2026-11-09「收敛 Agent 聊天并移除发布台」）整体删除，`server/` 与 `src/` 中不再有任何代码创建该目录；磁盘上的 `projects/.publish-profiles/` 是空的历史残留。因此本任务无可改动代码，只记录结论：若将来重建发布功能，profile 目录应按「未配置时回退、配置时落到状态根」的同一约定接 `statePath`，不要新起一套解析。验证：`rg -n "publish-profiles" --glob '!node_modules' --glob '!openspec/**' .` 仅命中文档与 `scripts/cleanup-orphan-media.mjs` 的排除项，`server/` 与 `src/` 无命中。
 - [x] 1.4 加一条「状态根与 appRoot 隔离」的断言：设 `SB_STATE_ROOT` 到临时目录后跑一次会写作业与草稿的接口，比较 appRoot 目录快照证明没有新增隐藏目录。验证：`node verify-state-root.mjs` 全绿（6 条：草稿与 job 接口成功、两者都落在状态根内、仓库根无新增目录、状态目录未出现在仓库根）。**注意：`server-build/app.mjs` 内联了 `paths.mjs`，改动服务端路径后必须先 `npm run build:server` 再跑集成断言，否则测到的是旧 bundle。**
-- [x] 1.5 确认 dev 与容器行为零变化：不设 `SB_STATE_ROOT` 时 `.agent-jobs` 等仍在仓库根。验证：不设 `SB_STATE_ROOT` 时 `verify-project.mjs`（24/0）与 `verify-canvas.mjs`（全部通过）在 dev `:5273` 与独立入口 `:56891` 双双全绿，`.blender-jobs` / `.vggt-jobs` 仍出现在仓库根，确认默认回退路径未变。
 
 ## 2. Electron 宿主骨架
 

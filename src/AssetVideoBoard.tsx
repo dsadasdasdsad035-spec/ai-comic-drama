@@ -139,7 +139,7 @@ function VideoIngestDialog({
         </header>
         <div className="asset-video-ingest-body">
           <p className="board-hint">
-            平台链、本地 MP4 都会落在本项目的<strong>视频库</strong>，供几何分析与发布素材卡；解析器在设置 →
+            平台链、本地 MP4 都会落在本项目的<strong>视频库</strong>，供运镜参照与发布素材卡；解析器在设置 →
             素材库 → 平台链接下载。
           </p>
           <p className="board-hint asset-ingest-adapters" data-asset-ingest-adapters>

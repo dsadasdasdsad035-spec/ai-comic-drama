@@ -210,13 +210,6 @@ import {
   shutdownRenderJobs,
   submitRenderJob,
 } from './blender.mjs'
-import {
-  cancelVggtJob,
-  cleanupVggtJobs,
-  getVggtJob,
-  isVggtAvailable,
-  submitVggtAnalyze,
-} from './vggt.mjs'
 // @ts-ignore 宿主导块 .mjs
 import { ingestShot3dReference } from './shot3d-ingest.mjs'
 import {
@@ -2892,7 +2885,6 @@ export function authorizeStudioRequest(req: any): {
 
 export function runServerStartupTasks(root: string) {  try {
     cleanupStaleJobs(root)
-    cleanupVggtJobs(root)
   } catch {
     /* 清理失败不阻塞启动 */
   }
@@ -5587,63 +5579,6 @@ export function createAppHandler({ root }: { root: string }) {
             const creative = applyCreativeEnvDefaults(normalizeCreativeSettings(settings.creative), process.env).settings
             const result = await ingestShot3dReference(root, body, creative)
             res.end(JSON.stringify({ ok: true, ...result }))
-          } catch (e: any) {
-            res.statusCode = 400
-            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
-          }
-          return
-        }
-
-        // ---- VGGT 参考片几何分析（POC，不写调度真相）----
-        if (url.startsWith('/api/vggt/')) {
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          const rest = url.slice('/api/vggt/'.length)
-          try {
-            if (rest === 'status' && req.method === 'GET') {
-              res.end(JSON.stringify({ ok: true, available: isVggtAvailable() }))
-              return
-            }
-            if (rest === 'analyze' && req.method === 'POST') {
-              const body = await readJson(req)
-              try {
-                const job = submitVggtAnalyze(root, body)
-                res.end(JSON.stringify({ ok: true, job }))
-              } catch (e: any) {
-                if (e?.code === 'VGGT_NO_WORKER') {
-                  res.statusCode = 503
-                  res.end(JSON.stringify({ ok: false, message: e.message }))
-                  return
-                }
-                throw e
-              }
-              return
-            }
-            const jobMatch = rest.match(/^jobs\/([^/]+)(?:\/cancel)?$/)
-            if (jobMatch) {
-              const jobId = decodeURIComponent(jobMatch[1])
-              if (rest.endsWith('/cancel')) {
-                if (req.method !== 'POST') {
-                  res.statusCode = 405
-                  res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
-                  return
-                }
-                const job = cancelVggtJob(root, jobId)
-                res.end(JSON.stringify({ ok: true, job }))
-                return
-              }
-              if (req.method === 'GET') {
-                const job = getVggtJob(root, jobId)
-                if (!job) {
-                  res.statusCode = 404
-                  res.end(JSON.stringify({ ok: false, message: '作业不存在或已过期' }))
-                  return
-                }
-                res.end(JSON.stringify({ ok: true, job }))
-                return
-              }
-            }
-            res.statusCode = 404
-            res.end(JSON.stringify({ ok: false, message: '未知的 VGGT 接口' }))
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
