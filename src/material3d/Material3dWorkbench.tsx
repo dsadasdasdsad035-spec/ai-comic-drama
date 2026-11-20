@@ -1,23 +1,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Cc0PropEntry, DesignSheet, ProjectAsset } from '../api'
-import { fetchCc0PropsManifest, importCc0PropToProject, patchProject } from '../api'
+import type { Cc0PropEntry, DesignSheet, ItchPropEntry, ProjectAsset } from '../api'
+import {
+  fetchCc0PropsManifest,
+  fetchItchPropsManifest,
+  importCc0PropToProject,
+  importItchPropToProject,
+  patchProject,
+} from '../api'
 import { isGltfAssetUrl } from './isGltfAssetUrl'
 import { uploadImageFile } from '../mediaUpload'
 import { createBillboardObject, resolveDesignBillboardUrl } from './billboardFromDesign'
 import { captureViewportPng, blobToDataUrl } from './captureViewport'
 import { createBabylonHost, type BabylonHost } from './createEngine'
 import { createGizmoSelection, type GizmoSelectionController } from './gizmoSelection'
-import { hideInspector, showEmbeddedInspector, syncInspectorSelection } from './inspectorPane'
+import { DebugLayerTab } from '@babylonjs/core/Debug/debugLayer'
+import {
+  hideInspector,
+  popupFullInspector,
+  showEmbeddedInspector,
+  syncInspectorSelection,
+} from './inspectorPane'
+import { applyTransformToLiveNode } from './applyObjectToNode'
+import { buildStoryboardMarkdown, downloadStoryboardJson } from './exportStoryboard'
+import { applyMaterial3dEnvironment } from './sceneEnvironment'
 import { syncSceneFromDoc } from './syncSceneFromDoc'
 import {
   DEFAULT_TRANSFORM,
   newBookmarkId,
   newMaterial3dObjectId,
   type Material3dBookmark,
+  type Material3dEnvironment,
   type Material3dGltfObject,
+  type Material3dObject,
   type Material3dScene,
   type Material3dTransform,
 } from './material3dTypes'
+import Material3dAddPanel, { type PropSource } from './Material3dAddPanel'
+import Material3dCameraPanel from './Material3dCameraPanel'
+import Material3dEnvironmentPanel from './Material3dEnvironmentPanel'
+import Material3dHierarchyPanel from './Material3dHierarchyPanel'
 
 type Props = {
   projectName: string
@@ -71,11 +92,18 @@ export default function Material3dWorkbench({
   const inspectorHostRef = useRef<HTMLDivElement>(null)
   const [ready, setReady] = useState(false)
   const [cc0Props, setCc0Props] = useState<Cc0PropEntry[]>([])
-  const [cc0Filter, setCc0Filter] = useState('')
+  const [itchProps, setItchProps] = useState<ItchPropEntry[]>([])
+  const [railTab, setRailTab] = useState<'add' | 'hierarchy' | 'camera' | 'scene'>('add')
+  const [propSource, setPropSource] = useState<PropSource>('characters')
+  const [charactersReady, setCharactersReady] = useState(false)
+  const [propQuery, setPropQuery] = useState('')
   const [samplesReady, setSamplesReady] = useState(false)
+  const [itchVendorReady, setItchVendorReady] = useState(false)
   const [importingProp, setImportingProp] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [inspectorShowExplorer, setInspectorShowExplorer] = useState(false)
+  const [inspectorTab, setInspectorTab] = useState(DebugLayerTab.Properties)
   const [bookmarkLabel, setBookmarkLabel] = useState('机位 1')
   const [savingShot, setSavingShot] = useState(false)
 
@@ -94,10 +122,13 @@ export default function Material3dWorkbench({
 
   useEffect(() => {
     let alive = true
-    void fetchCc0PropsManifest()
-      .then((cc0) => {
+    void Promise.all([fetchCc0PropsManifest(), fetchItchPropsManifest()])
+      .then(([cc0, itch]) => {
         if (!alive) return
         setCc0Props(cc0.samples ?? [])
+        setItchProps(itch.samples ?? [])
+        setItchVendorReady(Boolean(itch.vendorReady))
+        setCharactersReady(Boolean(cc0.charactersReady))
         setSamplesReady(true)
       })
       .catch(() => {
@@ -108,6 +139,11 @@ export default function Material3dWorkbench({
       alive = false
     }
   }, [])
+
+  const isObjectLocked = useCallback(
+    (objectId: string) => Boolean(sceneDoc.objects.find((o) => o.id === objectId)?.locked),
+    [sceneDoc.objects],
+  )
 
   const applyObjectTransform = useCallback(
     (objectId: string, transform: Material3dTransform) => {
@@ -120,6 +156,15 @@ export default function Material3dWorkbench({
       onSceneChange(next)
     },
     [sceneDoc, onSceneChange],
+  )
+
+  const handleTransformChange = useCallback(
+    (objectId: string, transform: Material3dTransform) => {
+      const host = hostRef.current
+      if (host) applyTransformToLiveNode(host.scene, objectId, transform)
+      applyObjectTransform(objectId, transform)
+    },
+    [applyObjectTransform],
   )
 
   const selectObject = useCallback(
@@ -188,6 +233,7 @@ export default function Material3dWorkbench({
         if (!disposed) setSelectedId(id)
       },
       onTransformEnd: (id, transform) => applyObjectTransform(id, transform),
+      isLocked: isObjectLocked,
     }).then((ctrl) => {
       if (disposed) {
         ctrl.dispose()
@@ -201,7 +247,13 @@ export default function Material3dWorkbench({
       gizmoRef.current?.dispose()
       gizmoRef.current = null
     }
-  }, [ready, applyObjectTransform])
+  }, [ready, applyObjectTransform, isObjectLocked])
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (!ready || !host) return
+    void applyMaterial3dEnvironment(host.scene, host.envHandles, sceneDoc.environment)
+  }, [ready, sceneDoc.environment])
 
   useEffect(() => {
     if (!inspectorOpen) {
@@ -218,7 +270,10 @@ export default function Material3dWorkbench({
         requestAnimationFrame(mountInspector)
         return
       }
-      void showEmbeddedInspector(host.scene, hostEl).then(() => {
+      void showEmbeddedInspector(host.scene, hostEl, {
+        showExplorer: inspectorShowExplorer,
+        initialTab: inspectorTab,
+      }).then(() => {
         if (!cancelled) void syncInspectorSelection(host.scene, selectedIdRef.current)
       })
     }
@@ -226,7 +281,16 @@ export default function Material3dWorkbench({
     return () => {
       cancelled = true
     }
-  }, [ready, inspectorOpen])
+  }, [ready, inspectorOpen, inspectorShowExplorer, inspectorTab])
+
+  const openInspectorPopup = useCallback(() => {
+    const host = hostRef.current
+    if (!host) return
+    void popupFullInspector(host.scene, {
+      showExplorer: inspectorShowExplorer,
+      initialTab: inspectorTab,
+    })
+  }, [inspectorShowExplorer, inspectorTab])
 
   useEffect(() => {
     if (!ready || !inspectorOpen) return
@@ -249,6 +313,15 @@ export default function Material3dWorkbench({
     onSceneChange(next)
   }
 
+  const patchObject = (objectId: string, patch: Partial<Material3dObject>) => {
+    const objects = sceneDoc.objects.map((o) =>
+      o.id === objectId ? ({ ...o, ...patch } as Material3dObject) : o,
+    )
+    patchScene({ objects })
+    if ('billboardSize' in patch) void refreshMeshes()
+    if ('locked' in patch) gizmoRef.current?.selectById(selectedIdRef.current)
+  }
+
   const addBillboard = (designId: string) => {
     const design = designs.find((d) => d.id === designId)
     if (!design) return
@@ -261,6 +334,8 @@ export default function Material3dWorkbench({
         ? sceneDoc.designRefs
         : [...sceneDoc.designRefs, designId]
       patchScene({ objects: [...sceneDoc.objects, obj], designRefs })
+      setRailTab('hierarchy')
+      setSelectedId(obj.id)
       try {
         resolveDesignBillboardUrl(design, missing)
       } catch {
@@ -274,7 +349,7 @@ export default function Material3dWorkbench({
   const addGltf = (assetUrl: string) => {
     const url = assetUrl.split('?')[0]
     if (!isGltfAssetUrl(url)) {
-      toast('仅支持项目素材或 CC0 道具')
+      toast('仅支持项目素材、CC0 或 itch 本地道具')
       return
     }
     const obj: Material3dGltfObject = {
@@ -288,18 +363,58 @@ export default function Material3dWorkbench({
       },
     }
     patchScene({ objects: [...sceneDoc.objects, obj] })
+    setRailTab('hierarchy')
+    setSelectedId(obj.id)
   }
 
-  const cc0Filtered = useMemo(() => {
-    const q = cc0Filter.trim().toLowerCase()
-    if (!q) return cc0Props
-    return cc0Props.filter(
-      (p) =>
-        p.title.toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q) ||
-        (p.categories || []).some((c) => c.toLowerCase().includes(q)),
-    )
-  }, [cc0Props, cc0Filter])
+  const importItchToAssets = async (prop: ItchPropEntry) => {
+    if (!projectName) return
+    setImportingProp(true)
+    try {
+      toast('正在写入项目素材（itch 本地包）…')
+      const row = await importItchPropToProject({
+        project: projectName,
+        url: prop.url,
+        title: prop.title,
+      })
+      const nextAssets: ProjectAsset[] = [
+        ...assets,
+        { kind: row.kind, title: row.title, url: row.url, note: row.note || 'itch-local-pack' },
+      ]
+      await patchProject(projectName, { assets: nextAssets })
+      onAssetsAppended?.(nextAssets)
+      toast(`已加入项目素材：${row.title}`)
+    } catch (e) {
+      toast((e as Error).message || '导入失败')
+    } finally {
+      setImportingProp(false)
+    }
+  }
+
+  const filterProps = useCallback(
+    <T extends { id: string; title: string; categories?: string[]; pack?: string }>(list: T[]) => {
+      const q = propQuery.trim().toLowerCase()
+      if (!q) return list
+      return list.filter(
+        (p) =>
+          p.title.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q) ||
+          ('pack' in p && String(p.pack || '').toLowerCase().includes(q)) ||
+          (p.categories || []).some((c) => c.toLowerCase().includes(q)),
+      )
+    },
+    [propQuery],
+  )
+
+  const isCharacterProp = useCallback(
+    (p: Cc0PropEntry) => (p.categories || []).includes('characters'),
+    [],
+  )
+  const characterProps = useMemo(() => cc0Props.filter(isCharacterProp), [cc0Props, isCharacterProp])
+  const furnitureProps = useMemo(() => cc0Props.filter((p) => !isCharacterProp(p)), [cc0Props, isCharacterProp])
+  const characterFiltered = useMemo(() => filterProps(characterProps), [characterProps, filterProps])
+  const cc0Filtered = useMemo(() => filterProps(furnitureProps), [furnitureProps, filterProps])
+  const itchFiltered = useMemo(() => filterProps(itchProps), [itchProps, filterProps])
 
   const importCc0ToAssets = async (prop: Cc0PropEntry) => {
     if (!projectName) return
@@ -361,6 +476,25 @@ export default function Material3dWorkbench({
     if (selectedId === id) selectObject(null)
   }
 
+  const copyStoryboardMarkdown = async () => {
+    const md = buildStoryboardMarkdown(sceneDoc, designs)
+    try {
+      await navigator.clipboard.writeText(md)
+      toast('分镜说明已复制到剪贴板')
+    } catch {
+      toast('复制失败，请检查浏览器权限')
+    }
+  }
+
+  const exportStoryboardJson = () => {
+    downloadStoryboardJson(sceneDoc, designs)
+    toast('已下载 storyboard JSON')
+  }
+
+  const onEnvironmentChange = (environment: Material3dEnvironment) => {
+    patchScene({ environment })
+  }
+
   const exportScreenshot = async () => {
     const host = hostRef.current
     if (!host || !projectName) return
@@ -388,175 +522,115 @@ export default function Material3dWorkbench({
 
   return (
     <div className="m3d-workbench">
-      <div className="m3d-toolbar board-hint">
-        <span>
-          <b>{sceneDoc.name}</b> · 编排/机位在此；成片 MP4 请用创意 → Blender 三维专家
-        </span>
-        <span className="m3d-toolbar-actions">
-          <button type="button" className="btn-ghost" disabled={!ready || savingShot} onClick={() => void exportScreenshot()}>
-            {savingShot ? '导出中…' : '导出视口 PNG'}
+      <header className="m3d-command-bar">
+        <div className="m3d-command-primary">
+          <button type="button" className="m3d-back" onClick={onClose}>
+            ← 场景列表
           </button>
-          <button type="button" className="btn-ghost" onClick={onClose}>
-            返回列表
-          </button>
-        </span>
-      </div>
-      <div className="m3d-body">
-        <aside className="m3d-side">
-          <h4>设定立板</h4>
-          <select
-            className="wb-field"
-            data-m3d-design-select
-            defaultValue=""
-            onChange={(e) => {
-              const v = e.target.value
-              if (!v) return
-              addBillboard(v)
-              e.target.value = ''
-            }}
-          >
-            <option value="">选择场景/道具卡…</option>
-            {designOptions.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.kind === 'scene' ? '场景' : '道具'} · {d.name}
-              </option>
-            ))}
-          </select>
-          <h4>GLB / glTF</h4>
-          <select
-            className="wb-field"
-            data-m3d-gltf-select
-            defaultValue=""
-            onChange={(e) => {
-              const v = e.target.value
-              if (!v) return
-              addGltf(v)
-              e.target.value = ''
-            }}
-          >
-            <option value="">从项目素材选择…</option>
-            {gltfAssets.map((a, i) => (
-              <option key={`${a.url}-${i}`} value={a.url}>
-                {a.title || a.url.split('/').pop()}
-              </option>
-            ))}
-          </select>
-          <h4>CC0 道具库（Poly Haven）</h4>
-          <p className="board-hint m3d-hint">
-            {!samplesReady
-              ? '加载目录…'
-              : cc0Props.length
-                ? `${cc0Props.length} 个家具/道具 · CC0 · 首次加入场景会拉取 glTF 包`
-                : '无目录：npm run sync:cc0-props'}
-          </p>
           <input
-            className="wb-field"
-            type="search"
-            placeholder="搜索椅子、桌子…"
-            value={cc0Filter}
-            onChange={(e) => setCc0Filter(e.target.value)}
-            disabled={!cc0Props.length}
+            className="m3d-scene-name"
+            aria-label="场景名称"
+            value={sceneDoc.name}
+            onChange={(e) => patchScene({ name: e.target.value })}
           />
-          <select
-            className="wb-field"
-            data-m3d-cc0-select
-            defaultValue=""
-            disabled={!cc0Filtered.length}
-            onChange={(e) => {
-              const v = e.target.value
-              if (!v) return
-              addGltf(v)
-              e.target.value = ''
-            }}
-          >
-            <option value="">选 CC0 道具加入场景…</option>
-            {cc0Filtered.map((p) => (
-              <option key={p.id} value={p.url}>
-                {p.title}
-              </option>
-            ))}
-          </select>
-          <select
-            className="wb-field"
-            data-m3d-cc0-import-select
-            defaultValue=""
-            disabled={!cc0Filtered.length || importingProp}
-            onChange={(e) => {
-              const id = e.target.value
-              e.target.value = ''
-              if (!id) return
-              const prop = cc0Props.find((p) => p.id === id)
-              if (prop) void importCc0ToAssets(prop)
-            }}
-          >
-            <option value="">复制到项目素材…</option>
-            {cc0Filtered.map((p) => (
-              <option key={`import-cc0-${p.id}`} value={p.id}>
-                {p.title}
-              </option>
-            ))}
-          </select>
-          <h4>对象 ({sceneDoc.objects.length})</h4>
-          <p className="board-hint m3d-hint">点选视口或列表中的对象，用 Gizmo 拖动；位移会写入场景数据。</p>
-          <ul className="m3d-list" data-m3d-object-list>
-            {sceneDoc.objects.map((o) => (
-              <li key={o.id} className={selectedId === o.id ? 'm3d-list-selected' : undefined}>
-                <button
-                  type="button"
-                  className="m3d-object-pick"
-                  data-m3d-object-item={o.id}
-                  onClick={() => selectObject(o.id)}
-                >
-                  {o.kind === 'billboard' ? `立板 ${o.designId}` : `模型 ${o.assetUrl.split('/').pop()}`}
-                </button>
-                <button type="button" className="btn-mini ghost" onClick={() => removeObject(o.id)}>
-                  删
-                </button>
-              </li>
-            ))}
-          </ul>
-          <h4>检视器</h4>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-m3d-inspector-toggle
-            onClick={() => setInspectorOpen((v) => !v)}
-          >
-            {inspectorOpen ? '收起属性检视' : '打开属性检视'}
-          </button>
-          <div
-            ref={inspectorHostRef}
-            className="m3d-inspector-host"
-            data-m3d-inspector-host
-            style={{ display: inspectorOpen ? 'block' : 'none' }}
-          />
-          <h4>机位书签</h4>
-          <div className="m3d-bookmark-row">
-            <input
-              className="wb-field"
-              value={bookmarkLabel}
-              onChange={(e) => setBookmarkLabel(e.target.value)}
-              placeholder="机位名称"
-              data-m3d-bookmark-label
-            />
-            <button type="button" className="btn-ghost" data-m3d-save-bookmark onClick={saveBookmark}>
-              保存当前机位
-            </button>
+          <div className="m3d-stat-chips" aria-label="场景统计">
+            <span className="m3d-chip-stat">{sceneDoc.objects.length} 对象</span>
+            <span className="m3d-chip-stat">{sceneDoc.cameras.length} 机位</span>
+            {!ready ? <span className="m3d-chip-stat m3d-chip-stat--muted">视口加载中…</span> : null}
           </div>
-          <ul className="m3d-list" data-m3d-bookmark-list>
-            {sceneDoc.cameras.map((c) => (
-              <li key={c.id}>
-                <button type="button" className="btn-mini" onClick={() => restoreBookmark(c.id)}>
-                  {c.label}
-                </button>
-                <button type="button" className="btn-mini ghost" onClick={() => removeBookmark(c.id)}>
-                  删
-                </button>
-              </li>
-            ))}
-          </ul>
+        </div>
+        <div className="m3d-command-actions">
+          <button type="button" className="btn-ghost" disabled={!ready || savingShot} onClick={() => void exportScreenshot()}>
+            {savingShot ? '导出中…' : '视口截图'}
+          </button>
+        </div>
+      </header>
+
+      <div className="m3d-body">
+        <aside className="m3d-rail">
+          <nav className="m3d-rail-tabs" aria-label="工作台面板">
+            <button type="button" className={railTab === 'add' ? 'on' : undefined} onClick={() => setRailTab('add')}>
+              添加
+            </button>
+            <button type="button" className={railTab === 'hierarchy' ? 'on' : undefined} onClick={() => setRailTab('hierarchy')}>
+              层级
+              {sceneDoc.objects.length ? <span>{sceneDoc.objects.length}</span> : null}
+            </button>
+            <button type="button" className={railTab === 'camera' ? 'on' : undefined} onClick={() => setRailTab('camera')}>
+              机位
+              {sceneDoc.cameras.length ? <span>{sceneDoc.cameras.length}</span> : null}
+            </button>
+            <button type="button" className={railTab === 'scene' ? 'on' : undefined} onClick={() => setRailTab('scene')}>
+              场景
+            </button>
+          </nav>
+          <div className="m3d-rail-body">
+            {railTab === 'add' ? (
+              <Material3dAddPanel
+                designOptions={designOptions}
+                gltfAssets={gltfAssets}
+                cc0Props={cc0Props}
+                itchProps={itchProps}
+                cc0Filtered={cc0Filtered}
+                characterFiltered={characterFiltered}
+                itchFiltered={itchFiltered}
+                charactersReady={charactersReady}
+                propSource={propSource}
+                onPropSource={setPropSource}
+                propQuery={propQuery}
+                onPropQuery={setPropQuery}
+                samplesReady={samplesReady}
+                itchVendorReady={itchVendorReady}
+                importingProp={importingProp}
+                onAddBillboard={addBillboard}
+                onAddGltf={addGltf}
+                onImportCc0={(p) => void importCc0ToAssets(p)}
+                onImportItch={(p) => void importItchToAssets(p)}
+              />
+            ) : null}
+            {railTab === 'hierarchy' ? (
+              <Material3dHierarchyPanel
+                objects={sceneDoc.objects}
+                designs={designs}
+                selectedId={selectedId}
+                inspectorOpen={inspectorOpen}
+                inspectorShowExplorer={inspectorShowExplorer}
+                inspectorTab={inspectorTab}
+                onSelect={selectObject}
+                onRemove={removeObject}
+                onToggleInspector={() => setInspectorOpen((v) => !v)}
+                onInspectorShowExplorer={setInspectorShowExplorer}
+                onInspectorTab={setInspectorTab}
+                onInspectorPopup={openInspectorPopup}
+                onPatchObject={patchObject}
+                onTransformChange={handleTransformChange}
+                inspectorHostRef={inspectorHostRef}
+              />
+            ) : null}
+            {railTab === 'camera' ? (
+              <Material3dCameraPanel
+                cameras={sceneDoc.cameras}
+                bookmarkLabel={bookmarkLabel}
+                onBookmarkLabel={setBookmarkLabel}
+                onSave={saveBookmark}
+                onRestore={restoreBookmark}
+                onRemove={removeBookmark}
+                onCopyMarkdown={() => void copyStoryboardMarkdown()}
+                onExportJson={exportStoryboardJson}
+              />
+            ) : null}
+            {railTab === 'scene' ? (
+              <Material3dEnvironmentPanel environment={sceneDoc.environment} onChange={onEnvironmentChange} />
+            ) : null}
+          </div>
         </aside>
-        <canvas ref={canvasRef} className="m3d-canvas" data-m3d-canvas />
+        <div className="m3d-stage">
+          <canvas ref={canvasRef} className="m3d-canvas" data-m3d-canvas />
+          <div className="m3d-viewport-hud" aria-hidden>
+            <span>拖动旋转 · 滚轮缩放 · 选中对象后可 Gizmo 移动</span>
+            {sceneDoc.objects.length === 0 ? <span className="m3d-viewport-hud-strong">从左侧「添加」开始编排</span> : null}
+          </div>
+        </div>
       </div>
     </div>
   )

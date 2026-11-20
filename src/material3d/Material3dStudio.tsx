@@ -11,6 +11,13 @@ type Props = {
   toast: (m: string) => void
 }
 
+function formatUpdated(iso: string | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 export default function Material3dStudio({ projectName, designs, missing, onScenesCountChange, toast }: Props) {
   const [scenes, setScenes] = useState<Material3dScene[]>([])
   const [assets, setAssets] = useState<ProjectAsset[]>([])
@@ -37,7 +44,7 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
       toast((e as Error).message || '读取三维场景失败')
       setReady(false)
     }
-  }, [projectName, toast])
+  }, [projectName, toast, onScenesCountChange])
 
   useEffect(() => {
     setOpenId(null)
@@ -82,6 +89,14 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
 
   const openScene = scenes.find((s) => s.id === openId) ?? null
 
+  const createAndOpen = () => {
+    const s = newMaterial3dScene()
+    const next = [...scenes, s]
+    setScenes(next)
+    setOpenId(s.id)
+    void persistScenes(next).catch((e) => toast((e as Error).message || '保存失败'))
+  }
+
   if (!projectName) {
     return <div className="char-empty-board">先在顶栏选择项目，再使用场景三维工作台。</div>
   }
@@ -105,63 +120,82 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
 
   return (
     <div className="m3d-studio" data-material3d-studio>
-      <div className="m3d-studio-head">
-        <p className="board-hint">
-          浏览器内编排场景/道具参考与 GLB；CC0 道具见工作台侧栏。机位书签保存在项目中。成片渲染仍在创意 Blender 专家。
-        </p>
-        <button
-          type="button"
-          className="btn primary"
-          data-m3d-new-scene
-          disabled={!ready}
-          onClick={() => {
-            const s = newMaterial3dScene()
-            const next = [...scenes, s]
-            setScenes(next)
-            setOpenId(s.id)
-            void persistScenes(next).catch((e) => toast((e as Error).message || '保存失败'))
-          }}
-        >
+      <header className="m3d-studio-hero">
+        <div>
+          <h3 className="m3d-studio-title">场景三维</h3>
+          <p className="board-hint m3d-studio-lede">
+            浏览器内摆放设定立板与 GLB，保存机位书签；导出 PNG 可作分镜参考，成片仍在 Blender 三维专家。
+          </p>
+          <ol className="m3d-studio-steps">
+            <li>新建场景</li>
+            <li>添加立板 / 模型</li>
+            <li>保存机位</li>
+          </ol>
+        </div>
+        <button type="button" className="btn primary" data-m3d-new-scene disabled={!ready} onClick={createAndOpen}>
           新建三维场景
         </button>
-      </div>
-      <div className="char-grid">
-        {scenes.length === 0 ? (
-          <div className="char-empty-board">还没有三维场景，点「新建三维场景」开始。</div>
-        ) : (
-          scenes.map((s) => (
-            <div key={s.id} className="char-card m3d-scene-card" data-m3d-scene-card={s.id}>
-              <div className="char-card-head">
-                <input
-                  className="wb-field"
-                  value={s.name}
-                  onChange={(e) =>
-                    updateScene(s.id, { ...s, name: e.target.value, updatedAt: new Date().toISOString() })
+      </header>
+
+      {scenes.length === 0 ? (
+        <button type="button" className="m3d-studio-empty" disabled={!ready} onClick={createAndOpen}>
+          <strong>还没有三维场景</strong>
+          <span>点击创建第一个场景，在工作台里从「添加」面板加入道具</span>
+        </button>
+      ) : (
+        <ul className="m3d-scene-grid">
+          {scenes.map((s) => (
+            <li key={s.id}>
+              <article
+                className="m3d-scene-card"
+                data-m3d-scene-card={s.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpenId(s.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setOpenId(s.id)
                   }
-                />
-              </div>
-              <p className="board-hint">
-                {s.objects.length} 个对象 · {s.cameras.length} 个机位
-              </p>
-              <div className="m3d-card-actions">
-                <button type="button" className="btn primary" onClick={() => setOpenId(s.id)}>
-                  打开工作台
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => {
-                    if (!window.confirm(`删除「${s.name}」？`)) return
-                    setScenes((prev) => prev.filter((x) => x.id !== s.id))
-                  }}
-                >
-                  删除
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+                }}
+              >
+                <div className="m3d-scene-card-top">
+                  <input
+                    className="m3d-scene-card-name"
+                    value={s.name}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      updateScene(s.id, { ...s, name: e.target.value, updatedAt: new Date().toISOString() })
+                    }
+                  />
+                  {formatUpdated(s.updatedAt) ? (
+                    <time className="m3d-scene-card-time">{formatUpdated(s.updatedAt)}</time>
+                  ) : null}
+                </div>
+                <p className="m3d-scene-card-stats">
+                  <span>{s.objects.length} 对象</span>
+                  <span>{s.cameras.length} 机位</span>
+                </p>
+                <div className="m3d-card-actions" onClick={(e) => e.stopPropagation()}>
+                  <button type="button" className="btn primary" onClick={() => setOpenId(s.id)}>
+                    打开工作台
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      if (!window.confirm(`删除「${s.name}」？`)) return
+                      setScenes((prev) => prev.filter((x) => x.id !== s.id))
+                    }}
+                  >
+                    删除
+                  </button>
+                </div>
+              </article>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

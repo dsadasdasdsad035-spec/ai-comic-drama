@@ -4,5 +4,6 @@ export function isGltfAssetUrl(url: string): boolean {
   const lower = u.toLowerCase()
   if (!lower.endsWith('.glb') && !lower.endsWith('.gltf')) return false
   if (lower.startsWith('/cc0-props/')) return true
+  if (lower.startsWith('/itch-props/')) return true
   return u.startsWith('/project-assets/')
 }

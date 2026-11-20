@@ -106,14 +106,31 @@ try {
     await page.reload({ waitUntil: 'networkidle' })
     await page.locator('[data-asset-studio3d-tab]').click()
     await page.locator('[data-material3d-studio]').waitFor({ timeout: 30000 })
-    await page.locator(`[data-m3d-scene-card="${scene0.id}"] button`, { hasText: '打开工作台' }).click()
+    await page.locator(`[data-m3d-scene-card="${scene0.id}"]`).click()
     await page.locator('[data-m3d-save-bookmark]').waitFor({ timeout: 60000 })
+    await page.getByRole('button', { name: '层级' }).click()
     await page.locator(`[data-m3d-object-item="${objId}"]`).click({ force: true })
     await page.waitForFunction(
-      (id) => document.querySelector(`[data-m3d-object-item="${id}"]`)?.closest('li')?.classList.contains('m3d-list-selected'),
+      (id) => document.querySelector(`[data-m3d-object-item="${id}"]`)?.closest('li')?.classList.contains('is-selected'),
       objId,
       { timeout: 10000 },
     )
+    await page.locator('[data-m3d-transform-panel] input').first().fill('2.5')
+    await page.locator('[data-m3d-transform-panel] input').first().blur()
+    await page.waitForResponse(
+      (r) => r.url().includes('/api/project') && r.request().method() === 'POST' && r.ok(),
+      { timeout: 20000 },
+    )
+    const afterTransform = readProject(root, PROJ)?.material3dScenes?.[0]?.objects?.[0]
+    check('数字改 transform 已落库', afterTransform?.transform?.position?.x === 2.5, String(afterTransform?.transform?.position?.x))
+    await page.getByRole('button', { name: '机位' }).click()
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 15000 }),
+      page.locator('[data-m3d-export-storyboard-json]').click(),
+    ])
+    const fn = download.suggestedFilename()
+    check('机位 JSON 导出文件名', fn.endsWith('-storyboard.json'), fn)
+    await page.getByRole('button', { name: '层级' }).click()
     await page.evaluate(() => document.querySelector('[data-m3d-inspector-toggle]')?.click())
     await page.waitForFunction(
       () => document.querySelector('[data-m3d-inspector-host]')?.dataset.m3dInspectorReady === 'true',

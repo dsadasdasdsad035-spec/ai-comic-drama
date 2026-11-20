@@ -38,6 +38,7 @@ export async function createGizmoSelection(
   callbacks: {
     onSelect: (objectId: string | null) => void
     onTransformEnd: (objectId: string, transform: Material3dTransform) => void
+    isLocked?: (objectId: string) => boolean
   },
 ): Promise<GizmoSelectionController> {
   const BABYLON = await import('@babylonjs/core')
@@ -70,6 +71,10 @@ export async function createGizmoSelection(
   const attachToId = (objectId: string | null) => {
     attachedId = objectId
     if (!objectId) {
+      gizmoManager.attachToMesh(null)
+      return
+    }
+    if (callbacks.isLocked?.(objectId)) {
       gizmoManager.attachToMesh(null)
       return
     }

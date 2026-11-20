@@ -759,6 +759,8 @@ export type Cc0PropManifest = {
   license?: string
   updatedAt?: string
   vendorReady?: boolean
+  /** Grab3D 人形分镜 GLB 是否已全部在 vendor */
+  charactersReady?: boolean
   samples: Cc0PropEntry[]
 }
 
@@ -767,6 +769,47 @@ export async function fetchCc0PropsManifest(): Promise<Cc0PropManifest> {
   const j = (await res.json()) as Cc0PropManifest & { ok?: boolean }
   if (!j.ok) return { schemaVersion: 1, samples: [] }
   return j
+}
+
+export type ItchPropEntry = {
+  id: string
+  title: string
+  pack: string
+  license?: string
+  itchUrl?: string
+  categories?: string[]
+  url: string
+}
+
+export type ItchPropManifest = {
+  schemaVersion: number
+  source?: string
+  license?: string
+  updatedAt?: string
+  vendorReady?: boolean
+  samples: ItchPropEntry[]
+}
+
+export async function fetchItchPropsManifest(): Promise<ItchPropManifest> {
+  const res = await apiFetch('/api/itch-props')
+  const j = (await res.json()) as ItchPropManifest & { ok?: boolean }
+  if (!j.ok) return { schemaVersion: 1, samples: [] }
+  return j
+}
+
+export async function importItchPropToProject(opts: {
+  project: string
+  url: string
+  title?: string
+}): Promise<{ url: string; title: string; kind: string; note?: string }> {
+  const res = await apiFetch('/api/itch-props/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  const j = (await res.json()) as { ok?: boolean; message?: string; url?: string; title?: string; kind?: string; note?: string }
+  if (!j.ok || !j.url) throw new Error(j.message || '导入 itch 道具失败')
+  return { url: j.url, title: j.title || opts.title || 'itch 道具', kind: j.kind || 'model', note: j.note }
 }
 
 export async function importCc0PropToProject(opts: {

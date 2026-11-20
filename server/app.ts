@@ -115,6 +115,14 @@ import {
   readCc0PropsManifest,
   resolveCc0PropFile,
 } from './cc0-props.mjs'
+import { readMergedCc0PropsManifest } from './m3d-characters.mjs'
+import {
+  itchPropsVendorReady,
+  importItchPropToProject,
+  parseItchPropUrl,
+  readItchPropsManifest,
+  resolveItchPropFile,
+} from './itch-props.mjs'
 import {
   mergeStockSettings,
   normalizeStockSettings,
@@ -2942,6 +2950,18 @@ export function createAppHandler({ root }: { root: string }) {
       if (await proxyRemoteMedia(req, res, url, root)) return
     }
 
+        // itch 等本地入库道具：vendor/itch-props/
+        if (url.startsWith('/itch-props/')) {
+          try {
+            const file = resolveItchPropFile(root, url)
+            serveFile(res, req, file, mimeOf(path.extname(file).slice(1) || 'glb'))
+          } catch {
+            res.statusCode = 404
+            res.end()
+          }
+          return
+        }
+
         // CC0 道具（Poly Haven）：vendor/cc0-props/，按需拉取
         if (url.startsWith('/cc0-props/')) {
           try {
@@ -4533,13 +4553,53 @@ export function createAppHandler({ root }: { root: string }) {
           return
         }
 
+        if (url === '/api/itch-props' && req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const manifest = readItchPropsManifest(root)
+          res.end(
+            JSON.stringify({
+              ok: true,
+              vendorReady: itchPropsVendorReady(root),
+              ...manifest,
+            }),
+          )
+          return
+        }
+
+        if (url === '/api/itch-props/import' && req.method === 'POST') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          try {
+            const body = await readJson(req)
+            const projectName = String(body?.project || '').trim()
+            const propUrl = parseItchPropUrl(body?.url)
+            const title = String(body?.title || '').trim()
+            if (!projectName) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '缺少 project' }))
+              return
+            }
+            if (!propUrl) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: 'url 须为 /itch-props/...' }))
+              return
+            }
+            const row = await importItchPropToProject(root, projectName, propUrl, title)
+            res.end(JSON.stringify({ ok: true, ...row }))
+          } catch (e: any) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
         if (url === '/api/cc0-props' && req.method === 'GET') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          const manifest = readCc0PropsManifest(root)
+          const manifest = readMergedCc0PropsManifest(root)
           res.end(
             JSON.stringify({
               ok: true,
               vendorReady: cc0PropsVendorReady(root),
+              charactersReady: manifest.charactersReady,
               ...manifest,
             }),
           )

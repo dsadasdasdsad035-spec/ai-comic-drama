@@ -17,6 +17,57 @@ export const DEFAULT_TRANSFORM: Material3dTransform = {
   scale: { x: 1, y: 1, z: 1 },
 }
 
+export type Material3dBillboardSize = { width: number; height: number }
+
+export const DEFAULT_BILLBOARD_SIZE: Material3dBillboardSize = { width: 3.2, height: 1.8 }
+
+export type Material3dGroundEnv = {
+  size?: number
+  color?: string
+  visible?: boolean
+}
+
+export type Material3dLightEnv = {
+  ambient?: number
+  directional?: number
+}
+
+export type Material3dEnvironment = {
+  background?: string
+  ground?: Material3dGroundEnv
+  light?: Material3dLightEnv
+}
+
+export const DEFAULT_MATERIAL3D_ENVIRONMENT: {
+  background: string
+  ground: Required<Material3dGroundEnv>
+  light: Required<Material3dLightEnv>
+} = {
+  background: '#12171c',
+  ground: { size: 24, color: '#24292e', visible: true },
+  light: { ambient: 1, directional: 0.6 },
+}
+
+export type Material3dObjectBase = {
+  id: string
+  label?: string
+  locked?: boolean
+  transform: Material3dTransform
+}
+
+export type Material3dBillboardObject = Material3dObjectBase & {
+  kind: 'billboard'
+  designId: string
+  billboardSize?: Material3dBillboardSize
+}
+
+export type Material3dGltfObject = Material3dObjectBase & {
+  kind: 'gltf'
+  assetUrl: string
+}
+
+export type Material3dObject = Material3dBillboardObject | Material3dGltfObject
+
 export type Material3dBookmark = {
   id: string
   label: string
@@ -26,29 +77,35 @@ export type Material3dBookmark = {
   target: Material3dVec3
 }
 
-export type Material3dBillboardObject = {
-  id: string
-  kind: 'billboard'
-  designId: string
-  transform: Material3dTransform
-}
-
-export type Material3dGltfObject = {
-  id: string
-  kind: 'gltf'
-  assetUrl: string
-  transform: Material3dTransform
-}
-
-export type Material3dObject = Material3dBillboardObject | Material3dGltfObject
-
 export type Material3dScene = {
   id: string
   name: string
   designRefs: string[]
   objects: Material3dObject[]
   cameras: Material3dBookmark[]
+  environment?: Material3dEnvironment
   updatedAt: string
+}
+
+export function resolveBillboardSize(obj: Material3dBillboardObject): Material3dBillboardSize {
+  const w = obj.billboardSize?.width ?? DEFAULT_BILLBOARD_SIZE.width
+  const h = obj.billboardSize?.height ?? DEFAULT_BILLBOARD_SIZE.height
+  return { width: w, height: h }
+}
+
+export function mergeMaterial3dEnvironment(env?: Material3dEnvironment): typeof DEFAULT_MATERIAL3D_ENVIRONMENT {
+  return {
+    background: env?.background?.trim() || DEFAULT_MATERIAL3D_ENVIRONMENT.background,
+    ground: {
+      size: env?.ground?.size ?? DEFAULT_MATERIAL3D_ENVIRONMENT.ground.size,
+      color: env?.ground?.color?.trim() || DEFAULT_MATERIAL3D_ENVIRONMENT.ground.color,
+      visible: env?.ground?.visible ?? DEFAULT_MATERIAL3D_ENVIRONMENT.ground.visible,
+    },
+    light: {
+      ambient: env?.light?.ambient ?? DEFAULT_MATERIAL3D_ENVIRONMENT.light.ambient,
+      directional: env?.light?.directional ?? DEFAULT_MATERIAL3D_ENVIRONMENT.light.directional,
+    },
+  }
 }
 
 export function newMaterial3dScene(name?: string): Material3dScene {

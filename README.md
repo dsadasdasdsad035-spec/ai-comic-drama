@@ -66,7 +66,7 @@ brew install --cask blender    # 或自行安装到 /Applications
 - **剧本**：生成和保存都必须绑定项目；有未保存分集时切换项目或离开剧本页会先确认，保存后才写回项目。
 - **画布**：按项目存 `storyboard-canvas-v1:<project>`；切换项目时从该项目的 `project.shots` 水合，不再读写全局画布。旧全局画布会先备份到 `storyboard-canvas-v1:legacy-backup`，只迁移能归属当前项目的节点。
 - **拆角色**：全剧读项目 `source + episodes`；本集读当前集的 `project.shots`（cast / 台词 / 画面），不依赖浏览器里残留的画布节点。角色页也能直接切集，切完镜头上下文与聊天上下文一起跟着走。
-- **素材**：场景/道具设定存项目的 `designs`，和画布素材库分开；设定图可以单卡或批量发布成 `scene` / `prop` 素材卡。素材守则在设置页默认启用，按地点/道具去重，场景图固定空镜、道具图固定多角度隔离表。**场景三维** Tab 用浏览器（Babylon）编排设定立板、项目内 GLB 与机位书签；**CC0 道具**来自 **Poly Haven**（`public/presets/cc0-props/manifest.json`，`npm run sync:cc0-props` 刷新）；侧栏选用，首次加载缓存在 `vendor/cc0-props/`。成片 MP4 仍在创意 Blender 三维专家。
+- **素材**：场景/道具设定存项目的 `designs`，和画布素材库分开；设定图可以单卡或批量发布成 `scene` / `prop` 素材卡。素材守则在设置页默认启用，按地点/道具去重，场景图固定空镜、道具图固定多角度隔离表。**场景三维** Tab 用浏览器（Babylon）编排设定立板、项目内 GLB 与机位书签；**CC0 道具**来自 **Poly Haven**（`public/presets/cc0-props/manifest.json`，`npm run sync:cc0-props` 刷新），缓存在 `vendor/cc0-props/`；**itch 等家具包**走本地 manifest（`public/presets/itch-props/manifest.json`，`node scripts/ingest-itch-prop-pack.mjs` 入库到 `vendor/itch-props/`，`npm run validate:itch-props` 校验）。成片 MP4 仍在创意 Blender 三维专家。
 
 ### 新建与删除项目
 

@@ -1,9 +1,11 @@
 import type { ArcRotateCamera, Engine, Scene } from '@babylonjs/core'
+import type { SceneEnvironmentHandles } from './sceneEnvironment'
 
 export type BabylonHost = {
   engine: Engine
   scene: Scene
   camera: ArcRotateCamera
+  envHandles: SceneEnvironmentHandles
   dispose: () => void
 }
 
@@ -59,10 +61,19 @@ export async function createBabylonHost(canvas: HTMLCanvasElement): Promise<Baby
   const onResize = () => engine.resize()
   window.addEventListener('resize', onResize)
 
+  const envHandles: SceneEnvironmentHandles = {
+    ground,
+    hemiName: '__m3d_light_hemi',
+    dirName: '__m3d_light_sun',
+    baseHemiIntensity: 1,
+    baseDirIntensity: 0.6,
+  }
+
   return {
     engine,
     scene,
     camera,
+    envHandles,
     dispose: () => {
       window.removeEventListener('resize', onResize)
       engine.stopRenderLoop()

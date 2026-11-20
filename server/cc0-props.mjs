@@ -129,7 +129,7 @@ export function resolveCc0PropMainGltf(appRoot, urlPath) {
   return full
 }
 
-function patchGltfUriMap(doc, relpathToFlat) {
+export function patchGltfUriMap(doc, relpathToFlat) {
   const patchUri = (uri) => {
     if (!uri || typeof uri !== 'string' || uri.startsWith('data:')) return uri
     const norm = uri.split('/').join('/')

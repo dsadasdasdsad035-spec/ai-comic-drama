@@ -1,5 +1,5 @@
 import type { DesignSheet } from '../api'
-import { MATERIAL3D_OBJECT_META, type Material3dScene } from './material3dTypes'
+import { MATERIAL3D_OBJECT_META, resolveBillboardSize, type Material3dScene } from './material3dTypes'
 import { resolveDesignBillboardUrl } from './billboardFromDesign'
 
 export type SyncSceneContext = {
@@ -79,8 +79,9 @@ export async function syncSceneFromDoc(
       const design = designById.get(obj.designId)
       if (!design) continue
       const url = resolveDesignBillboardUrl(design, ctx.missing)
-      const plane = BABYLON.MeshBuilder.CreatePlane(`bb-${obj.id}`, { width: 3.2, height: 1.8 }, scene)
-      plane.metadata = { [MATERIAL3D_OBJECT_META]: obj.id }
+      const size = resolveBillboardSize(obj)
+      const plane = BABYLON.MeshBuilder.CreatePlane(`bb-${obj.id}`, { width: size.width, height: size.height }, scene)
+      plane.metadata = { [MATERIAL3D_OBJECT_META]: obj.id, material3dLocked: Boolean(obj.locked) }
       applyTransform(plane, obj.transform)
       const mat = new BABYLON.StandardMaterial(`bb-mat-${obj.id}`, scene)
       mat.diffuseTexture = new BABYLON.Texture(url, scene)
@@ -109,7 +110,7 @@ export async function syncSceneFromDoc(
         return { billboardCount, gltfCount, meshCount: 0 }
       }
       const root = new BABYLON.TransformNode(`gltf-${obj.id}`, scene)
-      root.metadata = { [MATERIAL3D_OBJECT_META]: obj.id }
+      root.metadata = { [MATERIAL3D_OBJECT_META]: obj.id, material3dLocked: Boolean(obj.locked) }
       container.addAllToScene()
       for (const m of container.meshes) {
         if (!m.parent) m.setParent(root)

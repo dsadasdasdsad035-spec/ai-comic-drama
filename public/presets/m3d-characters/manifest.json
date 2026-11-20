@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "source": "https://grab3d.com/",
+  "license": "CC0 (Grab3D)",
+  "updatedAt": "2026-11-20T14:22:26.790Z",
+  "entries": [
+    {
+      "id": "stylized_mannequin_light",
+      "title": "木人分镜立偶",
+      "slug": "stylized-mannequin",
+      "file": "stylized-mannequin-light.glb",
+      "license": "CC0"
+    },
+    {
+      "id": "man_base_light",
+      "title": "男性基础人形",
+      "slug": "man-base-character",
+      "file": "man-base-character-light.glb",
+      "license": "CC0"
+    },
+    {
+      "id": "woman_base_light",
+      "title": "女性基础人形",
+      "slug": "woman-base-character",
+      "file": "woman-base-character-light.glb",
+      "license": "CC0"
+    },
+    {
+      "id": "businessman_light",
+      "title": "西装路人（男）",
+      "slug": "businessman",
+      "file": "businessman-light.glb",
+      "license": "CC0"
+    },
+    {
+      "id": "hoodie_teen_light",
+      "title": "连帽衫青年",
+      "slug": "hoodie-teen",
+      "file": "hoodie-teen-light.glb",
+      "license": "CC0"
+    }
+  ],
+  "samples": [
+    {
+      "id": "stylized_mannequin_light",
+      "title": "木人分镜立偶",
+      "source": "grab3d",
+      "license": "CC0",
+      "categories": [
+        "characters",
+        "rigged"
+      ],
+      "url": "/cc0-props/characters/stylized-mannequin/stylized-mannequin-light.glb"
+    },
+    {
+      "id": "man_base_light",
+      "title": "男性基础人形",
+      "source": "grab3d",
+      "license": "CC0",
+      "categories": [
+        "characters",
+        "rigged"
+      ],
+      "url": "/cc0-props/characters/man-base-character/man-base-character-light.glb"
+    },
+    {
+      "id": "woman_base_light",
+      "title": "女性基础人形",
+      "source": "grab3d",
+      "license": "CC0",
+      "categories": [
+        "characters",
+        "rigged"
+      ],
+      "url": "/cc0-props/characters/woman-base-character/woman-base-character-light.glb"
+    },
+    {
+      "id": "businessman_light",
+      "title": "西装路人（男）",
+      "source": "grab3d",
+      "license": "CC0",
+      "categories": [
+        "characters",
+        "rigged"
+      ],
+      "url": "/cc0-props/characters/businessman/businessman-light.glb"
+    },
+    {
+      "id": "hoodie_teen_light",
+      "title": "连帽衫青年",
+      "source": "grab3d",
+      "license": "CC0",
+      "categories": [
+        "characters",
+        "rigged"
+      ],
+      "url": "/cc0-props/characters/hoodie-teen/hoodie-teen-light.glb"
+    }
+  ]
+}
