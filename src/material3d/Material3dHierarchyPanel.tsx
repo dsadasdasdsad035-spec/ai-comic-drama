@@ -1,9 +1,6 @@
-import type { RefObject } from 'react'
-import type { DebugLayerTab } from '@babylonjs/core/Debug/debugLayer'
 import type { DesignSheet } from '../api'
 import type { Material3dBillboardObject, Material3dObject, Material3dTransform } from './material3dTypes'
 import { DEFAULT_BILLBOARD_SIZE } from './material3dTypes'
-import { INSPECTOR_TAB_OPTIONS } from './inspectorPane'
 import { material3dObjectKindTag, material3dObjectLabel } from './objectDisplayName'
 import Material3dTransformPanel from './Material3dTransformPanel'
 
@@ -11,36 +8,24 @@ type Props = {
   objects: Material3dObject[]
   designs: DesignSheet[]
   selectedId: string | null
-  inspectorOpen: boolean
-  inspectorShowExplorer: boolean
-  inspectorTab: DebugLayerTab
   onSelect: (id: string | null) => void
   onRemove: (id: string) => void
-  onToggleInspector: () => void
-  onInspectorShowExplorer: (v: boolean) => void
-  onInspectorTab: (tab: DebugLayerTab) => void
-  onInspectorPopup: () => void
   onPatchObject: (id: string, patch: Partial<Material3dObject>) => void
   onTransformChange: (id: string, transform: Material3dTransform) => void
-  inspectorHostRef: RefObject<HTMLDivElement>
+  onOpenLibrary: () => void
+  onOpenDebug: () => void
 }
 
 export default function Material3dHierarchyPanel({
   objects,
   designs,
   selectedId,
-  inspectorOpen,
-  inspectorShowExplorer,
-  inspectorTab,
   onSelect,
   onRemove,
-  onToggleInspector,
-  onInspectorShowExplorer,
-  onInspectorTab,
-  onInspectorPopup,
   onPatchObject,
   onTransformChange,
-  inspectorHostRef,
+  onOpenLibrary,
+  onOpenDebug,
 }: Props) {
   const selected = selectedId ? objects.find((o) => o.id === selectedId) : null
 
@@ -50,14 +35,19 @@ export default function Material3dHierarchyPanel({
         <header className="m3d-panel-block-head m3d-panel-block-head--row">
           <div>
             <h5>场景对象</h5>
-            <p>点选后在视口用 Gizmo 移动；变更自动保存</p>
+            <p>在视口点选或从下表选中；Gizmo 与数字面板同步</p>
           </div>
           <button type="button" className="btn-mini ghost" onClick={() => onSelect(null)} disabled={!selectedId}>
             取消选中
           </button>
         </header>
         {objects.length === 0 ? (
-          <p className="m3d-empty-inline">还没有对象，到「添加」放入立板或模型</p>
+          <div className="m3d-empty-card">
+            <p>还没有摆进场景的内容</p>
+            <button type="button" className="btn primary" onClick={onOpenLibrary}>
+              去素材库添加
+            </button>
+          </div>
         ) : (
           <ul className="m3d-catalog" data-m3d-object-list>
             {objects.map((o) => (
@@ -87,9 +77,10 @@ export default function Material3dHierarchyPanel({
       </section>
 
       {selected ? (
-        <section className="m3d-panel-block" data-m3d-object-props>
+        <section className="m3d-panel-block m3d-panel-block--accent" data-m3d-object-props>
           <header className="m3d-panel-block-head">
-            <h5>对象属性</h5>
+            <h5>选中对象</h5>
+            <p>{material3dObjectLabel(selected, designs)}</p>
           </header>
           <label className="m3d-env-row">
             <span>显示名</span>
@@ -108,7 +99,7 @@ export default function Material3dHierarchyPanel({
               data-m3d-object-locked
               onChange={(e) => onPatchObject(selected.id, { locked: e.target.checked })}
             />
-            锁定（不可 Gizmo 拖动）
+            锁定（禁止 Gizmo）
           </label>
           {selected.kind === 'billboard' ? (
             <div className="m3d-billboard-size">
@@ -156,52 +147,15 @@ export default function Material3dHierarchyPanel({
             onChange={(t) => onTransformChange(selected.id, t)}
           />
         </section>
-      ) : null}
+      ) : (
+        <p className="m3d-empty-inline">在视口点击对象，或从上方列表选择以编辑变换。</p>
+      )}
 
-      <section className="m3d-panel-block">
-        <header className="m3d-panel-block-head">
-          <h5>属性检视</h5>
-          <p>Babylon 官方 Explorer + 调试页签；修改不保存到项目</p>
-        </header>
-        <p className="m3d-inspector-warn">检视器内的材质/网格改动仅当前会话有效，刷新或同步场景后会丢失。</p>
-        <div className="m3d-inspector-toolbar">
-          <label className="m3d-env-check m3d-inspector-check">
-            <input
-              type="checkbox"
-              checked={inspectorShowExplorer}
-              onChange={(e) => onInspectorShowExplorer(e.target.checked)}
-              data-m3d-inspector-explorer
-            />
-            <span>场景浏览器</span>
-          </label>
-          <button type="button" className="btn-mini ghost" data-m3d-inspector-popup onClick={onInspectorPopup}>
-            弹窗打开
-          </button>
-        </div>
-        <div className="m3d-source-tabs m3d-inspector-tabs" role="tablist" aria-label="检视器页签">
-          {INSPECTOR_TAB_OPTIONS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              className={inspectorTab === tab.id ? 'on' : undefined}
-              title={tab.hint}
-              data-m3d-inspector-tab={tab.id}
-              onClick={() => onInspectorTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="btn-ghost m3d-field-tight" data-m3d-inspector-toggle onClick={onToggleInspector}>
-          {inspectorOpen ? '收起检视器' : '展开检视器'}
+      <section className="m3d-panel-block m3d-panel-block--muted">
+        <p className="m3d-meta-line">需要改材质网格、看统计或 glTF 工具？</p>
+        <button type="button" className="btn-ghost m3d-field-tight" onClick={onOpenDebug}>
+          打开调试检视器
         </button>
-        <div
-          ref={inspectorHostRef}
-          className={inspectorShowExplorer ? 'm3d-inspector-host m3d-inspector-host--tall' : 'm3d-inspector-host'}
-          data-m3d-inspector-host
-          style={{ display: inspectorOpen ? 'block' : 'none' }}
-        />
       </section>
     </div>
   )

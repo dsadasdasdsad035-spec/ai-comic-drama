@@ -3383,10 +3383,33 @@ body.si-resizing {
   flex-wrap: wrap;
 }
 
+.m3d-workflow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.m3d-workflow-steps button {
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+}
+
+.m3d-workflow-steps button.on {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: var(--accent-dim);
+  color: var(--accent-ink);
+}
+
 .m3d-body {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) 1fr;
-  gap: 12px;
+  grid-template-columns: minmax(300px, 400px) 1fr;
+  gap: 14px;
   flex: 1;
   min-height: 0;
 }
@@ -3399,6 +3422,130 @@ body.si-resizing {
   border-radius: var(--r-md);
   background: var(--panel);
   overflow: hidden;
+}
+
+.m3d-rail--split {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.m3d-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.m3d-rail-nav button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.m3d-rail-nav button.on {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--bg) 30%, transparent);
+}
+
+.m3d-rail-nav-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.m3d-rail-nav-hint {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.m3d-rail-nav-badge {
+  margin-top: 2px;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--accent-dim);
+  color: var(--accent-ink);
+}
+
+.m3d-rail--split .m3d-rail-body {
+  max-height: min(78vh, 880px);
+}
+
+.m3d-library-lede,
+.m3d-shot-lede {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-2));
+  border: 1px solid var(--line);
+}
+
+.m3d-add-card {
+  padding: 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.m3d-source-tabs--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.m3d-source-tabs--stack button {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.m3d-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 12px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+}
+
+.m3d-panel-block--accent {
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+}
+
+.m3d-panel-block--muted {
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.m3d-panel-shot .m3d-panel-scene-env,
+.m3d-panel-shot .m3d-panel-camera {
+  padding: 0;
+}
+
+.m3d-viewport-hud-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .m3d-rail-tabs {

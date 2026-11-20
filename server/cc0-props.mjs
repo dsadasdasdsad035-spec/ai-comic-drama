@@ -28,7 +28,10 @@ export const CC0_PROP_CATEGORIES = new Set([
   'wall decoration',
   'containers',
   'potted plants',
+  'plants',
   'electronics',
+  'food',
+  'tools',
   'instrument',
 ])
 

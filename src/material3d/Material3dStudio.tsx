@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { getProject, patchProject, type DesignSheet, type ProjectAsset, type ProjectData } from '../api'
-import Material3dWorkbench from './Material3dWorkbench'
 import { newMaterial3dScene, type Material3dScene } from './material3dTypes'
+
+const LazyMaterial3dWorkbench = lazy(() => import('./Material3dWorkbench'))
 
 type Props = {
   projectName: string
@@ -103,18 +104,20 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
 
   if (openScene) {
     return (
-      <Material3dWorkbench
-        key={openScene.id}
-        projectName={projectName}
-        sceneDoc={openScene}
-        designs={designs}
-        assets={assets}
-        missing={missing}
-        onSceneChange={(next) => updateScene(openScene.id, next, { immediate: true })}
-        onClose={() => setOpenId(null)}
-        onAssetsAppended={setAssets}
-        toast={toast}
-      />
+      <Suspense fallback={<div className="char-empty-board">正在加载三维工作台…</div>}>
+        <LazyMaterial3dWorkbench
+          key={openScene.id}
+          projectName={projectName}
+          sceneDoc={openScene}
+          designs={designs}
+          assets={assets}
+          missing={missing}
+          onSceneChange={(next) => updateScene(openScene.id, next, { immediate: true })}
+          onClose={() => setOpenId(null)}
+          onAssetsAppended={setAssets}
+          toast={toast}
+        />
+      </Suspense>
     )
   }
 
@@ -127,9 +130,9 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
             浏览器内摆放设定立板与 GLB，保存机位书签；导出 PNG 可作分镜参考，成片仍在 Blender 三维专家。
           </p>
           <ol className="m3d-studio-steps">
-            <li>新建场景</li>
-            <li>添加立板 / 模型</li>
-            <li>保存机位</li>
+            <li>① 新建场景</li>
+            <li>② 素材库摆放</li>
+            <li>③ 分镜机位导出</li>
           </ol>
         </div>
         <button type="button" className="btn primary" data-m3d-new-scene disabled={!ready} onClick={createAndOpen}>
@@ -140,7 +143,7 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
       {scenes.length === 0 ? (
         <button type="button" className="m3d-studio-empty" disabled={!ready} onClick={createAndOpen}>
           <strong>还没有三维场景</strong>
-          <span>点击创建第一个场景，在工作台里从「添加」面板加入道具</span>
+          <span>创建后从「素材库」加入立板、人形或家具，再在「分镜」保存机位</span>
         </button>
       ) : (
         <ul className="m3d-scene-grid">

@@ -7,6 +7,7 @@ import {
   importItchPropToProject,
   patchProject,
 } from '../api'
+import { cc0PropDisplayTitle, cc0PropSearchHaystack } from './cc0PropDisplayTitle'
 import { isGltfAssetUrl } from './isGltfAssetUrl'
 import { uploadImageFile } from '../mediaUpload'
 import { createBillboardObject, resolveDesignBillboardUrl } from './billboardFromDesign'
@@ -36,9 +37,11 @@ import {
   type Material3dTransform,
 } from './material3dTypes'
 import Material3dAddPanel, { type PropSource } from './Material3dAddPanel'
-import Material3dCameraPanel from './Material3dCameraPanel'
-import Material3dEnvironmentPanel from './Material3dEnvironmentPanel'
+import Material3dDebugPanel from './Material3dDebugPanel'
 import Material3dHierarchyPanel from './Material3dHierarchyPanel'
+import Material3dShotPanel from './Material3dShotPanel'
+
+export type Material3dRailTab = 'library' | 'compose' | 'shot' | 'debug'
 
 type Props = {
   projectName: string
@@ -93,7 +96,7 @@ export default function Material3dWorkbench({
   const [ready, setReady] = useState(false)
   const [cc0Props, setCc0Props] = useState<Cc0PropEntry[]>([])
   const [itchProps, setItchProps] = useState<ItchPropEntry[]>([])
-  const [railTab, setRailTab] = useState<'add' | 'hierarchy' | 'camera' | 'scene'>('add')
+  const [railTab, setRailTab] = useState<Material3dRailTab>(() => (sceneDoc.objects.length > 0 ? 'compose' : 'library'))
   const [propSource, setPropSource] = useState<PropSource>('characters')
   const [charactersReady, setCharactersReady] = useState(false)
   const [propQuery, setPropQuery] = useState('')
@@ -205,14 +208,19 @@ export default function Material3dWorkbench({
     if (!canvas) return
     let alive = true
     setReady(false)
-    void createBabylonHost(canvas).then((host) => {
-      if (!alive) {
-        host.dispose()
-        return
-      }
-      hostRef.current = host
-      setReady(true)
-    })
+    void createBabylonHost(canvas)
+      .then((host) => {
+        if (!alive) {
+          host.dispose()
+          return
+        }
+        hostRef.current = host
+        setReady(true)
+      })
+      .catch((e) => {
+        if (!alive) return
+        toast((e as Error).message || '三维引擎启动失败')
+      })
     return () => {
       alive = false
       meshSyncGenRef.current += 1
@@ -334,7 +342,7 @@ export default function Material3dWorkbench({
         ? sceneDoc.designRefs
         : [...sceneDoc.designRefs, designId]
       patchScene({ objects: [...sceneDoc.objects, obj], designRefs })
-      setRailTab('hierarchy')
+      setRailTab('compose')
       setSelectedId(obj.id)
       try {
         resolveDesignBillboardUrl(design, missing)
@@ -363,7 +371,7 @@ export default function Material3dWorkbench({
       },
     }
     patchScene({ objects: [...sceneDoc.objects, obj] })
-    setRailTab('hierarchy')
+    setRailTab('compose')
     setSelectedId(obj.id)
   }
 
@@ -395,13 +403,16 @@ export default function Material3dWorkbench({
     <T extends { id: string; title: string; categories?: string[]; pack?: string }>(list: T[]) => {
       const q = propQuery.trim().toLowerCase()
       if (!q) return list
-      return list.filter(
-        (p) =>
-          p.title.toLowerCase().includes(q) ||
-          p.id.toLowerCase().includes(q) ||
-          ('pack' in p && String(p.pack || '').toLowerCase().includes(q)) ||
-          (p.categories || []).some((c) => c.toLowerCase().includes(q)),
-      )
+      return list.filter((p) => {
+        if ('pack' in p && String(p.pack || '').toLowerCase().includes(q)) return true
+        if (p.id.toLowerCase().includes(q)) return true
+        if (p.title.toLowerCase().includes(q)) return true
+        if ((p.categories || []).some((c) => c.toLowerCase().includes(q))) return true
+        if ('url' in p && 'source' in p && (p as Cc0PropEntry).source === 'polyhaven') {
+          return cc0PropSearchHaystack(p as Cc0PropEntry).includes(q)
+        }
+        return false
+      })
     },
     [propQuery],
   )
@@ -421,10 +432,11 @@ export default function Material3dWorkbench({
     setImportingProp(true)
     try {
       toast('正在下载并写入项目素材（Poly Haven CC0）…')
+      const displayTitle = cc0PropDisplayTitle(prop)
       const row = await importCc0PropToProject({
         project: projectName,
         url: prop.url,
-        title: prop.title,
+        title: displayTitle,
       })
       const nextAssets: ProjectAsset[] = [
         ...assets,
@@ -521,7 +533,7 @@ export default function Material3dWorkbench({
   }
 
   return (
-    <div className="m3d-workbench">
+    <div className="m3d-workbench" data-m3d-workbench data-m3d-workbench-ready={ready ? 'true' : undefined}>
       <header className="m3d-command-bar">
         <div className="m3d-command-primary">
           <button type="button" className="m3d-back" onClick={onClose}>
@@ -539,6 +551,17 @@ export default function Material3dWorkbench({
             {!ready ? <span className="m3d-chip-stat m3d-chip-stat--muted">视口加载中…</span> : null}
           </div>
         </div>
+        <nav className="m3d-workflow-steps" aria-label="分镜工作流">
+          <button type="button" className={railTab === 'library' ? 'on' : undefined} onClick={() => setRailTab('library')}>
+            ① 素材
+          </button>
+          <button type="button" className={railTab === 'compose' ? 'on' : undefined} onClick={() => setRailTab('compose')}>
+            ② 编排
+          </button>
+          <button type="button" className={railTab === 'shot' ? 'on' : undefined} onClick={() => setRailTab('shot')}>
+            ③ 分镜
+          </button>
+        </nav>
         <div className="m3d-command-actions">
           <button type="button" className="btn-ghost" disabled={!ready || savingShot} onClick={() => void exportScreenshot()}>
             {savingShot ? '导出中…' : '视口截图'}
@@ -547,25 +570,46 @@ export default function Material3dWorkbench({
       </header>
 
       <div className="m3d-body">
-        <aside className="m3d-rail">
-          <nav className="m3d-rail-tabs" aria-label="工作台面板">
-            <button type="button" className={railTab === 'add' ? 'on' : undefined} onClick={() => setRailTab('add')}>
-              添加
+        <aside className="m3d-rail m3d-rail--split">
+          <nav className="m3d-rail-nav" aria-label="侧栏面板">
+            <button
+              type="button"
+              className={railTab === 'library' ? 'on' : undefined}
+              data-m3d-rail="library"
+              onClick={() => setRailTab('library')}
+            >
+              <span className="m3d-rail-nav-title">素材库</span>
+              <span className="m3d-rail-nav-hint">立板与模型</span>
             </button>
-            <button type="button" className={railTab === 'hierarchy' ? 'on' : undefined} onClick={() => setRailTab('hierarchy')}>
-              层级
-              {sceneDoc.objects.length ? <span>{sceneDoc.objects.length}</span> : null}
+            <button
+              type="button"
+              className={railTab === 'compose' ? 'on' : undefined}
+              data-m3d-rail="compose"
+              onClick={() => setRailTab('compose')}
+            >
+              <span className="m3d-rail-nav-title">编排</span>
+              {sceneDoc.objects.length ? <span className="m3d-rail-nav-badge">{sceneDoc.objects.length}</span> : null}
             </button>
-            <button type="button" className={railTab === 'camera' ? 'on' : undefined} onClick={() => setRailTab('camera')}>
-              机位
-              {sceneDoc.cameras.length ? <span>{sceneDoc.cameras.length}</span> : null}
+            <button
+              type="button"
+              className={railTab === 'shot' ? 'on' : undefined}
+              data-m3d-rail="shot"
+              onClick={() => setRailTab('shot')}
+            >
+              <span className="m3d-rail-nav-title">分镜</span>
+              {sceneDoc.cameras.length ? <span className="m3d-rail-nav-badge">{sceneDoc.cameras.length}</span> : null}
             </button>
-            <button type="button" className={railTab === 'scene' ? 'on' : undefined} onClick={() => setRailTab('scene')}>
-              场景
+            <button
+              type="button"
+              className={railTab === 'debug' ? 'on' : undefined}
+              data-m3d-rail="debug"
+              onClick={() => setRailTab('debug')}
+            >
+              <span className="m3d-rail-nav-title">调试</span>
             </button>
           </nav>
           <div className="m3d-rail-body">
-            {railTab === 'add' ? (
+            {railTab === 'library' ? (
               <Material3dAddPanel
                 designOptions={designOptions}
                 gltfAssets={gltfAssets}
@@ -588,29 +632,28 @@ export default function Material3dWorkbench({
                 onImportItch={(p) => void importItchToAssets(p)}
               />
             ) : null}
-            {railTab === 'hierarchy' ? (
+            {railTab === 'compose' ? (
               <Material3dHierarchyPanel
                 objects={sceneDoc.objects}
                 designs={designs}
                 selectedId={selectedId}
-                inspectorOpen={inspectorOpen}
-                inspectorShowExplorer={inspectorShowExplorer}
-                inspectorTab={inspectorTab}
                 onSelect={selectObject}
                 onRemove={removeObject}
-                onToggleInspector={() => setInspectorOpen((v) => !v)}
-                onInspectorShowExplorer={setInspectorShowExplorer}
-                onInspectorTab={setInspectorTab}
-                onInspectorPopup={openInspectorPopup}
                 onPatchObject={patchObject}
                 onTransformChange={handleTransformChange}
-                inspectorHostRef={inspectorHostRef}
+                onOpenLibrary={() => setRailTab('library')}
+                onOpenDebug={() => {
+                  setRailTab('debug')
+                  setInspectorOpen(true)
+                }}
               />
             ) : null}
-            {railTab === 'camera' ? (
-              <Material3dCameraPanel
+            {railTab === 'shot' ? (
+              <Material3dShotPanel
+                environment={sceneDoc.environment}
                 cameras={sceneDoc.cameras}
                 bookmarkLabel={bookmarkLabel}
+                onEnvironmentChange={onEnvironmentChange}
                 onBookmarkLabel={setBookmarkLabel}
                 onSave={saveBookmark}
                 onRestore={restoreBookmark}
@@ -619,16 +662,41 @@ export default function Material3dWorkbench({
                 onExportJson={exportStoryboardJson}
               />
             ) : null}
-            {railTab === 'scene' ? (
-              <Material3dEnvironmentPanel environment={sceneDoc.environment} onChange={onEnvironmentChange} />
+            {railTab === 'debug' ? (
+              <Material3dDebugPanel
+                inspectorOpen={inspectorOpen}
+                inspectorShowExplorer={inspectorShowExplorer}
+                inspectorTab={inspectorTab}
+                onToggleInspector={() => setInspectorOpen((v) => !v)}
+                onInspectorShowExplorer={setInspectorShowExplorer}
+                onInspectorTab={setInspectorTab}
+                onInspectorPopup={openInspectorPopup}
+                inspectorHostRef={inspectorHostRef}
+              />
             ) : null}
           </div>
         </aside>
         <div className="m3d-stage">
           <canvas ref={canvasRef} className="m3d-canvas" data-m3d-canvas />
           <div className="m3d-viewport-hud" aria-hidden>
-            <span>拖动旋转 · 滚轮缩放 · 选中对象后可 Gizmo 移动</span>
-            {sceneDoc.objects.length === 0 ? <span className="m3d-viewport-hud-strong">从左侧「添加」开始编排</span> : null}
+            <div className="m3d-viewport-hud-row">
+              <span>左键旋转 · 滚轮缩放 · 点选对象后 Gizmo 移动</span>
+            </div>
+            {selectedId ? (
+              <div className="m3d-viewport-hud-row">
+                <span className="m3d-viewport-hud-strong">已选中对象</span>
+                <button type="button" className="btn-mini ghost" onClick={() => setRailTab('compose')}>
+                  在编排中编辑
+                </button>
+              </div>
+            ) : sceneDoc.objects.length === 0 ? (
+              <div className="m3d-viewport-hud-row">
+                <span className="m3d-viewport-hud-strong">从「素材库」放入第一个对象</span>
+                <button type="button" className="btn-mini primary" onClick={() => setRailTab('library')}>
+                  打开素材库
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 从 Poly Haven API 生成 CC0 道具 manifest（家具/道具类，上限 96）。
+ * 从 Poly Haven API 生成 CC0 道具 manifest（家具/室内道具，尽量全覆盖）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,6 +14,7 @@ const CATS = new Set([
   'table',
   'props',
   'decorative',
+  'decoration',
   'office',
   'appliances',
   'dishes',
@@ -24,9 +25,37 @@ const CATS = new Set([
   'wall decoration',
   'containers',
   'potted plants',
+  'plants',
+  'electronics',
+  'food',
+  'tools',
 ])
-const MAX = 96
+/** 家用/室内布景优先；其余按名称排序 */
+const HOME_PRIO = [
+  'furniture',
+  'seating',
+  'table',
+  'bed',
+  'shelves',
+  'lighting',
+  'appliances',
+  'dishes',
+  'decorative',
+  'decoration',
+  'props',
+  'containers',
+  'vases',
+  'wall decoration',
+  'potted plants',
+  'plants',
+  'electronics',
+  'office',
+  'food',
+  'tools',
+]
+const MAX = 220
 const SKIP = /^collection:/
+const DEPRIORITIZE = new Set(['industrial', 'nature', 'rigged'])
 
 function log(msg) {
   console.log(`[cc0-props] ${msg}`)
@@ -36,6 +65,17 @@ function matchesPropAsset(entry) {
   const cats = entry.categories || []
   if (cats.some((c) => SKIP.test(c))) return false
   return cats.some((c) => CATS.has(c))
+}
+
+function homeRank(categories) {
+  const cats = categories || []
+  let best = HOME_PRIO.length + 10
+  for (const c of cats) {
+    const i = HOME_PRIO.indexOf(c)
+    if (i >= 0 && i < best) best = i
+  }
+  if (cats.some((c) => DEPRIORITIZE.has(c))) best += 50
+  return best
 }
 
 async function gltf1kFilename(assetId) {
@@ -57,7 +97,7 @@ const assets = await res.json()
 const candidates = Object.entries(assets)
   .filter(([, v]) => matchesPropAsset(v))
   .map(([id, v]) => ({ id, name: v.name || id, categories: v.categories || [] }))
-  .sort((a, b) => a.name.localeCompare(b.name))
+  .sort((a, b) => homeRank(a.categories) - homeRank(b.categories) || a.name.localeCompare(b.name))
   .slice(0, MAX)
 
 log(`匹配 ${candidates.length} 个，解析 glTF 文件名 …`)

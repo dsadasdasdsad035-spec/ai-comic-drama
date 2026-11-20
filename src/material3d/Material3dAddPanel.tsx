@@ -1,4 +1,5 @@
 import type { Cc0PropEntry, DesignSheet, ItchPropEntry, ProjectAsset } from '../api'
+import { cc0PropDisplayTitle } from './cc0PropDisplayTitle'
 
 export type PropSource = 'project' | 'characters' | 'cc0' | 'itch'
 
@@ -50,13 +51,19 @@ export default function Material3dAddPanel({
       ? characterFiltered.map((p) => ({
           kind: 'cc0' as const,
           prop: p,
-          title: p.title,
+          title: cc0PropDisplayTitle(p),
           meta: p.license || 'CC0',
           url: p.url,
           disabled: !charactersReady,
         }))
       : propSource === 'cc0'
-      ? cc0Filtered.map((p) => ({ kind: 'cc0' as const, prop: p, title: p.title, meta: p.license || 'CC0', url: p.url }))
+      ? cc0Filtered.map((p) => ({
+          kind: 'cc0' as const,
+          prop: p,
+          title: cc0PropDisplayTitle(p),
+          meta: p.license || 'CC0',
+          url: p.url,
+        }))
       : propSource === 'itch'
         ? itchFiltered.map((p) => ({
             kind: 'itch' as const,
@@ -97,10 +104,11 @@ export default function Material3dAddPanel({
 
   return (
     <div className="m3d-panel m3d-panel-add">
-      <section className="m3d-panel-block">
+      <p className="m3d-library-lede">① 加入立板或模型 → ②「编排」里微调 → ③「分镜」存机位</p>
+      <section className="m3d-panel-block m3d-add-card">
         <header className="m3d-panel-block-head">
-          <h5>设定立板</h5>
-          <p>从场景/道具设定卡贴参考图到地面</p>
+          <h5>参考立板</h5>
+          <p>把场景/道具设定图贴在场景中</p>
         </header>
         {designOptions.length === 0 ? (
           <p className="m3d-empty-inline">暂无可用的设定图（需已出图且文件存在）</p>
@@ -142,12 +150,12 @@ export default function Material3dAddPanel({
         ) : null}
       </section>
 
-      <section className="m3d-panel-block">
+      <section className="m3d-panel-block m3d-add-card">
         <header className="m3d-panel-block-head">
-          <h5>三维模型</h5>
-          <p>选来源后一键加入场景，或存到项目素材</p>
+          <h5>三维素材</h5>
+          <p>人形、家具或项目 GLB；可先「加入场景」或「存素材」</p>
         </header>
-        <nav className="m3d-source-tabs" aria-label="模型来源">
+        <nav className="m3d-source-tabs m3d-source-tabs--stack" aria-label="模型来源">
           <button
             type="button"
             className={propSource === 'project' ? 'on' : undefined}
@@ -215,7 +223,7 @@ export default function Material3dAddPanel({
                 propSource === 'characters'
                   ? '搜索木人、男性、西装…'
                   : propSource === 'cc0'
-                    ? '搜索椅子、灯具…'
+                    ? '搜索餐椅、咖啡桌、沙发…'
                     : '搜索本地包…'
               }
               value={propQuery}
