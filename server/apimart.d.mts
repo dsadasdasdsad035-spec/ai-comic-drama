@@ -43,6 +43,16 @@ export declare function errorFromResponse(text: string, status: number): Apimart
 export declare function isSupportedVideoModel(model: string): boolean
 export declare function videoFamilyFor(model: string): string
 export declare function mapCatalogEntry(raw: any): ApimartCatalogEntry | null
+/** 环境变量或 macOS 系统 HTTP/HTTPS 代理（供 APIMart 出网） */
+export declare function resolveApimartHttpsProxy(): string
+
+export declare function probeApimartReachable(opts?: {
+  baseUrl?: string
+  apiKey?: string
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}): Promise<boolean>
+
 export declare function fetchCatalog(opts: {
   baseUrl: string
   apiKey: string

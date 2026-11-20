@@ -11,6 +11,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { mediaPath, mediaPathFromUrl } from './paths.mjs'
 import { resolveRoot, safeProjectName } from './db.mjs'
+import { desktopProjectsCandidates } from './default-projects-dir.mjs'
 
 const ASSETS_DIR = 'assets'
 const MAX_REF_BYTES = 30 * 1024 * 1024
@@ -64,10 +65,42 @@ export function resolveProjectMediaPath(appRoot, name, file) {
 
 export function projectMediaExists(appRoot, name, file) {
   try {
-    return fs.existsSync(resolveProjectMediaPath(appRoot, name, file))
+    locateProjectMediaFile(appRoot, name, file)
+    return true
   } catch {
     return false
   }
+}
+
+/** 在 SB_PROJECTS_DIR、仓库 projects/、桌面 userData 等多处查找同一项目媒体文件 */
+export function locateProjectMediaFile(appRoot, name, file) {
+  const safeName = safeProjectName(name)
+  const safeFile = safeMediaFile(file)
+  if (!safeFile) throw new Error(`非法的媒体文件名：${file}`)
+  const roots = new Set()
+  try {
+    roots.add(resolveRoot(appRoot))
+  } catch {
+    /* ignore */
+  }
+  roots.add(path.resolve(appRoot, 'projects'))
+  for (const d of desktopProjectsCandidates()) roots.add(d)
+  const tried = []
+  for (const rootDir of roots) {
+    const dir = path.join(rootDir, safeName, ASSETS_DIR)
+    const full = path.join(dir, safeFile)
+    tried.push(full)
+    const rel = path.relative(dir, full)
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) continue
+    if (fs.existsSync(full)) return full
+  }
+  let rootHint = ''
+  try {
+    rootHint = resolveRoot(appRoot)
+  } catch {
+    rootHint = '（未配置 SB_PROJECTS_DIR）'
+  }
+  throw new Error(`参考图不存在：${projectMediaUrl(safeName, safeFile)}（当前项目库 ${rootHint}）`)
 }
 
 /** 写一张项目图片，返回站内 URL（/project-assets/...） */
@@ -291,16 +324,37 @@ export function migrateProjectMedia(appRoot, name, project) {
   }
 }
 
+/**
+ * 把绝对 URL、带 query 的站内路径统一成 /project-assets/<项目>/<文件>；
+ * 第三方 http(s) 原样返回。
+ */
+export function canonicalProjectMediaRef(ref) {
+  const raw = String(ref || '').trim()
+  if (!raw) return raw
+  const bare = raw.split('?')[0]
+  if (parseProjectMediaUrl(bare)) return bare
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const p = new URL(raw).pathname
+      if (parseProjectMediaUrl(p)) return p
+    } catch {
+      /* 非法 URL */
+    }
+    return raw
+  }
+  return bare
+}
+
 /** 本地相对路径 / dataURL / http URL / 项目媒体 URL → 可直接给方舟的 image 字段 */
 export function resolveRef(ref, appRoot) {
-  if (ref.startsWith('data:') || ref.startsWith('http')) return ref
-  const pm = parseProjectMediaUrl(ref)
-  const file = pm
-    ? resolveProjectMediaPath(appRoot, pm.name, pm.file)
-    : mediaPathFromUrl(appRoot, ref)
-  if (!fs.existsSync(file)) throw new Error(`参考图不存在：${ref}`)
+  const canon = canonicalProjectMediaRef(ref)
+  if (canon.startsWith('data:')) return canon
+  if (/^https?:\/\//i.test(canon)) return canon
+  const pm = parseProjectMediaUrl(canon)
+  const file = pm ? locateProjectMediaFile(appRoot, pm.name, pm.file) : mediaPathFromUrl(appRoot, canon)
+  if (!fs.existsSync(file)) throw new Error(`参考图不存在：${canon}`)
   const size = fs.statSync(file).size
-  if (size > MAX_REF_BYTES) throw new Error(`参考图超过 30MB：${ref}`)
+  if (size > MAX_REF_BYTES) throw new Error(`参考图超过 30MB：${canon}`)
   const buf = fs.readFileSync(file)
   const ext = path.extname(file).slice(1) || 'png'
   return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${buf.toString('base64')}`

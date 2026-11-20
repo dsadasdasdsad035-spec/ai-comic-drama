@@ -1776,6 +1776,28 @@ function Shell() {
     if (projectSnapRef.current) projectSnapRef.current = { ...projectSnapRef.current, revision }
   }, [])
 
+  /** 出片成功后立刻写 clip 到 project.json（与 patch 同事务传入字段，避免 nodesRef 尚未提交） */
+  const flushShotClip = useCallback(
+    async (nodeId: string, fields: Partial<ShotData>) => {
+      if (!projectName || readyProject !== projectName) return
+      const n = nodesRef.current.find((x) => x.id === nodeId)
+      const shotId = n?.data.shotId
+      if (!n || !shotId) return
+      const merged = { ...n.data, ...fields }
+      if (!merged.videoUrl) return
+      const sig = bizSignature(merged)
+      syncedRef.current.set(String(shotId), sig)
+      try {
+        const r = await mergeProjectShots(projectName, [nodeToShot(merged, shotId)])
+        bumpProjectRevision(r.revision)
+        pushStudioCanvasNow()
+      } catch {
+        /* 画布仍保留 videoUrl，防抖写回会再试 */
+      }
+    },
+    [projectName, readyProject, bumpProjectRevision, pushStudioCanvasNow],
+  )
+
   const reloadSettings = useCallback(() => {
     getSettings()
       .then(async ({ settings }) => {
@@ -3079,7 +3101,7 @@ function Shell() {
    * 只在有实质性业务字段变化时才写，且靠快照对比避免首屏把所有镜头重写一遍。
    */
   useEffect(() => {
-    if (!projectName || readyProject !== projectName || view !== 'board') return
+    if (!projectName || readyProject !== projectName) return
     if (syncedRef.current.size === 0) return
     const timer = window.setTimeout(() => {
       const changed: ProjectShot[] = []
@@ -3103,7 +3125,7 @@ function Shell() {
         })
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [nodes, projectName, readyProject, view, bumpProjectRevision, pushStudioCanvasNow])
+  }, [nodes, projectName, readyProject, bumpProjectRevision, pushStudioCanvasNow])
 
   const charImages = useMemo(() => {
     const m: Record<string, string> = {}
@@ -3327,7 +3349,7 @@ function Shell() {
           patch(id, { vidAt: Date.now() - elapsed * 1000 }),
         )
         const createdAt = new Date().toISOString()
-        patch(id, {
+        const videoSaved: Partial<ShotData> = {
           videoUrl: done.url,
           vidState: 'idle',
           vidAt: undefined,
@@ -3354,7 +3376,9 @@ function Shell() {
                 },
               }
             : {}),
-        })
+        }
+        patch(id, videoSaved)
+        void flushShotClip(id, videoSaved)
         endTask(tid)
       } catch (e) {
         const recover = resolveVideoUpstreamRecover(e, modelKey, selectedVideoModel?.providerKind)
@@ -3365,10 +3389,13 @@ function Shell() {
           ...(recover ? { videoUpstreamRecover: recover } : {}),
         })
         endTask(tid, (e as Error).message)
+        if (recover) window.setTimeout(() => void recoverVideoOneRef.current(id), 400)
       }
     },
-    [patch, ratio, vidRes, selectedVideoModel, projectAspect, missingMedia],
+    [patch, ratio, vidRes, selectedVideoModel, projectAspect, missingMedia, flushShotClip],
   )
+
+  const recoverVideoOneRef = useRef<(id: string) => void>(() => {})
 
   /** 本地轮询超时但上游已完成时，凭 task_id 拉取成片 */
   const recoverVideoOne = useCallback(
@@ -3394,7 +3421,7 @@ function Shell() {
           providerKind: recover.providerKind,
         })
         const prevMeta = node.data.videoMeta
-        patch(id, {
+        const videoSaved: Partial<ShotData> = {
           videoUrl: done.url,
           vidState: 'idle',
           vidAt: undefined,
@@ -3409,17 +3436,20 @@ function Shell() {
                 modelKey,
                 createdAt: new Date().toISOString(),
               },
-        })
+        }
+        patch(id, videoSaved)
+        void flushShotClip(id, videoSaved)
         endTask(tid)
-        setToast('成片已拉回')
+        setToast('成片已拉回并挂到分镜')
         window.setTimeout(() => setToast(''), 2400)
       } catch (e) {
         patch(id, { vidState: 'error', vidError: (e as Error).message, vidAt: undefined })
         endTask(tid, (e as Error).message)
       }
     },
-    [patch, selectedVideoModel],
+    [patch, selectedVideoModel, flushShotClip],
   )
+  recoverVideoOneRef.current = recoverVideoOne
 
   const cancelTransitionVideo = useCallback(
     (edgeId: string) => {

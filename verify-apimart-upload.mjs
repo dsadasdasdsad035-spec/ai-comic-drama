@@ -29,7 +29,10 @@ const out = await uploadImage({
 })
 check('上传 URL', seen?.url === 'https://api.apimart.ai/v1/uploads/images', seen?.url)
 check('Bearer 头', seen?.auth === 'Bearer k')
-check('multipart FormData', seen?.body instanceof FormData)
+check(
+  'multipart FormData',
+  Boolean(seen?.body?.get) && String(seen?.body?.constructor?.name || '').includes('FormData'),
+)
 const file = seen?.body?.get('file')
 check('字段名 file 且带内容', Boolean(file) && file.size === png.length && file.name === 'ref.png', file && `${file.name}/${file.size}`)
 check('返回 URL', out.url === 'https://cdn.example/ref.png', out.url)

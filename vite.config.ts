@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from 'vite'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { applyDefaultProjectsDir } from './server/default-projects-dir.mjs'
 import { createAppHandler, runServerShutdownTasks, runServerStartupTasks } from './server/app.ts'
 
 /**
@@ -11,6 +12,7 @@ function appServerPlugin(): Plugin {
   return {
     name: 'storyboard-app-server',
     configureServer(server) {
+      applyDefaultProjectsDir()
       const root = server.config.root
       runServerStartupTasks(root)
       server.httpServer?.on('close', () => {

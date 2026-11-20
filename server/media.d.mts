@@ -32,6 +32,7 @@ export declare function safeMediaFile(file: unknown): string | null
 export declare function parseProjectMediaUrl(ref: unknown): ProjectMediaRef | null
 export declare function isProjectMediaUrl(ref: unknown): boolean
 export declare function resolveProjectMediaPath(appRoot: string, name: string, file: string): string
+export declare function locateProjectMediaFile(appRoot: string, name: string, file: string): string
 export declare function projectMediaExists(appRoot: string, name: string, file: string): boolean
 export declare function saveProjectImage(
   appRoot: string,
@@ -68,4 +69,5 @@ export declare function migrateProjectMedia(
   name: string,
   project: Record<string, any>,
 ): MigrationResult
+export declare function canonicalProjectMediaRef(ref: string): string
 export declare function resolveRef(ref: string, appRoot: string): string

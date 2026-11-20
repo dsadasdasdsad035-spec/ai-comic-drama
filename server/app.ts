@@ -103,6 +103,7 @@ import {
   listProjectImages,
   migrateProjectMedia,
   parseProjectMediaUrl,
+  locateProjectMediaFile,
   resolveProjectMediaPath,
   resolveRef,
   saveProjectImage,
@@ -164,6 +165,8 @@ import {
   submitVideo as submitApimartVideo,
   synthesizeSpeech as synthesizeApimartSpeech,
   uploadImage as uploadApimartImage,
+  probeApimartReachable,
+  resolveApimartHttpsProxy,
   videoFamilyFor,
   videoUrlFromTask,
 } from './apimart.mjs'
@@ -1276,6 +1279,13 @@ function pickVideoModel(
   return withProvider(entry)
 }
 
+function providerBaseUrl(provider?: Provider): string {
+  if (provider?.kind === 'apimart') {
+    return String(provider.baseUrl || 'https://api.apimart.ai/v1').replace(/\/+$/, '')
+  }
+  return String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+}
+
 /** 文本族：text / textPro 只是档位，手选时两族都算合法 */
 const isTextCap = (cap: Cap) => cap === 'text' || cap === 'textPro'
 const hasTextCap = (m: ModelEntry) => modelHasCap(m, 'text') || modelHasCap(m, 'textPro')
@@ -1519,6 +1529,72 @@ type VideoJob = {
 }
 
 const videoJobs = new Map<string, VideoJob>()
+
+/** APIMart 轮询/下载因网络瞬断失败时，后台续拉成片，前端继续 GET job 即可拿到 succeeded */
+function resumeApimartVideoJob(opts: {
+  jobId: string
+  taskId: string
+  baseUrl: string
+  apiKey: string
+  startedAt: number
+  finalPrompt: string
+  outDir: string
+  apimartVidBill?: ReturnType<typeof guardApimartVideo>
+}) {
+  const { jobId, taskId, baseUrl, apiKey, startedAt, finalPrompt, outDir, apimartVidBill } = opts
+  const cur = videoJobs.get(jobId)
+  if (cur) {
+    cur.status = 'running'
+    cur.taskId = taskId
+    cur.message = '网络波动，后台继续拉取 APIMart 成片…'
+  }
+  ;(async () => {
+    try {
+      let data = (await getApimartTask({ baseUrl, apiKey, taskId })) as Record<string, unknown>
+      const st = String(data?.status || '')
+      if (st !== 'completed') {
+        data = (await pollApimartTask({
+          baseUrl,
+          apiKey,
+          taskId,
+          timeoutMs: 12 * 60_000,
+        })) as Record<string, unknown>
+      }
+      const videoUrl = videoUrlFromTask(data)
+      if (!videoUrl) throw new ApimartError('任务未返回视频地址', { kind: 'api', taskId })
+      const dl = await downloadApimartResult({ url: videoUrl })
+      const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+      fs.writeFileSync(path.join(outDir, name), dl.bytes)
+      videoJobs.set(jobId, {
+        status: 'succeeded',
+        url: `/videos/${name}`,
+        startedAt,
+        elapsed: Date.now() - startedAt,
+        taskId,
+        prompt: finalPrompt,
+      })
+      if (apimartVidBill && !apimartVidBill.skipBilling) {
+        finalizeApimartVideo(apimartVidBill)
+      }
+    } catch (e) {
+      releaseApimartHold(apimartVidBill || undefined)
+      const err = e as ApimartError & { taskId?: string }
+      let message = String(err?.message || e)
+      const upstreamId = String(taskId || err?.taskId || '').trim()
+      if (upstreamId && !message.includes(upstreamId)) {
+        message = `${message}\nAPIMart task_id：${upstreamId}`
+      }
+      videoJobs.set(jobId, {
+        status: 'failed',
+        message,
+        startedAt,
+        elapsed: Date.now() - startedAt,
+        ...(upstreamId ? { taskId: upstreamId } : {}),
+        prompt: finalPrompt,
+      })
+    }
+  })()
+}
 
 /** 静态文件直出：绕开 vite 启动时建立的 public 索引 + 支持 Range（视频拖动进度条需要） */
 export function serveFile(res: any, req: any, file: string, mime: string) {
@@ -2990,7 +3066,7 @@ export function createAppHandler({ root }: { root: string }) {
           }
           let file = ''
           try {
-            file = resolveProjectMediaPath(
+            file = locateProjectMediaFile(
               root,
               decodeURIComponent(parts[1]),
               decodeURIComponent(parts[2]),
@@ -6469,7 +6545,7 @@ export function createAppHandler({ root }: { root: string }) {
               return
             }
             const useArk = kindHint === 'ark' || (!kindHint && provider?.kind === 'ark')
-            const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')
+            const base = providerBaseUrl(provider)
             const outDir = mediaPath(root, 'videos')
             fs.mkdirSync(outDir, { recursive: true })
 
@@ -6635,7 +6711,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             // 视频族解析：显式 key 在 video / videoRef 两族精确命中；视频参考必须由条目声明能力
             const wantKey = String(body.modelKey || '').trim()
-            const pick = videoRefMode
+            let pick = videoRefMode
               ? pickVideoModel(wantKey, { needVideoRef: true, refMode: true })
               : refMode
                 ? pickVideoModel(wantKey, { refMode: true })
@@ -6654,7 +6730,7 @@ export function createAppHandler({ root }: { root: string }) {
               )
               return
             }
-            const model = pick.entry?.model || (referenceMode ? effVideoRefModel() : effVideoModel())
+            let model = pick.entry?.model || (referenceMode ? effVideoRefModel() : effVideoModel())
             // 没有任何图片输入时只能走纯文本：仅对声明 textToVideo 的模型放行
             const textMode = !image && !referenceMode && !transitionMode
             const supportsText = Boolean(pick.entry?.features?.textToVideo)
@@ -6670,8 +6746,8 @@ export function createAppHandler({ root }: { root: string }) {
               )
               return
             }
-            const provider = pick.provider
-            const runKey = providerKey(provider)
+            let provider = pick.provider
+            let runKey = providerKey(provider)
             if (!runKey) {
               res.statusCode = 400
               res.end(
@@ -6694,10 +6770,24 @@ export function createAppHandler({ root }: { root: string }) {
               )
               return
             }
-            const base = String(provider?.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(
-              /\/+$/,
-              '',
-            )
+            let base = providerBaseUrl(provider)
+
+            if (provider?.kind === 'apimart' && (refMode || videoRefMode || refImages.length > 0 || generateAudio)) {
+              if (!(await probeApimartReachable({ baseUrl: base, apiKey: runKey }))) {
+                const px = resolveApimartHttpsProxy()
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'network',
+                    message: px
+                      ? `无法经代理 ${px} 连接 APIMart，请检查 Clash/Surge 规则是否放行 api.apimart.ai`
+                      : '无法连接 APIMart：请开启系统 HTTP/HTTPS 代理，或设置环境变量 HTTPS_PROXY（桌面端会自动读取 macOS 系统代理）',
+                  }),
+                )
+                return
+              }
+            }
 
             if (generateAudio && transitionMode && provider?.kind === 'ark') {
               res.statusCode = 400
@@ -6741,6 +6831,7 @@ export function createAppHandler({ root }: { root: string }) {
               }
 
               const skipped: string[] = []
+              const refSkipReasons: string[] = []
               const refUrls: string[] = []
               const refVideoUrls: string[] = []
               // 转场分流：首尾帧模式用边界帧；只首帧模式用首帧；纯文本模式两者都空。
@@ -6800,11 +6891,16 @@ export function createAppHandler({ root }: { root: string }) {
                   for (const r of refSources) {
                     try {
                       refUrls.push(await uploadApimartRef(r, `ref-${refUrls.length}`))
-                    } catch {
+                    } catch (e) {
                       skipped.push(r)
+                      const msg = e instanceof Error ? e.message : String(e)
+                      refSkipReasons.push(`${r}（${msg}）`)
                     }
                   }
-                  if (refUrls.length === 0) throw new ApimartError(`参考图都不可用：${skipped.join('、')}`, { kind: 'download' })
+                  if (refUrls.length === 0) {
+                    const detail = refSkipReasons.length ? refSkipReasons.join('；') : skipped.join('、')
+                    throw new ApimartError(`参考图都不可用：${detail}`, { kind: 'download' })
+                  }
                 }
                 if (effVideoRefMode) {
                   for (const r of refVideos) {
@@ -6899,7 +6995,7 @@ export function createAppHandler({ root }: { root: string }) {
               videoJobs.set(id, { status: 'running', startedAt, prompt: finalPrompt })
               const outDir = mediaPath(root, 'videos')
               fs.mkdirSync(outDir, { recursive: true })
-              res.end(JSON.stringify({ ok: true, id, mode, family, model, skipped, provider: provider.label, prompt: finalPrompt }))
+              res.end(JSON.stringify({ ok: true, id, mode, family, model, skipped, provider: provider?.label, prompt: finalPrompt }))
 
               ;(async () => {
                 let taskId = ''
@@ -6926,10 +7022,25 @@ export function createAppHandler({ root }: { root: string }) {
                     finalizeApimartVideo(apimartVidBill)
                   }
                 } catch (e) {
-                  releaseApimartHold(apimartVidBill || undefined)
                   const err = e as ApimartError & { taskId?: string }
                   let message = String(err?.message || e)
                   const upstreamId = String(taskId || err?.taskId || '').trim()
+                  const networkish =
+                    err?.kind === 'network' || /fetch failed|网络|轮询 APIMart|下载成片/i.test(message)
+                  if (upstreamId && networkish) {
+                    resumeApimartVideoJob({
+                      jobId: id,
+                      taskId: upstreamId,
+                      baseUrl: base,
+                      apiKey: runKey,
+                      startedAt,
+                      finalPrompt,
+                      outDir,
+                      apimartVidBill: apimartVidBill || undefined,
+                    })
+                    return
+                  }
+                  releaseApimartHold(apimartVidBill || undefined)
                   if (upstreamId && !message.includes(upstreamId)) {
                     message = `${message}\nAPIMart task_id：${upstreamId}`
                   }
@@ -6952,6 +7063,7 @@ export function createAppHandler({ root }: { root: string }) {
             const refUrls: string[] = []
             const refVideoUrls: string[] = []
             const skipped: string[] = []
+            const refSkipReasons: string[] = []
             const tempVideos: string[] = []
             // 方舟没有尾帧：转场用关键帧/上一镜尾帧当首帧，生成后由成片裁到目标时长
             const arkImage = transition
@@ -6964,11 +7076,16 @@ export function createAppHandler({ root }: { root: string }) {
                 for (const r of refImages) {
                   try {
                     refUrls.push(resolveRef(r, root))
-                  } catch {
+                  } catch (e) {
                     skipped.push(r)
+                    const msg = e instanceof Error ? e.message : String(e)
+                    refSkipReasons.push(`${r}（${msg}）`)
                   }
                 }
-                if (refUrls.length === 0) throw new Error(`参考图都不可用：${skipped.join('、')}`)
+                if (refUrls.length === 0) {
+                  const detail = refSkipReasons.length ? refSkipReasons.join('；') : skipped.join('、')
+                  throw new Error(`参考图都不可用：${detail}`)
+                }
               } else if (!videoRefMode && arkImage) {
                 firstUrl = resolveRef(arkImage, root)
               }
@@ -7228,6 +7345,24 @@ export function createAppHandler({ root }: { root: string }) {
             const refUrls: string[] = []
             const dropped: string[] = []
             const maxRefs = featureRef === 'single' ? 1 : 10
+            const needsApimartUpload = rawRefs.some((r) => !/^https?:\/\//i.test(r))
+            if (
+              needsApimartUpload &&
+              !(await probeApimartReachable({ baseUrl: base, apiKey: imgKey }))
+            ) {
+              const px = resolveApimartHttpsProxy()
+              res.statusCode = 400
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: 'network',
+                  message: px
+                    ? `无法经代理 ${px} 连接 APIMart，请检查代理规则是否放行 api.apimart.ai`
+                    : '无法连接 APIMart：请开启系统 HTTP/HTTPS 代理，或设置环境变量 HTTPS_PROXY（桌面端会自动读取 macOS 系统代理）',
+                }),
+              )
+              return
+            }
             for (const ref of rawRefs) {
               if (refUrls.length >= maxRefs) {
                 dropped.push(ref)

@@ -19,6 +19,7 @@ import path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { MEDIA_DIRS, ensureMediaDir, ensureStateDir, resolveStaticRoot } from './paths.mjs'
+import { applyDefaultProjectsDir } from './default-projects-dir.mjs'
 import { dbPath, listProjects, resolveRoot } from './db.mjs'
 import { assertNodeVersion } from './runtime-version.mjs'
 import { createCreativeHost } from './creative-host.mjs'
@@ -50,6 +51,8 @@ import { bumpStudioProjectRevision, readProjectRevision } from './studio-project
 
 // 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
 if (!assertNodeVersion()) process.exit(1)
+
+applyDefaultProjectsDir()
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const DIST_DIR = path.join(ROOT, 'dist')

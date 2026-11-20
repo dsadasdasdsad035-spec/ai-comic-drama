@@ -9,7 +9,13 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { FormData as UndiciFormData } from 'undici'
 import { isBizSuccessCode } from './text-stream.mjs'
+import { getApimartFetch, resolveApimartHttpsProxy } from './apimart-network.mjs'
+
+export { resolveApimartHttpsProxy } from './apimart-network.mjs'
+
+const defaultFetchImpl = (...args) => getApimartFetch()(...args)
 
 const DEFAULT_BASE = 'https://api.apimart.ai/v1'
 const CATALOG_TIMEOUT_MS = 30_000
@@ -17,7 +23,7 @@ const SUBMIT_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 60_000
 const DOWNLOAD_TIMEOUT_MS = 120_000
 /** 与前端 waitVideo 12min 对齐，减少「云端已完成、本地先超时」 */
-const TASK_TIMEOUT_MS = 10 * 60_000
+const TASK_TIMEOUT_MS = 12 * 60_000
 const POLL_INTERVAL_MS = 2_500
 
 export const APIMART_DEFAULT_VOICE = 'alloy'
@@ -103,7 +109,28 @@ function abortError(lt) {
   })
 }
 
-async function requestJson(url, { apiKey, method = 'GET', body, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = fetch }) {
+/** 代理抖动、TLS 握手失败等可重试的网络错误 */
+function isTransientNetworkError(e) {
+  if (!(e instanceof ApimartError) || e.kind !== 'network') return false
+  const raw = String(e.message || '')
+  return /fetch failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|UND_ERR|socket disconnected|TLS|SSL|HANDSHAKE|timeout/i.test(
+    raw,
+  )
+}
+
+async function sleepBackoff(ms, signal) {
+  const wait = Math.min(Math.max(ms, 500), 30_000)
+  await sleep(wait, signal)
+}
+
+async function requestJson(url, {
+  apiKey,
+  method = 'GET',
+  body,
+  signal,
+  timeoutMs = SUBMIT_TIMEOUT_MS,
+  fetchImpl = defaultFetchImpl,
+}) {
   const lt = timeoutController(signal, timeoutMs)
   try {
     const r = await fetchImpl(url, {
@@ -329,7 +356,32 @@ export function mapCatalogEntry(raw) {
   }
 }
 
-export async function fetchCatalog({ baseUrl, apiKey, signal, timeoutMs = CATALOG_TIMEOUT_MS, fetchImpl = fetch }) {
+/** 探测本机能否访问 APIMart（参考图上传、出片前置依赖） */
+export async function probeApimartReachable({
+  baseUrl,
+  apiKey,
+  timeoutMs = 8_000,
+  fetchImpl = defaultFetchImpl,
+} = {}) {
+  if (!String(apiKey || '').trim()) return false
+  const base = resolveBaseUrl(baseUrl)
+  if (!/apimart\.ai/i.test(base)) return false
+  const lt = timeoutController(undefined, timeoutMs)
+  try {
+    const r = await fetchImpl(`${base}/models`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: lt.signal,
+    })
+    return r.status >= 200 && r.status < 600
+  } catch {
+    return false
+  } finally {
+    lt.dispose()
+  }
+}
+
+export async function fetchCatalog({ baseUrl, apiKey, signal, timeoutMs = CATALOG_TIMEOUT_MS, fetchImpl = defaultFetchImpl }) {
   const j = await requestJson(`${resolveBaseUrl(baseUrl)}/models?expand=category`, {
     apiKey,
     signal,
@@ -360,7 +412,7 @@ export async function uploadImage({
   filename,
   signal,
   timeoutMs = UPLOAD_TIMEOUT_MS,
-  fetchImpl = fetch,
+  fetchImpl = defaultFetchImpl,
 }) {
   const bytes = buffer ? Buffer.from(buffer) : fs.readFileSync(filePath)
   if (bytes.length > 20 * 1024 * 1024) {
@@ -368,7 +420,8 @@ export async function uploadImage({
   }
   const name = filename || (filePath ? path.basename(filePath) : 'image.jpg')
   const type = mime || (filePath ? mimeFor(filePath) : 'image/jpeg')
-  const form = new FormData()
+  // undici fetch 不会正确编码 Node 全局 FormData，须用 undici 的 FormData
+  const form = new UndiciFormData()
   form.append('file', new Blob([bytes], { type }), name)
   const lt = timeoutController(signal, timeoutMs)
   try {
@@ -392,7 +445,14 @@ export async function uploadImage({
   } catch (e) {
     if (e instanceof ApimartError) throw e
     if (e?.name === 'AbortError') throw abortError(lt)
-    throw new ApimartError(e?.message || '参考图上传失败', { kind: 'network' })
+    const raw = String(e?.message || e || '参考图上传失败')
+    const networkish = /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|SSL|certificate|socket/i.test(raw)
+    throw new ApimartError(
+      networkish
+        ? `无法连接 APIMart 上传接口（${resolveApimartHttpsProxy() ? `经代理 ${resolveApimartHttpsProxy()}` : '未配置代理；请开启系统代理或设置 HTTPS_PROXY'}）`
+        : raw || '参考图上传失败',
+      { kind: 'network' },
+    )
   } finally {
     lt.dispose()
   }
@@ -414,7 +474,7 @@ export function buildImagePayload({ model, prompt, ratio = '16:9', size, refUrls
   }
 }
 
-export async function submitImage({ baseUrl, apiKey, payload, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = fetch }) {
+export async function submitImage({ baseUrl, apiKey, payload, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = defaultFetchImpl }) {
   const j = await requestJson(`${resolveBaseUrl(baseUrl)}/images/generations`, {
     apiKey,
     method: 'POST',
@@ -555,7 +615,7 @@ export function buildVideoPayload({
   throw new ApimartError(`视频模型「${model}」尚未接入 APIMart 运行时`, { kind: 'unsupported' })
 }
 
-export async function submitVideo({ baseUrl, apiKey, payload, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = fetch }) {
+export async function submitVideo({ baseUrl, apiKey, payload, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = defaultFetchImpl }) {
   const j = await requestJson(`${resolveBaseUrl(baseUrl)}/videos/generations`, {
     apiKey,
     method: 'POST',
@@ -579,7 +639,7 @@ export async function getTask({
   taskId,
   signal,
   timeoutMs = SUBMIT_TIMEOUT_MS,
-  fetchImpl = fetch,
+  fetchImpl = defaultFetchImpl,
 }) {
   const j = await requestJson(`${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`, {
     apiKey,
@@ -597,19 +657,40 @@ export async function pollTask({
   signal,
   timeoutMs = TASK_TIMEOUT_MS,
   intervalMs = POLL_INTERVAL_MS,
-  fetchImpl = fetch,
+  fetchImpl = defaultFetchImpl,
   onProgress,
 }) {
   const started = Date.now()
+  let netStreak = 0
+  const taskUrl = `${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`
   for (;;) {
     if (signal?.aborted) throw new ApimartError('请求已取消', { kind: 'cancelled' })
     if (Date.now() - started > timeoutMs) {
       throw new ApimartError(`任务 ${taskId} 超时`, { kind: 'timeout', taskId })
     }
-    const j = await requestJson(
-      `${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`,
-      { apiKey, signal, timeoutMs: SUBMIT_TIMEOUT_MS, fetchImpl },
-    )
+    let j
+    try {
+      j = await requestJson(taskUrl, {
+        apiKey,
+        signal,
+        timeoutMs: Math.max(SUBMIT_TIMEOUT_MS, 60_000),
+        fetchImpl,
+      })
+      netStreak = 0
+    } catch (e) {
+      if (isTransientNetworkError(e) && netStreak < 40) {
+        netStreak++
+        await sleepBackoff(intervalMs * Math.min(netStreak, 6), signal)
+        continue
+      }
+      if (isTransientNetworkError(e)) {
+        throw new ApimartError(
+          `轮询 APIMart 任务状态时网络中断（${e.message}）；云端可能仍在生成，可用「重新拉取成片」`,
+          { kind: 'network', taskId },
+        )
+      }
+      throw e
+    }
     const data = j?.data && typeof j.data === 'object' ? j.data : j
     const status = String(data?.status || '')
     if (typeof onProgress === 'function') onProgress({ status, progress: Number(data?.progress) || 0 })
@@ -623,25 +704,47 @@ export async function pollTask({
   }
 }
 
-export async function downloadResult({ url, signal, timeoutMs = DOWNLOAD_TIMEOUT_MS, fetchImpl = fetch }) {
-  const lt = timeoutController(signal, timeoutMs)
-  try {
-    const r = await fetchImpl(url, { signal: lt.signal })
-    if (!r.ok) {
-      const text = await r.text().catch(() => '')
-      throw errorFromResponse(text || `下载失败 HTTP ${r.status}`, r.status)
+export async function downloadResult({ url, signal, timeoutMs = DOWNLOAD_TIMEOUT_MS, fetchImpl = defaultFetchImpl }) {
+  const target = String(url || '').trim()
+  if (!target) throw new ApimartError('结果地址为空', { kind: 'bad-request' })
+  let lastNet = ''
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const lt = timeoutController(signal, timeoutMs)
+    try {
+      const r = await fetchImpl(target, { signal: lt.signal })
+      if (!r.ok) {
+        const text = await r.text().catch(() => '')
+        throw errorFromResponse(text || `下载失败 HTTP ${r.status}`, r.status)
+      }
+      const contentType = String(r.headers.get('content-type') || 'application/octet-stream')
+      const bytes = Buffer.from(await r.arrayBuffer())
+      if (!bytes.length) throw new ApimartError('结果文件为空', { kind: 'api' })
+      return { bytes, contentType }
+    } catch (e) {
+      if (e instanceof ApimartError && e.kind !== 'network') {
+        lt.dispose()
+        throw e
+      }
+      if (e?.name === 'AbortError') {
+        lt.dispose()
+        throw abortError(lt)
+      }
+      lastNet = String(e?.message || e || '结果下载失败')
+      const err = e instanceof ApimartError ? e : new ApimartError(lastNet, { kind: 'network' })
+      lt.dispose()
+      if (attempt < 5 && isTransientNetworkError(err)) {
+        await sleepBackoff(2000 * 2 ** attempt, signal)
+        continue
+      }
+      throw new ApimartError(
+        `下载成片失败（${lastNet}）${attempt > 0 ? '，已重试仍失败' : ''}；可用「重新拉取成片」`,
+        { kind: 'network' },
+      )
+    } finally {
+      lt.dispose()
     }
-    const contentType = String(r.headers.get('content-type') || 'application/octet-stream')
-    const bytes = Buffer.from(await r.arrayBuffer())
-    if (!bytes.length) throw new ApimartError('结果文件为空', { kind: 'api' })
-    return { bytes, contentType }
-  } catch (e) {
-    if (e instanceof ApimartError) throw e
-    if (e?.name === 'AbortError') throw abortError(lt)
-    throw new ApimartError(e?.message || '结果下载失败', { kind: 'network' })
-  } finally {
-    lt.dispose()
   }
+  throw new ApimartError(`下载成片失败（${lastNet}）`, { kind: 'network' })
 }
 
 export function imageUrlsFromTask(data) {
@@ -931,7 +1034,7 @@ export async function synthesizeSpeech({
   strictVoice = false,
   signal,
   timeoutMs = 60_000,
-  fetchImpl = fetch,
+  fetchImpl = defaultFetchImpl,
 }) {
   const input = String(text || '').trim()
   if (!input) throw new ApimartError('合成文本为空', { kind: 'bad-request' })
