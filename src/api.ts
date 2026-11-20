@@ -210,6 +210,9 @@ export type VideoOpts = {
   cameraFixed?: boolean
   /** 设置页模型表里的键；不传走默认 */
   modelKey?: string
+  /** 出片成功后服务端直接写回分镜 clip */
+  project?: string
+  shotId?: string
 }
 
 async function readJsonRes(res: Response) {

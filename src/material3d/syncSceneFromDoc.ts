@@ -121,6 +121,12 @@ export async function syncSceneFromDoc(
         t.metadata = { ...(t.metadata || {}), [MATERIAL3D_OBJECT_META]: obj.id }
       }
       applyTransform(root, obj.transform)
+      // 挂接完成后释放容器壳，避免每次同步累积 AssetContainer（网格留在 scene）
+      try {
+        container.dispose()
+      } catch {
+        /* 已释放 */
+      }
       gltfCount++
     }
   }

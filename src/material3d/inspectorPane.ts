@@ -48,6 +48,7 @@ export async function showEmbeddedInspector(
   container: HTMLElement,
   options: EmbeddedInspectorOptions,
 ): Promise<void> {
+  if (scene.isDisposed) return
   const key = embeddedKey(scene, container, options)
   if (hostScene === scene && hostEl === container && container.dataset.m3dInspectorReady === 'true' && lastEmbeddedKey === key) {
     const { Inspector } = await import('@babylonjs/inspector')
@@ -71,6 +72,7 @@ export async function showEmbeddedInspector(
 
 /** 在独立窗口打开完整 embed（Explorer + Inspector） */
 export async function popupFullInspector(scene: Scene, options: EmbeddedInspectorOptions): Promise<void> {
+  if (scene.isDisposed) return
   const { Inspector } = await import('@babylonjs/inspector')
   if (Inspector.IsVisible && hostEl) {
     Inspector.PopupEmbed()
@@ -109,7 +111,7 @@ export async function hideInspector(): Promise<void> {
 
 /** 检视器已打开时，让属性面板跟随当前选中节点 */
 export async function syncInspectorSelection(scene: Scene, objectId: string | null): Promise<void> {
-  if (!objectId || !hostScene || hostScene !== scene) return
+  if (scene.isDisposed || !objectId || !hostScene || hostScene !== scene) return
   const node = findNodeForObjectId(scene, objectId)
   if (!node) return
   try {

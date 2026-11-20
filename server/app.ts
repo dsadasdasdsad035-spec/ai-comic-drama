@@ -1530,6 +1530,33 @@ type VideoJob = {
 
 const videoJobs = new Map<string, VideoJob>()
 
+/** 出片落盘后直接写 project.json clip，避免仅依赖前端 patch（失败/切页会丢） */
+function persistShotClipFromVideoJob(
+  appRoot: string,
+  projectName: string,
+  shotId: string,
+  clipUrl: string,
+  videoMeta?: Record<string, unknown>,
+) {
+  const name = String(projectName || '').trim()
+  const sid = String(shotId || '').trim()
+  const clip = String(clipUrl || '').trim()
+  if (!name || !sid || !clip) return
+  try {
+    const rootDir = resolveRoot(appRoot)
+    const p = readProject(rootDir, name)
+    const cur = p.shots.find((s: { id?: string; video_meta?: Record<string, unknown> }) => String(s.id) === sid)
+    if (!cur) {
+      console.warn('[seedance] 分镜 clip 写回：找不到 shotId', sid, 'in', name)
+      return
+    }
+    const merged = mergeShots(p.shots, [{ id: sid, clip, video_meta: { ...(cur.video_meta || {}), ...videoMeta, url: clip } }], 'partial')
+    writeProject(rootDir, name, { shots: merged })
+  } catch (e) {
+    console.warn('[seedance] 分镜 clip 写回失败', name, sid, (e as Error).message)
+  }
+}
+
 /** APIMart 轮询/下载因网络瞬断失败时，后台续拉成片，前端继续 GET job 即可拿到 succeeded */
 function resumeApimartVideoJob(opts: {
   jobId: string
@@ -1540,8 +1567,10 @@ function resumeApimartVideoJob(opts: {
   finalPrompt: string
   outDir: string
   apimartVidBill?: ReturnType<typeof guardApimartVideo>
+  attach?: { projectName: string; shotId: string; modelKey: string }
+  appRoot: string
 }) {
-  const { jobId, taskId, baseUrl, apiKey, startedAt, finalPrompt, outDir, apimartVidBill } = opts
+  const { jobId, taskId, baseUrl, apiKey, startedAt, finalPrompt, outDir, apimartVidBill, attach, appRoot } = opts
   const cur = videoJobs.get(jobId)
   if (cur) {
     cur.status = 'running'
@@ -1564,15 +1593,25 @@ function resumeApimartVideoJob(opts: {
       if (!videoUrl) throw new ApimartError('任务未返回视频地址', { kind: 'api', taskId })
       const dl = await downloadApimartResult({ url: videoUrl })
       const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+      const clipUrl = `/videos/${name}`
       fs.writeFileSync(path.join(outDir, name), dl.bytes)
       videoJobs.set(jobId, {
         status: 'succeeded',
-        url: `/videos/${name}`,
+        url: clipUrl,
         startedAt,
         elapsed: Date.now() - startedAt,
         taskId,
         prompt: finalPrompt,
       })
+      if (attach) {
+        persistShotClipFromVideoJob(appRoot, attach.projectName, attach.shotId, clipUrl, {
+          url: clipUrl,
+          prompt: finalPrompt,
+          modelKey: attach.modelKey,
+          upstreamTaskId: taskId,
+          createdAt: new Date().toISOString(),
+        })
+      }
       if (apimartVidBill && !apimartVidBill.skipBilling) {
         finalizeApimartVideo(apimartVidBill)
       }
@@ -6990,6 +7029,13 @@ export function createAppHandler({ root }: { root: string }) {
                 return
               }
 
+              const attachProject = String(body.project || body.projectName || '').trim()
+              const attachShotId = String(body.shotId || '').trim()
+              const clipAttach =
+                attachProject && attachShotId
+                  ? { projectName: attachProject, shotId: attachShotId, modelKey: model }
+                  : undefined
+
               const id = `v-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`
               const startedAt = Date.now()
               videoJobs.set(id, { status: 'running', startedAt, prompt: finalPrompt })
@@ -7009,15 +7055,25 @@ export function createAppHandler({ root }: { root: string }) {
                   if (!videoUrl) throw new ApimartError('任务未返回视频地址', { kind: 'api' })
                   const dl = await downloadApimartResult({ url: videoUrl })
                   const name = `shot-vid-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.mp4`
+                  const clipUrl = `/videos/${name}`
                   fs.writeFileSync(path.join(outDir, name), dl.bytes)
                   videoJobs.set(id, {
                     status: 'succeeded',
-                    url: `/videos/${name}`,
+                    url: clipUrl,
                     startedAt,
                     elapsed: Date.now() - startedAt,
                     taskId,
                     prompt: finalPrompt,
                   })
+                  if (clipAttach) {
+                    persistShotClipFromVideoJob(root, clipAttach.projectName, clipAttach.shotId, clipUrl, {
+                      url: clipUrl,
+                      prompt: finalPrompt,
+                      modelKey: clipAttach.modelKey,
+                      upstreamTaskId: taskId,
+                      createdAt: new Date().toISOString(),
+                    })
+                  }
                   if (apimartVidBill && !apimartVidBill.skipBilling) {
                     finalizeApimartVideo(apimartVidBill)
                   }
@@ -7037,6 +7093,8 @@ export function createAppHandler({ root }: { root: string }) {
                       finalPrompt,
                       outDir,
                       apimartVidBill: apimartVidBill || undefined,
+                      attach: clipAttach,
+                      appRoot: root,
                     })
                     return
                   }

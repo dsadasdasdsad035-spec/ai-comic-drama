@@ -15,13 +15,32 @@ export function isHostMeshName(name: string): boolean {
   return HOST_ROOTS.has(name) || name.startsWith('__m3d_')
 }
 
+/** Electron/ flex 布局下 canvas 可能先以 0×0 挂载，立刻建 WebGL 上下文易触发渲染进程崩溃 */
+export function waitCanvasLayout(canvas: HTMLCanvasElement, maxMs = 3000): Promise<void> {
+  if (canvas.clientWidth > 0 && canvas.clientHeight > 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      ro.disconnect()
+      clearTimeout(timer)
+      resolve()
+    }
+    const ro = new ResizeObserver(() => {
+      if (canvas.clientWidth > 0 && canvas.clientHeight > 0) done()
+    })
+    ro.observe(canvas)
+    const timer = window.setTimeout(done, maxMs)
+  })
+}
+
 /** 创建 Babylon 视口：Arc 相机、地面与基础灯光 */
 export async function createBabylonHost(canvas: HTMLCanvasElement): Promise<BabylonHost> {
+  await waitCanvasLayout(canvas)
   const BABYLON = await import('@babylonjs/core')
   const engine = new BABYLON.Engine(canvas, true, {
     preserveDrawingBuffer: true,
-    stencil: true,
+    stencil: false,
     adaptToDeviceRatio: true,
+    doNotHandleContextLost: true,
   })
   const scene = new BABYLON.Scene(engine)
   scene.clearColor = new BABYLON.Color4(0.07, 0.09, 0.11, 1)
@@ -54,11 +73,16 @@ export async function createBabylonHost(canvas: HTMLCanvasElement): Promise<Baby
   ground.material = gmat
   ground.isPickable = false
 
+  let disposed = false
   engine.runRenderLoop(() => {
+    if (disposed || engine.isDisposed || scene.isDisposed) return
     scene.render()
   })
 
-  const onResize = () => engine.resize()
+  const onResize = () => {
+    if (disposed || engine.isDisposed) return
+    engine.resize()
+  }
   window.addEventListener('resize', onResize)
 
   const envHandles: SceneEnvironmentHandles = {
@@ -75,10 +99,20 @@ export async function createBabylonHost(canvas: HTMLCanvasElement): Promise<Baby
     camera,
     envHandles,
     dispose: () => {
+      if (disposed) return
+      disposed = true
       window.removeEventListener('resize', onResize)
+      try {
+        camera.detachControl()
+      } catch {
+        /* 已分离 */
+      }
       engine.stopRenderLoop()
-      scene.dispose()
-      engine.dispose()
+      if (!scene.isDisposed) scene.dispose()
+      if (!engine.isDisposed) {
+        engine.wipeCaches(true)
+        engine.dispose()
+      }
     },
   }
 }

@@ -3337,6 +3337,9 @@ function Shell() {
             ? {}
             : { cameraFixed: node.data.move === '固定' }),
           modelKey,
+          ...(projectName && node.data.shotId
+            ? { project: projectName, shotId: String(node.data.shotId) }
+            : {}),
         })
         if (res.skipped?.length) {
           setToast(`跳过 ${res.skipped.length} 张失效参考图，继续出片`)
@@ -3392,7 +3395,7 @@ function Shell() {
         if (recover) window.setTimeout(() => void recoverVideoOneRef.current(id), 400)
       }
     },
-    [patch, ratio, vidRes, selectedVideoModel, projectAspect, missingMedia, flushShotClip],
+    [patch, ratio, vidRes, selectedVideoModel, projectAspect, missingMedia, flushShotClip, projectName],
   )
 
   const recoverVideoOneRef = useRef<(id: string) => void>(() => {})

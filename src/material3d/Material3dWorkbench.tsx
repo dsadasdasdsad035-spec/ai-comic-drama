@@ -224,13 +224,19 @@ export default function Material3dWorkbench({
     return () => {
       alive = false
       meshSyncGenRef.current += 1
-      void hideInspector()
-      gizmoRef.current?.dispose()
-      gizmoRef.current = null
-      hostRef.current?.dispose()
-      hostRef.current = null
+      void hideInspector().finally(() => {
+        gizmoRef.current?.dispose()
+        gizmoRef.current = null
+        try {
+          hostRef.current?.dispose()
+        } catch {
+          /* 视口可能已失去 WebGL 上下文 */
+        }
+        hostRef.current = null
+        setReady(false)
+      })
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     const host = hostRef.current
