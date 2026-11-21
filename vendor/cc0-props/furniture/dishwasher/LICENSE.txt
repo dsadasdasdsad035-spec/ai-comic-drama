@@ -1,0 +1,4 @@
+洗碗机（Dishwasher）— Grab3D dishwasher
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/food/dishwasher/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

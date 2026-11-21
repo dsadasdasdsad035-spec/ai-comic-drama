@@ -3530,6 +3530,32 @@ body.si-resizing {
   width: 100%;
 }
 
+/* 家具分组 chips：加上软装后品类到 90+，平铺太长，按组收窄 */
+.m3d-group-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 6px;
+}
+
+.m3d-group-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+}
+
+.m3d-group-chips button span {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.m3d-group-chips button.on span {
+  opacity: 0.85;
+}
+
 .m3d-empty-card {
   display: flex;
   flex-direction: column;

@@ -1,0 +1,4 @@
+装饰画套装（Wall Art Set）— Grab3D wall-art
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/furniture/wall-art/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

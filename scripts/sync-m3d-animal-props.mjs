@@ -129,6 +129,8 @@ for (const entry of entries) {
     source: 'grab3d',
     license: entry.license || 'CC0-1.0',
     categories: [bucket.category, entry.style || model.style || 'stylized'],
+    // 分组随 entries 一起带出来，UI 的 chips 靠它分类
+    ...(entry.group ? { group: entry.group } : {}),
     url: `/cc0-props/${bucket.urlBucket}/${slug}/${glb.file}`,
   })
 }

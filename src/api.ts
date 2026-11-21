@@ -737,6 +737,8 @@ export type Cc0PropEntry = {
   source: string
   license?: string
   categories?: string[]
+  /** 家具侧的分组：seat / bed / table / storage / soft / decor / plant / light / kitchen / bath / laundry */
+  group?: string
   url: string
 }
 

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "source": "https://grab3d.com",
   "license": "CC0 1.0 (Grab3D)",
-  "note": "现代家居家具 44 件（沙发/床/桌/椅/柜/软装）；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
-  "updatedAt": "2026-11-21T11:24:12.406Z",
+  "note": "现代家居家具与软装 93 件（沙发/床/桌/椅/柜/软装/绿植/灯具/厨卫/收纳）；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
+  "updatedAt": "2026-11-21T11:39:47.203Z",
   "entries": [
     {
       "id": "sofa",
@@ -14,7 +14,8 @@
       "bytes": 957748,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/sofa/"
+      "page": "https://grab3d.com/models/furniture/sofa/",
+      "group": "seat"
     },
     {
       "id": "corner_sofa",
@@ -25,7 +26,8 @@
       "bytes": 880364,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/corner-sofa/"
+      "page": "https://grab3d.com/models/furniture/corner-sofa/",
+      "group": "seat"
     },
     {
       "id": "bean_bag_chair",
@@ -36,7 +38,8 @@
       "bytes": 630840,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bean-bag-chair/"
+      "page": "https://grab3d.com/models/furniture/bean-bag-chair/",
+      "group": "seat"
     },
     {
       "id": "pouf",
@@ -47,7 +50,8 @@
       "bytes": 713752,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/pouf/"
+      "page": "https://grab3d.com/models/furniture/pouf/",
+      "group": "seat"
     },
     {
       "id": "armchair",
@@ -58,7 +62,8 @@
       "bytes": 641456,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/armchair/"
+      "page": "https://grab3d.com/models/furniture/armchair/",
+      "group": "seat"
     },
     {
       "id": "office_chair",
@@ -69,7 +74,8 @@
       "bytes": 1261664,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/office-chair/"
+      "page": "https://grab3d.com/models/furniture/office-chair/",
+      "group": "seat"
     },
     {
       "id": "gaming_chair",
@@ -80,7 +86,8 @@
       "bytes": 691248,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/gaming-chair/"
+      "page": "https://grab3d.com/models/furniture/gaming-chair/",
+      "group": "seat"
     },
     {
       "id": "dining_chair",
@@ -91,7 +98,8 @@
       "bytes": 613796,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/dining-chair/"
+      "page": "https://grab3d.com/models/furniture/dining-chair/",
+      "group": "seat"
     },
     {
       "id": "director_chair",
@@ -102,7 +110,8 @@
       "bytes": 634800,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/director-chair/"
+      "page": "https://grab3d.com/models/furniture/director-chair/",
+      "group": "seat"
     },
     {
       "id": "bar_stool",
@@ -113,7 +122,8 @@
       "bytes": 535544,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bar-stool/"
+      "page": "https://grab3d.com/models/furniture/bar-stool/",
+      "group": "seat"
     },
     {
       "id": "bench",
@@ -124,7 +134,8 @@
       "bytes": 454536,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bench/"
+      "page": "https://grab3d.com/models/furniture/bench/",
+      "group": "seat"
     },
     {
       "id": "bed",
@@ -135,7 +146,8 @@
       "bytes": 1085004,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bed/"
+      "page": "https://grab3d.com/models/furniture/bed/",
+      "group": "bed"
     },
     {
       "id": "single_bed",
@@ -146,7 +158,8 @@
       "bytes": 517080,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/single-bed/"
+      "page": "https://grab3d.com/models/furniture/single-bed/",
+      "group": "bed"
     },
     {
       "id": "bunk_bed",
@@ -157,7 +170,8 @@
       "bytes": 525988,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bunk-bed/"
+      "page": "https://grab3d.com/models/furniture/bunk-bed/",
+      "group": "bed"
     },
     {
       "id": "nightstand",
@@ -168,7 +182,8 @@
       "bytes": 720720,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/nightstand/"
+      "page": "https://grab3d.com/models/furniture/nightstand/",
+      "group": "bed"
     },
     {
       "id": "dresser",
@@ -179,7 +194,8 @@
       "bytes": 903224,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/dresser/"
+      "page": "https://grab3d.com/models/furniture/dresser/",
+      "group": "storage"
     },
     {
       "id": "wardrobe",
@@ -190,7 +206,8 @@
       "bytes": 968836,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/wardrobe/"
+      "page": "https://grab3d.com/models/furniture/wardrobe/",
+      "group": "storage"
     },
     {
       "id": "filing_cabinet",
@@ -201,7 +218,8 @@
       "bytes": 1191728,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/filing-cabinet/"
+      "page": "https://grab3d.com/models/furniture/filing-cabinet/",
+      "group": "storage"
     },
     {
       "id": "shelf_unit",
@@ -212,7 +230,8 @@
       "bytes": 664952,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/shelf-unit/"
+      "page": "https://grab3d.com/models/furniture/shelf-unit/",
+      "group": "storage"
     },
     {
       "id": "bookshelf",
@@ -223,7 +242,8 @@
       "bytes": 2897208,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bookshelf/"
+      "page": "https://grab3d.com/models/furniture/bookshelf/",
+      "group": "storage"
     },
     {
       "id": "coffee_table",
@@ -234,7 +254,8 @@
       "bytes": 347180,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/coffee-table/"
+      "page": "https://grab3d.com/models/furniture/coffee-table/",
+      "group": "table"
     },
     {
       "id": "side_table",
@@ -245,7 +266,8 @@
       "bytes": 550272,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/side-table/"
+      "page": "https://grab3d.com/models/furniture/side-table/",
+      "group": "table"
     },
     {
       "id": "dining_table",
@@ -256,7 +278,8 @@
       "bytes": 493856,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/dining-table/"
+      "page": "https://grab3d.com/models/furniture/dining-table/",
+      "group": "table"
     },
     {
       "id": "round_table",
@@ -267,7 +290,8 @@
       "bytes": 778264,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/round-table/"
+      "page": "https://grab3d.com/models/furniture/round-table/",
+      "group": "table"
     },
     {
       "id": "meeting_table",
@@ -278,7 +302,8 @@
       "bytes": 590732,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/meeting-table/"
+      "page": "https://grab3d.com/models/furniture/meeting-table/",
+      "group": "table"
     },
     {
       "id": "office_desk",
@@ -289,7 +314,8 @@
       "bytes": 967176,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/office-desk/"
+      "page": "https://grab3d.com/models/furniture/office-desk/",
+      "group": "table"
     },
     {
       "id": "standing_desk",
@@ -300,7 +326,8 @@
       "bytes": 651976,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/standing-desk/"
+      "page": "https://grab3d.com/models/furniture/standing-desk/",
+      "group": "table"
     },
     {
       "id": "kitchen_island",
@@ -311,7 +338,8 @@
       "bytes": 697804,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/kitchen-island/"
+      "page": "https://grab3d.com/models/furniture/kitchen-island/",
+      "group": "kitchen"
     },
     {
       "id": "bar_counter",
@@ -322,7 +350,8 @@
       "bytes": 609364,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bar-counter/"
+      "page": "https://grab3d.com/models/furniture/bar-counter/",
+      "group": "kitchen"
     },
     {
       "id": "rug",
@@ -333,7 +362,8 @@
       "bytes": 857032,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/rug/"
+      "page": "https://grab3d.com/models/furniture/rug/",
+      "group": "soft"
     },
     {
       "id": "curtains",
@@ -344,7 +374,8 @@
       "bytes": 616048,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/curtains/"
+      "page": "https://grab3d.com/models/furniture/curtains/",
+      "group": "soft"
     },
     {
       "id": "cushion",
@@ -355,7 +386,8 @@
       "bytes": 836384,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/cushion/"
+      "page": "https://grab3d.com/models/furniture/cushion/",
+      "group": "soft"
     },
     {
       "id": "full_length_mirror",
@@ -366,7 +398,8 @@
       "bytes": 513360,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/full-length-mirror/"
+      "page": "https://grab3d.com/models/furniture/full-length-mirror/",
+      "group": "decor"
     },
     {
       "id": "floor_lamp",
@@ -377,7 +410,8 @@
       "bytes": 711096,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/floor-lamp/"
+      "page": "https://grab3d.com/models/furniture/floor-lamp/",
+      "group": "light"
     },
     {
       "id": "ceiling_lamp",
@@ -388,7 +422,8 @@
       "bytes": 565608,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/ceiling-lamp/"
+      "page": "https://grab3d.com/models/furniture/ceiling-lamp/",
+      "group": "light"
     },
     {
       "id": "table_lamp",
@@ -399,7 +434,8 @@
       "bytes": 994120,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/table-lamp/"
+      "page": "https://grab3d.com/models/furniture/table-lamp/",
+      "group": "light"
     },
     {
       "id": "wall_clock",
@@ -410,7 +446,8 @@
       "bytes": 1230160,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/wall-clock/"
+      "page": "https://grab3d.com/models/furniture/wall-clock/",
+      "group": "decor"
     },
     {
       "id": "tv_stand",
@@ -421,7 +458,8 @@
       "bytes": 1314324,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/tv-stand/"
+      "page": "https://grab3d.com/models/furniture/tv-stand/",
+      "group": "storage"
     },
     {
       "id": "laundry_basket",
@@ -432,7 +470,8 @@
       "bytes": 1048916,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/laundry-basket/"
+      "page": "https://grab3d.com/models/furniture/laundry-basket/",
+      "group": "storage"
     },
     {
       "id": "coat_rack",
@@ -443,7 +482,8 @@
       "bytes": 1011116,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/coat-rack/"
+      "page": "https://grab3d.com/models/furniture/coat-rack/",
+      "group": "storage"
     },
     {
       "id": "trash_can",
@@ -454,7 +494,8 @@
       "bytes": 1020852,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/trash-can/"
+      "page": "https://grab3d.com/models/furniture/trash-can/",
+      "group": "storage"
     },
     {
       "id": "desk_organizer",
@@ -465,7 +506,8 @@
       "bytes": 653356,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/desk-organizer/"
+      "page": "https://grab3d.com/models/furniture/desk-organizer/",
+      "group": "storage"
     },
     {
       "id": "coffee_machine",
@@ -476,7 +518,404 @@
       "bytes": 1261560,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/coffee-machine/"
+      "page": "https://grab3d.com/models/furniture/coffee-machine/",
+      "group": "kitchen"
+    },
+    {
+      "id": "blinds",
+      "slug": "blinds",
+      "title": "百叶帘",
+      "titleEn": "Venetian Blinds",
+      "file": "blinds.glb",
+      "bytes": 1054904,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "soft",
+      "page": "https://grab3d.com/models/furniture/blinds/"
+    },
+    {
+      "id": "blanket",
+      "slug": "blanket",
+      "title": "盖毯",
+      "titleEn": "Knit Blanket",
+      "file": "blanket.glb",
+      "bytes": 1176536,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "soft",
+      "page": "https://grab3d.com/models/furniture/blanket/"
+    },
+    {
+      "id": "picture_frame",
+      "slug": "picture-frame",
+      "title": "相框",
+      "titleEn": "Picture Frame",
+      "file": "picture-frame.glb",
+      "bytes": 434564,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/props/picture-frame/"
+    },
+    {
+      "id": "wall_art",
+      "slug": "wall-art",
+      "title": "装饰画套装",
+      "titleEn": "Wall Art Set",
+      "file": "wall-art.glb",
+      "bytes": 945284,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/wall-art/"
+    },
+    {
+      "id": "bathroom_mirror",
+      "slug": "bathroom-mirror",
+      "title": "浴室镜",
+      "titleEn": "Bathroom Mirror",
+      "file": "bathroom-mirror.glb",
+      "bytes": 723160,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/bathroom-mirror/"
+    },
+    {
+      "id": "vase",
+      "slug": "vase",
+      "title": "花瓶",
+      "titleEn": "Flower Vase",
+      "file": "vase-light.glb",
+      "bytes": 959816,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/vase/"
+    },
+    {
+      "id": "book_stack",
+      "slug": "book-stack",
+      "title": "书堆",
+      "titleEn": "Book Stack",
+      "file": "book-stack.glb",
+      "bytes": 1140168,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/props/book-stack/"
+    },
+    {
+      "id": "bookend",
+      "slug": "bookend",
+      "title": "书立",
+      "titleEn": "Rainbow Bookends",
+      "file": "bookend.glb",
+      "bytes": 1383836,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/props/bookend/"
+    },
+    {
+      "id": "tissue_box",
+      "slug": "tissue-box",
+      "title": "纸巾盒",
+      "titleEn": "Tissue Box",
+      "file": "tissue-box.glb",
+      "bytes": 716800,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/props/tissue-box/"
+    },
+    {
+      "id": "houseplant_set",
+      "slug": "houseplant-set",
+      "title": "室内绿植套装",
+      "titleEn": "Houseplant Set",
+      "file": "houseplant-set.glb",
+      "bytes": 1337696,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/furniture/houseplant-set/"
+    },
+    {
+      "id": "monstera_plant",
+      "slug": "monstera-plant",
+      "title": "龟背竹",
+      "titleEn": "Monstera Plant",
+      "file": "monstera-plant.glb",
+      "bytes": 960036,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/nature/monstera-plant/"
+    },
+    {
+      "id": "snake_plant",
+      "slug": "snake-plant",
+      "title": "虎尾兰",
+      "titleEn": "Snake Plant",
+      "file": "snake-plant.glb",
+      "bytes": 706996,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/nature/snake-plant/"
+    },
+    {
+      "id": "potted_cactus",
+      "slug": "potted-cactus",
+      "title": "仙人掌盆栽",
+      "titleEn": "Potted Cactus",
+      "file": "potted-cactus.glb",
+      "bytes": 2229748,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/nature/potted-cactus/"
+    },
+    {
+      "id": "succulent",
+      "slug": "succulent",
+      "title": "多肉盆栽",
+      "titleEn": "Potted Succulent",
+      "file": "succulent.glb",
+      "bytes": 717728,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/nature/succulent/"
+    },
+    {
+      "id": "flower_planter",
+      "slug": "flower-planter",
+      "title": "花槽",
+      "titleEn": "Flower Planter",
+      "file": "flower-planter.glb",
+      "bytes": 1392820,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "plant",
+      "page": "https://grab3d.com/models/nature/flower-planter/"
+    },
+    {
+      "id": "string_lights",
+      "slug": "string-lights",
+      "title": "串灯",
+      "titleEn": "Garden String Lights",
+      "file": "string-lights.glb",
+      "bytes": 992596,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "light",
+      "page": "https://grab3d.com/models/furniture/string-lights/"
+    },
+    {
+      "id": "kitchen_cabinet",
+      "slug": "kitchen-cabinet",
+      "title": "橱柜",
+      "titleEn": "Kitchen Cabinet",
+      "file": "kitchen-cabinet.glb",
+      "bytes": 1531980,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/furniture/kitchen-cabinet/"
+    },
+    {
+      "id": "kitchen_sink",
+      "slug": "kitchen-sink",
+      "title": "厨房水槽",
+      "titleEn": "Kitchen Sink",
+      "file": "kitchen-sink.glb",
+      "bytes": 956352,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/furniture/kitchen-sink/"
+    },
+    {
+      "id": "range_hood",
+      "slug": "range-hood",
+      "title": "抽油烟机",
+      "titleEn": "Range Hood",
+      "file": "range-hood.glb",
+      "bytes": 566216,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/range-hood/"
+    },
+    {
+      "id": "refrigerator",
+      "slug": "refrigerator",
+      "title": "冰箱",
+      "titleEn": "Refrigerator",
+      "file": "refrigerator.glb",
+      "bytes": 1470356,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/refrigerator/"
+    },
+    {
+      "id": "dishwasher",
+      "slug": "dishwasher",
+      "title": "洗碗机",
+      "titleEn": "Dishwasher",
+      "file": "dishwasher-light.glb",
+      "bytes": 1053172,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/dishwasher/"
+    },
+    {
+      "id": "microwave",
+      "slug": "microwave",
+      "title": "微波炉",
+      "titleEn": "Microwave",
+      "file": "microwave.glb",
+      "bytes": 866508,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/microwave/"
+    },
+    {
+      "id": "electric_kettle",
+      "slug": "electric-kettle",
+      "title": "电热水壶",
+      "titleEn": "Electric Kettle",
+      "file": "electric-kettle.glb",
+      "bytes": 1043872,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/electric-kettle/"
+    },
+    {
+      "id": "toaster",
+      "slug": "toaster",
+      "title": "烤面包机",
+      "titleEn": "Toaster",
+      "file": "toaster.glb",
+      "bytes": 1069712,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/food/toaster/"
+    },
+    {
+      "id": "bathtub",
+      "slug": "bathtub",
+      "title": "浴缸",
+      "titleEn": "Bathtub",
+      "file": "bathtub.glb",
+      "bytes": 805912,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/bathtub/"
+    },
+    {
+      "id": "shower_cabin",
+      "slug": "shower-cabin",
+      "title": "淋浴房",
+      "titleEn": "Shower Cabin",
+      "file": "shower-cabin.glb",
+      "bytes": 956764,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/shower-cabin/"
+    },
+    {
+      "id": "shower_head",
+      "slug": "shower-head",
+      "title": "淋浴花洒",
+      "titleEn": "Shower Head with Slide Rail",
+      "file": "shower-head.glb",
+      "bytes": 822332,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/shower-head/"
+    },
+    {
+      "id": "toilet",
+      "slug": "toilet",
+      "title": "马桶",
+      "titleEn": "Toilet",
+      "file": "toilet.glb",
+      "bytes": 1356920,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/toilet/"
+    },
+    {
+      "id": "bathroom_sink",
+      "slug": "bathroom-sink",
+      "title": "浴室洗手台",
+      "titleEn": "Bathroom Sink",
+      "file": "bathroom-sink.glb",
+      "bytes": 1846500,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/bathroom-sink/"
+    },
+    {
+      "id": "towel_rack",
+      "slug": "towel-rack",
+      "title": "毛巾架",
+      "titleEn": "Towel Rack",
+      "file": "towel-rack.glb",
+      "bytes": 713632,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/towel-rack/"
+    },
+    {
+      "id": "bathroom_cabinet",
+      "slug": "bathroom-cabinet",
+      "title": "浴室柜",
+      "titleEn": "Bathroom Cabinet",
+      "file": "bathroom-cabinet.glb",
+      "bytes": 935060,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "bath",
+      "page": "https://grab3d.com/models/furniture/bathroom-cabinet/"
+    },
+    {
+      "id": "washing_machine",
+      "slug": "washing-machine",
+      "title": "洗衣机",
+      "titleEn": "Washing Machine",
+      "file": "washing-machine.glb",
+      "bytes": 901472,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "laundry",
+      "page": "https://grab3d.com/models/electronics/washing-machine/"
+    },
+    {
+      "id": "ladder_shelf",
+      "slug": "ladder-shelf",
+      "title": "梯形架",
+      "titleEn": "Ladder Shelf",
+      "file": "ladder-shelf.glb",
+      "bytes": 1053440,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "storage",
+      "page": "https://grab3d.com/models/furniture/ladder-shelf/"
     }
   ],
   "samples": [
@@ -490,6 +929,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/sofa/sofa.glb"
     },
     {
@@ -502,6 +942,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/corner-sofa/corner-sofa.glb"
     },
     {
@@ -514,6 +955,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/bean-bag-chair/bean-bag-chair.glb"
     },
     {
@@ -526,6 +968,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/pouf/pouf.glb"
     },
     {
@@ -538,6 +981,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/armchair/armchair.glb"
     },
     {
@@ -550,6 +994,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/office-chair/office-chair.glb"
     },
     {
@@ -562,6 +1007,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/gaming-chair/gaming-chair-light.glb"
     },
     {
@@ -574,6 +1020,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/dining-chair/dining-chair.glb"
     },
     {
@@ -586,6 +1033,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/director-chair/director-chair.glb"
     },
     {
@@ -598,6 +1046,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/bar-stool/bar-stool.glb"
     },
     {
@@ -610,6 +1059,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "seat",
       "url": "/cc0-props/furniture/bench/bench.glb"
     },
     {
@@ -622,6 +1072,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "bed",
       "url": "/cc0-props/furniture/bed/bed.glb"
     },
     {
@@ -634,6 +1085,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "bed",
       "url": "/cc0-props/furniture/single-bed/single-bed-light.glb"
     },
     {
@@ -646,6 +1098,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "bed",
       "url": "/cc0-props/furniture/bunk-bed/bunk-bed-light.glb"
     },
     {
@@ -658,6 +1111,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "bed",
       "url": "/cc0-props/furniture/nightstand/nightstand.glb"
     },
     {
@@ -670,6 +1124,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/dresser/dresser.glb"
     },
     {
@@ -682,6 +1137,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/wardrobe/wardrobe-light.glb"
     },
     {
@@ -694,6 +1150,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/filing-cabinet/filing-cabinet.glb"
     },
     {
@@ -706,6 +1163,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/shelf-unit/shelf-unit-light.glb"
     },
     {
@@ -718,6 +1176,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/bookshelf/bookshelf.glb"
     },
     {
@@ -730,6 +1189,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/coffee-table/coffee-table.glb"
     },
     {
@@ -742,6 +1202,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/side-table/side-table.glb"
     },
     {
@@ -754,6 +1215,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/dining-table/dining-table.glb"
     },
     {
@@ -766,6 +1228,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/round-table/round-table.glb"
     },
     {
@@ -778,6 +1241,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/meeting-table/meeting-table.glb"
     },
     {
@@ -790,6 +1254,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/office-desk/office-desk.glb"
     },
     {
@@ -802,6 +1267,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "table",
       "url": "/cc0-props/furniture/standing-desk/standing-desk.glb"
     },
     {
@@ -814,6 +1280,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "kitchen",
       "url": "/cc0-props/furniture/kitchen-island/kitchen-island-light.glb"
     },
     {
@@ -826,6 +1293,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "kitchen",
       "url": "/cc0-props/furniture/bar-counter/bar-counter-light.glb"
     },
     {
@@ -838,6 +1306,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "soft",
       "url": "/cc0-props/furniture/rug/rug.glb"
     },
     {
@@ -850,6 +1319,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "soft",
       "url": "/cc0-props/furniture/curtains/curtains-light.glb"
     },
     {
@@ -862,6 +1332,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "soft",
       "url": "/cc0-props/furniture/cushion/cushion.glb"
     },
     {
@@ -874,6 +1345,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "decor",
       "url": "/cc0-props/furniture/full-length-mirror/full-length-mirror.glb"
     },
     {
@@ -886,6 +1358,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "light",
       "url": "/cc0-props/furniture/floor-lamp/floor-lamp.glb"
     },
     {
@@ -898,6 +1371,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "light",
       "url": "/cc0-props/furniture/ceiling-lamp/ceiling-lamp.glb"
     },
     {
@@ -910,6 +1384,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "light",
       "url": "/cc0-props/furniture/table-lamp/table-lamp.glb"
     },
     {
@@ -922,6 +1397,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "decor",
       "url": "/cc0-props/furniture/wall-clock/wall-clock.glb"
     },
     {
@@ -934,6 +1410,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/tv-stand/tv-stand.glb"
     },
     {
@@ -946,6 +1423,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/laundry-basket/laundry-basket.glb"
     },
     {
@@ -958,6 +1436,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/coat-rack/coat-rack.glb"
     },
     {
@@ -970,6 +1449,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/trash-can/trash-can.glb"
     },
     {
@@ -982,6 +1462,7 @@
         "furniture",
         "stylized"
       ],
+      "group": "storage",
       "url": "/cc0-props/furniture/desk-organizer/desk-organizer.glb"
     },
     {
@@ -994,7 +1475,437 @@
         "furniture",
         "stylized"
       ],
+      "group": "kitchen",
       "url": "/cc0-props/furniture/coffee-machine/coffee-machine.glb"
+    },
+    {
+      "id": "blinds",
+      "title": "百叶帘",
+      "titleEn": "Venetian Blinds",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "soft",
+      "url": "/cc0-props/furniture/blinds/blinds.glb"
+    },
+    {
+      "id": "blanket",
+      "title": "盖毯",
+      "titleEn": "Knit Blanket",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "soft",
+      "url": "/cc0-props/furniture/blanket/blanket.glb"
+    },
+    {
+      "id": "picture_frame",
+      "title": "相框",
+      "titleEn": "Picture Frame",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/picture-frame/picture-frame.glb"
+    },
+    {
+      "id": "wall_art",
+      "title": "装饰画套装",
+      "titleEn": "Wall Art Set",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/wall-art/wall-art.glb"
+    },
+    {
+      "id": "bathroom_mirror",
+      "title": "浴室镜",
+      "titleEn": "Bathroom Mirror",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/bathroom-mirror/bathroom-mirror.glb"
+    },
+    {
+      "id": "vase",
+      "title": "花瓶",
+      "titleEn": "Flower Vase",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/vase/vase-light.glb"
+    },
+    {
+      "id": "book_stack",
+      "title": "书堆",
+      "titleEn": "Book Stack",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/book-stack/book-stack.glb"
+    },
+    {
+      "id": "bookend",
+      "title": "书立",
+      "titleEn": "Rainbow Bookends",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/bookend/bookend.glb"
+    },
+    {
+      "id": "tissue_box",
+      "title": "纸巾盒",
+      "titleEn": "Tissue Box",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/tissue-box/tissue-box.glb"
+    },
+    {
+      "id": "houseplant_set",
+      "title": "室内绿植套装",
+      "titleEn": "Houseplant Set",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/houseplant-set/houseplant-set.glb"
+    },
+    {
+      "id": "monstera_plant",
+      "title": "龟背竹",
+      "titleEn": "Monstera Plant",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/monstera-plant/monstera-plant.glb"
+    },
+    {
+      "id": "snake_plant",
+      "title": "虎尾兰",
+      "titleEn": "Snake Plant",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/snake-plant/snake-plant.glb"
+    },
+    {
+      "id": "potted_cactus",
+      "title": "仙人掌盆栽",
+      "titleEn": "Potted Cactus",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/potted-cactus/potted-cactus.glb"
+    },
+    {
+      "id": "succulent",
+      "title": "多肉盆栽",
+      "titleEn": "Potted Succulent",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/succulent/succulent.glb"
+    },
+    {
+      "id": "flower_planter",
+      "title": "花槽",
+      "titleEn": "Flower Planter",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "plant",
+      "url": "/cc0-props/furniture/flower-planter/flower-planter.glb"
+    },
+    {
+      "id": "string_lights",
+      "title": "串灯",
+      "titleEn": "Garden String Lights",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "light",
+      "url": "/cc0-props/furniture/string-lights/string-lights.glb"
+    },
+    {
+      "id": "kitchen_cabinet",
+      "title": "橱柜",
+      "titleEn": "Kitchen Cabinet",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/kitchen-cabinet/kitchen-cabinet.glb"
+    },
+    {
+      "id": "kitchen_sink",
+      "title": "厨房水槽",
+      "titleEn": "Kitchen Sink",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/kitchen-sink/kitchen-sink.glb"
+    },
+    {
+      "id": "range_hood",
+      "title": "抽油烟机",
+      "titleEn": "Range Hood",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/range-hood/range-hood.glb"
+    },
+    {
+      "id": "refrigerator",
+      "title": "冰箱",
+      "titleEn": "Refrigerator",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/refrigerator/refrigerator.glb"
+    },
+    {
+      "id": "dishwasher",
+      "title": "洗碗机",
+      "titleEn": "Dishwasher",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/dishwasher/dishwasher-light.glb"
+    },
+    {
+      "id": "microwave",
+      "title": "微波炉",
+      "titleEn": "Microwave",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/microwave/microwave.glb"
+    },
+    {
+      "id": "electric_kettle",
+      "title": "电热水壶",
+      "titleEn": "Electric Kettle",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/electric-kettle/electric-kettle.glb"
+    },
+    {
+      "id": "toaster",
+      "title": "烤面包机",
+      "titleEn": "Toaster",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/toaster/toaster.glb"
+    },
+    {
+      "id": "bathtub",
+      "title": "浴缸",
+      "titleEn": "Bathtub",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/bathtub/bathtub.glb"
+    },
+    {
+      "id": "shower_cabin",
+      "title": "淋浴房",
+      "titleEn": "Shower Cabin",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/shower-cabin/shower-cabin.glb"
+    },
+    {
+      "id": "shower_head",
+      "title": "淋浴花洒",
+      "titleEn": "Shower Head with Slide Rail",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/shower-head/shower-head.glb"
+    },
+    {
+      "id": "toilet",
+      "title": "马桶",
+      "titleEn": "Toilet",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/toilet/toilet.glb"
+    },
+    {
+      "id": "bathroom_sink",
+      "title": "浴室洗手台",
+      "titleEn": "Bathroom Sink",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/bathroom-sink/bathroom-sink.glb"
+    },
+    {
+      "id": "towel_rack",
+      "title": "毛巾架",
+      "titleEn": "Towel Rack",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/towel-rack/towel-rack.glb"
+    },
+    {
+      "id": "bathroom_cabinet",
+      "title": "浴室柜",
+      "titleEn": "Bathroom Cabinet",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "bath",
+      "url": "/cc0-props/furniture/bathroom-cabinet/bathroom-cabinet.glb"
+    },
+    {
+      "id": "washing_machine",
+      "title": "洗衣机",
+      "titleEn": "Washing Machine",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "laundry",
+      "url": "/cc0-props/furniture/washing-machine/washing-machine.glb"
+    },
+    {
+      "id": "ladder_shelf",
+      "title": "梯形架",
+      "titleEn": "Ladder Shelf",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "storage",
+      "url": "/cc0-props/furniture/ladder-shelf/ladder-shelf.glb"
     }
   ]
 }

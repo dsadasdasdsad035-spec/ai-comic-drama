@@ -101,6 +101,7 @@ export default function Material3dWorkbench({
   const [charactersReady, setCharactersReady] = useState(false)
   const [animalsReady, setAnimalsReady] = useState(false)
   const [furnitureReady, setFurnitureReady] = useState(false)
+  const [furnitureGroup, setFurnitureGroup] = useState('')
   const [propQuery, setPropQuery] = useState('')
   const [samplesReady, setSamplesReady] = useState(false)
   const [itchVendorReady, setItchVendorReady] = useState(false)
@@ -449,8 +450,39 @@ export default function Material3dWorkbench({
   )
   const characterFiltered = useMemo(() => filterProps(characterProps), [characterProps, filterProps])
   const animalFiltered = useMemo(() => filterProps(animalProps), [animalProps, filterProps])
-  const cc0Filtered = useMemo(() => filterProps(furnitureProps), [furnitureProps, filterProps])
   const itchFiltered = useMemo(() => filterProps(itchProps), [itchProps, filterProps])
+  /** Poly Haven 没有 group 字段，按品类推导；Grab3D 侧直接用清单里的 group */
+  const furnitureGroupOf = useCallback((p: Cc0PropEntry): string => {
+    if (p.group) return p.group
+    // Poly Haven 的品类偶尔不准：Modern Wooden Cabinet 被标成 table，实际是柜子
+    const groups: Record<string, string> = {
+      modern_wooden_cabinet: 'storage',
+      drawer_cabinet: 'storage',
+      CoffeeCart_01: 'kitchen',
+      modular_street_seating: 'seat',
+    }
+    if (groups[p.id]) return groups[p.id]
+    const cats = p.categories || []
+    if (cats.includes('seating')) return 'seat'
+    if (cats.includes('bed')) return 'bed'
+    if (cats.includes('table')) return 'table'
+    if (cats.includes('shelves')) return 'storage'
+    return 'other'
+  }, [])
+  const furnitureGroupCounts = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const p of furnitureProps) {
+      const g = furnitureGroupOf(p)
+      out[g] = (out[g] || 0) + 1
+    }
+    return out
+  }, [furnitureProps, furnitureGroupOf])
+  const cc0Filtered = useMemo(() => {
+    const scoped = furnitureGroup
+      ? furnitureProps.filter((p) => furnitureGroupOf(p) === furnitureGroup)
+      : furnitureProps
+    return filterProps(scoped)
+  }, [furnitureProps, furnitureGroup, furnitureGroupOf, filterProps])
 
   const importCc0ToAssets = async (prop: Cc0PropEntry) => {
     if (!projectName) return
@@ -645,6 +677,9 @@ export default function Material3dWorkbench({
                 animalFiltered={animalFiltered}
                 furnitureGapFillCount={furnitureGapFillProps.length}
                 furnitureReady={furnitureReady}
+                furnitureGroup={furnitureGroup}
+                onFurnitureGroup={setFurnitureGroup}
+                furnitureGroupCounts={furnitureGroupCounts}
                 itchFiltered={itchFiltered}
                 charactersReady={charactersReady}
                 animalsReady={animalsReady}

@@ -58,6 +58,8 @@ function readGrab3dManifest(appRoot, dir, bucket, category, defaultStyle) {
       source: 'grab3d',
       license: e.license || 'CC0-1.0',
       categories: [category, e.style || defaultStyle],
+      // group 只在家具侧有意义（沙发/桌/柜/软装/绿植/厨卫…），动物不分组
+      ...(e.group ? { group: e.group } : {}),
       url: `/cc0-props/${bucket}/${e.slug}/${e.file}`,
     }))
     const samples = fromSamples.length ? fromSamples : fromEntries

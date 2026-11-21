@@ -3,6 +3,22 @@ import { cc0PropDisplayTitle } from './cc0PropDisplayTitle'
 
 export type PropSource = 'project' | 'characters' | 'animals' | 'cc0' | 'itch'
 
+/** 家具分组：清单里的 group 字段，Grab3D 侧才有；Poly Haven 的现代家具归入按品类推导的组 */
+export const FURNITURE_GROUPS: { id: string; label: string }[] = [
+  { id: 'seat', label: '沙发椅凳' },
+  { id: 'bed', label: '床与卧室' },
+  { id: 'table', label: '桌' },
+  { id: 'storage', label: '柜与收纳' },
+  { id: 'soft', label: '软装' },
+  { id: 'decor', label: '装饰' },
+  { id: 'plant', label: '绿植' },
+  { id: 'light', label: '灯具' },
+  { id: 'kitchen', label: '厨房' },
+  { id: 'bath', label: '卫浴' },
+  { id: 'laundry', label: '洗衣' },
+  { id: 'other', label: '其他' },
+]
+
 type Props = {
   designOptions: DesignSheet[]
   gltfAssets: ProjectAsset[]
@@ -17,6 +33,11 @@ type Props = {
   /** 家具目录里 Grab3D 补库件的数量（显示在摘要里） */
   furnitureGapFillCount: number
   furnitureReady: boolean
+  /** 家具分组筛选；空串表示不筛 */
+  furnitureGroup: string
+  onFurnitureGroup: (g: string) => void
+  /** 每个分组的件数，用于 chip 上的计数 */
+  furnitureGroupCounts: Record<string, number>
   propSource: PropSource
   onPropSource: (s: PropSource) => void
   propQuery: string
@@ -43,6 +64,9 @@ export default function Material3dAddPanel({
   animalsReady,
   furnitureGapFillCount,
   furnitureReady,
+  furnitureGroup,
+  onFurnitureGroup,
+  furnitureGroupCounts,
   propSource,
   onPropSource,
   propQuery,
@@ -281,6 +305,30 @@ export default function Material3dAddPanel({
                       : !itchProps.length
               }
             />
+            {propSource === 'cc0' ? (
+              <div className="m3d-group-chips" role="group" aria-label="家具分组">
+                <button
+                  type="button"
+                  className={`btn-mini ${furnitureGroup ? '' : 'on'}`}
+                  data-m3d-group=""
+                  onClick={() => onFurnitureGroup('')}
+                >
+                  全部
+                </button>
+                {FURNITURE_GROUPS.filter((g) => (furnitureGroupCounts[g.id] || 0) > 0).map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`btn-mini ${furnitureGroup === g.id ? 'on' : ''}`}
+                    data-m3d-group={g.id}
+                    onClick={() => onFurnitureGroup(furnitureGroup === g.id ? '' : g.id)}
+                  >
+                    {g.label}
+                    <span>{furnitureGroupCounts[g.id]}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <p className="m3d-meta-line">{catalogHint}</p>
             <ul className="m3d-catalog m3d-catalog-scroll">
               {catalogRows.length === 0 ? (
