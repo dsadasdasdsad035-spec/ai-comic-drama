@@ -3,13 +3,11 @@ import type { AppSettings } from './api'
 import type { NarratorVoice } from './api'
 import { listVoicesCached, type VoiceOption } from './api'
 import {
-  buildNarrationPayload,
   extractNarrationLines,
   narrationVoiceStale,
   type NarratorVoiceConfig,
 } from './narration'
 import type { ShotData } from './types'
-import { parseDialogue } from './prompts'
 import GenErrorNote from './GenErrorNote'
 
 type Props = {
@@ -21,8 +19,8 @@ type Props = {
 }
 
 export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoice, onGenerate, settings }: Props) {
-  const lines = useMemo(() => extractNarrationLines(parseDialogue(data.dialogue)), [data.dialogue])
-  const parsed = useMemo(() => parseDialogue(data.dialogue), [data.dialogue])
+  // extractNarrationLines 自己会按文本/结构化两种形态解析台词，这里不必先 parseDialogue
+  const lines = useMemo(() => extractNarrationLines(data.dialogue), [data.dialogue])
   const stale = useMemo(
     () =>
       narrationVoiceStale(
@@ -53,9 +51,6 @@ export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoic
   }, [modelKey])
 
   const ready = Boolean(narratorVoice?.modelKey && narratorVoice?.voiceId && lines.length)
-  const payloadOk = Boolean(
-    narratorVoice && buildNarrationPayload({ dialogue: parsed, dialogueDelivery: data.dialogueDelivery, narrator: narratorVoice }),
-  )
 
   const setModel = (mk: string) => {
     const voiceId = narratorVoice?.voiceId && voices.some((v) => v.id === narratorVoice.voiceId) ? narratorVoice.voiceId : ''
@@ -65,6 +60,25 @@ export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoic
     if (!modelKey) return
     onSaveNarratorVoice({ modelKey, voiceId })
   }
+
+  /**
+   * 音色为空时自动选第一个可用音色。
+   *
+   * 为什么必须自动：换引擎会清空 voiceId（不同引擎的音色不通用，这是对的），
+   * 但清空后「生成旁白」就一直是置灰状态，而面板收在折叠区里、用户看不出
+   * 少选了什么。实测就是「我选了音色，按钮还是灰的」。
+   *
+   * 只在 voiceId 为空时补，不覆盖用户已选的音色。
+   */
+  useEffect(() => {
+    if (!modelKey || narratorVoice?.voiceId) return
+    const first = voices[0]?.id
+    if (!first) return
+    onSaveNarratorVoice({ modelKey, voiceId: first })
+    // 依赖刻意只含 modelKey 与首个音色：voices 数组每次拉取都是新引用，
+    // 把它放进依赖会在音色加载完成时重复触发（虽然被 voiceId 判空挡住，但没必要）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelKey, voices, narratorVoice?.voiceId])
 
   return (
     <div className="field narration-panel">
@@ -110,7 +124,15 @@ export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoic
         <button
           type="button"
           className="btn-primary"
-          disabled={!ready || !payloadOk || data.voiceState === 'running'}
+          disabled={data.voiceState === 'running'}
+          data-narration-generate
+          title={
+            !ready
+              ? !lines.length
+                ? '这一镜没有旁白行（说话人写「旁白」「画外音」「VO」等）'
+                : '请先选择旁白引擎与音色'
+              : undefined
+          }
           onClick={onGenerate}
         >
           {data.voiceState === 'running' ? '生成中…' : data.voiceUrl ? '重新生成旁白' : '生成旁白'}
