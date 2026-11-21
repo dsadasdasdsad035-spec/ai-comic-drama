@@ -1,0 +1,4 @@
+储物柜（School Lockers）— Grab3D school-locker
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/furniture/school-locker/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

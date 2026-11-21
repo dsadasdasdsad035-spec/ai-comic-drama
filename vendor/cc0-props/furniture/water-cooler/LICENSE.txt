@@ -1,0 +1,4 @@
+饮水机（Water Cooler）— Grab3D water-cooler
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/electronics/water-cooler/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

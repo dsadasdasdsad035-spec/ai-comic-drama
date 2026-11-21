@@ -3,7 +3,7 @@
   "source": "https://grab3d.com",
   "license": "CC0 1.0 (Grab3D)",
   "note": "现代家居家具与软装 93 件（沙发/床/桌/椅/柜/软装/绿植/灯具/厨卫/收纳）；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
-  "updatedAt": "2026-11-21T11:39:47.203Z",
+  "updatedAt": "2026-11-21T12:27:19.908Z",
   "entries": [
     {
       "id": "sofa",
@@ -916,6 +916,78 @@
       "license": "CC0-1.0",
       "group": "storage",
       "page": "https://grab3d.com/models/furniture/ladder-shelf/"
+    },
+    {
+      "id": "notice_board",
+      "slug": "notice-board",
+      "title": "公告板",
+      "titleEn": "Notice Board",
+      "file": "notice-board.glb",
+      "bytes": 2214488,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/city/notice-board/"
+    },
+    {
+      "id": "whiteboard",
+      "slug": "whiteboard",
+      "title": "白板",
+      "titleEn": "Whiteboard",
+      "file": "whiteboard.glb",
+      "bytes": 1106096,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/whiteboard/"
+    },
+    {
+      "id": "projector",
+      "slug": "projector",
+      "title": "投影仪",
+      "titleEn": "Projector",
+      "file": "projector.glb",
+      "bytes": 1044188,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "light",
+      "page": "https://grab3d.com/models/electronics/projector/"
+    },
+    {
+      "id": "water_cooler",
+      "slug": "water-cooler",
+      "title": "饮水机",
+      "titleEn": "Water Cooler",
+      "file": "water-cooler.glb",
+      "bytes": 675304,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/electronics/water-cooler/"
+    },
+    {
+      "id": "school_locker",
+      "slug": "school-locker",
+      "title": "储物柜",
+      "titleEn": "School Lockers",
+      "file": "school-locker.glb",
+      "bytes": 1524652,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "storage",
+      "page": "https://grab3d.com/models/furniture/school-locker/"
+    },
+    {
+      "id": "office_divider",
+      "slug": "office-divider",
+      "title": "办公隔断",
+      "titleEn": "Office Divider",
+      "file": "office-divider.glb",
+      "bytes": 611348,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/office-divider/"
     }
   ],
   "samples": [
@@ -1906,6 +1978,84 @@
       ],
       "group": "storage",
       "url": "/cc0-props/furniture/ladder-shelf/ladder-shelf.glb"
+    },
+    {
+      "id": "notice_board",
+      "title": "公告板",
+      "titleEn": "Notice Board",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/notice-board/notice-board.glb"
+    },
+    {
+      "id": "whiteboard",
+      "title": "白板",
+      "titleEn": "Whiteboard",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/whiteboard/whiteboard.glb"
+    },
+    {
+      "id": "projector",
+      "title": "投影仪",
+      "titleEn": "Projector",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "light",
+      "url": "/cc0-props/furniture/projector/projector.glb"
+    },
+    {
+      "id": "water_cooler",
+      "title": "饮水机",
+      "titleEn": "Water Cooler",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/water-cooler/water-cooler.glb"
+    },
+    {
+      "id": "school_locker",
+      "title": "储物柜",
+      "titleEn": "School Lockers",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "storage",
+      "url": "/cc0-props/furniture/school-locker/school-locker.glb"
+    },
+    {
+      "id": "office_divider",
+      "title": "办公隔断",
+      "titleEn": "Office Divider",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/office-divider/office-divider.glb"
     }
   ]
 }
