@@ -110,7 +110,7 @@ export default function EpisodeScriptImportDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="script-intake-title"
-        data-board-import-script
+        data-script-import
       >
         <header className="mp-head">
           <div>

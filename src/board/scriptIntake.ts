@@ -1,5 +1,6 @@
 import type { ProjectEpisode } from '../api'
 import { mergeScriptDraft } from '../agent/drafts'
+import { parseScriptMarkdown } from '../intake/scriptMarkdown'
 import { validateContract } from '../skills/contracts'
 
 export function episodesFromScriptJson(raw: unknown): ProjectEpisode[] {
@@ -33,4 +34,19 @@ export function planScriptImport(
     updated: merged.updated,
     summary: `导入分集：新增 ${merged.added} 集 · 更新 ${merged.updated} 集`,
   }
+}
+
+/** 详情页源码编辑写回：解析 Markdown 并合并到当前 episodes */
+export function applyEpisodeScriptMarkdownFromText(
+  current: ProjectEpisode[],
+  raw: string,
+  hintEpNo?: number,
+): { episodes: ProjectEpisode[]; summary: string } {
+  const parsed = parseScriptMarkdown(raw, { hintEpNo })
+  if (!parsed.ok) throw new Error(parsed.error)
+  const incoming = episodesFromScriptJson({ episodes: parsed.episodes })
+  const plan = planScriptImport(current, incoming)
+  const bits = [`更新 ${plan.updated} 集`]
+  if (plan.added) bits.unshift(`新增 ${plan.added} 集`)
+  return { episodes: plan.episodes, summary: `已写回剧本：${bits.join(' · ')}` }
 }

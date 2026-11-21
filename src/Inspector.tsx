@@ -319,6 +319,73 @@ function AssetPanel({
   )
 }
 
+function ShotClipFrameActions({
+  hasVideo,
+  hasPrevShot,
+  showLinkPrev,
+  onPublishClipFrame,
+  onLinkPrevShotTail,
+}: {
+  hasVideo: boolean
+  hasPrevShot: boolean
+  showLinkPrev: boolean
+  onPublishClipFrame?: (role: 'head' | 'tail') => Promise<{ title: string; notice?: string }>
+  onLinkPrevShotTail?: () => Promise<{ title: string; notice?: string }>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [note, setNote] = useState('')
+  if (!hasVideo || (!onPublishClipFrame && !onLinkPrevShotTail)) return null
+  const run = async (fn: () => Promise<{ notice?: string } | void>) => {
+    setBusy(true)
+    setError('')
+    setNote('')
+    try {
+      const r = await fn()
+      if (r && 'notice' in r && r.notice) setNote(r.notice)
+    } catch (e) {
+      setError((e as Error).message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="si-clip-frame-actions">
+      <div className="si-clip-frame-btns">
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy || !onPublishClipFrame}
+          onClick={() => void run(() => onPublishClipFrame!('head'))}
+        >
+          {busy ? '抽帧中…' : '抽首帧 → 素材卡'}
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy || !onPublishClipFrame}
+          onClick={() => void run(() => onPublishClipFrame!('tail'))}
+        >
+          {busy ? '抽帧中…' : '抽尾帧 → 素材卡'}
+        </button>
+        {showLinkPrev ? (
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={busy || !hasPrevShot || !onLinkPrevShotTail}
+            title={!hasPrevShot ? '集内第一镜或没有上一镜' : undefined}
+            onClick={() => void run(onLinkPrevShotTail!)}
+          >
+            引用上一镜尾帧
+          </button>
+        ) : null}
+      </div>
+      {error ? <GenErrorNote message={error} /> : null}
+      {note ? <div className="gen-note vp-field-note">{note}</div> : null}
+    </div>
+  )
+}
+
 type Props = {
   node: ShotNodeType | null
   patch: (id: string, patch: Partial<ShotData>) => void
@@ -356,6 +423,9 @@ type Props = {
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
   onAddAssetCard?: (input: { title: string; kind: string; url: string }) => void
+  hasPrevShot?: boolean
+  onPublishClipFrame?: (role: 'head' | 'tail') => Promise<{ title: string; notice?: string }>
+  onLinkPrevShotTail?: () => Promise<{ title: string; notice?: string }>
 }
 
 function ShotLexiconRefBlock({
@@ -642,6 +712,9 @@ function InspectorBody({
   stagePick,
   onPickStage,
   onAddAssetCard,
+  hasPrevShot,
+  onPublishClipFrame,
+  onLinkPrevShotTail,
 }: BodyProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [pickVideo, setPickVideo] = useState('')
@@ -1036,6 +1109,17 @@ function InspectorBody({
                 }}
               />
             </label>
+          {d.videoUrl ? (
+            <div className="si-video-preview si-video-preview--visual">
+              <video src={d.videoUrl} muted loop playsInline controls preload="metadata" />
+              <ShotClipFrameActions
+                hasVideo
+                hasPrevShot={Boolean(hasPrevShot)}
+                showLinkPrev={false}
+                onPublishClipFrame={onPublishClipFrame}
+              />
+            </div>
+          ) : null}
             {d.refImage && (
               <button
                 className="btn-ghost"
@@ -1194,6 +1278,13 @@ function InspectorBody({
             <a className="btn-ghost vid-save" href={d.videoUrl} download={`${d.shotId || d.no}.mp4`}>
               保存成片
             </a>
+            <ShotClipFrameActions
+              hasVideo
+              hasPrevShot={Boolean(hasPrevShot)}
+              showLinkPrev
+              onPublishClipFrame={onPublishClipFrame}
+              onLinkPrevShotTail={onLinkPrevShotTail}
+            />
           </div>
         )}
         {videoRequest ? (

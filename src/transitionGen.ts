@@ -1,4 +1,5 @@
-import { extractFrames, type ModelEntry } from './api'
+import { type ModelEntry } from './api'
+import { clipBoundaryFrames, DARK_FRAME_YAVG } from './clipBoundaryFrames'
 import { parseDialogue } from './prompts'
 import {
   audioRefCapabilitiesFor,
@@ -59,47 +60,6 @@ export type TransitionRef = {
   source: 'character' | 'asset' | 'extra'
 }
 
-/** 缓存里存原始 YAVG（不是布尔），阈值调整后不会命中旧判定 */
-const frameCache = new Map<string, { start?: string; end?: string; startYavg?: number; endYavg?: number }>()
-
-/**
- * 尾帧用负时间表示「距片尾秒数」（/api/frames → ffmpeg -sseof）。
- * 注意它只是解码窗口起点：服务端用 `-update 1` 解码到片尾，落盘的才是真末帧。
- */
-const TAIL_FRAME_SSEOF_SEC = -0.1
-
-/** 近黑阈值，与服务端 `/api/frames` 的判黑阈值保持一致（约占 7% 亮度） */
-const DARK_FRAME_YAVG = 18
-
-/** 视频首帧/尾帧；同一 URL 只抽一次；只缓存首尾都成功的结果，避免尾帧失败后永久回退静帧。 */
-async function videoFrames(url: string): Promise<{ start?: string; end?: string; startYavg?: number; endYavg?: number }> {
-  const hit = frameCache.get(url)
-  if (hit?.start && hit?.end) return hit
-  try {
-    const first = await extractFrames(url, 2, undefined, [0])
-    const startYavg = first.stats?.[0]?.yavg
-    let end: string | undefined
-    let endYavg: number | undefined
-    try {
-      const last = await extractFrames(url, 2, undefined, [TAIL_FRAME_SSEOF_SEC])
-      end = last.urls[0]
-      endYavg = last.stats?.[0]?.yavg
-    } catch {
-      end = undefined
-    }
-    const out = {
-      start: first.urls[0],
-      end,
-      ...(startYavg === undefined ? {} : { startYavg }),
-      ...(endYavg === undefined ? {} : { endYavg }),
-    }
-    if (out.start && out.end) frameCache.set(url, out)
-    return out
-  } catch {
-    return {}
-  }
-}
-
 /**
  * 边界帧只从成片抽取：上一镜成片尾帧、下一镜成片首帧。
  * 没有成片或抽帧失败都留空并给 warning；不回退静帧。
@@ -115,7 +75,7 @@ export async function ensureTransitionBoundary(
   let inn: string | undefined
 
   if (source.data.videoUrl) {
-    const f = await videoFrames(String(source.data.videoUrl))
+    const f = await clipBoundaryFrames(String(source.data.videoUrl))
     if (f.end) {
       out = f.end
       if (f.endYavg !== undefined && f.endYavg < DARK_FRAME_YAVG) {
@@ -127,7 +87,7 @@ export async function ensureTransitionBoundary(
   }
 
   if (target.data.videoUrl) {
-    const f = await videoFrames(String(target.data.videoUrl))
+    const f = await clipBoundaryFrames(String(target.data.videoUrl))
     if (f.start) {
       inn = f.start
       if (f.startYavg !== undefined && f.startYavg < DARK_FRAME_YAVG) {

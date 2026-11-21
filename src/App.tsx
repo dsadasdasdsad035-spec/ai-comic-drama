@@ -77,13 +77,14 @@ import {
 } from './canvasShotOps'
 import { formatEpisodeLabel, reconcileProjectShots } from './shotRows'
 import BoardEpisodeGrid from './board/BoardEpisodeGrid'
+import ScriptEpisodeHub from './board/ScriptEpisodeHub'
+import ScriptEpisodeDetail from './board/ScriptEpisodeDetail'
 import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
-import EpisodeScriptDetailDialog from './board/EpisodeScriptDetailDialog'
+import { applyEpisodeScriptMarkdownFromText } from './board/scriptIntake'
 import { episodeScriptUi } from './board/episodeScriptUi'
 import {
   blankEpisode,
   episodeHasScript,
-  findEpisode,
   nextEpisodeNo,
   planDeleteEpisodeScript,
 } from './board/episodeOps'
@@ -136,7 +137,18 @@ import {
   resolveVoiceForSpeaker,
 } from './voiceCatalog'
 import { audioCost, imageCost, money, normalizePricing, videoCost, type Pricing } from './pricing'
-import { collectShotReferences, currentShotImage, hasNeighborReference, limitReferences, neighborReferenceItems, SHOT_NEXT, SHOT_PREV } from './shotReferences'
+import {
+  collectShotReferences,
+  currentShotImage,
+  hasNeighborReference,
+  limitReferences,
+  neighborReferenceItems,
+  neighborShots,
+  SHOT_NEXT,
+  SHOT_PREV,
+} from './shotReferences'
+import { extractSingleClipFrame, type ClipFrameRole } from './clipBoundaryFrames'
+import { buildClipFrameAssetFields, findClipFrameAssetNode } from './clipFrameAssets'
 import { refreshPromptRenderTemplateVersion } from './promptRender'
 import {
   buildShotVideoRequest,
@@ -423,6 +435,9 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       url?: string
       designId?: string
       characterName?: string
+      sourceShotId?: string
+      frameRole?: 'head' | 'tail'
+      sourceClipFingerprint?: string
     }
     const canvasId = canvasIdFromNodeId(n.id)
     out.push({
@@ -431,6 +446,9 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       url: d.url || '',
       ...(d.designId ? { designId: d.designId } : {}),
       ...(d.characterName ? { characterName: d.characterName } : {}),
+      ...(d.sourceShotId ? { sourceShotId: d.sourceShotId } : {}),
+      ...(d.frameRole ? { frameRole: d.frameRole } : {}),
+      ...(d.sourceClipFingerprint ? { sourceClipFingerprint: d.sourceClipFingerprint } : {}),
       ...(canvasId ? { canvasId } : {}),
     })
   }
@@ -655,8 +673,12 @@ function Shell() {
   const [epVersion, setEpVersion] = useState(0)
   /** 画布两阶段：集目录 → 单集 Flow；不持久化，刷新与左栏进画布回落目录 */
   const [boardPhase, setBoardPhase] = useState<'episodes' | 'canvas'>('episodes')
+  const [scriptPhase, setScriptPhase] = useState<'list' | 'detail'>('list')
+  const [scriptDetailEpNo, setScriptDetailEpNo] = useState<number | null>(null)
+  /** 返回书架后的「上次读到」：与 scriptDetailEpNo 分开，后者回列表就被清空 */
+  const [scriptLastReadEpNo, setScriptLastReadEpNo] = useState<number | null>(null)
+  const [scriptLastReadSceneNo, setScriptLastReadSceneNo] = useState<number | null>(null)
   const [scriptImportOpen, setScriptImportOpen] = useState(false)
-  const [episodeScriptDetailEpNo, setEpisodeScriptDetailEpNo] = useState<number | null>(null)
   const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
   const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
   const [addEpisodePromptOpen, setAddEpisodePromptOpen] = useState(false)
@@ -826,6 +848,13 @@ function Shell() {
     if (route.kind === 'project') writeLastView(route.project, route.view)
   }, [route])
 
+  useEffect(() => {
+    if (view !== 'script' || scriptPhase !== 'detail') return
+    setScriptDetailEpNo(epNo)
+    // 进过详情就算「读过」：返回书架时该集常驻选中态
+    setScriptLastReadEpNo(epNo)
+  }, [view, scriptPhase, epNo])
+
   /** 切项目：剧本有未保存分集时先确认；切换期间禁止写回旧数据 */
   const changeProject = useCallback(
     (next: string) => {
@@ -897,10 +926,19 @@ function Shell() {
   const changeView = useCallback(
     (
       next: ViewId,
-      opts?: { settingsSection?: SettingsInitialSection; boardPhase?: 'episodes' | 'canvas' },
+      opts?: {
+        settingsSection?: SettingsInitialSection
+        boardPhase?: 'episodes' | 'canvas'
+        scriptPhase?: 'list' | 'detail'
+        scriptEpNo?: number
+      },
     ) => {
-      if (next === view && !opts?.settingsSection) {
+      if (next === view && !opts?.settingsSection && opts?.scriptEpNo == null && !opts?.scriptPhase && !opts?.boardPhase) {
         if (next === 'board') setBoardPhase('episodes')
+        if (next === 'script') {
+          setScriptPhase('list')
+          setScriptDetailEpNo(null)
+        }
         return
       }
       if (next === 'settings') {
@@ -911,10 +949,35 @@ function Shell() {
       if (next === 'board') {
         setBoardPhase(opts?.boardPhase ?? 'episodes')
       }
+      if (next === 'script') {
+        if (opts?.scriptEpNo != null) {
+          const no = Math.max(1, Math.floor(Number(opts.scriptEpNo) || 1))
+          setEpNo(no)
+          setScriptDetailEpNo(no)
+          setScriptPhase('detail')
+        } else if (opts?.scriptPhase) {
+          setScriptPhase(opts.scriptPhase)
+          if (opts.scriptPhase === 'list') setScriptDetailEpNo(null)
+        } else if (next !== view) {
+          setScriptPhase('list')
+          setScriptDetailEpNo(null)
+        }
+      }
       if (route.kind !== 'project') return
       navigate(projectHash(route.project, next))
     },
     [view, route],
+  )
+
+  const openScriptHub = useCallback(() => {
+    changeView('script', { scriptPhase: 'list' })
+  }, [changeView])
+
+  const openScriptEpisode = useCallback(
+    (no: number) => {
+      changeView('script', { scriptEpNo: no, scriptPhase: 'detail' })
+    },
+    [changeView],
   )
 
   /**
@@ -1001,6 +1064,25 @@ function Shell() {
       window.setTimeout(() => setToast(''), 3200)
     },
     [readyProject],
+  )
+
+  const handleApplyScriptMarkdownFromDetail = useCallback(
+    async (markdown: string, hintEpNo: number) => {
+      if (!readyProject) throw new Error('项目未就绪')
+      try {
+        const { episodes: nextEps, summary } = applyEpisodeScriptMarkdownFromText(episodes, markdown, hintEpNo)
+        await patchProject(readyProject, { episodes: nextEps })
+        setEpisodes(nextEps)
+        setEpVersion((v) => v + 1)
+        setToast(summary)
+        window.setTimeout(() => setToast(''), 3600)
+      } catch (e) {
+        setToast((e as Error).message || '剧本写回失败')
+        window.setTimeout(() => setToast(''), 3600)
+        throw e
+      }
+    },
+    [readyProject, episodes],
   )
 
   const requestDeleteEpisodeScript = useCallback(
@@ -2945,6 +3027,9 @@ function Shell() {
             url: asset.url,
             ...(asset.designId ? { designId: asset.designId } : {}),
             ...(asset.characterName ? { characterName: asset.characterName } : {}),
+            ...(asset.sourceShotId ? { sourceShotId: asset.sourceShotId } : {}),
+            ...(asset.frameRole ? { frameRole: asset.frameRole } : {}),
+            ...(asset.sourceClipFingerprint ? { sourceClipFingerprint: asset.sourceClipFingerprint } : {}),
           }
           if (at !== undefined) {
             const node = out[at]
@@ -2985,6 +3070,66 @@ function Shell() {
       window.setTimeout(() => setToast(''), 2400)
     },
     [setNodes],
+  )
+
+  /** 从分镜成片抽首/尾帧并发布为溯源素材卡（同镜同角色覆盖） */
+  const publishClipFrameForNode = useCallback(
+    async (shotNodeId: string, role: ClipFrameRole): Promise<{ token: string; title: string; notice?: string }> => {
+      const node = nodesRef.current.find((n) => n.id === shotNodeId)
+      if (!node) throw new Error('镜头不在画布上')
+      const videoUrl = String(node.data.videoUrl || '').trim()
+      if (!videoUrl) throw new Error('还没有成片')
+      const shotId = String(node.data.shotId || '').trim()
+      if (!shotId) throw new Error('镜头缺少业务 id')
+
+      const extracted = await extractSingleClipFrame(videoUrl, role)
+      if ('error' in extracted) throw new Error(extracted.error)
+
+      const baseFields = buildClipFrameAssetFields({
+        shotId,
+        shotNo: String(node.data.no || ''),
+        videoUrl,
+        frameUrl: extracted.url,
+        role,
+      })
+
+      const existingNode = findClipFrameAssetNode(nodesRef.current, shotId, role)
+      let token: string
+      if (existingNode) {
+        const cid = canvasIdFromNodeId(existingNode.id) || uid()
+        const merged = { ...baseFields, canvasId: cid }
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.id === existingNode.id ? ({ ...n, data: { ...n.data, ...merged } } as typeof n) : n,
+          ),
+        )
+        token = existingNode.id
+      } else {
+        const card = newAssetCard(nodesRef.current, baseFields as Record<string, unknown>)
+        token = card.id
+        setNodes((prev) => [...prev, card])
+      }
+      return { token, title: baseFields.title, notice: extracted.notice }
+    },
+    [setNodes],
+  )
+
+  /** 上一镜尾帧 → 素材卡 + 写入本镜 refIds（不改 shot-prev） */
+  const linkPrevShotTailFrame = useCallback(
+    async (targetNodeId: string) => {
+      const node = nodesRef.current.find((n) => n.id === targetNodeId)
+      if (!node) throw new Error('镜头不在画布上')
+      const { prev } = neighborShots(node, nodesRef.current)
+      if (!prev) throw new Error('没有上一镜')
+      if (!String(prev.data.videoUrl || '').trim()) throw new Error('上一镜还没有成片')
+      const pub = await publishClipFrameForNode(prev.id, 'tail')
+      const cur = node.data.refIds ?? []
+      if (!cur.includes(pub.token)) {
+        patch(targetNodeId, { refIds: [...cur, pub.token] })
+      }
+      return pub
+    },
+    [publishClipFrameForNode, patch],
   )
 
   /** 角色表情总图 → 画布：每个角色只有一张卡，重复发布只更新图片/标题。 */
@@ -4115,6 +4260,10 @@ function Shell() {
     ],
   )
   const selected = nodes.find((n) => n.id === selId) ?? null
+  const selectedHasPrevShot = useMemo(() => {
+    if (!selected || !selected.data.shotId) return false
+    return Boolean(neighborShots(selected, nodes).prev)
+  }, [selected, nodes])
   /** 选中镜头的出片请求预览；与 generateVideoOne 调用同一个纯拼装器 */
   const selectedVideoRequest = useMemo(() => {
     const type = (selected as unknown as { type?: string } | null)?.type
@@ -4129,6 +4278,26 @@ function Shell() {
       resolution: vidRes,
     })
   }, [selected, nodes, characters, missingMedia, selectedVideoModel, vidRes])
+
+  const handlePublishClipFrame = useCallback(
+    async (role: ClipFrameRole) => {
+      if (!selected) throw new Error('未选中镜头')
+      const r = await publishClipFrameForNode(selected.id, role)
+      setToast(r.notice ? `已发布：${r.title}（${r.notice}）` : `已发布素材卡：${r.title}`)
+      window.setTimeout(() => setToast(''), 3200)
+      return r
+    },
+    [selected, publishClipFrameForNode],
+  )
+
+  const handleLinkPrevShotTail = useCallback(async () => {
+    if (!selected) throw new Error('未选中镜头')
+    const r = await linkPrevShotTailFrame(selected.id)
+    setToast(r.notice ? `已引用上一镜尾帧：${r.title}（${r.notice}）` : `已引用上一镜尾帧：${r.title}`)
+    window.setTimeout(() => setToast(''), 3200)
+    return r
+  }, [selected, linkPrevShotTailFrame])
+
   const selEdge = selEdgeId ? edges.find((e) => e.id === selEdgeId) ?? null : null
   const selEdgeSource = selEdge ? nodes.find((n) => n.id === selEdge.source) ?? null : null
   const selEdgeTarget = selEdge ? nodes.find((n) => n.id === selEdge.target) ?? null : null
@@ -4209,7 +4378,9 @@ function Shell() {
           />
         }
         episodeSlot={
-          EPISODE_VIEWS.includes(view) && view !== 'board' ? (
+          view === 'script' && scriptPhase === 'detail' ? (
+            <EpPicker projectName={projectName} epNo={epNo} setEpNo={setEpNo} version={epVersion} />
+          ) : EPISODE_VIEWS.includes(view) && view !== 'board' ? (
             <EpPicker projectName={projectName} epNo={epNo} setEpNo={setEpNo} version={epVersion} />
           ) : null
         }
@@ -4270,6 +4441,47 @@ function Shell() {
               window.setTimeout(() => setToast(''), 2800)
             }}
           />
+        ) : view === 'script' ? (
+          scriptPhase === 'detail' && scriptDetailEpNo != null ? (
+            <ScriptEpisodeDetail
+              epNo={scriptDetailEpNo}
+              episodes={episodes}
+              shots={projectShots}
+              projectName={currentSummary.title || projectName}
+              projectStyle={projectStyle}
+              projectAspect={projectAspect}
+              refIndex={buildShotRefIndex(characters, nodes)}
+              onBack={() => {
+                setScriptPhase('list')
+                setScriptDetailEpNo(null)
+              }}
+              onEnterBoard={() => {
+                const n = scriptDetailEpNo
+                if (n == null) return
+                enterBoardEpisode(n)
+                changeView('board', { boardPhase: 'canvas' })
+              }}
+              onImportScript={() => {
+                setScriptHintEpNo(scriptDetailEpNo)
+                setScriptImportOpen(true)
+              }}
+              onDeleteEpisodeScript={() => requestDeleteEpisodeScript(scriptDetailEpNo)}
+              onApplyScriptMarkdown={(md) => handleApplyScriptMarkdownFromDetail(md, scriptDetailEpNo)}
+              onReadProgress={(sceneNo) => setScriptLastReadSceneNo(sceneNo)}
+            />
+          ) : (
+            <ScriptEpisodeHub
+              projectReady={readyProject === projectName && Boolean(projectName)}
+              episodes={episodes}
+              shots={projectShots}
+              projectTitle={currentSummary.title || projectName}
+              onOpenEpisode={openScriptEpisode}
+              onImportScript={openScriptImport}
+              onGoCreative={() => changeView('creative')}
+              lastEpNo={scriptLastReadEpNo}
+              lastSceneNo={scriptLastReadSceneNo}
+            />
+          )
         ) : view === 'assets' ? (
           <AssetBoard
             projectName={projectName}
@@ -4321,8 +4533,8 @@ function Shell() {
             shots={projectShots}
             onPick={enterBoardEpisode}
             onAddEpisode={() => void handleAddEpisode()}
-            onImportScript={openScriptImport}
-            onViewEpisodeScript={setEpisodeScriptDetailEpNo}
+            onOpenScript={openScriptEpisode}
+            onOpenScriptHub={openScriptHub}
             addBusy={addEpisodeBusy}
             projectTitle={currentSummary.title || projectName}
             refIndex={buildShotRefIndex(characters, nodes)}
@@ -4350,8 +4562,8 @@ function Shell() {
                     className="ep-chip ep-chip-script"
                     data-board-ep-label
                     data-has-script={episodeScriptUi(episodes, epNo).hasScript ? 'true' : 'false'}
-                    title="查看本集剧本大纲（标题、场次）；分镜仍在画布编辑"
-                    onClick={() => setEpisodeScriptDetailEpNo(epNo)}
+                    title="在剧本视图查看本集 Markdown 大纲"
+                    onClick={() => openScriptEpisode(epNo)}
                   >
                     <span className="ep-chip-no">{formatEpisodeLabel(epNo)}</span>
                     <span className="ep-chip-script-badge">
@@ -4814,6 +5026,9 @@ function Shell() {
             pick={modelPick}
             onPick={pickModelKey}
             onAddAssetCard={addAssetCardFromStock}
+            hasPrevShot={selectedHasPrevShot}
+            onPublishClipFrame={handlePublishClipFrame}
+            onLinkPrevShotTail={handleLinkPrevShotTail}
           />
           )}
         </main>
@@ -4832,32 +5047,6 @@ function Shell() {
         ) : null}
       </AppShell>
       )}
-
-        {episodeScriptDetailEpNo != null ? (
-          <EpisodeScriptDetailDialog
-            epNo={episodeScriptDetailEpNo}
-            episode={findEpisode(episodes, episodeScriptDetailEpNo)}
-            episodes={episodes}
-            shotCount={
-              projectShots.filter((s) => (Number(s.episode) || 1) === episodeScriptDetailEpNo).length
-            }
-            onClose={() => setEpisodeScriptDetailEpNo(null)}
-            onImportScript={() => {
-              setScriptHintEpNo(episodeScriptDetailEpNo)
-              setScriptImportOpen(true)
-            }}
-            onEnterBoard={() => {
-              const n = episodeScriptDetailEpNo
-              setEpisodeScriptDetailEpNo(null)
-              if (n != null) enterBoardEpisode(n)
-            }}
-            onDeleteEpisodeScript={() => {
-              const n = episodeScriptDetailEpNo
-              setEpisodeScriptDetailEpNo(null)
-              if (n != null) requestDeleteEpisodeScript(n)
-            }}
-          />
-        ) : null}
 
         {scriptImportOpen ? (
           <EpisodeScriptImportDialog

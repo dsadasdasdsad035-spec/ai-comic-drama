@@ -14,8 +14,8 @@ type Props = {
   shots: ProjectShot[]
   onPick: (epNo: number) => void
   onAddEpisode: () => void
-  onImportScript: () => void
-  onViewEpisodeScript: (epNo: number) => void
+  onOpenScript: (epNo: number) => void
+  onOpenScriptHub?: () => void
   addBusy?: boolean
   projectTitle?: string
   onNotice?: (msg: string) => void
@@ -42,12 +42,12 @@ function EpisodeCardCover({ kind, src }: { kind: 'keyframe' | 'clip' | 'none'; s
 
 function EpisodeDirToolbar({
   onAddEpisode,
-  onImportScript,
+  onOpenScriptHub,
   addBusy,
   canExport,
   exportTitle,
   onExportAll,
-}: Pick<Props, 'onAddEpisode' | 'onImportScript' | 'addBusy'> & {
+}: Pick<Props, 'onAddEpisode' | 'onOpenScriptHub' | 'addBusy'> & {
   canExport: boolean
   exportTitle: string
   onExportAll: () => void
@@ -60,12 +60,14 @@ function EpisodeDirToolbar({
           {addBusy ? '添加中…' : '新建分集'}
         </button>
       </div>
-      <div className="board-ep-toolgroup" aria-label="剧本">
-        <span className="board-ep-toollabel">剧本</span>
-        <button type="button" className="btn" data-board-import-script onClick={onImportScript}>
-          导入大纲
-        </button>
-      </div>
+      {onOpenScriptHub ? (
+        <div className="board-ep-toolgroup" aria-label="剧本">
+          <span className="board-ep-toollabel">剧本</span>
+          <button type="button" className="btn btn-ghost" data-board-goto-script onClick={onOpenScriptHub}>
+            去剧本中心
+          </button>
+        </div>
+      ) : null}
       <div className="board-ep-toolgroup" aria-label="分镜">
         <span className="board-ep-toollabel">分镜</span>
         <button
@@ -87,10 +89,10 @@ type CardProps = {
   row: ReturnType<typeof listBoardEpisodes>[number]
   episodes: ProjectEpisode[]
   onPick: (epNo: number) => void
-  onViewEpisodeScript: (epNo: number) => void
+  onOpenScript: (epNo: number) => void
 }
 
-function BoardEpisodeCard({ row, episodes, onPick, onViewEpisodeScript }: CardProps) {
+function BoardEpisodeCard({ row, episodes, onPick, onOpenScript }: CardProps) {
   const script = episodeScriptUi(episodes, row.no)
   const displayTitle = row.title || script.title || '未命名'
 
@@ -128,7 +130,7 @@ function BoardEpisodeCard({ row, episodes, onPick, onViewEpisodeScript }: CardPr
             type="button"
             className="btn-mini board-ep-btn-script"
             data-board-view-script={row.no}
-            onClick={() => onViewEpisodeScript(row.no)}
+            onClick={() => onOpenScript(row.no)}
           >
             看剧本
           </button>
@@ -150,8 +152,8 @@ export default function BoardEpisodeGrid({
   shots,
   onPick,
   onAddEpisode,
-  onImportScript,
-  onViewEpisodeScript,
+  onOpenScript,
+  onOpenScriptHub,
   addBusy,
   projectTitle,
   onNotice,
@@ -174,8 +176,8 @@ export default function BoardEpisodeGrid({
 
   const headCopy =
     rows.length === 0
-      ? '剧本决定场次与叙事节奏，分镜在画布里拆镜。先建分集或导入剧本大纲。'
-      : '每集两层：剧本大纲（标题与场次）与分镜镜头（画布）。封面取自本集第一条有画面的镜头。'
+      ? '分镜在画布里拆镜；剧本大纲在左侧「剧本」视图编辑或导入。'
+      : '封面取自本集第一条有画面的镜头；剧本详情在「剧本」视图查看。'
 
   if (!projectReady) {
     return (
@@ -195,7 +197,7 @@ export default function BoardEpisodeGrid({
           </div>
           <EpisodeDirToolbar
             onAddEpisode={onAddEpisode}
-            onImportScript={onImportScript}
+            onOpenScriptHub={onOpenScriptHub}
             addBusy={addBusy}
             canExport={canExport}
             exportTitle={exportTitle}
@@ -211,9 +213,11 @@ export default function BoardEpisodeGrid({
             <button type="button" className="btn primary" disabled={addBusy} onClick={onAddEpisode}>
               新建第一集
             </button>
-            <button type="button" className="btn" onClick={onImportScript}>
-              导入剧本大纲
-            </button>
+            {onOpenScriptHub ? (
+              <button type="button" className="btn" onClick={onOpenScriptHub}>
+                去剧本中心
+              </button>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -240,7 +244,7 @@ export default function BoardEpisodeGrid({
                 row={row}
                 episodes={episodes}
                 onPick={onPick}
-                onViewEpisodeScript={onViewEpisodeScript}
+                onOpenScript={onOpenScript}
               />
             ))}
           </div>

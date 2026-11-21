@@ -14,6 +14,15 @@ export type BoardEpisodeRow = {
   targetSeconds?: number
   shotCount: number
   cover: EpisodeCover
+  /** 集钩子；书封第二行与检索用，缺省为空串 */
+  hook: string
+  /** 该集是否登记了剧本（有 episodes 记录且至少一场） */
+  hasScript: boolean
+  sceneCount: number
+  /** 场次地点去重列表；书封检索用 */
+  places: string[]
+  /** 该集镜头 cast 里的角色名去重列表；书封检索用 */
+  castNames: string[]
 }
 
 function noNumber(no: string | undefined): number | null {
@@ -62,11 +71,31 @@ export function listBoardEpisodes(
   }
   const declared = episodes.map((e) => Number(e.no) || 1)
   const all = [...new Set([...declared, ...map.keys()])].filter((n) => n > 0).sort((a, b) => a - b)
-  return all.map((no) => ({
-    no,
-    title: episodes.find((e) => Number(e.no) === no)?.title?.trim() || '',
-    targetSeconds: episodes.find((e) => Number(e.no) === no)?.targetSeconds,
-    shotCount: map.get(no) ?? 0,
-    cover: resolveEpisodeCover(shots, no),
-  }))
+  return all.map((no) => {
+    const ep = episodes.find((e) => Number(e.no) === no)
+    const scenes = ep?.scenes ?? []
+    const places = [...new Set(scenes.map((sc) => String(sc.place ?? '').trim()).filter(Boolean))]
+    const castNames = [
+      ...new Set(
+        shots
+          .filter((s) => (Number(s.episode) || 1) === no)
+          .flatMap((s) => (s.cast ?? []).map((c) => String(c ?? '').trim()))
+          .filter(Boolean),
+      ),
+    ]
+    return {
+      no,
+      title: ep?.title?.trim() || '',
+      targetSeconds: ep?.targetSeconds,
+      shotCount: map.get(no) ?? 0,
+      cover: resolveEpisodeCover(shots, no),
+      hook: String(ep?.hook ?? '').trim(),
+      // 书架口径（spec）：无分集记录或场次为空都算缺剧本。
+      // 注意与 episodeScriptUi.hasScript 不同——那个按「是否登记分集」，供画布芯片用。
+      hasScript: scenes.length > 0,
+      sceneCount: scenes.length,
+      places,
+      castNames,
+    }
+  })
 }

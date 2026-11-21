@@ -736,6 +736,8 @@ export type ProjectEpisode = {
   scenes?: {
     no?: number
     slug?: string
+    /** 场次空间（内 / 外 / 内外），由剧本 Markdown 场标题解析 */
+    space?: string
     place?: string
     time?: string
     beats?: string
@@ -846,6 +848,12 @@ export type ProjectAsset = {
    * 首次进画布时生成一次并随素材卡落库；旧数据为空时由前端补写。
    */
   canvasId?: string
+  /** 成片帧溯源：业务镜 id（如 E01-S01） */
+  sourceShotId?: string
+  /** 成片首帧或尾帧 */
+  frameRole?: 'head' | 'tail'
+  /** 抽取时来源成片的指纹（路径哈希） */
+  sourceClipFingerprint?: string
 }
 
 export type DesignKind = 'scene' | 'prop'

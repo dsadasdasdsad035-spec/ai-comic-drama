@@ -1,6 +1,15 @@
 import { z } from 'zod'
 import { defineTool, type ToolDef } from './tool'
-import { listMedia, type ProjectData, type ProjectShot } from '../api'
+import { listMedia, patchProject, type ProjectData, type ProjectShot } from '../api'
+import { extractSingleClipFrame, type ClipFrameRole } from '../clipBoundaryFrames'
+import {
+  buildClipFrameAssetFields,
+  clipFrameAssetToken,
+  findClipFrameAsset,
+  mergeClipFrameIntoAssets,
+} from '../clipFrameAssets'
+import { appendRefToken } from '../clipFrameRef'
+import { uid } from '../types'
 import type { MaterialToolDeps } from './materialTools'
 import { isProjectMediaUrl } from '../assetCards'
 import { readCharacters } from '../charMap'
@@ -323,6 +332,123 @@ export function createSetShotNeighborRefsTool(deps: MaterialToolDeps): ToolDef {
         summary: `镜 ${shot.no} 已${mode === 'add' ? '添加' : '移除'}${neighbor === 'prev' ? '上' : '下'}一镜参考`,
         no: shot.no,
         refIds,
+      }
+    },
+  })
+}
+
+function prevShotInEpisode(project: ProjectData, ep: number, shot: ProjectShot): ProjectShot | undefined {
+  const list = (project.shots ?? [])
+    .filter((s) => (Number(s.episode) || 1) === ep)
+    .slice()
+    .sort((a, b) => String(a.no ?? '').localeCompare(String(b.no ?? ''), 'zh'))
+  const idx = list.findIndex((s) => s.id === shot.id)
+  if (idx <= 0) return undefined
+  return list[idx - 1]
+}
+
+async function upsertClipFrameAssetInProject(
+  projectName: string,
+  project: ProjectData,
+  shot: ProjectShot,
+  role: ClipFrameRole,
+): Promise<{ ok: true; token: string; title: string; notice?: string } | { ok: false; error: string }> {
+  const clip = String(shot.clip ?? '').trim()
+  if (!clip) return { ok: false, error: `镜 ${shot.no} 还没有成片` }
+  const extracted = await extractSingleClipFrame(clip, role)
+  if ('error' in extracted) return { ok: false, error: extracted.error }
+  const assets = [...(project.assets ?? [])]
+  const existing = findClipFrameAsset(assets, shot.id, role)
+  const canvasId = String(existing?.canvasId ?? '').trim() || uid()
+  const fields = buildClipFrameAssetFields({
+    shotId: shot.id,
+    shotNo: String(shot.no ?? ''),
+    videoUrl: clip,
+    frameUrl: extracted.url,
+    role,
+    canvasId,
+  })
+  const merged = mergeClipFrameIntoAssets(assets, fields)
+  await patchProject(projectName, { assets: merged })
+  return {
+    ok: true,
+    token: clipFrameAssetToken(canvasId),
+    title: fields.title,
+    notice: extracted.notice,
+  }
+}
+
+/** 从成片抽首/尾帧并写入项目素材库（画布下次水合可见） */
+export function createPublishShotClipFrameTool(deps: MaterialToolDeps): ToolDef {
+  return defineTool({
+    name: 'publish_shot_clip_frame',
+    description:
+      '【平台内置】从某镜成片抽取首帧或尾帧，发布/覆盖为溯源素材卡（sourceShotId+frameRole）。',
+    schema: z.object({
+      no: z.string().min(1),
+      episode: z.number().int().min(1).optional(),
+      role: z.enum(['head', 'tail']),
+    }),
+    run: async ({ no, episode, role }) => {
+      if (!deps.projectName().trim()) return { ok: false, error: NO_PROJECT }
+      const name = deps.projectName().trim()
+      let project: ProjectData
+      try {
+        project = await deps.load()
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : deps.epNo()
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const out = await upsertClipFrameAssetInProject(name, project, shot, role)
+      if (!out.ok) return out
+      deps.onChanged?.()
+      return {
+        ok: true,
+        summary: `镜 ${shot.no} 已发布${role === 'head' ? '首' : '尾'}帧素材：${out.title}`,
+        token: out.token,
+        ...(out.notice ? { notice: out.notice } : {}),
+      }
+    },
+  })
+}
+
+/** 上一镜尾帧素材写入本镜 refIds（不写入 shot-prev） */
+export function createLinkPrevShotTailFrameTool(deps: MaterialToolDeps): ToolDef {
+  return defineTool({
+    name: 'link_prev_shot_tail_frame',
+    description: '【平台内置】将上一镜成片尾帧发布为素材卡，并把对应 asset token 写入本镜 refIds。',
+    schema: z.object({
+      no: z.string().min(1),
+      episode: z.number().int().min(1).optional(),
+    }),
+    run: async ({ no, episode }) => {
+      if (!deps.projectName().trim()) return { ok: false, error: NO_PROJECT }
+      const name = deps.projectName().trim()
+      let project: ProjectData
+      try {
+        project = await deps.load()
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : deps.epNo()
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const prev = prevShotInEpisode(project, ep, shot)
+      if (!prev) return { ok: false, error: '没有上一镜' }
+      const pub = await upsertClipFrameAssetInProject(name, project, prev, 'tail')
+      if (!pub.ok) return pub
+      project = await deps.load()
+      const refIds = appendRefToken(shot.refIds, pub.token)
+      const written = await deps.writeShot(project, { ...shot, refIds })
+      if (!written.ok) return written
+      deps.onChanged?.()
+      return {
+        ok: true,
+        summary: `镜 ${shot.no} 已引用上一镜尾帧：${pub.title}`,
+        refIds,
+        token: pub.token,
       }
     },
   })

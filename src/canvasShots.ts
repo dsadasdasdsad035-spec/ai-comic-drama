@@ -50,6 +50,9 @@ export function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
         url: a.url,
         ...(a.designId ? { designId: a.designId } : {}),
         ...(a.characterName ? { characterName: a.characterName } : {}),
+        ...(a.sourceShotId ? { sourceShotId: a.sourceShotId } : {}),
+        ...(a.frameRole ? { frameRole: a.frameRole } : {}),
+        ...(a.sourceClipFingerprint ? { sourceClipFingerprint: a.sourceClipFingerprint } : {}),
       },
     } as unknown as ShotNodeType)
   })

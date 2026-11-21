@@ -28,6 +28,8 @@ import {
   createSetShotRefExtrasTool,
   createSetShotVideoOptionsTool,
   createSetShotVideoOverrideTool,
+  createPublishShotClipFrameTool,
+  createLinkPrevShotTailFrameTool,
 } from './shotVideoHarnessTools'
 
 /**
@@ -634,6 +636,8 @@ export function createMaterialTools(deps: MaterialToolDeps): ToolDef[] {
     createSetShotVideoOverrideTool(deps),
     createSetShotRefExtrasTool(deps),
     createSetShotNeighborRefsTool(deps),
+    createPublishShotClipFrameTool(deps),
+    createLinkPrevShotTailFrameTool(deps),
     createGenerateCharacterViewsTool(deps),
     createGenerateExpressionSheetTool(deps),
   ]

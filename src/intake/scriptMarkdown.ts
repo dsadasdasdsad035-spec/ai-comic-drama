@@ -89,6 +89,7 @@ export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHint
   type SceneAcc = {
     no: number
     slug: string
+    space: string
     place: string
     time: string
     beatsLines: string[]
@@ -140,6 +141,7 @@ export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHint
           current = {
             no: scNo,
             slug,
+            space: m.groups.space.trim(),
             place: m.groups.location.trim(),
             time: m.groups.time.trim(),
             beatsLines: [],
@@ -181,6 +183,7 @@ export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHint
         scenes: sorted.map((s) => ({
           no: s.no,
           slug: s.slug,
+          space: s.space,
           place: s.place,
           time: s.time,
           beats: s.beatsLines.join('\n').trim(),

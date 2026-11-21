@@ -37,6 +37,29 @@ export function boardEpisodeMatch(row: BoardEpisodeRow, q: string): boolean {
   )
 }
 
+/**
+ * 剧本书架检索：比画布集目录多覆盖钩子、场次地点与角色名。
+ * 不复用 `boardEpisodeMatch`——画布搜索不该命中这些字段。
+ */
+export function scriptEpisodeMatch(row: BoardEpisodeRow, q: string): boolean {
+  return includesQ(
+    [
+      String(row.no),
+      formatEpisodeLabel(row.no),
+      `EP${String(row.no).padStart(3, '0')}`,
+      row.title,
+      row.hook,
+      ...row.places,
+      ...row.castNames,
+      String(row.sceneCount),
+      String(row.shotCount),
+      row.hasScript ? '有剧本' : '缺剧本',
+      row.targetSeconds != null ? `${row.targetSeconds}` : '',
+    ].join(' '),
+    q,
+  )
+}
+
 export function episodePickerMatch(
   ep: { no: number; title?: string; hook?: string },
   shotCount: number,

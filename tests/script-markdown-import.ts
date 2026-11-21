@@ -6,6 +6,8 @@ import assert from 'node:assert/strict'
 import { detectFormat } from '../src/intake/format'
 import { parseScriptMarkdown, hasScriptSceneHeading } from '../src/intake/scriptMarkdown'
 import { episodesFromScriptJson } from '../src/board/scriptIntake'
+import { buildScriptEpisodeMarkdown } from '../src/intake/scriptExportMarkdown'
+import { validateContract } from '../src/skills/contracts'
 
 const SAMPLE = `# EP001 开篇
 
@@ -70,5 +72,26 @@ const combo = `${SAMPLE}
 `
 assert.equal(detectFormat(combo, { intake: 'script' }).kind, 'script-markdown')
 assert.equal(detectFormat(combo).kind, 'markdown-table')
+
+const roundTrip = parseScriptMarkdown(buildScriptEpisodeMarkdown(parsed.episodes[0]!, 1))
+assert.equal(roundTrip.ok, true)
+if (!roundTrip.ok) throw new Error('roundTrip')
+assert.equal(roundTrip.episodes[0]?.scenes?.length, 2)
+assert.equal(roundTrip.episodes[0]?.scenes?.[1]?.space, '外')
+const v = validateContract('script-v1', { episodes: roundTrip.episodes })
+assert.equal(v.ok, true, v.errors?.join('；'))
+
+const withHook = {
+  no: 3,
+  title: '无题',
+  hook: '一句钩子',
+  scenes: [{ no: 1, slug: 'EP003-SC001', space: '内', place: '家', time: '夜', beats: '正文' }],
+} as const
+const mdHook = buildScriptEpisodeMarkdown(withHook, 3)
+assert.match(mdHook, /> 一句钩子/)
+assert.match(mdHook, /EP003-SC001/)
+
+const emptyTitle = buildScriptEpisodeMarkdown({ no: 4, scenes: [] }, 4)
+assert.match(emptyTitle, /尚未填写场次/)
 
 console.log('script-markdown-import: ok')

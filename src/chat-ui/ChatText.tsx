@@ -54,12 +54,29 @@ const Table: NonNullable<Components['table']> = ({ node: _node, children, ...res
 export function ChatText({ text }: { text: string }) {
   return (
     <div className="chat-md" data-chat-md>
-      <Markdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        components={{ pre: Pre, code: Code, a: Anchor, table: Table }}
-      >
-        {text}
-      </Markdown>
+      <MarkdownBody text={text} />
     </div>
+  )
+}
+
+/**
+ * 纯 Markdown 渲染体：不包作用域类，由调用方决定排版域。
+ * 剧本阅读页用 `.reader-md`，聊天消息用 `.chat-md`，两者共用同一套
+ * remark 插件与元素覆盖，避免渲染逻辑分叉。
+ */
+export function MarkdownBody({
+  text,
+  components,
+}: {
+  text: string
+  components?: Components
+}) {
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm, remarkBreaks]}
+      components={{ pre: Pre, code: Code, a: Anchor, table: Table, ...components }}
+    >
+      {text}
+    </Markdown>
   )
 }

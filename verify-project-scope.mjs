@@ -155,19 +155,14 @@ try {
   check('A key 2 个 shotId', stB['storyboard-canvas-v1:A']?.shotIds === 2, JSON.stringify(stB['storyboard-canvas-v1:A']))
   check('B key 3 个 shotId', stB['storyboard-canvas-v1:B']?.shotIds === 3, JSON.stringify(stB['storyboard-canvas-v1:B']))
 
+  // 剧本已迁入独立视图且无本地未保存草稿；切项目不应再因剧本文本拦截
   await page.getByRole('button', { name: '剧本', exact: true }).click()
-  await page.waitForTimeout(500)
-  await page.locator('textarea').first().fill('未保存测试原文')
-  await page.waitForTimeout(200)
-  await sel.selectOption('A')
-  await page.waitForTimeout(500)
-  check('未保存时切项目会确认', /未保存/.test(dialogText), dialogText)
-  check('取消后仍在 B', (await sel.inputValue()) === 'B', await sel.inputValue())
-
-  dialogMode = 'accept'
+  await page.waitForTimeout(400)
+  await page.locator('[data-script-hub]').waitFor({ timeout: 10000 })
   await sel.selectOption('A')
   await page.waitForTimeout(1200)
-  check('确认后切到 A', (await sel.inputValue()) === 'A', await sel.inputValue())
+  check('无剧本文本草稿时切项目不确认', dialogText === '', JSON.stringify(dialogText))
+  check('切到 A', (await sel.inputValue()) === 'A', await sel.inputValue())
 
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.waitForTimeout(500)
