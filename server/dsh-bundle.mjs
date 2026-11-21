@@ -67,19 +67,67 @@ export function expectedBundles(dshHome) {
 }
 
 /**
+ * 插件需要但源码在 server/ 根目录的共享模块。
+ *
+ * 为什么不在 server/dsh-plugins/creative-tools/ 里放第二份：那会变成两份实现，
+ * 迟早不一致。这里在安装时从唯一来源复制过去，并且复制清单里已声明，
+ * copyPluginPackage 会校验它存在。
+ */
+const SHARED_PLUGIN_MODULES = ['studio-tool-aliases.mjs']
+
+/** 共享模块的源目录（server/ 根） */
+function sharedModuleDir(root) {
+  return path.join(root, 'server')
+}
+
+/**
+ * 把共享模块同步进插件源目录，使插件包自包含。
+ * 目标文件由 .gitignore 忽略（生成物，不属于源码树）。
+ * @returns 是否有变化
+ */
+function syncSharedModulesIntoPlugin(root, log) {
+  const from = sharedModuleDir(root)
+  const to = bundleSourceDir(root)
+  let changed = false
+  for (const file of SHARED_PLUGIN_MODULES) {
+    const src = path.join(from, file)
+    const dest = path.join(to, file)
+    if (!fs.existsSync(src)) throw new Error(`共享模块缺失：${src}`)
+    const next = fs.readFileSync(src, 'utf8')
+    const prev = fs.existsSync(dest) ? fs.readFileSync(dest, 'utf8') : null
+    if (prev !== next) {
+      fs.writeFileSync(dest, next, 'utf8')
+      changed = true
+      log(`[studio-bundle] 已同步共享模块 ${file} → ${path.relative(root, to)}`)
+    }
+  }
+  return changed
+}
+
+/**
  * 把插件源码复制进 profile 的 node_modules（内容相同则跳过）。
+ *
+ * 清单里的文件缺失时就**抛错**而不是跳过。这里曾静默 continue，
+ * 导致 index.js 新增的 import 没被一起部署时整个插件加载失败却无人察觉：
+ * 宿主只打一行 warn，界面上所有工具凭空消失，模型只能看到宿主自带工具。
+ * 宁可启动时报错，也好过半残的插件桥 —— 这与 creative-tools 插件
+ * 「缺 baseUrl/token 就整插件不注册」的取舍一致。
+ *
  * @returns 是否有变化
  */
 function copyPluginPackage(source, dest, files, log) {
   if (!fs.existsSync(path.join(source, 'index.js'))) {
     throw new Error(`插件源码缺失：${source}`)
   }
+  const missing = files.filter((file) => !fs.existsSync(path.join(source, file)))
+  if (missing.length) {
+    throw new Error(`插件源码缺文件：${missing.join('、')}（目录 ${source}）`)
+  }
   fs.mkdirSync(dest, { recursive: true })
   let changed = false
   for (const file of files) {
     const from = path.join(source, file)
     const to = path.join(dest, file)
-    if (!fs.existsSync(from)) continue
     const next = fs.readFileSync(from, 'utf8')
     const prev = fs.existsSync(to) ? fs.readFileSync(to, 'utf8') : null
     if (prev !== next) {
@@ -104,12 +152,19 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
     throw new Error(`工具桥插件源码缺失：${source}`)
   }
 
-  let changed = copyPluginPackage(
-    source,
-    dest,
-    ['index.js', 'package.json', 'cordis.patch.yml', 'shell-sync-tools.mjs'],
-    log,
-  )
+  // 先把共享模块同步进插件源目录，插件包才会自包含（index.js 用 './' 引用）
+  let changed = syncSharedModulesIntoPlugin(root, log)
+
+  if (
+    copyPluginPackage(
+      source,
+      dest,
+      ['index.js', 'package.json', 'cordis.patch.yml', 'shell-sync-tools.mjs', ...SHARED_PLUGIN_MODULES],
+      log,
+    )
+  ) {
+    changed = true
+  }
 
   // 专家闸门插件不是 bundle（它只被 preset 子插件列表按包名引用），
   // 但同样必须能被 profile 目录解析到，否则 preset 加载时会报找不到插件。

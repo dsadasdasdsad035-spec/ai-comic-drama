@@ -11,7 +11,11 @@
  * 这些都在应用侧；宿主只负责模型循环与会话。
  */
 import { STUDIO_SHELL_SYNC_TOOLS as DESTRUCTIVE_TOOLS } from './shell-sync-tools.mjs'
-import { expandStudioToolCatalog, resolveStudioToolName } from '../../studio-tool-aliases.mjs'
+// 必须用包内相对路径。这个插件会被 dsh-bundle 复制到
+// <profile>/node_modules/dsh-plugin-creative-tools/ 下运行，'../../' 会指到
+// profile 根目录；那里没有这个文件，插件加载直接抛 ERR_MODULE_NOT_FOUND，
+// 结果是 apply() 从未执行、所有工具静默消失（模型只看到宿主自带的 bash）。
+import { expandStudioToolCatalog, resolveStudioToolName } from './studio-tool-aliases.mjs'
 
 /** 与 server/studio-tool-bridge.mjs 的 INTERNAL_TOKEN_HEADER 保持一致 */
 const INTERNAL_TOKEN_HEADER = 'x-studio-internal'

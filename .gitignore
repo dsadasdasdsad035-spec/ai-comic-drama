@@ -117,6 +117,9 @@ vendor/cc0-props/*
 # itch 等平台自入库 3D 包（清单在 public/presets/itch-props）
 vendor/itch-props/
 
+# dsh 工具桥插件的共享模块副本（安装时从 server/ 同步，属生成物）
+server/dsh-plugins/creative-tools/studio-tool-aliases.mjs
+
 # Blender Bridge 运行时 profile（见 SB_STATE_ROOT）
 .blender-profile/
 
