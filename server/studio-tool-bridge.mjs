@@ -23,6 +23,7 @@ import {
 import { HOST_NATIVE_TOOLS } from './studio-host-tools.mjs'
 import { canvasContextForProject } from './studio-canvas-context.mjs'
 import { isStudioShellSyncTool } from './dsh-plugins/creative-tools/shell-sync-tools.mjs'
+import { expandStudioToolCatalog, resolveStudioToolName } from './studio-tool-aliases.mjs'
 
 const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
@@ -180,7 +181,7 @@ export class StudioToolBridge {
     if (this.catalogCache.generation === this.toolsGeneration && this.catalogCache.list) {
       return this.catalogCache.list
     }
-    const list = catalogFromTools([...tools.values()], this.log)
+    const list = expandStudioToolCatalog(catalogFromTools([...tools.values()], this.log))
     this.catalogBuilds += 1
     this.catalogCache = { generation: this.toolsGeneration, list }
     return list
@@ -194,7 +195,8 @@ export class StudioToolBridge {
   async invoke(name, args, { projectName, epNo, sessionToken, expertId } = {}) {
     const tools = await this.ensureLoaded(projectName, epNo)
     if (typeof this.resetReadSnapshot === 'function') this.resetReadSnapshot()
-    const tool = tools.get(name)
+    const resolvedName = resolveStudioToolName(name)
+    const tool = tools.get(resolvedName)
     if (!tool) {
       return { ok: false, error: `没有名为「${name}」的工具` }
     }
@@ -202,14 +204,18 @@ export class StudioToolBridge {
     this.invokeExpertAllowlist = expert ? resolveExpertSkillAllowlist(expert, this.root).ids : null
     if (expert) {
       const allowedTools = resolveExpertToolNames(expert, [...tools.keys()])
-      if (allowedTools && !allowedTools.has(name) && !HOST_NATIVE_TOOLS.includes(name)) {
+      if (
+        allowedTools &&
+        !allowedTools.has(resolvedName) &&
+        !HOST_NATIVE_TOOLS.includes(resolvedName)
+      ) {
         return {
           ok: false,
           error: `专家「${expert}」不允许使用工具「${name}」`,
         }
       }
       const skillAllow = resolveExpertSkillAllowlist(expert, this.root)
-      if (SKILL_ID_READ_TOOLS.has(name)) {
+      if (SKILL_ID_READ_TOOLS.has(resolvedName)) {
         const sid = String((args && typeof args === 'object' && (args.id || args.skillId)) || '').trim()
         if (sid && !skillAllow.ids.includes(sid)) {
           return {
@@ -236,7 +242,7 @@ export class StudioToolBridge {
       let result = await tool.run(parsed)
       if (
         expert &&
-        name === 'list_installed_skills' &&
+        resolvedName === 'list_installed_skills' &&
         result &&
         typeof result === 'object' &&
         result.ok !== false &&
@@ -257,7 +263,7 @@ export class StudioToolBridge {
         }
       }
       const failed = Boolean(result && typeof result === 'object' && result.ok === false)
-      if (!failed && isStudioShellSyncTool(name)) {
+      if (!failed && isStudioShellSyncTool(resolvedName)) {
         const written =
           parsed && typeof parsed === 'object' && parsed.project !== undefined
             ? String(parsed.project || '').trim()
@@ -267,7 +273,7 @@ export class StudioToolBridge {
       return {
         ok: !failed,
         ...(failed ? { error: String(result.error || result.message || '工具返回失败') } : {}),
-        summary: this.module.modelFacingResult(name, result),
+        summary: this.module.modelFacingResult(resolvedName, result),
         details: result,
       }
     } catch (e) {

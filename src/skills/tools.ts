@@ -69,6 +69,8 @@ export const KNOWN_TOOL_IDS = new Set([
   'set_shot_video_override',
   'set_shot_ref_extras',
   'set_shot_neighbor_refs',
+  'publish_shot_clip_frame',
+  'link_prev_shot_tail_frame',
   'submit_assets',
   // 创意会话：会话读、媒体摄取/分析、产物与生成
   'read_creative_session',

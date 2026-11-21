@@ -11,6 +11,7 @@
  * 这些都在应用侧；宿主只负责模型循环与会话。
  */
 import { STUDIO_SHELL_SYNC_TOOLS as DESTRUCTIVE_TOOLS } from './shell-sync-tools.mjs'
+import { expandStudioToolCatalog, resolveStudioToolName } from '../../studio-tool-aliases.mjs'
 
 /** 与 server/studio-tool-bridge.mjs 的 INTERNAL_TOKEN_HEADER 保持一致 */
 const INTERNAL_TOKEN_HEADER = 'x-studio-internal'
@@ -126,7 +127,7 @@ export function apply(ctx, config) {
     })
     if (!res.ok) throw new Error(`拉取工具清单失败：${res.status}`)
     const payload = await res.json()
-    const tools = Array.isArray(payload.tools) ? payload.tools : []
+    const tools = expandStudioToolCatalog(Array.isArray(payload.tools) ? payload.tools : [])
     const version = typeof payload.version === 'string' && payload.version ? payload.version : null
     return { tools, version }
   }
@@ -178,7 +179,7 @@ export function apply(ctx, config) {
                     internalToken,
                     '/api/studio/tools/execute',
                     {
-                      name: tool.name,
+                      name: resolveStudioToolName(tool.name),
                       args,
                       project: callProject,
                       episode: callEpisode,

@@ -69,6 +69,8 @@ const PROJECT = new Set([
   'set_shot_video_override',
   'set_shot_ref_extras',
   'set_shot_neighbor_refs',
+  'publish_shot_clip_frame',
+  'link_prev_shot_tail_frame',
 ])
 const GENERATE = new Set([
   'generate_keyframe',
@@ -146,6 +148,8 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'set_shot_video_override',
   'set_shot_ref_extras',
   'set_shot_neighbor_refs',
+  'publish_shot_clip_frame',
+  'link_prev_shot_tail_frame',
   'generate_character_views',
   'generate_expression_sheet',
   ...HOST_NATIVE_TOOLS,

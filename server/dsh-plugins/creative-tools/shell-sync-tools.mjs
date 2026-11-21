@@ -16,6 +16,8 @@ export const STUDIO_SHELL_SYNC_TOOLS = new Set([
   'set_character_visual',
   'set_shot_camera_lexicon',
   'link_shot_refs',
+  'publish_shot_clip_frame',
+  'link_prev_shot_tail_frame',
 ])
 
 export function isStudioShellSyncTool(name) {

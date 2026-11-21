@@ -188,10 +188,7 @@ const toolSpecs = {
   read_shot_detail: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
   read_shot_video_prompt: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
   read_shot_video_inputs: { args: { episode: 1, no: 'S01' }, expect: 'ok' },
-  // 夹具里 S01 → S02 配了一条 generated 转场，走真实投影而不是错误路径
-  read_transition_video_inputs: { args: { episode: 1, after_no: 'S01' }, expect: 'ok' },
   read_asset_inventory: { args: {}, expect: 'ok' },
-  read_transition_recipes: { args: { limit: 3 }, expect: 'ok' },
   list_camera_lexicon: { args: { limit: 2 }, expect: 'ok' },
   list_installed_skills: { args: {}, expect: 'ok' },
   list_experts: { args: {}, expect: 'ok' },
@@ -288,18 +285,15 @@ const toolSpecs = {
     reason: /找不到角色/,
   },
 
-  // ---- 转场参考 / 音频：夹具里 S01→S02 是一条 generated 转场 ----
-  attach_transition_refs: {
-    // 夹具没有给角色外观图，add 会因「没有外观图」被拒；关键是不能写入猜测值
-    args: { after_no: 'S01', kind: 'character', names: ['主角'] },
+  publish_shot_clip_frame: {
+    args: { no: 'S01', role: 'head' },
     expect: 'fail',
-    reason: /外观图|找不到|候选/,
+    reason: /成片|clip|视频|没有/,
   },
-  set_transition_audio: {
-    // 夹具的转场台词里没有唯一说话人，开启原生音频必须报可读原因且不写入
-    args: { after_no: 'S01', mode: 'native' },
+  link_prev_shot_tail_frame: {
+    args: { no: 'S02' },
     expect: 'fail',
-    reason: /说话人|台词|音色|样本|音频/,
+    reason: /成片|上一镜|视频|没有/,
   },
 
   // 包内文件读取：验收包只有 SKILL.md，读它必须成功（路径越界另有单测）

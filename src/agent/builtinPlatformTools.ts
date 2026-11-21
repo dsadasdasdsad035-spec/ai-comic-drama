@@ -292,6 +292,8 @@ export const PLATFORM_ACTION_TOOL_NAMES = [
   'set_shot_video_override',
   'set_shot_ref_extras',
   'set_shot_neighbor_refs',
+  'publish_shot_clip_frame',
+  'link_prev_shot_tail_frame',
   'generate_character_views',
   'generate_expression_sheet',
 ] as const
