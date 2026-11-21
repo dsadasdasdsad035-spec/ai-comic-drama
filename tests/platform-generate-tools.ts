@@ -110,7 +110,7 @@ async function main() {
   await check('三个生成工具都注册且进入清单', () => {
     const { tools } = makeTools()
     const names = tools.map((t) => t.name)
-    for (const n of ['generate_keyframe', 'generate_clip', 'generate_voice']) {
+    for (const n of ['generate_keyframe', 'generate_clip', 'generate_voice', 'generate_narration']) {
       assert.ok(names.includes(n), `${n} 未注册`)
     }
     assert.doesNotThrow(() => assertPlatformToolConsistency(names))

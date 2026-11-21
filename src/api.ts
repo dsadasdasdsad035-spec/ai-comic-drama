@@ -321,24 +321,6 @@ export async function waitVideo(
   }
 }
 
-export type { TransitionSuggestion } from './transitionSuggest'
-
-/** 两镜转场智能建议（规则 + 食谱索引，不触发出片） */
-export async function fetchTransitionSuggest(body: {
-  source: import('./types').ShotData
-  target: import('./types').ShotData
-  transitionOut?: import('./types').TransitionOut | null
-}) {
-  const r = await apiFetch('/api/transition/suggest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const j = await readJsonRes(r)
-  if (!j.ok) throw new Error(j.message || '转场建议失败')
-  return { suggestion: j.suggestion as import('./transitionSuggest').TransitionSuggestion }
-}
-
 // ---------- animatic 合成 ----------
 
 export type ExportSegment = {
@@ -880,12 +862,19 @@ export type DesignSheet = {
  */
 export type ProjectCanvasSpot = { key: string; x: number; y: number }
 
+export type NarratorVoice = {
+  modelKey: string
+  voiceId: string
+}
+
 export type ProjectData = {
   name?: string
   logline?: string
   source?: string
   style?: string
   aspect?: string
+  /** 画布旁白 TTS 声线（项目级，不进角色卡） */
+  narratorVoice?: NarratorVoice
   episodes?: ProjectEpisode[]
   characters?: unknown[]
   /** 素材库：场景 / 道具 / 参考图（画布素材卡的数据源） */
@@ -1029,6 +1018,7 @@ export type ProjectPatch = {
   aspect?: string
   /** 项目标题（显示名）；目录名不随之改变 */
   title?: string
+  narratorVoice?: NarratorVoice
 }
 
 /** 局部回写：只传的字段会更新，未传的一律保留 */

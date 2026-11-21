@@ -84,9 +84,13 @@ export function detectFormat(text: string, opts?: DetectFormatOptions): FormatRe
 
   const lines = trimmed.split(/\r?\n/).slice(0, 40)
 
-  // 2) short-drama 剧本 Markdown（分集导入优先于分镜表）
-  if (scriptIntake && hasScriptSceneHeading(trimmed)) {
-    return { kind: 'script-markdown', reason: '内容是 short-drama 剧本 Markdown' }
+  // 2) 分集剧本导入：非空即走零模型解析（宽松切场，不挡预览）
+  if (scriptIntake) {
+    const strict = hasScriptSceneHeading(trimmed)
+    return {
+      kind: 'script-markdown',
+      reason: strict ? '内容是 short-drama 剧本 Markdown' : '分集剧本文本（将尽力解析场次）',
+    }
   }
 
   // 3) Markdown 表格
@@ -108,16 +112,6 @@ export function detectFormat(text: string, opts?: DetectFormatOptions): FormatRe
     }
     if (minCommas >= 2 && commas.every((n) => n >= 2)) {
       return { kind: 'csv', reason: '内容是逗号分隔的表格' }
-    }
-  }
-
-  if (scriptIntake) {
-    if (jsonText.startsWith('{') || jsonText.startsWith('[')) {
-      return { kind: 'free-text', reason: '分集剧本导入仅支持 Markdown，请使用场次标题格式' }
-    }
-    return {
-      kind: 'free-text',
-      reason: '需要 short-drama 场次标题（## EP001-SC001 内 · 地点 · 时间）',
     }
   }
 

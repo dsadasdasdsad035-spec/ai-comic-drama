@@ -26,6 +26,11 @@ import { ASPECT_OPTIONS, isAspectOption } from '../project/aspect'
 import { resolveProdKind } from '../shotProdKind'
 import { dialogueToText, parseDialogue } from '../prompts'
 import { voiceFingerprint } from '../performance'
+import {
+  buildNarrationPayload,
+  extractNarrationLines,
+  voiceFingerprintNarration,
+} from '../narration'
 import { createStageToolSet, createPiNativeToolSet, type StageToolSet } from './stageTools'
 import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
 import { readCharacters, type ProjectChar } from '../charMap'
@@ -279,6 +284,7 @@ export const PLATFORM_ACTION_TOOL_NAMES = [
   'generate_keyframe',
   'generate_clip',
   'generate_voice',
+  'generate_narration',
   'link_shot_refs',
   'set_shot_camera_lexicon',
   'set_character_visual',
@@ -557,7 +563,13 @@ function createDeleteShotsTool(input: BuiltinPlatformCtx): ToolDef {
 
 /** 成本确认请求：出图/出片/配音都要先让用户看见钱 */
 export type BuiltinCostRequest = {
-  action: 'generate_keyframe' | 'generate_clip' | 'generate_voice' | 'generate_character_views' | 'generate_expression_sheet'
+  action:
+    | 'generate_keyframe'
+    | 'generate_clip'
+    | 'generate_voice'
+    | 'generate_narration'
+    | 'generate_character_views'
+    | 'generate_expression_sheet'
   title: string
   detail: string
   payload?: Record<string, unknown>
@@ -868,6 +880,87 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
   })
 }
 
+/** 旁白 TTS：仅旁白行，写 voiceUrl + voice_meta.scope=narration */
+function createGenerateNarrationTool(input: BuiltinPlatformCtx): ToolDef {
+  return defineTool({
+    name: 'generate_narration',
+    description:
+      '【平台内置】为一个分镜生成旁白配音（旁白/VO 行）。需项目已配置 narratorVoice。不进连播/导出。生成前须成本确认。',
+    schema: z.object({
+      no: z.string().min(1).describe('镜号，例如 S03'),
+      episode: z.number().int().min(1).optional().describe('集号；省略用当前集'),
+    }),
+    run: async ({ no, episode }) => {
+      const name = input.projectName.trim()
+      if (!name) return { ok: false, error: '请先在顶栏选择项目' }
+      let project: ProjectData
+      try {
+        project = await ensureProjectLoaded(input)
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+      const nv = project.narratorVoice
+      if (!nv?.modelKey || !nv.voiceId) {
+        return { ok: false, error: '项目未配置旁白声线（modelKey + voiceId）' }
+      }
+      const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : resolveEpNo(input)
+      const shot = findShot(project, ep, no)
+      if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
+      const narrLines = extractNarrationLines(shot.dialogue)
+      if (!narrLines.length) return { ok: false, error: `镜 ${shot.no} 没有旁白行` }
+      const payload = buildNarrationPayload({
+        dialogue: shot.dialogue,
+        dialogueDelivery: shot.dialogue_delivery,
+        narrator: nv,
+      })
+      if (!payload) return { ok: false, error: '无法组装旁白请求' }
+      const gate = await requireCost(input, {
+        action: 'generate_narration',
+        title: '生成旁白配音',
+        detail: `项目「${name}」第 ${ep} 集 镜 ${shot.no}`,
+        payload: { project: name, episode: ep, no: shot.no },
+      })
+      if (!gate.ok) return gate
+      try {
+        const body =
+          'lines' in payload
+            ? { lines: payload.lines, modelKey: payload.modelKey, project: name }
+            : {
+                text: (payload as { text: string }).text,
+                voice: (payload as { voice: string }).voice,
+                modelKey: payload.modelKey,
+                rate: (payload as { rate?: number }).rate,
+                performance: (payload as { performance?: import('../types').DialogueDelivery }).performance,
+                project: name,
+              }
+        const voice = await generateVoice(body)
+        if (!voice.url) return { ok: false, error: '配音渠道没有返回音频地址' }
+        const delivery = shot.dialogue_delivery
+        const next: ProjectShot = {
+          ...shot,
+          voice_meta: {
+            engine: voice.engine,
+            model: nv.modelKey,
+            voice: nv.voiceId,
+            scope: 'narration',
+            url: voice.url,
+            seconds: voice.seconds,
+            applied: voice.applied ?? [],
+            unsupported: voice.unsupported ?? [],
+            fingerprint: voiceFingerprintNarration(narrLines, delivery, nv),
+            createdAt: new Date().toISOString(),
+          },
+        }
+        const written = await writeShotBack(input, project, next)
+        if (!written.ok) return written
+        return { ok: true, summary: `镜 ${shot.no} 旁白已生成`, audio: voice.url, seconds: voice.seconds }
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message || String(e) }
+      }
+    },
+  })
+}
+
 /** 配音：成功写 audio_ref + voice_meta；失败不动原引用 */
 function createGenerateVoiceTool(input: BuiltinPlatformCtx): ToolDef {
   return defineTool({
@@ -967,6 +1060,7 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   byName.set('generate_keyframe', createGenerateKeyframeTool(input))
   byName.set('generate_clip', createGenerateClipTool(input))
   byName.set('generate_voice', createGenerateVoiceTool(input))
+  byName.set('generate_narration', createGenerateNarrationTool(input))
   for (const t of createMaterialTools({
     projectName: () => input.projectName,
     epNo: () => resolveEpNo(input),

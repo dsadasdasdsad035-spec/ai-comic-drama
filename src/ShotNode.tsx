@@ -435,12 +435,14 @@ function ShotNodeInner({ id, data, selected }: NodeProps<ShotNodeType>) {
           <span
             className={`shot-voice ${voiceOver ? 'over' : ''}`}
             title={
-              voiceOver
-                ? `配音 ${(data.voiceSeconds ?? 0).toFixed(1)}s 超过镜头 ${data.seconds.toFixed(1)}s，会被截断`
-                : `配音 ${(data.voiceSeconds ?? 0).toFixed(1)}s`
+              data.voiceMeta?.scope === 'narration'
+                ? `旁白试听 ${(data.voiceSeconds ?? 0).toFixed(1)}s（不进连播/导出）`
+                : voiceOver
+                  ? `配音 ${(data.voiceSeconds ?? 0).toFixed(1)}s 超过镜头 ${data.seconds.toFixed(1)}s，会被截断`
+                  : `配音 ${(data.voiceSeconds ?? 0).toFixed(1)}s（历史）`
             }
           >
-            {voiceOver ? '♪⚠' : '♪'}
+            {data.voiceMeta?.scope === 'narration' ? '旁' : voiceOver ? '♪⚠' : '♪'}
           </span>
         )}
       </div>

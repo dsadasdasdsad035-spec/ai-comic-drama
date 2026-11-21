@@ -170,6 +170,8 @@ export type DialogueCell = {
   lines: IntakeDialogueLine[]
   /** 旁白单独标出（说话人是旁白，不进 cast） */
   narrators: IntakeDialogueLine[]
+  /** 角色台词与旁白按单元格原文顺序排列（不含音效说明） */
+  speech: IntakeDialogueLine[]
   /** 音效/音乐等不产生台词的文字，保留备查 */
   sounds: string[]
   /** 是否有任何一条带表演标注 */
@@ -192,7 +194,7 @@ export function splitDialogueCell(raw: unknown): DialogueCell {
   const s = String(raw ?? '')
     .replace(/<br\s*\/?>/gi, '\n')
     .trim()
-  const out: DialogueCell = { lines: [], narrators: [], sounds: [], hasDelivery: false }
+  const out: DialogueCell = { lines: [], narrators: [], speech: [], sounds: [], hasDelivery: false }
   if (!s) return out
 
   // 先按句末标点 + 换行切成候选段，再逐段判断有没有说话人前缀
@@ -210,6 +212,7 @@ export function splitDialogueCell(raw: unknown): DialogueCell {
       const delivery = parseDialogueAnnotation(`${withAnn[2] ?? ''}${withAnn[3] ?? ''}`)
       if (delivery) out.hasDelivery = true
       const line: IntakeDialogueLine = { speaker, text, ...(delivery ?? {}) }
+      out.speech.push(line)
       if (NARRATOR.test(speaker)) out.narrators.push(line)
       else out.lines.push(line)
       continue

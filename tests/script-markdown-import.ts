@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { detectFormat } from '../src/intake/format'
 import { parseScriptMarkdown, hasScriptSceneHeading } from '../src/intake/scriptMarkdown'
-import { episodesFromScriptJson } from '../src/board/scriptIntake'
+import { episodesForScriptImport, episodesFromScriptJson } from '../src/board/scriptIntake'
 import { buildScriptEpisodeMarkdown } from '../src/intake/scriptExportMarkdown'
 import { validateContract } from '../src/skills/contracts'
 
@@ -31,6 +31,7 @@ const beats0 = parsed.episodes[0]?.scenes?.[0]?.beats ?? ''
 assert.match(beats0, /陈默：你来了/)
 assert.match(beats0, /\[VO\]/)
 
+episodesForScriptImport(parsed.episodes)
 episodesFromScriptJson({ episodes: parsed.episodes })
 
 const dualEp = `# EP001 甲
@@ -52,8 +53,26 @@ assert.deepEqual(
   [1, 2],
 )
 
-const bad = parseScriptMarkdown(`## EP001-SC001 外 · 只有地点`)
-assert.equal(bad.ok, false)
+const incomplete = parseScriptMarkdown(`## EP001-SC001 外 · 只有地点`)
+assert.equal(incomplete.ok, true)
+if (!incomplete.ok) throw new Error('incomplete heading')
+assert.equal(incomplete.episodes[0]?.scenes?.[0]?.time, '未注明时间')
+episodesForScriptImport(incomplete.episodes)
+
+const loose = parseScriptMarkdown(`## 第一场 内景 家 夜\n对白正文`, { hintEpNo: 2 })
+assert.equal(loose.ok, true)
+if (!loose.ok) throw new Error('loose')
+assert.equal(loose.episodes[0]?.no, 2)
+assert.match(loose.episodes[0]?.scenes?.[0]?.beats ?? '', /对白正文/)
+
+const plain = parseScriptMarkdown(`只有一段故事，没有标题。`, { hintEpNo: 3 })
+assert.equal(plain.ok, true)
+if (!plain.ok) throw new Error('plain')
+assert.equal(plain.episodes[0]?.no, 3)
+assert.equal(plain.episodes[0]?.scenes?.length, 1)
+assert.ok(plain.warnings.some((w) => /未识别场标题/.test(w)))
+
+assert.equal(detectFormat('随便一段字', { intake: 'script' }).kind, 'script-markdown')
 
 const mixed = `${SAMPLE}
 | 镜头 | 时间 |

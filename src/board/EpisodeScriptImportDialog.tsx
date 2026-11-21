@@ -1,11 +1,11 @@
 /**
- * 分集剧本导入：仅 Markdown，short-drama 场次标题零模型解析。
+ * 分集剧本导入：任意剧本文本零模型解析（宽进，规范格式可经创意 Agent 后修）。
  */
 import { useMemo, useRef, useState } from 'react'
 import type { ProjectEpisode } from '../api'
 import { detectFormat } from '../intake/format'
 import { parseScriptMarkdown } from '../intake/scriptMarkdown'
-import { episodesFromScriptJson, planScriptImport } from './scriptIntake'
+import { episodesForScriptImport, planScriptImport } from './scriptIntake'
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 
@@ -46,14 +46,14 @@ export default function EpisodeScriptImportDialog({
   const format = useMemo(() => detectFormat(raw, { intake: 'script' }), [raw])
 
   const parseResult = useMemo(() => {
-    if (format.kind !== 'script-markdown' || !raw.trim()) return null
+    if (!raw.trim()) return null
     return parseScriptMarkdown(raw, { hintEpNo })
-  }, [raw, format.kind, hintEpNo])
+  }, [raw, hintEpNo])
 
   const plan = useMemo(() => {
     if (!parseResult?.ok) return null
     try {
-      const incoming = episodesFromScriptJson({ episodes: parseResult.episodes })
+      const incoming = episodesForScriptImport(parseResult.episodes)
       return planScriptImport(episodes, incoming)
     } catch (e) {
       return { blocked: (e as Error).message } as const
@@ -66,8 +66,8 @@ export default function EpisodeScriptImportDialog({
       setError(`文件超过 4MB，请粘贴文本或拆分后再传`)
       return
     }
-    if (!/\.(md|markdown)$/i.test(file.name)) {
-      setError('分集剧本仅支持 .md / .markdown')
+    if (!/\.(md|markdown|txt)$/i.test(file.name)) {
+      setError('分集剧本支持 .md / .markdown / .txt')
       return
     }
     setError('')
@@ -94,13 +94,7 @@ export default function EpisodeScriptImportDialog({
     }
   }
 
-  const parseError =
-    parseResult && !parseResult.ok
-      ? parseResult.error
-      : format.kind === 'free-text' && raw.trim()
-        ? format.reason
-        : ''
-  const blocked = plan && 'blocked' in plan ? plan.blocked : ''
+  const parseError = parseResult && !parseResult.ok ? parseResult.error : ''
   const warnings = parseResult?.ok ? parseResult.warnings : []
 
   return (
@@ -148,7 +142,7 @@ export default function EpisodeScriptImportDialog({
                 setRaw(e.target.value)
                 setError('')
               }}
-              placeholder={'# EP001 集名\n\n## EP001-SC001 内 · 地点 · 时间\n场次正文…'}
+              placeholder={'可粘贴任意大纲文本；有 ## 会尽量切场。规范格式可在导入后用创意 Agent 改稿，或从集详情再导出 Markdown。'}
             />
           ) : (
             <div className="intake-file">
@@ -158,7 +152,7 @@ export default function EpisodeScriptImportDialog({
               <input
                 ref={fileRef}
                 type="file"
-                accept=".md,.markdown"
+                accept=".md,.markdown,.txt,text/plain"
                 hidden
                 onChange={(e) => {
                   void pickFile(e.target.files?.[0] ?? null)
@@ -185,7 +179,7 @@ export default function EpisodeScriptImportDialog({
           {error ? <div className="gen-error">{error}</div> : null}
           {parseError ? <div className="gen-error">{parseError}</div> : null}
           {applyError ? <div className="gen-error">{applyError}</div> : null}
-          {blocked ? <div className="gen-error">{blocked}</div> : null}
+          {plan && 'blocked' in plan ? <div className="gen-error">{plan.blocked}</div> : null}
 
           {plan && !('blocked' in plan) ? (
             <div className="intake-plan">

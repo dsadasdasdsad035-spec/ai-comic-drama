@@ -10,7 +10,8 @@ import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from '.
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { AppSettings, Cap, Stage } from './api'
-import type { ProjectEpisode, ProjectShot } from './api'
+import type { NarratorVoice, ProjectEpisode, ProjectShot } from './api'
+import NarrationPanel from './NarrationPanel'
 import { nodeToShot } from './shotSync'
 import VideoPromptAuditPanel from './VideoPromptAuditPanel'
 import { listVideoFiles, type VideoFile } from './api'
@@ -436,6 +437,9 @@ type Props = {
   hasPrevShot?: boolean
   onPublishClipFrame?: (role: 'head' | 'tail') => Promise<{ title: string; notice?: string }>
   onLinkPrevShotTail?: () => Promise<{ title: string; notice?: string }>
+  narratorVoice?: NarratorVoice | null
+  onSaveNarratorVoice?: (next: NarratorVoice) => void
+  onGenerateNarration?: () => void
 }
 
 function ShotLexiconRefBlock({
@@ -730,6 +734,9 @@ function InspectorBody({
   hasPrevShot,
   onPublishClipFrame,
   onLinkPrevShotTail,
+  narratorVoice,
+  onSaveNarratorVoice,
+  onGenerateNarration,
 }: BodyProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [pickVideo, setPickVideo] = useState('')
@@ -1541,6 +1548,22 @@ function InspectorBody({
           )}
         </div>
       </InspectorSection>
+
+      {settings && onSaveNarratorVoice && onGenerateNarration ? (
+        <div
+          className="si-section"
+          data-shot-tab={prodKind === 'image' ? 'narrative' : 'audio'}
+          hidden={prodKind === 'image' ? effectiveTab !== 'narrative' : effectiveTab !== 'audio'}
+        >
+          <NarrationPanel
+            data={d}
+            narratorVoice={narratorVoice}
+            settings={settings}
+            onSaveNarratorVoice={onSaveNarratorVoice}
+            onGenerate={onGenerateNarration}
+          />
+        </div>
+      ) : null}
 
       <label
         className="field expression-ref-toggle"

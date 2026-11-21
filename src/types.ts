@@ -148,6 +148,11 @@ export type VoiceMeta = {
   unsupported: string[]
   fingerprint: string
   createdAt: string
+  /** 旁白专用配音；缺省为历史整镜台词配音 */
+  scope?: 'narration'
+  /** 旁白 mp3 站内路径（落库用，画布 voiceUrl 与之同步） */
+  url?: string
+  seconds?: number
 }
 
 // ---------------------------------------------------------------- 分镜接缝（转场）

@@ -152,9 +152,9 @@ export function rowsFromTable(
     // 台词：拆成台词 / 旁白 / 声音说明；标注随台词一起带出
     const rawDialogue = get('dialogue')
     const cell = rawDialogue ? splitDialogueCell(rawDialogue) : null
-    const dialogue = cell && cell.lines.length ? cell.lines : undefined
+    const dialogue = cell && cell.speech.length ? cell.speech : undefined
     // 台词被写入时表演必须整组重建：下标已变，沿用旧数组会把 A 的语速挂到 B 的台词上
-    const dialogueDelivery = rawDialogue ? (cell?.lines ?? []).map((l) => deliveryOfLine(l)) : undefined
+    const dialogueDelivery = rawDialogue ? (cell?.speech ?? []).map((l) => deliveryOfLine(l)) : undefined
 
     // 选角：只写文件真给了的名字
     const rawCast = get('cast')
@@ -219,12 +219,6 @@ export function rowsFromTable(
       video_prompt: get('video_prompt') || undefined,
     })
 
-    // 声音说明与旁白不适合塞进 dialogue，但也不能丢：提示一次总数
-    if (cell?.narrators.length) {
-      rows[rows.length - 1].desc = `${rows[rows.length - 1].desc}${rows[rows.length - 1].desc ? '；' : ''}旁白：${cell.narrators
-        .map((n) => n.text)
-        .join(' ')}`.trim()
-    }
     if (cell?.sounds.length) {
       rows[rows.length - 1].desc = `${rows[rows.length - 1].desc}${rows[rows.length - 1].desc ? '；' : ''}声音：${cell.sounds
         .join(' ')}`.trim()

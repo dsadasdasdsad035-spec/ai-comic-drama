@@ -7,6 +7,7 @@ export const FULL_SCENE_HEADING_RE =
 
 const EP_IN_ID = /EP(?:0*)(\d+)/i
 const SC_IN_ID = /SC(?:0*)(\d+)/i
+const SCENE_ID_RE = /((?:[A-Za-z0-9]+-)*?EP(?:[0-9]{3}|[1-9][0-9]{3,})-SC(?:[0-9]{3}|[1-9][0-9]{3,}))/i
 
 const TITLE_EP_RE =
   /^#[ \t\u3000]+(?:(?:[A-Za-z0-9]+-)*?EP(?:[0-9]{3}|[1-9][0-9]{3,}))?[ \t\u3000]*(?:·[ \t\u3000]*)?(.*?)\r?$/
@@ -15,6 +16,12 @@ const LOOKS_LIKE_SCENE_HEAD =
   /^##[ \t\u3000]+(?:(?:[A-Za-z0-9]+-)*?EP(?:[0-9]{3}|[1-9][0-9]{3,})-SC(?:[0-9]{3}|[1-9][0-9]{3,}))/
 
 const SHOT_HEAD = /^(镜头|镜号|shot)$/i
+
+const pad3 = (n: number) => String(Math.max(1, Math.floor(n))).padStart(3, '0')
+
+function sceneTag(epNo: number, scNo: number): string {
+  return `EP${pad3(epNo)}-SC${pad3(scNo)}`
+}
 
 function epNoFromSceneId(sceneId: string): number | null {
   const m = sceneId.match(EP_IN_ID)
@@ -28,6 +35,13 @@ function scNoFromSceneId(sceneId: string): number | null {
   if (!m) return null
   const n = Number(m[1])
   return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function inferSpace(token: string): string {
+  const t = token.trim()
+  if (/内外/.test(t)) return '内外'
+  if (/^外|外景|^EXT\b/i.test(t)) return '外'
+  return '内'
 }
 
 /** 文档里是否至少有一个合法 short-drama 场次标题 */
@@ -64,6 +78,93 @@ function countShotTables(text: string): number {
   return n
 }
 
+type SceneAcc = {
+  no: number
+  slug: string
+  space: string
+  place: string
+  time: string
+  beatsLines: string[]
+}
+
+function tryStrictSceneHeading(trimmed: string, warnings: string[]): SceneAcc | null {
+  if (!LOOKS_LIKE_SCENE_HEAD.test(trimmed)) return null
+  const m = FULL_SCENE_HEADING_RE.exec(trimmed)
+  if (!m?.groups?.scene) return null
+  const slug = m.groups.scene
+  const scNo = scNoFromSceneId(slug)
+  if (scNo == null) return null
+  const place = m.groups.location?.trim() || '未命名地点'
+  const time = m.groups.time?.trim() || '未注明时间'
+  if (!m.groups.location?.trim() || !m.groups.time?.trim()) {
+    warnings.push(`场次「${slug}」标题不完整，已用占位补全地点或时间`)
+  }
+  return {
+    no: scNo,
+    slug,
+    space: (m.groups.space ?? '内').trim(),
+    place,
+    time,
+    beatsLines: [],
+  }
+}
+
+function parseLooseSceneHeading(
+  trimmed: string,
+  activeEpNo: number,
+  scSeq: Map<number, number>,
+  warnings: string[],
+): SceneAcc {
+  const body = trimmed.replace(/^##[ \t\u3000]+/, '').trim()
+  const idMatch = body.match(SCENE_ID_RE)
+  const slugFromId = idMatch?.[1]
+  let epNo = slugFromId ? epNoFromSceneId(slugFromId) ?? activeEpNo : activeEpNo
+  let scNo = slugFromId ? scNoFromSceneId(slugFromId) ?? nextSceneNo(epNo, scSeq) : nextSceneNo(epNo, scSeq)
+  const slug = slugFromId ?? sceneTag(epNo, scNo)
+  if (!slugFromId) {
+    warnings.push(`场次「${body.slice(0, 48)}${body.length > 48 ? '…' : ''}」已按顺序生成 ${slug}`)
+  }
+
+  const parts = body
+    .replace(SCENE_ID_RE, '')
+    .split(/[·・]/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+
+  let space = '内'
+  let place = '未命名地点'
+  let time = '未注明时间'
+
+  if (parts.length >= 3 && /^(内外|内|外|内景|外景|INT|EXT)/i.test(parts[0])) {
+    space = inferSpace(parts[0])
+    place = parts[1] || place
+    time = parts[2] || time
+  } else if (parts.length === 2) {
+    space = inferSpace(parts[0])
+    place = parts[1]
+  } else if (parts.length === 1) {
+    place = parts[0]
+    space = inferSpace(parts[0])
+  } else if (body && !slugFromId) {
+    place = body.slice(0, 80)
+  }
+
+  scSeq.set(epNo, Math.max(scSeq.get(epNo) ?? 0, scNo))
+  return { no: scNo, slug, space, place, time, beatsLines: [] }
+}
+
+function nextSceneNo(epNo: number, scSeq: Map<number, number>): number {
+  const n = (scSeq.get(epNo) ?? 0) + 1
+  scSeq.set(epNo, n)
+  return n
+}
+
+function isSceneH2Line(trimmed: string): boolean {
+  if (!trimmed.startsWith('##') || trimmed.startsWith('###')) return false
+  if (trimmed.trimStart().startsWith('|')) return false
+  return true
+}
+
 export type ParseScriptMarkdownHints = {
   hintEpNo?: number
 }
@@ -73,7 +174,7 @@ export type ParseScriptMarkdownResult =
   | { ok: false; error: string }
 
 /**
- * short-drama 式剧本 Markdown → 分集结构；场次正文原样写入 beats。
+ * 剧本 Markdown / 纯文本 → 分集结构；场次正文原样写入 beats。非空输入原则上总能解析出场次（零门禁）。
  */
 export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHints = {}): ParseScriptMarkdownResult {
   const raw = String(text ?? '').replace(/^\uFEFF/, '')
@@ -86,16 +187,10 @@ export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHint
   }
 
   const episodeTitles = new Map<number, string>()
-  type SceneAcc = {
-    no: number
-    slug: string
-    space: string
-    place: string
-    time: string
-    beatsLines: string[]
-  }
   const episodesByNo = new Map<number, SceneAcc[]>()
+  const scSeq = new Map<number, number>()
 
+  let activeEpNo = hints.hintEpNo != null ? Math.max(1, Math.floor(Number(hints.hintEpNo) || 1)) : 1
   let current: SceneAcc | null = null
   const beatsBuf: string[] = []
 
@@ -103,66 +198,60 @@ export function parseScriptMarkdown(text: string, hints: ParseScriptMarkdownHint
     if (!current) return
     current.beatsLines = [...beatsBuf]
     beatsBuf.length = 0
-    const epNo = epNoFromSceneId(current.slug)
-    if (epNo == null) {
-      throw new Error(`无法从场次 ID 解析集号：${current.slug}`)
-    }
+    const epNo = epNoFromSceneId(current.slug) ?? activeEpNo
+    activeEpNo = epNo
     const list = episodesByNo.get(epNo) ?? []
     list.push(current)
     episodesByNo.set(epNo, list)
+    scSeq.set(epNo, Math.max(scSeq.get(epNo) ?? 0, current.no))
     current = null
   }
 
-  try {
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trimEnd()
-      if (/^#[ \t\u3000]+/.test(trimmed) && !/^##/.test(trimmed)) {
-        flushScene()
-        const tm = TITLE_EP_RE.exec(trimmed)
-        const titleRest = (tm?.[1] ?? trimmed.replace(/^#[ \t\u3000]+/, '')).trim()
-        const epMatch = trimmed.match(EP_IN_ID)
-        if (epMatch && titleRest) {
-          const epNo = Number(epMatch[1])
-          if (Number.isFinite(epNo) && epNo > 0) episodeTitles.set(epNo, titleRest)
-        }
-        continue
-      }
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trimEnd()
 
-      if (trimmed.startsWith('##') && !trimmed.startsWith('###')) {
-        if (LOOKS_LIKE_SCENE_HEAD.test(trimmed)) {
-          const m = FULL_SCENE_HEADING_RE.exec(trimmed)
-          if (!m?.groups?.location?.trim() || !m.groups.time?.trim()) {
-            return { ok: false, error: `场次标题格式不对：${trimmed.slice(0, 80)}` }
-          }
-          flushScene()
-          const slug = m.groups.scene
-          const scNo = scNoFromSceneId(slug)
-          if (scNo == null) return { ok: false, error: `无法解析场号：${slug}` }
-          current = {
-            no: scNo,
-            slug,
-            space: m.groups.space.trim(),
-            place: m.groups.location.trim(),
-            time: m.groups.time.trim(),
-            beatsLines: [],
-          }
-          continue
+    if (/^#[ \t\u3000]+/.test(trimmed) && !/^##/.test(trimmed)) {
+      flushScene()
+      const tm = TITLE_EP_RE.exec(trimmed)
+      const titleRest = (tm?.[1] ?? trimmed.replace(/^#[ \t\u3000]+/, '')).trim()
+      const epMatch = trimmed.match(EP_IN_ID)
+      if (epMatch) {
+        const epNo = Number(epMatch[1])
+        if (Number.isFinite(epNo) && epNo > 0) {
+          activeEpNo = epNo
+          if (titleRest) episodeTitles.set(epNo, titleRest.replace(/^EP(?:[0-9]{3}|[1-9][0-9]{3,})\s*/i, '').trim())
         }
-        return { ok: false, error: `不支持的二级标题（请使用 ## EP001-SC001 内 · 地点 · 时间）：${trimmed.slice(0, 80)}` }
       }
-
-      if (current) beatsBuf.push(line)
+      continue
     }
-    flushScene()
-  } catch (e) {
-    return { ok: false, error: (e as Error).message }
+
+    if (isSceneH2Line(trimmed)) {
+      flushScene()
+      const strict = tryStrictSceneHeading(trimmed, warnings)
+      current = strict ?? parseLooseSceneHeading(trimmed, activeEpNo, scSeq, warnings)
+      const epFromSlug = epNoFromSceneId(current.slug)
+      if (epFromSlug != null) activeEpNo = epFromSlug
+      continue
+    }
+
+    if (current) beatsBuf.push(line)
   }
+  flushScene()
 
   if (episodesByNo.size === 0) {
-    return {
-      ok: false,
-      error: '没有找到场次标题；请写成 ## EP001-SC001 内 · 地点 · 时间',
-    }
+    const epNo = activeEpNo
+    const beats = raw.trim()
+    warnings.push('未识别场标题，全文已作为一场导入')
+    episodesByNo.set(epNo, [
+      {
+        no: 1,
+        slug: sceneTag(epNo, 1),
+        space: '内',
+        place: '未命名地点',
+        time: '未注明时间',
+        beatsLines: beats.split('\n'),
+      },
+    ])
   }
 
   const hintEp = hints.hintEpNo != null ? Math.max(1, Math.floor(Number(hints.hintEpNo) || 1)) : undefined

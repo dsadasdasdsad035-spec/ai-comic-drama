@@ -67,7 +67,7 @@ try {
   unit('剧本列表屏', (await page.locator('[data-script-ep-card="1"]').count()) === 1)
   unit('列表无集下拉', (await page.locator('.epbar-trigger').count()) === 0)
 
-  await page.locator('[data-script-ep-card="1"] .btn-mini').click()
+  await page.locator('[data-script-ep-card="1"] .script-book-enter').click()
   await page.locator('[data-script-phase="detail"]').waitFor({ timeout: 15000 })
   unit('详情屏', (await page.locator('[data-script-md-preview="script"]').count()) === 1)
   await page.locator('[data-script-preview-tab="shots"]').click()

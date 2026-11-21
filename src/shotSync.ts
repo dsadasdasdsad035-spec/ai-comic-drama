@@ -356,6 +356,8 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     audioMeta: s.audio_meta ?? fallback.audioMeta,
     lipSync: s.lip_sync ?? fallback.lipSync,
     voiceMeta: s.voice_meta ?? fallback.voiceMeta,
+    voiceUrl: s.voice_meta?.url ?? fallback.voiceUrl,
+    voiceSeconds: s.voice_meta?.seconds ?? fallback.voiceSeconds,
     prompt: s.keyframe_prompt || s.desc || fallback.prompt,
     videoPrompt: s.video_prompt ?? fallback.videoPrompt,
     videoPromptOverride:

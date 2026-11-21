@@ -100,7 +100,7 @@ import { isSheetUsable } from './expressionSheet'
 import { CanvasCtx } from './ctx'
 import { initialEdges, initialNodes, type AssetNodeType, type CharNodeType, type ShotEdgeType, type ShotNodeType } from './data'
 import { assetMediaType } from './mediaPick'
-import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ShotData, type Tool, type TransitionOut } from './types'
+import { cardWidth, effectiveSeconds, migrateMarks, uid, type Relation, type ShotData, type Tool } from './types'
 import {
   checkHealth,
   generateImage,
@@ -122,6 +122,7 @@ import {
   type ProjectAsset,
   type DesignSheet,
   type ProjectData,
+  type NarratorVoice,
   type ProjectEpisode,
   type ProjectShot,
   type ProjectSummary,
@@ -129,6 +130,11 @@ import {
 } from './api'
 import { dialogueToText, parseDialogue } from './prompts'
 import { deliveryForSpeaker, voiceFingerprint } from './performance'
+import {
+  buildNarrationPayload,
+  extractNarrationLines,
+  voiceFingerprintNarration,
+} from './narration'
 import { audioRefCapabilitiesFor, nativeAudioFingerprint } from './nativeAudio'
 import {
   providerIdForAudioModelKey,
@@ -195,20 +201,9 @@ import { buildEditList, transitionFor } from './editList'
 import {
   defaultTransition,
   normalizeEffect,
-  normalizeGenerated,
   normalizeTransitionOut,
-  transitionFingerprint,
   transitionSummary,
 } from './transition'
-import {
-  buildTransitionVideoPreview,
-  buildTransitionVideoRequest,
-  transitionRequestSeconds,
-  transitionStyleRefTokens,
-  transitionRefEdgeId,
-  parseTransitionRefEdgeId,
-  isTransitionDedicatedRefToken,
-} from './transitionGen'
 
 const nodeTypes = { shot: ShotNode, char: CharNode, asset: AssetNode }
 const edgeTypes = { shot: ShotEdge }
@@ -299,20 +294,8 @@ function readSavedKey(key: string): Saved | null {
             data.genError = undefined
           }
         }
-        if (data.transitionOut?.generated?.video?.state === 'running') {
-          const generated = normalizeGenerated(data.transitionOut.generated)
-          data.transitionOut = {
-            ...data.transitionOut,
-            generated: {
-              ...generated,
-              video: {
-                ...(generated.video ?? {}),
-                state: 'idle',
-                error: undefined,
-                at: undefined,
-              },
-            },
-          }
+        if (data.transitionOut) {
+          data.transitionOut = normalizeTransitionOut(data.transitionOut, data.transitionOut.to)
         }
         return { ...n, data }
       }),
@@ -697,11 +680,6 @@ function Shell() {
   const [candCount, setCandCount] = useState(1)
   const [batch, setBatch] = useState<{ total: number; done: number } | null>(null)
   const [vidRes, setVidRes] = useState<'480p' | '720p'>('480p')
-  /**
-   * 本轮由 Agent 写入的转场参考：`afterShotId|toShotId` → token 列表。
-   * 刻意只放内存——标记语义是「这一轮改的」，落盘后用户手改也无法撤销。
-   */
-  const [transitionAgentRefs, setTransitionAgentRefs] = useState<Record<string, string[]>>({})
   const [preview, setPreview] = useState(false)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
   const [assReady, setAssReady] = useState(false)
@@ -713,6 +691,7 @@ function Shell() {
   /** 项目画幅：白模渲染与出片共用 */
   const [projectAspect, setProjectAspect] = useState('16:9')
   const [projectStyle, setProjectStyle] = useState('')
+  const [narratorVoice, setNarratorVoice] = useState<NarratorVoice | null>(null)
   const assetsSnapRef = useRef('')
   /**
    * 画布布局的写回通道：
@@ -1238,6 +1217,7 @@ function Shell() {
     setSelId(null)
     setSelEdgeId(null)
     setProjectAspect('16:9')
+    setNarratorVoice(null)
     if (!projectName) {
       projectSnapRef.current = null
       setNodes(initialNodes)
@@ -1322,6 +1302,7 @@ function Shell() {
         setDesignSheetCount((p.designs ?? []).length)
         setProjectAspect(p.aspect || '16:9')
         setProjectStyle(String(p.style || ''))
+        setNarratorVoice(p.narratorVoice?.modelKey && p.narratorVoice?.voiceId ? p.narratorVoice : null)
         setProjectShots(shots)
         setEpisodes(((p.episodes ?? []) as ProjectEpisode[]) ?? [])
         const focusEp = Math.min(Math.max(1, wantedEp), maxEp)
@@ -1399,81 +1380,6 @@ function Shell() {
       setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...p } } : n)))
     },
     [setNodes],
-  )
-
-  /** 转场配置写回：始终基于最新节点数据合并，避免异步生成覆盖用户同时改的其他字段 */
-  const writeTransition = useCallback(
-    (sourceId: string, to: string, updater: (cur: TransitionOut) => TransitionOut) => {
-      setNodes((ns) =>
-        ns.map((n) => {
-          if (n.id !== sourceId) return n
-          const cur = normalizeTransitionOut(n.data.transitionOut, to)
-          return {
-            ...n,
-            data: {
-              ...n.data,
-              transitionOut: updater(cur),
-              handEdited: [...new Set([...(n.data.handEdited ?? []), 'transition_out'])],
-            },
-          }
-        }),
-      )
-    },
-    [setNodes],
-  )
-
-  const transitionPair = useCallback(
-    (edgeId: string) => {
-      const edge = edges.find((e) => e.id === edgeId)
-      if (!edge) return null
-      const source = nodesRef.current.find((n) => n.id === edge.source)
-      const target = nodesRef.current.find((n) => n.id === edge.target)
-      if (!source || !target) return null
-      return { edge, source, target, to: target.data.shotId || target.id }
-    },
-    [edges],
-  )
-
-  /** 转场专属参考：写入 generated.refIds，不污染镜头 refIds */
-  const toggleTransitionRef = useCallback(
-    (edgeId: string, refSourceId: string) => {
-      if (!isTransitionDedicatedRefToken(refSourceId)) return
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, to } = pair
-      writeTransition(source.id, to, (cur) => {
-        const g = normalizeGenerated(cur.generated)
-        const curIds = g.refIds ?? []
-        const nextIds = curIds.includes(refSourceId)
-          ? curIds.filter((x) => x !== refSourceId)
-          : [...curIds, refSourceId]
-        return {
-          ...cur,
-          mode: 'generated',
-          generated: {
-            ...g,
-            refIds: nextIds,
-            bridging: g.bridging ?? 'morph',
-          },
-        }
-      })
-    },
-    [transitionPair, writeTransition],
-  )
-
-  const removeTransitionRef = useCallback(
-    (edgeId: string, refSourceId: string) => {
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, to } = pair
-      writeTransition(source.id, to, (cur) => {
-        const g = normalizeGenerated(cur.generated)
-        const nextIds = (g.refIds ?? []).filter((x) => x !== refSourceId)
-        if (nextIds.length === (g.refIds ?? []).length) return cur
-        return { ...cur, generated: { ...g, refIds: nextIds } }
-      })
-    },
-    [transitionPair, writeTransition],
   )
 
   const patchCharacter = useCallback(
@@ -1969,32 +1875,6 @@ function Shell() {
       const srcType = (src as unknown as { type?: string } | undefined)?.type
       // 角色/素材 → 分镜：不进 edges 状态，写进目标镜头的 refIds（随镜头落库），边由 refEdges 派生
       if ((srcType === 'char' || srcType === 'asset') && c.target && c.source) {
-        const activeEdge = selEdgeId ? edges.find((e) => e.id === selEdgeId) : null
-        if (
-          activeEdge &&
-          (activeEdge.data?.relation ?? 'cut') === 'transition' &&
-          (c.target === activeEdge.source || c.target === activeEdge.target)
-        ) {
-          const up = nodesRef.current.find((n) => n.id === activeEdge.source)
-          const down = nodesRef.current.find((n) => n.id === activeEdge.target)
-          if (up && down) {
-            const to = down.data.shotId || down.id
-            const t = normalizeTransitionOut(up.data.transitionOut, to)
-            if (t.mode !== 'generated') {
-              setToast('请先将转场设为「生成」再连参考')
-              window.setTimeout(() => setToast(''), 2200)
-              return
-            }
-            const g = normalizeGenerated(t.generated)
-            const curIds = g.refIds ?? []
-            if (!curIds.includes(c.source)) {
-              toggleTransitionRef(activeEdge.id, c.source)
-              setToast(`已连为转场参考（共 ${curIds.length + 1} 张）`)
-              window.setTimeout(() => setToast(''), 1800)
-            }
-          }
-          return
-        }
         const tgt = nodesRef.current.find((n) => n.id === c.target)
         if (!tgt) return
         const tgtType = (tgt as unknown as { type?: string }).type
@@ -2021,17 +1901,12 @@ function Shell() {
         }
       }
     },
-    [relation, setEdges, patch, selEdgeId, edges, toggleTransitionRef],
+    [relation, setEdges, patch],
   )
 
   /** 单条连线的删除副作用：参考连线移出 refIds，转场连线清掉源镜头的 transitionOut */
   const applyEdgeRemoval = useCallback(
     (e: Edge) => {
-      const tr = parseTransitionRefEdgeId(e.id)
-      if (tr) {
-        removeTransitionRef(tr.edgeId, tr.refSourceId)
-        return
-      }
       if (e.id.startsWith('ref-')) {
         const tgt = nodesRef.current.find((n) => n.id === e.target)
         if (!tgt) return
@@ -2046,7 +1921,7 @@ function Shell() {
       if (src.data.transitionOut?.to !== to) return
       patch(src.id, { transitionOut: undefined })
     },
-    [patch, removeTransitionRef],
+    [patch],
   )
 
   /** 删除参考连线 = 从目标镜头的 refIds 里移除；删除转场连线 = 清掉源镜头的 transitionOut */
@@ -2057,19 +1932,7 @@ function Shell() {
     [applyEdgeRemoval],
   )
 
-  /** 删除已生成关键帧/视频的转场连线要二次确认（菜单与 Delete 共用一份判定） */
-  const needsEdgeDeleteConfirm = useCallback((e: Edge) => {
-    if (e.id.startsWith('ref-') || parseTransitionRefEdgeId(e.id)) return false
-    if ((e.data?.relation ?? 'cut') !== 'transition') return false
-    const src = nodesRef.current.find((n) => n.id === e.source)
-    const tgt = nodesRef.current.find((n) => n.id === e.target)
-    if (!src || !tgt) return false
-    const to = tgt.data.shotId || tgt.id
-    const cur = src.data.transitionOut
-    return Boolean(
-      cur && cur.to === to && (cur.generated?.video?.url || cur.generated?.keyframe?.candidates?.length),
-    )
-  }, [])
+  const needsEdgeDeleteConfirm = useCallback((_e: Edge) => false, [])
 
   /** 菜单「删除连线」：先按需确认，再移边并清掉对应的持久化字段 */
   const deleteEdgeFromMenu = useCallback(
@@ -2390,12 +2253,6 @@ function Shell() {
     },
     [edges, setEdgeRelation, openTransition],
   )
-  const focusShotFromTransition = useCallback((nodeId: string) => {
-    saveInspectorPrefs({ ...loadInspectorPrefs(), tab: 'outgoing' })
-    setSelEdgeId(null)
-    setSelRef(null)
-    setSelId(nodeId)
-  }, [])
   const refEdges = useMemo<Edge[]>(() => {
     const out: Edge[] = []
     const inCanvas = new Set(canvasNodes.map((n) => n.id))
@@ -2421,37 +2278,6 @@ function Shell() {
         } as unknown as Edge)
       }
     }
-    for (const e of edges) {
-      if ((e.data?.relation ?? 'cut') !== 'transition') continue
-      const src = shotsById.get(e.source)
-      const tgt = shotsById.get(e.target)
-      if (!src || !tgt) continue
-      const to = tgt.data.shotId || tgt.id
-      const t = normalizeTransitionOut(src.data.transitionOut, to)
-      if (t.mode !== 'generated') continue
-      const refIds = normalizeGenerated(t.generated).refIds ?? []
-      for (const rid of refIds) {
-        if (!isTransitionDedicatedRefToken(rid)) continue
-        if (!inCanvas.has(rid)) continue
-        const eid = transitionRefEdgeId(e.id, rid)
-        const on = selRef === eid
-        out.push({
-          id: eid,
-          source: rid,
-          target: e.source,
-          type: 'default',
-          style: {
-            stroke: 'var(--ref-edge)',
-            strokeWidth: on ? 3 : 1.6,
-            strokeDasharray: '4 3',
-            filter: on ? 'drop-shadow(0 0 6px var(--ref-edge))' : undefined,
-          },
-          label: '转场参考',
-          labelStyle: { fill: 'var(--ref-edge)', fontSize: 10 },
-          labelBgStyle: { fill: 'var(--ref-label-bg)' },
-        } as unknown as Edge)
-      }
-    }
     return out
   }, [canvasNodes, shownNodes, selRef, edges])
 
@@ -2462,13 +2288,6 @@ function Shell() {
       if (ev.key !== 'Delete' && ev.key !== 'Backspace') return
       const t = ev.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      const tr = parseTransitionRefEdgeId(selRef)
-      if (tr) {
-        ev.preventDefault()
-        removeTransitionRef(tr.edgeId, tr.refSourceId)
-        setSelRef(null)
-        return
-      }
       for (const n of nodesRef.current) {
         const cur = (n.data as unknown as { refIds?: string[] }).refIds ?? []
         for (const rid of cur) {
@@ -2482,7 +2301,7 @@ function Shell() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [selRef, patch, removeTransitionRef])
+  }, [selRef, patch])
 
   /** 缩得很小时切到精简渲染（CSS 隐藏卡片里的次要信息） */
   const [zoomLite, setZoomLite] = useState(false)
@@ -2524,28 +2343,6 @@ function Shell() {
       title?: string
       kind?: string
       refIds?: string[]
-    }
-    if (selEdgeId && (type === 'char' || type === 'asset')) {
-      const edge = edges.find((e) => e.id === selEdgeId)
-      if (edge && (edge.data?.relation ?? 'cut') === 'transition') {
-        const up = shownNodes.find((n) => n.id === edge.source)
-        const down = shownNodes.find((n) => n.id === edge.target)
-        if (up && down) {
-          const to = down.data.shotId || down.id
-          const t = normalizeTransitionOut(up.data.transitionOut, to)
-          const refIds = normalizeGenerated(t.generated).refIds ?? []
-          return {
-            mode: 'transition-pick' as const,
-            edgeId: selEdgeId,
-            headTitle: `转场 ${up.data.no}→${down.data.no}`,
-            headSub: '点选画布中的角色/素材卡，加入或移出本条转场出片',
-            sectionTitle: '画布里的参考源',
-            emptyText: '先添加素材卡或给角色出图',
-            hint: '仅写入转场 generated.refIds，不改动镜头 refIds。也可拖线：先点选转场边，再从角色/素材连到上/下镜。',
-            items: refCards.map((c) => ({ ...c, on: refIds.includes(c.id) })),
-          }
-        }
-      }
     }
     if (type === 'shot') {
       const mine = d.refIds ?? []
@@ -2589,7 +2386,7 @@ function Shell() {
         on: (n.data.refIds ?? []).includes(node.id),
       })),
     }
-  }, [ctx, canvasNodes, refCards, shownNodes, selEdgeId, edges])
+  }, [ctx, canvasNodes, refCards, shownNodes])
 
   /** 建立/取消参考关系：refIds 挂在镜头（target）上 */
   const toggleRef = useCallback(
@@ -2627,29 +2424,6 @@ function Shell() {
   const [selBusy, setSelBusy] = useState('')
   /** 运行中的出图请求：同一镜只允许一个在途请求 */
   const activeImgRef = useRef<Map<string, { token: number; controller: AbortController; taskId: string }>>(new Map())
-  type TransitionVideoRun = {
-    controller: AbortController
-    taskId: string
-    sourceId: string
-    to: string
-    edgeId: string
-  }
-  const activeTransitionVideoRef = useRef<Map<string, TransitionVideoRun>>(new Map())
-  const transitionVideoRunKey = (sourceId: string, to: string) => `${sourceId}\0${to}`
-  const registerTransitionVideoRun = (rec: TransitionVideoRun) => {
-    const m = activeTransitionVideoRef.current
-    m.set(rec.edgeId, rec)
-    m.set(transitionVideoRunKey(rec.sourceId, rec.to), rec)
-  }
-  const unregisterTransitionVideoRun = (rec: TransitionVideoRun) => {
-    const m = activeTransitionVideoRef.current
-    m.delete(rec.edgeId)
-    m.delete(transitionVideoRunKey(rec.sourceId, rec.to))
-  }
-  const lookupTransitionVideoRun = (edgeId: string, sourceId?: string, to?: string) => {
-    const m = activeTransitionVideoRef.current
-    return m.get(edgeId) ?? (sourceId && to ? m.get(transitionVideoRunKey(sourceId, to)) : undefined)
-  }
   const imgTokenRef = useRef(0)
   const batchAbortRef = useRef<AbortController | null>(null)
 
@@ -2867,26 +2641,12 @@ function Shell() {
         if (relation !== 'transition') return base as Edge
         if (!src || !tgt) return base as Edge
         const t = transitionFor(src, tgt)
-        const fp = transitionFingerprint(src.data, tgt.data, t.generated)
-        const pending = t.mode === 'generated' && !t.generated?.video?.url
-        const stale = Boolean(
-          t.mode === 'generated' &&
-            t.generated?.video?.url &&
-            t.meta?.fingerprint &&
-            t.meta.fingerprint !== fp,
-        )
-        const state = inactiveEdgeIds.has(e.id)
-          ? 'inactive'
-          : stale
-            ? 'stale'
-            : pending
-              ? 'pending'
-              : 'ready'
-        // 状态只用线条样式表达：类名既给 CSS 着色，也给回归脚本作稳定钩子
+        const seamLabel = transitionSummary(t)
+        const state = inactiveEdgeIds.has(e.id) ? 'inactive' : 'ready'
         return {
           ...base,
           className: `edge-rel-${relation} edge-state-${state}`,
-          data: { ...base.data, state },
+          data: { ...base.data, state, seamLabel },
         } as Edge
       })
     return [...decorated, ...castEdges, ...refEdges]
@@ -3574,312 +3334,7 @@ function Shell() {
   )
   recoverVideoOneRef.current = recoverVideoOne
 
-  const cancelTransitionVideo = useCallback(
-    (edgeId: string) => {
-      const pair = transitionPair(edgeId)
-      const rec = lookupTransitionVideoRun(edgeId, pair?.source.id, pair?.to)
-      const g = pair ? normalizeGenerated(pair.source.data.transitionOut?.generated) : null
-      if (!rec && (!pair || g?.video?.state !== 'running')) return
-
-      if (rec) {
-        unregisterTransitionVideoRun(rec)
-        rec.controller.abort()
-        cancelTask(rec.taskId)
-      }
-
-      const sourceId = rec?.sourceId ?? pair!.source.id
-      const to = rec?.to ?? pair!.to
-      writeTransition(sourceId, to, (cur) => ({
-        ...cur,
-        generated: {
-          ...normalizeGenerated(cur.generated),
-          video: {
-            ...(cur.generated?.video ?? {}),
-            state: 'idle',
-            error: undefined,
-            at: undefined,
-          },
-        },
-      }))
-      setToast(rec ? '已取消转场出片' : '已清除转场生成状态')
-      window.setTimeout(() => setToast(''), 2200)
-    },
-    [writeTransition, transitionPair],
-  )
-
-  const generateTransitionVideo = useCallback(
-    async (edgeId: string) => {
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, target, to } = pair
-      const base = normalizeTransitionOut(source.data.transitionOut, to)
-      const g = normalizeGenerated(base.generated)
-      const legacyKeyframe = g.bridging === 'keyframe' ? g.keyframe?.image || g.keyframe?.candidates?.[g.keyframe?.activeIdx ?? 0] : undefined
-      if (lookupTransitionVideoRun(edgeId, source.id, to)) return
-      if (g.video?.state === 'running') {
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              ...(cur.generated?.video ?? {}),
-              state: 'idle',
-              error: undefined,
-              at: undefined,
-            },
-          },
-        }))
-        return
-      }
-      const controller = new AbortController()
-      const videoKey = modelPick.video || appSettings?.defaults?.video || ''
-      const entry = appSettings?.models.find((m) => m.key === videoKey)
-      const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
-      const transitionModel = entry
-        ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
-        : null
-      const submitsLastFrame = Boolean(g.boundary?.out && g.boundary?.in)
-      const req = transitionRequestSeconds(g.targetSeconds, entry?.model, submitsLastFrame, {
-        nativeAudio: g.audioMode === 'native',
-      })
-      const preBundle = buildTransitionVideoRequest({
-        source,
-        target,
-        generated: g,
-        model: transitionModel,
-        nodes: nodesRef.current,
-        characters,
-        missingMedia,
-      })
-      const preBlocked = preBundle.blocking[0]
-      if (preBlocked) {
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              ...(cur.generated?.video ?? {}),
-              state: 'error',
-              error: preBlocked.message,
-            },
-          },
-        }))
-        setToast(preBlocked.message)
-        window.setTimeout(() => setToast(''), 3600)
-        return
-      }
-      const omitNotes = videoOmitToastMessages(preBundle)
-      if (omitNotes.length) {
-        setToast(omitNotes.join('；'))
-        window.setTimeout(() => setToast(''), 4200)
-      }
-      writeTransition(source.id, to, (cur) => ({
-        ...cur,
-        mode: 'generated',
-        generated: {
-          ...normalizeGenerated(cur.generated),
-          video: {
-            ...(cur.generated?.video ?? {}),
-            state: 'running',
-            error: undefined,
-            upstreamRecover: undefined,
-            at: Date.now(),
-            modelKey: videoKey,
-            seconds: req.seconds,
-            ...(req.trimTo ? { trimTo: req.trimTo } : {}),
-          },
-        },
-      }))
-      const tid = startTask('video', `转场 ${source.data.no}→${target.data.no}`, {
-        cost: videoCost(price, req.seconds, vidRes),
-        retry: () => void generateTransitionVideo(edgeId),
-        cancel: () => cancelTransitionVideo(edgeId),
-      })
-      const run: TransitionVideoRun = { controller, taskId: tid, sourceId: source.id, to, edgeId }
-      registerTransitionVideoRun(run)
-      try {
-        const bridging = legacyKeyframe ? 'keyframe' : 'morph'
-        if (controller.signal.aborted) return
-        const bundle = buildTransitionVideoRequest({
-          source,
-          target,
-          generated: g,
-          model: transitionModel,
-          nodes: nodesRef.current,
-          characters,
-          missingMedia,
-        })
-        const nativeOn = g.audioMode === 'native' && Boolean(g.audioRef?.url)
-        const res = await startVideo({
-          transition: {
-            boundaryOut: g.boundary?.out,
-            boundaryIn: g.boundary?.in,
-            ...(legacyKeyframe ? { keyframe: legacyKeyframe } : {}),
-            bridging,
-          },
-          prompt: bundle.prompt,
-          ...(bundle.refImages.length ? { refImages: bundle.refImages } : {}),
-          ...(bundle.refVideos.length ? { refVideos: bundle.refVideos } : {}),
-          ...(nativeOn ? { generateAudio: true, audioRef: g.audioRef!.url } : {}),
-          seconds: req.seconds,
-          ratio: projectAspect,
-          resolution: vidRes,
-          cameraFixed: false,
-          modelKey: videoKey,
-        })
-        const done = await waitVideo(res.id, undefined, 12 * 60 * 1000, controller.signal)
-        if (controller.signal.aborted) return
-        writeTransition(source.id, to, (cur) => {
-          const generated = {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              url: done.url,
-              modelKey: videoKey,
-              seconds: req.seconds,
-              ...(req.trimTo ? { trimTo: req.trimTo } : {}),
-              state: 'idle' as const,
-              upstreamRecover: undefined,
-              videoMeta: {
-                url: done.url,
-                prompt: bundle.prompt,
-                fingerprint: bundle.promptFingerprint,
-                modelKey: videoKey,
-                createdAt: new Date().toISOString(),
-              },
-            },
-          }
-          return {
-            ...cur,
-            mode: 'generated',
-            generated,
-            meta: {
-              fingerprint: transitionFingerprint(
-                source.data,
-                target.data,
-                generated,
-                undefined,
-                transitionStyleRefTokens(source, target, nodesRef.current, characters, missingMedia, generated),
-              ),
-              modelKey: videoKey,
-              createdAt: new Date().toISOString(),
-            },
-          }
-        })
-        endTask(tid)
-      } catch (e) {
-        if ((e as Error).name === 'AbortError' || controller.signal.aborted) return
-        const message = (e as Error).message || '转场视频生成失败'
-        const recover = resolveVideoUpstreamRecover(e, videoKey, videoProvider?.kind)
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              ...(cur.generated?.video ?? {}),
-              state: 'error',
-              error: message,
-              ...(recover ? { upstreamRecover: recover } : {}),
-            },
-          },
-        }))
-        endTask(tid, message)
-      } finally {
-        unregisterTransitionVideoRun(run)
-      }
-    },
-    [transitionPair, writeTransition, modelPick, appSettings, projectAspect, vidRes, price, cancelTransitionVideo, characters, missingMedia],
-  )
-
-  const recoverTransitionVideo = useCallback(
-    async (edgeId: string) => {
-      const pair = transitionPair(edgeId)
-      if (!pair) return
-      const { source, target, to } = pair
-      const base = normalizeTransitionOut(source.data.transitionOut, to)
-      const g = normalizeGenerated(base.generated)
-      const videoKey = g.video?.modelKey || modelPick.video || appSettings?.defaults?.video || ''
-      const entry = appSettings?.models.find((m) => m.key === videoKey)
-      const videoProvider = appSettings?.providers.find((p) => p.id === entry?.provider)
-      const stored = g.video?.upstreamRecover
-      const recover =
-        stored ||
-        resolveVideoUpstreamRecover(new Error(g.video?.error || ''), videoKey, videoProvider?.kind)
-      if (!recover) {
-        setToast('没有可恢复的上游 task_id')
-        window.setTimeout(() => setToast(''), 2800)
-        return
-      }
-      writeTransition(source.id, to, (cur) => ({
-        ...cur,
-        generated: {
-          ...normalizeGenerated(cur.generated),
-          video: {
-            ...(cur.generated?.video ?? {}),
-            state: 'running',
-            error: undefined,
-            at: Date.now(),
-          },
-        },
-      }))
-      const tid = startTask('video', `转场 ${source.data.no}→${target.data.no} 拉取成片`, {
-        retry: () => void recoverTransitionVideo(edgeId),
-      })
-      try {
-        const done = await recoverVideo({
-          upstreamTaskId: recover.upstreamTaskId,
-          modelKey: videoKey,
-          providerKind: recover.providerKind,
-        })
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              ...(cur.generated?.video ?? {}),
-              url: done.url,
-              state: 'idle' as const,
-              error: undefined,
-              upstreamRecover: undefined,
-              at: undefined,
-              videoMeta: cur.generated?.video?.videoMeta
-                ? {
-                    ...cur.generated.video.videoMeta,
-                    url: done.url,
-                    createdAt: new Date().toISOString(),
-                  }
-                : {
-                    url: done.url,
-                    prompt: '',
-                    fingerprint: '',
-                    modelKey: videoKey,
-                    createdAt: new Date().toISOString(),
-                  },
-            },
-          },
-        }))
-        endTask(tid)
-        setToast('转场成片已拉回')
-        window.setTimeout(() => setToast(''), 2400)
-      } catch (e) {
-        const message = (e as Error).message
-        writeTransition(source.id, to, (cur) => ({
-          ...cur,
-          generated: {
-            ...normalizeGenerated(cur.generated),
-            video: {
-              ...(cur.generated?.video ?? {}),
-              state: 'error',
-              error: message,
-            },
-          },
-        }))
-        endTask(tid, message)
-      }
-    },
-    [transitionPair, writeTransition, modelPick, appSettings],
-  )
-
-  /** 批量只动效果转场；生成转场必须逐条手动，避免一次点掉多次视频生成 */
+  /** 批量把效果转场统一为叠化 0.5s */
   const unifyTransitions = useCallback(() => {
     let changed = 0
     for (const e of edges) {
@@ -3889,23 +3344,21 @@ function Shell() {
       if (!source || !target) continue
       const to = target.data.shotId || target.id
       const cur = normalizeTransitionOut(source.data.transitionOut, to)
-      if (cur.mode === 'generated') continue
       const effect = normalizeEffect(cur.effect)
       if (effect.type === 'dissolve' && Math.abs(effect.seconds - 0.5) < 0.001) continue
-      writeTransition(source.id, to, (c) => ({
-        ...c,
-        mode: 'effect',
-        effect: normalizeEffect({ type: 'dissolve', seconds: 0.5 }),
-      }))
+      const hand = [...new Set([...(source.data.handEdited ?? []), 'transition_out'])]
+      patch(source.id, {
+        transitionOut: normalizeTransitionOut(
+          { ...cur, effect: normalizeEffect({ type: 'dissolve', seconds: 0.5 }) },
+          to,
+        ),
+        handEdited: hand,
+      })
       changed++
     }
-    setToast(
-      changed
-        ? `已把 ${changed} 条转场统一为叠化 0.5s（生成转场保持不变）`
-        : '没有需要改的效果转场；生成转场保持原样',
-    )
+    setToast(changed ? `已把 ${changed} 条转场统一为叠化 0.5s` : '没有需要改的转场')
     window.setTimeout(() => setToast(''), 3200)
-  }, [edges, writeTransition])
+  }, [edges, patch])
 
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
   const generateVoiceOne = useCallback(
@@ -4008,6 +3461,86 @@ function Shell() {
       }
     },
     [patch, appSettings],
+  )
+
+  const saveNarratorVoice = useCallback(
+    async (next: NarratorVoice) => {
+      setNarratorVoice(next)
+      if (!readyProject) return
+      projectSnapRef.current = projectSnapRef.current
+        ? { ...projectSnapRef.current, narratorVoice: next }
+        : projectSnapRef.current
+      try {
+        await patchProject(readyProject, { narratorVoice: next })
+      } catch {
+        setToast('旁白声线保存失败')
+        window.setTimeout(() => setToast(''), 2800)
+      }
+    },
+    [readyProject],
+  )
+
+  /** 仅合成旁白行；音频不进连播/导出 */
+  const generateNarrationOne = useCallback(
+    async (id: string) => {
+      const node = nodesRef.current.find((n) => n.id === id)
+      if (!node) return
+      const nv = narratorVoice
+      if (!nv?.modelKey || !nv.voiceId) {
+        patch(id, { voiceState: 'error', voiceError: '请先在旁白区配置项目旁白音色' })
+        return
+      }
+      const narrLines = extractNarrationLines(node.data.dialogue)
+      if (!narrLines.length) {
+        patch(id, { voiceState: 'error', voiceError: '这一镜没有旁白行' })
+        return
+      }
+      const payload = buildNarrationPayload({
+        dialogue: parseDialogue(node.data.dialogue),
+        dialogueDelivery: node.data.dialogueDelivery,
+        narrator: nv,
+        voiceRate: node.data.voiceRate,
+      })
+      if (!payload) {
+        patch(id, { voiceState: 'error', voiceError: '无法组装旁白合成请求' })
+        return
+      }
+      patch(id, { voiceState: 'running', voiceError: undefined })
+      try {
+        const body =
+          'lines' in payload
+            ? { lines: payload.lines, modelKey: payload.modelKey, project: readyProject || undefined }
+            : {
+                text: payload.text,
+                voice: payload.voice,
+                modelKey: payload.modelKey,
+                ...('rate' in payload && payload.rate != null ? { rate: payload.rate } : {}),
+                ...(payload.performance ? { performance: payload.performance } : {}),
+                project: readyProject || undefined,
+              }
+        const r = await generateVoice(body)
+        patch(id, {
+          voiceUrl: r.url,
+          voiceState: 'idle',
+          voiceSeconds: r.seconds,
+          voiceMeta: {
+            engine: r.engine,
+            model: nv.modelKey,
+            voice: nv.voiceId,
+            scope: 'narration',
+            url: r.url,
+            seconds: r.seconds,
+            applied: r.applied ?? [],
+            unsupported: r.unsupported ?? [],
+            fingerprint: voiceFingerprintNarration(narrLines, node.data.dialogueDelivery, nv),
+            createdAt: new Date().toISOString(),
+          },
+        })
+      } catch (e) {
+        patch(id, { voiceState: 'error', voiceError: (e as Error).message })
+      }
+    },
+    [patch, narratorVoice, readyProject],
   )
 
   const generateAll = async () => {
@@ -4447,6 +3980,7 @@ function Shell() {
               projectReady={readyProject === projectName && Boolean(projectName)}
               episodes={episodes}
               shots={projectShots}
+              selectedEpNo={scriptDetailEpNo}
               projectTitle={currentSummary.title || projectName}
               onOpenEpisode={openScriptEpisode}
               onImportScript={openScriptImport}
@@ -4873,10 +4407,6 @@ function Shell() {
                 hint={ctxData.hint}
                 items={ctxData.items}
                 onClickItem={(id) => {
-                  if (ctxData.mode === 'transition-pick') {
-                    toggleTransitionRef(ctxData.edgeId, id)
-                    return
-                  }
                   if (ctxData.mode === 'shot') toggleRef(ctxData.targetId, id)
                   else toggleRef(id, ctxData.targetId)
                 }}
@@ -4912,8 +4442,8 @@ function Shell() {
                 extraActions={[
                   {
                     key: 'panel',
-                    label: '转场设置…',
-                    hint: edgeCtxData.relation === 'transition' ? '打开转场面板' : '会先落到转场',
+                    label: '接缝设置…',
+                    hint: edgeCtxData.relation === 'transition' ? '打开接缝面板' : '会先落到转场',
                     onClick: () => openTransitionFromMenu(edgeCtxData.id),
                   },
                 ]}
@@ -4938,32 +4468,11 @@ function Shell() {
               edge={selEdge}
               source={selEdgeSource}
               target={selEdgeTarget}
-              nodes={nodes}
-              characters={characters}
-              missingMedia={missingMedia}
-              settings={appSettings}
-              pick={modelPick}
               projectName={projectName}
-              price={price}
-              vidRes={vidRes}
               inactive={inactiveEdgeIds.has(selEdge.id)}
               onPatch={patch}
               onSetRelation={setEdgeRelation}
               onClose={() => setSelEdgeId(null)}
-              onGenerateVideo={generateTransitionVideo}
-              onRecoverVideo={recoverTransitionVideo}
-              onCancelVideo={cancelTransitionVideo}
-              onFocusShot={focusShotFromTransition}
-              onPick={pickModelKey}
-              onVidResChange={setVidRes}
-              projectStyle={projectStyle}
-              stagePick={stagePick}
-              onPickStage={pickStageModel}
-              agentRefTokens={
-                transitionAgentRefs[
-                  `${String(selEdgeSource.data.shotId || selEdgeSource.id)}|${String(selEdgeTarget.data.shotId || selEdgeTarget.id)}`
-                ] ?? []
-              }
             />
           ) : (
             <Inspector
@@ -5000,6 +4509,9 @@ function Shell() {
             hasPrevShot={selectedHasPrevShot}
             onPublishClipFrame={handlePublishClipFrame}
             onLinkPrevShotTail={handleLinkPrevShotTail}
+            narratorVoice={narratorVoice}
+            onSaveNarratorVoice={saveNarratorVoice}
+            onGenerateNarration={() => selected && void generateNarrationOne(selected.id)}
           />
           )}
         </main>
