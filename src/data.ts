@@ -4,12 +4,14 @@ import type { Relation, ShotData } from './types'
 export type ShotNodeType = Node<ShotData, 'shot'>
 export type ShotEdgeDataType = {
   relation: Relation
-  /** 只用于画布显示：转场状态（真相在源镜头的 transitionOut），决定线条的不透明度与描边色 */
-  state?: 'ready' | 'pending' | 'stale' | 'inactive'
+  /** 只用于画布显示：是否参与成片（真相在源镜头的 transitionOut），决定线条的不透明度 */
+  state?: 'ready' | 'inactive'
   /** 只用于画布显示：这条边是不是正在编辑的转场边（替代被关掉的 EdgeProps.selected） */
   active?: boolean
   /** 两端皆为出片镜时顺序边画实线（覆盖 relation 默认虚线） */
   sequenceSolid?: boolean
+  /** 转场连线中点标签文案（如「叠化 0.5s」）；非转场边为空 */
+  seamLabel?: string
 }
 export type ShotEdgeType = Edge<ShotEdgeDataType, 'shot'>
 

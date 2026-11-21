@@ -72,7 +72,6 @@ const REREAD_HINTS: Record<string, string> = {
   read_shot_detail: 'read_shot_detail',
   read_shot_video_prompt: 'read_shot_video_prompt',
   read_shot_video_inputs: 'read_shot_video_inputs',
-  read_transition_video_inputs: 'read_transition_video_inputs',
   read_episode: 'read_episode',
   read_episodes: 'read_episodes',
   read_characters: 'read_characters',

@@ -19,14 +19,14 @@ type Props = {
   value: string
   /** 点选关系：不关闭菜单，方便连着比较 */
   onPick: (id: string) => void
-  /** 关系之外的动作（打开转场设置等） */
+  /** 关系之外的动作（打开接缝设置等） */
   extraActions?: { key: string; label: string; hint?: string; onClick: () => void }[]
   /** 删除连线（底部危险动作） */
   onDelete?: () => void
   onClose: () => void
 }
 
-/** 分镜连线右键菜单：关系单选 + 转场设置/删除入口 */
+/** 分镜连线右键菜单：关系单选 + 接缝设置/删除入口 */
 export default function EdgeContextMenu(p: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x: p.x, y: p.y })

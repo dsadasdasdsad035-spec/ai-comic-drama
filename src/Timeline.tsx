@@ -97,10 +97,6 @@ export default function Timeline({
         }),
     [edit],
   )
-  const transitionItems = useMemo(
-    () => edit.items.filter((x) => x.kind === 'transition'),
-    [edit],
-  )
   const fades = useMemo(
     () =>
       edit.items
@@ -167,7 +163,7 @@ export default function Timeline({
         </button>
         <b>时间线</b>
         <span className="ntl-sum">
-          {clips.length} 镜{edit.transitions ? ` · ${edit.transitions} 转场` : ''} · <b>{total.toFixed(1)}s</b>
+          {clips.length} 镜 · <b>{total.toFixed(1)}s</b>
         </span>
         <span className="ntl-order" title="播放顺序按镜号，拖动不改顺序">按镜号</span>
         {edit.inactive.length > 0 && (
@@ -241,20 +237,6 @@ export default function Timeline({
                   />
                 ) : null
               })}
-              {transitionItems.map((t) => (
-                <button
-                  key={t.id}
-                  className={`ntl-clip transition ${t.stale ? 'stale' : ''}`}
-                  style={{
-                    left: px(t.start, zoom),
-                    width: Math.max(18, px(t.duration, zoom)),
-                  }}
-                  onClick={() => t.edgeId && onOpenTransition?.(t.edgeId)}
-                  title={`生成转场 ${t.duration.toFixed(1)}s${t.stale ? ' · 需重生成' : ''}`}
-                >
-                  <span className="ntl-clip-t">转场</span>
-                </button>
-              ))}
             </div>
 
             {/* 字幕轨：每条 cue 一个块；拖动仍作为整镜 subOffset */}

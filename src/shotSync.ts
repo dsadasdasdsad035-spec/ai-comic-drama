@@ -1,6 +1,7 @@
 import type { ProjectShot } from './api'
 import { resolveProdKind } from './shotProdKind'
 import { dialogueToText, parseDialogue } from './prompts'
+import { normalizeTransitionOut } from './transition'
 import type { ShotData } from './types'
 
 /**
@@ -215,7 +216,10 @@ export function mergeShotsDraft(
       next.refIds = fieldPolicy === 'import' ? mergeRefIds(old.refIds, g.refIds) : g.refIds
     }
     setIf('refExtras', g.refExtras)
-    setIf('transition_out', g.transition_out)
+    // 接缝写回一律归一化：外部（导入/Agent）带来的生成配置不进项目
+    if (writable.includes('transition_out') && g.transition_out !== undefined) {
+      next.transition_out = g.transition_out ? normalizeTransitionOut(g.transition_out) : null
+    }
     setIf('prod_kind', g.prod_kind)
     setIf('motion_note', g.motion_note)
     setIf('lexicon_ref_key', g.lexicon_ref_key)
@@ -274,7 +278,7 @@ export function bizSignature(d: ShotData): string {
     clip: localPath(d.videoUrl),
     refExtras: d.refExtras ?? [],
     refIds: d.refIds ?? [],
-    transitionOut: d.transitionOut ?? null,
+    transitionOut: d.transitionOut ? normalizeTransitionOut(d.transitionOut) : null,
     sceneNo: d.sceneNo ?? null,
     sceneSlug: d.sceneSlug ?? '',
     visualBrief: d.visualBrief ?? null,
@@ -318,7 +322,9 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     refExtras: d.refExtras,
     refIds: d.refIds,
     // null 是明确清除：mergeShots 会跳过 undefined，写 undefined 会让旧转场复活
-    transition_out: d.transitionOut ?? null,
+    // null 是明确清除：mergeShots 会跳过 undefined，写 undefined 会让旧转场复活。
+    // 归一化兜住旧画布/外部写入：生成配置不进项目文件。
+    transition_out: d.transitionOut ? normalizeTransitionOut(d.transitionOut) : null,
     scene_no: d.sceneNo,
     scene_slug: d.sceneSlug,
     visual_brief: d.visualBrief,
@@ -363,9 +369,14 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     videoUrl: s.clip ?? fallback.videoUrl,
     cast: s.cast,
     refExtras: s.refExtras,
-    // 字段缺失（旧项目）才沿用画布上的值；显式 null 表示已经删掉，不能复活
+    // 字段缺失（旧项目）才沿用画布上的值；显式 null 表示已经删掉，不能复活。
+    // 归一化在这里做：旧存档里的生成配置（generated）读入即剥离，画布与写回都只见效果位。
     transitionOut:
-      s.transition_out === undefined ? fallback.transitionOut : s.transition_out ?? undefined,
+      s.transition_out === undefined
+        ? fallback.transitionOut
+        : s.transition_out
+          ? normalizeTransitionOut(s.transition_out)
+          : undefined,
     sceneNo: s.scene_no ?? fallback.sceneNo,
     sceneSlug: s.scene_slug ?? fallback.sceneSlug,
     visualBrief: s.visual_brief ?? fallback.visualBrief,

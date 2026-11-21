@@ -144,27 +144,16 @@ const dialogueDelivery = passthrough({
   emphasis: z.string().optional(),
 })
 
-const transitionTaxonomy = z.enum(['scene', 'character', 'space', 'vfx', 'camera', 'ai_video'])
-
 const joinItemV1 = passthrough({
   after_no: z.union([z.string(), z.number()]),
   to_no: z.union([z.string(), z.number()]),
   relation: z.enum(['cut', 'transition']).optional(),
-  mode: z.enum(['effect', 'generated']).optional(),
-  taxonomy: transitionTaxonomy.optional(),
-  recipe_ids: z.array(z.string()).optional(),
+  // 生成转场已退役：接缝只写效果预设与时长
+  mode: z.literal('effect').optional(),
   effect: passthrough({
     preset_id: z.string().optional(),
     type: z.string().optional(),
     seconds: z.number().optional(),
-  }).optional(),
-  generated: passthrough({
-    prompt: z.string().optional(),
-    sound_prompt: z.string().optional(),
-    target_seconds: z.number().optional(),
-    recipe_ids: z.array(z.string()).optional(),
-    variant_id: z.string().optional(),
-    taxonomy: transitionTaxonomy.optional(),
   }).optional(),
 })
 

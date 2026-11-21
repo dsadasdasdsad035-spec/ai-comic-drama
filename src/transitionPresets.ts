@@ -46,6 +46,9 @@ export const TRANSITION_PRESETS: TransitionPresetDef[] = [
 
 const BY_ID = new Map(TRANSITION_PRESETS.map((p) => [p.id, p]))
 
+/** 预设总数；接缝设置与回归脚本用来断言目录规模 */
+export const PRESET_COUNT = TRANSITION_PRESETS.length
+
 export function getTransitionPreset(id: string | undefined): TransitionPresetDef | undefined {
   const key = String(id || '').trim()
   return key ? BY_ID.get(key) : undefined

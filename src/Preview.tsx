@@ -16,7 +16,7 @@ import {
 type Item = {
   id: string
   no: string
-  kind: 'shot' | 'transition'
+  kind: 'shot'
   /** 名义镜头时长 */
   seconds: number
   duration: number
@@ -43,35 +43,12 @@ type Item = {
 
 /**
  * 分镜顺序 = 节点数组顺序；接缝由 buildEditList 统一给出。
- * 生成转场作为独立条目进入播放列表，效果转场以 joinOut 表示。
+ * 播放列表只有镜头条目，效果转场以 joinIn / joinOut 表示两镜重叠。
  */
 export function buildPlaylist(nodes: ShotNodeType[], edges: ShotEdgeType[] = []): Item[] {
   const list = buildEditList(nodes, edges)
   const items: Item[] = list.items.map((x) => {
-    if (x.kind === 'transition') {
-      return {
-        id: x.id,
-        no: '转场',
-        kind: 'transition',
-        seconds: x.duration,
-        duration: x.duration,
-        start: x.start,
-        end: x.end,
-        src: x.media,
-        isVideo: true,
-        ...(x.trimTo ? { trim: x.trimTo } : {}),
-        ...(x.stale ? { stale: true } : {}),
-        dialogue: '',
-        size: '',
-        move: '',
-        audio: 'none',
-        voiceSeconds: 0,
-        voiceOffset: 0,
-        joinIn: x.joinIn,
-        captions: [],
-      }
-    }
-    const n = x.node!
+    const n = x.node
     const video = activeVideoUrl(n.data)
     const audio = n.data.audioMode === 'native' ? 'native' : 'none'
     return {
@@ -123,12 +100,7 @@ function layoutItems(items: Item[], durFix: Record<string, number>): Item[] {
   let cursor = 0
   return items.map((item, index) => {
     const fixed = durFix[item.id]
-    const duration = Math.max(
-      0.2,
-      item.kind === 'transition'
-        ? (item.trim ?? fixed ?? item.duration)
-        : (fixed ?? item.duration),
-    )
+    const duration = Math.max(0.2, fixed ?? item.duration)
     const join = item.joinIn.kind === 'effect' ? item.joinIn.seconds : 0
     const start = index === 0 ? 0 : Math.max(0, cursor - join)
     const end = start + duration
@@ -506,7 +478,6 @@ export default function Preview({
     const segs: ExportSegment[] = []
     const joins: ExportJoin[] = []
     const issues: CaptionIssue[] = []
-    let staleCount = 0
     for (const item of items) {
       if (!item.src) continue
       joins.push(
@@ -514,7 +485,6 @@ export default function Preview({
           ? { mode: 'effect', seconds: item.joinIn.seconds, xfade: item.joinIn.xfade }
           : { mode: 'cut' },
       )
-      if (item.kind === 'transition' && item.stale) staleCount++
       const seg: ExportSegment = item.isVideo
         ? {
             kind: item.kind,
@@ -580,7 +550,6 @@ export default function Preview({
     try {
       const result = await assembleAnimatic(segs, expRes, {
         joins,
-        staleTransitions: staleCount,
         captionStyle: CAPTION_STYLE,
         ...(projectName ? { project: projectName, episode: epNo } : {}),
       })
@@ -603,7 +572,6 @@ export default function Preview({
             .join('，')}`,
         )
       }
-      if (result.staleTransitions) warns.push(`${result.staleTransitions} 条生成转场已失效，建议重生成后再导出`)
       if (result.captionWarnings?.length) warns.push(...result.captionWarnings)
       if (warnings.length) warns.unshift(`${warnings.length} 条字幕警告已在导出前确认`)
       setExpWarn(warns.join('；'))
@@ -649,12 +617,8 @@ export default function Preview({
         <div className="pv-head">
           <span className="pv-no">{current?.no ?? '——'}</span>
           <span className="pv-meta">
-            {current
-              ? current.kind === 'transition'
-                ? `生成转场 · ${current.duration.toFixed(1)}s${current.stale ? ' · 需重生成' : ''}`
-                : `${current.duration.toFixed(1)}s · ${current.size} · ${current.move}`
-              : ''}
-            {current && current.kind === 'shot' && !current.isVideo && <em className="pv-still">静帧</em>}
+            {current ? `${current.duration.toFixed(1)}s · ${current.size} · ${current.move}` : ''}
+            {current && !current.isVideo && <em className="pv-still">静帧</em>}
             {audioLabel && <span className="pv-status">{audioLabel}</span>}
             <span className="pv-status">{captionLabel}</span>
           </span>
@@ -779,14 +743,12 @@ export default function Preview({
               key={item.id}
               className={`pv-seg ${item.id === current?.id && !ended ? 'on' : ''} ${
                 playhead >= item.end || ended ? 'past' : ''
-              } ${item.kind === 'transition' ? 'transition' : ''}`}
+              }`}
               style={{ flex: Math.max(0.4, item.duration) }}
               onClick={() => seekTo(itemStart(item))}
-              title={`${item.no} · ${item.duration.toFixed(1)}s${
-                item.kind === 'transition' ? ' · 生成转场' : item.isVideo ? ' · 视频' : ' · 静帧'
-              }`}
+              title={`${item.no} · ${item.duration.toFixed(1)}s${item.isVideo ? ' · 视频' : ' · 静帧'}`}
             >
-              <span>{item.kind === 'transition' ? 'T' : item.no}</span>
+              <span>{item.no}</span>
             </button>
           ))}
         </div>

@@ -88,18 +88,6 @@ export const WORKBENCH_BUILTINS = {
     hint: '在拆镜之后批量写相邻镜接缝；只改 transition_out 草稿',
     scope: 'episode',
   },
-  plan_transition_director: {
-    key: 'plan_transition_director',
-    label: '镜间转场决策',
-    hint: 'transition-director：判硬切/效果/生成桥接，输出 YAML handoff',
-    scope: 'episode',
-  },
-  plan_cinematic_transition: {
-    key: 'plan_cinematic_transition',
-    label: '转场视频提示词',
-    hint: 'cinematic-transition：首尾帧与桥接 Seedance 提示词，写入接缝',
-    scope: 'episode',
-  },
   generate_prompts: {
     key: 'generate_prompts',
     label: '生成提示词',
@@ -215,6 +203,10 @@ export type DraftApplyResult = {
    * 回执上的「用它生成三视图」靠它知道给谁出图，不靠解析文本。
    */
   subjects?: string[]
+  /** 视频提示词审计失败时的逐项问题；供 Agent 直接按 evidence/hint 重写 */
+  checks?: Array<Record<string, unknown>>
+  /** 审计失败的整体修改指引 */
+  hint?: string
 }
 
 /**

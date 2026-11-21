@@ -30,7 +30,6 @@ import { createStageToolSet, createPiNativeToolSet, type StageToolSet } from './
 import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
 import { readCharacters, type ProjectChar } from '../charMap'
 import { createMaterialTools } from './materialTools'
-import { createTransitionRefTools } from './transitionRefTools'
 import { defineTool, type ToolDef } from './tool'
 import { collectShotReferences, limitReferences } from '../shotReferences'
 import {
@@ -113,11 +112,6 @@ export type BuiltinPlatformCtx = {
   getVideoResolution?: () => string
   /** 按 modelKey 解析视频模型；generate_clip 单次覆盖用 */
   getVideoModelByKey?: (key: string) => VideoModelInput | null
-  /**
-   * Agent 写转场参考后的内存标记：宿主据此在出片区标「本轮 Agent 写入」。
-   * 刻意不落盘——标记语义是「这一轮改的」，落盘后无法随用户手改撤销。
-   */
-  onTransitionRefsWritten?: (info: { afterShotId: string; toShotId: string; tokens: string[] }) => void
   /**
    * 专家会话可选：返回当前允许列举的技能 id 集；null/空表示不过滤（非专家或桥未注入）。
    * 由 StudioToolBridge 在 invoke 前通过闭包注入，不扩展工具对外 schema。
@@ -286,8 +280,6 @@ export const PLATFORM_ACTION_TOOL_NAMES = [
   'generate_clip',
   'generate_voice',
   'link_shot_refs',
-  'attach_transition_refs',
-  'set_transition_audio',
   'set_shot_camera_lexicon',
   'set_character_visual',
   'set_shot_video_options',
@@ -975,31 +967,6 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   byName.set('generate_keyframe', createGenerateKeyframeTool(input))
   byName.set('generate_clip', createGenerateClipTool(input))
   byName.set('generate_voice', createGenerateVoiceTool(input))
-  for (const t of createTransitionRefTools({
-    projectName: () => input.projectName,
-    epNo: () => resolveEpNo(input),
-    load: () => ensureProjectLoaded(input),
-    setSnapshot: (p) => draftCtx(input).setSnapshot(p),
-    onChanged: () => input.onProjectDataChanged?.(),
-    writeShot: (project, next) => writeShotBack(input, project, next),
-    // 画布有实时上下文就用它；没有则由工具按项目快照重建（素材卡 token 也能解析）
-    ...(input.getCanvasContext
-      ? {
-          getCanvasContext: () => {
-            const ctx = input.getCanvasContext!()
-            return {
-              nodes: ctx.nodes,
-              characters: ctx.characters,
-              missingMedia: ctx.missingMedia,
-            }
-          },
-        }
-      : {}),
-    getSelectedVideoModel: input.getSelectedVideoModel,
-    onRefsWritten: input.onTransitionRefsWritten,
-  })) {
-    byName.set(t.name, t)
-  }
   for (const t of createMaterialTools({
     projectName: () => input.projectName,
     epNo: () => resolveEpNo(input),
@@ -1045,8 +1012,6 @@ const PLATFORM_READ_TOOL_NAMES = [
   'read_shot_detail',
   'read_shot_video_prompt',
   'read_shot_video_inputs',
-  'read_transition_video_inputs',
-  'read_transition_recipes',
   'read_asset_inventory',
   'read_asset_detail',
   'list_camera_lexicon',

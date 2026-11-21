@@ -1,9 +1,7 @@
 import type { CharacterSheet } from './characters'
 import type { ShotNodeType } from './data'
 import { parseDialogue } from './prompts'
-import type { ShotData, TransitionGenerated, VideoPromptRenderMeta } from './types'
-import { transitionDialogueText, transitionRecipePromptBlock, type TransitionInputMode } from './transitionGen'
-import { getTransitionRecipe } from './transitionRecipes'
+import type { ShotData, VideoPromptRenderMeta } from './types'
 import { resolveShotLexiconRef } from './cameraLexicon'
 import { shortHash } from './hash'
 import {
@@ -26,7 +24,7 @@ export type PromptRenderAssetInherit = 'strict' | 'motion_only' | 'audio_only' |
 
 export type PromptRenderBundle = {
   schemaVersion: 1
-  kind: 'shot' | 'transition'
+  kind: 'shot'
   templateVersion: string
   video: {
     type: string
@@ -67,15 +65,6 @@ export type PromptRenderBundle = {
     motionNote?: string
     nativeAudio?: { mode: 'off' | 'native'; character?: string }
     soundDesign?: string
-  }
-  transition?: {
-    bridging: string
-    inputMode: string
-    sourceShotNo: string
-    targetShotNo: string
-    recipeHints?: string[]
-    recipePitfalls?: string[]
-    agentPrompt?: string
   }
   continuity: {
     identityLocks: string[]
@@ -267,82 +256,6 @@ function assetInheritLabel(inherit: PromptRenderAssetInherit): string {
   return '外观与场景一致'
 }
 
-
-export function buildTransitionPromptRenderBundle(input: {
-  source: TNode
-  target: TNode
-  generated: TransitionGenerated
-  inputMode: TransitionInputMode | string
-  style: string
-  aspect: string
-  seconds: number
-  requestFingerprint: string
-}): PromptRenderBundle {
-  const g = input.generated
-  const recipeBlock = transitionRecipePromptBlock(g.recipeIds, g.variantId, g.prompt)
-  const pitfalls: string[] = []
-  for (const id of g.recipeIds ?? []) {
-    const card = getTransitionRecipe(id)
-    if (card?.pitfalls) pitfalls.push(...card.pitfalls)
-  }
-  const bridging = g.bridging ?? 'keyframe'
-  const forbidAnchor =
-    input.inputMode === 'text' || input.inputMode === 'none'
-      ? ['正文不得引用首帧/尾帧锚点（当前为纯文本或无结构输入）']
-      : []
-  return {
-    schemaVersion: 1,
-    kind: 'transition',
-    templateVersion: getPromptRenderTemplateVersion(),
-    video: {
-      type: '转场桥接',
-      durationSec: input.seconds,
-      aspectRatio: input.aspect,
-      visualStyle: input.style,
-      shotCount: 1,
-    },
-    assets: [],
-    scene: {
-      subjects: [
-        ...(input.source.data.cast ?? []),
-        ...(input.target.data.cast ?? []),
-      ],
-      castStates: `${input.source.data.no}→${input.target.data.no}`,
-      location: input.source.data.sceneSlug || input.target.data.sceneSlug || '',
-      // 两镜环境描述整段透传，不做字符切片
-      environment: [input.source.data.prompt, input.target.data.prompt].filter(Boolean).join(' | '),
-    },
-    creative: {
-      desc: g.prompt,
-      videoPromptBrief: g.prompt,
-      size: `${input.source.data.size}→${input.target.data.size}`,
-      move: `${input.source.data.move}→${input.target.data.move}`,
-      soundDesign: g.soundPrompt ?? '',
-      dialogue: transitionDialogueText(input.source, input.target),
-    },
-    transition: {
-      bridging,
-      inputMode: String(input.inputMode),
-      sourceShotNo: input.source.data.no,
-      targetShotNo: input.target.data.no,
-      recipeHints: recipeBlock.text ? [recipeBlock.text] : [],
-      recipePitfalls: pitfalls,
-      agentPrompt: g.prompt,
-    },
-    continuity: {
-      identityLocks: ['保持角色身份、外貌、服装连续'],
-      spatialRules: ['运动与视线连续，避免无理由跳切'],
-      forbidden: ['无字幕', '无水印', ...forbidAnchor],
-    },
-    endFrame: {
-      subjectPose: `对齐下一镜 ${input.target.data.no} 起始姿态`,
-      composition: input.target.data.size,
-      focus: '过渡终点可读',
-      nextShotLink: input.target.data.videoPrompt || input.target.data.prompt,
-    },
-    seedanceRulesDigest: SEEDANCE_RULES_DIGEST,
-  }
-}
 
 /** 供测试：从镜头输入构建 bundle 并返回 bundle 指纹（应等于 request.fingerprint） */
 export function shotRenderBundleFingerprint(input: Parameters<typeof buildShotVideoRequest>[0] & {

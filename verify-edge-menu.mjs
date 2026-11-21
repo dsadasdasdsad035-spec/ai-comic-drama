@@ -1,6 +1,7 @@
 /**
- * 连线单击菜单回归：画布连线无标签、单击线身弹菜单、右击不弹菜单、关系单选、
- * 转场设置入口、正在编辑的边高亮、贴边翻面、菜单删除连线（镜头数据不变）。
+ * 连线单击菜单回归：硬切连线无标签、转场连线中点显示接缝摘要、单击线身弹菜单、
+ * 右击不弹菜单、关系单选、接缝设置入口、正在编辑的边高亮、贴边翻面、
+ * 菜单删除连线（镜头数据不变）。
  * 跑法：先 npm run dev，再 node verify-edge-menu.mjs
  */
 import path from 'node:path'
@@ -97,7 +98,7 @@ await page.route('**/api/project**', async (route) => {
   })
 })
 
-// 画布不再有标签，关系与状态一律读边上的类名（edge-rel-* / edge-state-*）
+// 关系与状态一律读边上的类名（edge-rel-* / edge-state-*）；中点标签只属于转场线
 const edgeSel = '.react-flow__edge-shot'
 const interactionSel = `${edgeSel} .react-flow__edge-interaction`
 const edgeClass = async () =>
@@ -134,12 +135,27 @@ if (edgeProjectName) {
     window.location.hash = `#/p/${encodeURIComponent(n)}/board`
   }, edgeProjectName)
 }
+/** 画布页先出「分集目录」：点进第 1 集才有分镜卡与连线。卡片本身可能不跳，兜底点「进分镜」 */
+const reenterBoard = async () => {
+  const cards = page.locator('.board-ep-card')
+  if (await cards.count()) await cards.first().click()
+  const detail = page.locator('.wb-bar-detail')
+  try {
+    await detail.waitFor({ state: 'visible', timeout: 4000 })
+  } catch {
+    const enter = page.locator('button', { hasText: '进分镜' }).first()
+    if (await enter.count()) await enter.click()
+    await detail.waitFor({ state: 'visible', timeout: 20000 })
+  }
+  await page.waitForLoadState('networkidle').catch(() => {})
+  await page.waitForTimeout(1800)
+}
 await page.locator('.rail').waitFor({ timeout: 20000 })
-await page.waitForLoadState('networkidle').catch(() => {})
-await page.waitForTimeout(1800)
+await reenterBoard()
 
-check('项目加载 2 镜', (await page.locator('.react-flow__node').count()) === 2)
-check('画布上没有任何连线标签', (await page.locator('.edge-chip').count()) === 0)
+const nodeCount = await page.locator('.react-flow__node').count()
+check('项目加载 2 镜', nodeCount === 2, String(nodeCount))
+check('硬切连线没有中点标签', (await page.locator('.edge-chip').count()) === 0)
 const edgeId = await page.evaluate(() => {
   const s = JSON.parse(localStorage.getItem('storyboard-canvas-v1:edge-menu-e2e') || '{}')
   return (s.edges || []).find((e) => !e.id.startsWith('ref-'))?.id ?? null
@@ -170,7 +186,7 @@ await page.locator(interactionSel).first().dispatchEvent('contextmenu', { client
 await page.waitForTimeout(400)
 check('右击连线不弹菜单', (await ctxMenuCount()) === 0)
 
-// 单击进入转场 → 转场设置
+// 单击进入转场 → 接缝设置
 await clickEdge()
 await page.locator('.ctx-radio-row[data-edge-rel="transition"] .ctx-main').click()
 await page.waitForTimeout(700)
@@ -181,10 +197,21 @@ check(
   ['none', ''].includes(String(await edgePathDash())),
   await edgePathDash(),
 )
-await page.locator('.ctx-menu .ctx-actions button', { hasText: '转场设置' }).click()
+await closeMenu()
+check('转场连线出现中点标签', (await page.locator('.edge-chip').count()) === 1)
+const chipText = (await page.locator('.edge-chip').innerText()).trim()
+check('标签写的是接缝摘要', chipText.includes('叠化') && chipText.includes('0.5s'), chipText)
+const chipEvents = await page
+  .locator('.edge-chip')
+  .evaluate((el) => getComputedStyle(el).pointerEvents)
+check('标签不吃指针事件', chipEvents === 'none', chipEvents)
+await clickEdge()
+await page.locator('.ctx-menu .ctx-actions button', { hasText: '接缝设置' }).click()
 await page.waitForTimeout(500)
 check('菜单关闭', (await ctxMenuCount()) === 0)
-check('转场面板打开', (await page.locator('.tr-panel').count()) === 1)
+check('接缝设置打开', (await page.locator('.tr-panel').count()) === 1)
+const panelTitle = (await page.locator('.tr-panel .panel-head b').innerText()).trim()
+check('面板标题为「接缝设置」', panelTitle === '接缝设置', panelTitle)
 const strokeOn = await page
   .locator(`${edgeSel} .react-flow__edge-path`)
   .evaluate((el) => getComputedStyle(el).strokeWidth)
@@ -249,7 +276,7 @@ state.project.shots[0].transition_out = {
 }
 await page.evaluate(() => localStorage.removeItem('storyboard-canvas-v1:edge-menu-e2e'))
 await page.reload({ waitUntil: 'networkidle' })
-await page.waitForTimeout(1800)
+await reenterBoard()
 check('旧项目水合出转场线', (await relationOf()) === 'transition', await edgeClass())
 await clickEdge()
 check('菜单显示当前关系为转场', (await page.locator('.ctx-radio-row.on[data-edge-rel="transition"]').count()) === 1)

@@ -19,6 +19,8 @@ import { checkCharacterWriteback, readCharacters, toProject } from '../charMap'
 import { mergeScriptDraft } from '../agent/drafts'
 import { isProjectMediaUrl, mergeAssetCards } from '../assetCards'
 import type { ProjectEpisode } from '../api'
+import { auditVideoPromptCore } from '../promptAuditCore.mjs'
+import { AUDIT_VOCAB } from '../videoPromptVocab'
 
 export type ProjectDraftCtx = {
   projectName: string
@@ -59,6 +61,112 @@ function resolveDraftEpNo(ctx: ProjectDraftCtx): number {
   const raw = typeof ctx.epNo === 'function' ? ctx.epNo() : ctx.epNo
   const n = Number(raw)
   return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+/**
+ * 视频提示词内容审计（写回前）。
+ *
+ * 只审本次提交涉及的镜头：把每条提交项与快照里的原镜头合并成「将要写入的样子」，
+ * 再跑审计核。返回非空即表示阻断——调用方不得落库。
+ *
+ * 上下文来源都在快照里：场次 beats 从 `episodes[].scenes` 取，角色卡走
+ * `readCharacters`，参考集从 `refIds` / `refExtras` 与素材卡标题拼摘要。
+ */
+function auditPromptsBeforeWrite(
+  items: Array<{ no?: unknown; keyframe_prompt?: unknown; video_prompt?: unknown }>,
+  p: ProjectData,
+  epNo: number,
+): DraftApplyResult | null {
+  if (!Array.isArray(items) || items.length === 0) return null
+
+  const shots = p.shots || []
+  const characters = readCharacters(p.characters)
+  const assets = p.assets || []
+  const ep = (p.episodes || []).find((e) => (Number(e.no) || 0) === epNo)
+  const scenes = ep?.scenes ?? []
+
+  // 角色名 → lookEn（与首帧审计同一份数据）
+  const chars = characters.map((c) => ({ name: c.name, lookEn: c.lookEn }))
+  // 场景 / 道具已建档名称，供「该有参考」判定
+  const sceneNames = assets.filter((a) => a.kind === 'scene').map((a) => a.title).filter(Boolean)
+  const propNames = assets.filter((a) => a.kind === 'prop').map((a) => a.title).filter(Boolean)
+  // 定稿文本：剧本场次正文 + 镜头描述 + 台词，供发声引文守真比对
+  const dialogueSource = [
+    ...scenes.map((s) => String(s.beats ?? '')),
+    ...shots.map((s) => `${String(s.desc ?? '')} ${JSON.stringify(s.dialogue ?? '')}`),
+    ...characters.map((c) => `${c.name ?? ''} ${c.lookCn ?? ''}`),
+  ].join('\n')
+
+  const epShots = shots
+    .filter((s) => (Number(s.episode) || 1) === epNo)
+    .slice()
+    .sort((a, b) => String(a.no ?? '').localeCompare(String(b.no ?? ''), undefined, { numeric: true }))
+
+  const failures: Array<Record<string, unknown>> = []
+
+  for (const item of items) {
+    const no = String(item?.no ?? '')
+    const existing = shots.find(
+      (s) => String(s.no ?? '') === no && (Number(s.episode) || 1) === epNo,
+    )
+    if (!existing) continue
+
+    const sceneSlug = String(existing.scene_slug ?? '')
+    const scene = scenes.find((s) => String(s.slug ?? '') === sceneSlug)
+    const idx = epShots.findIndex((s) => String(s.no ?? '') === no)
+    const nextShot = idx >= 0 ? epShots[idx + 1] : undefined
+
+    // 参考摘要：refIds（asset-<canvasId> / char-<name>）+ refExtras 标题
+    const refs: Array<{ kind: string; name: string }> = []
+    for (const token of existing.refIds ?? []) {
+      const t = String(token)
+      if (t.startsWith('char-')) refs.push({ kind: 'character', name: t.slice(5) })
+      else if (t.startsWith('asset-')) {
+        const id = t.slice(6)
+        const a = assets.find((x) => String(x.canvasId ?? '') === id)
+        if (a) refs.push({ kind: a.kind === 'scene' ? 'scene' : a.kind === 'prop' ? 'prop' : 'other', name: a.title })
+      }
+    }
+    for (const url of existing.refExtras ?? []) {
+      const a = assets.find((x) => String(x.url ?? '') === String(url))
+      if (a) refs.push({ kind: a.kind === 'scene' ? 'scene' : a.kind === 'prop' ? 'prop' : 'other', name: a.title })
+    }
+    if (existing.keyframe) refs.push({ kind: 'frame', name: '首帧' })
+
+    const audit = auditVideoPromptCore(
+      { ...existing, video_prompt: String(item?.video_prompt ?? existing.video_prompt ?? '') },
+      {
+        vocab: AUDIT_VOCAB,
+        sceneBeats: String(scene?.beats ?? ''),
+        refs,
+        chars,
+        castSceneNames: sceneNames,
+        propNames,
+        dialogueSource,
+        nextShot,
+        isLastShot: idx >= 0 && idx === epShots.length - 1,
+      },
+    )
+
+    if (audit.blockers.length > 0) {
+      failures.push({ no, blockers: audit.blockers, warnings: audit.warnings })
+    }
+  }
+
+  if (failures.length === 0) return null
+
+  const checks = failures.flatMap((f) =>
+    (f.blockers as Array<Record<string, unknown>>).map((b) => ({ ...b, no: f.no })),
+  )
+  const warnCount = failures.reduce((n, f) => n + (f.warnings as unknown[]).length, 0)
+  return {
+    ok: false,
+    summary: '',
+    error:
+      `视频提示词审计未通过：${failures.length} 镜存在硬项问题，本次未写入任何数据` +
+      (warnCount ? `（另有 ${warnCount} 条提示）` : ''),
+    ...(checks.length ? { checks, hint: '按每条 checks 的 evidence 与 hint 修改后重新提交；只改这些项，不要重写未涉及的段落' } : {}),
+  } as DraftApplyResult
 }
 
 /** 按平台契约把 payload 合并进当前项目（创意 / 内置 Pi 工具共用） */
@@ -162,6 +270,12 @@ export async function applyProjectDraft(
     const items = Array.isArray((payload as { shots?: unknown[] }).shots)
       ? (payload as { shots: Parameters<typeof mergePromptDraft>[1] }).shots
       : []
+
+    // 内容审计：在落库之前用「合并后的镜头」判定，硬项不通过即整体拒绝、
+    // 不写任何数据。用合并后的结果而不是提交原文，因为锚点展开会补全字段。
+    const auditFail = auditPromptsBeforeWrite(items, p, epNo)
+    if (auditFail) return auditFail
+
     const { shots, patched, missing, unresolved } = mergePromptDraft(
       p.shots || [],
       items,
@@ -191,8 +305,8 @@ export async function applyProjectDraft(
     ctx.onProjectDataChanged?.()
     return {
       ok: true,
-      summary: `镜间接缝：应用 ${r.applied}，硬切 ${r.cuts}，特效 ${r.effects}，生成 ${r.generated}`,
-      counts: { applied: r.applied, cuts: r.cuts, effects: r.effects, generated: r.generated },
+      summary: `镜间接缝：应用 ${r.applied}，硬切 ${r.cuts}，特效 ${r.effects}`,
+      counts: { applied: r.applied, cuts: r.cuts, effects: r.effects },
     }
   }
 

@@ -1,28 +1,16 @@
 import type { ProjectShot } from './api'
 import type { TransitionOut } from './types'
-import { defaultTransition, normalizeEffect, normalizeGenerated, normalizeTransitionOut } from './transition'
-export type TransitionTaxonomy = 'scene' | 'character' | 'space' | 'vfx' | 'camera' | 'ai_video'
+import { normalizeEffect, normalizeTransitionOut } from './transition'
 
 export type JoinRelation = 'cut' | 'transition'
-
-export type JoinGeneratedDraft = {
-  prompt?: string
-  sound_prompt?: string
-  target_seconds?: number
-  recipe_ids?: string[]
-  variant_id?: string
-  taxonomy?: TransitionTaxonomy
-}
 
 export type JoinDraft = {
   after_no: string
   to_no: string
   relation?: JoinRelation
-  mode?: 'effect' | 'generated'
-  taxonomy?: TransitionTaxonomy
-  recipe_ids?: string[]
+  /** 只接受 effect；生成转场已退役 */
+  mode?: 'effect'
   effect?: { preset_id?: string; type?: string; seconds?: number }
-  generated?: JoinGeneratedDraft
 }
 
 export type JoinApplyIssue = { after_no: string; message: string }
@@ -32,7 +20,6 @@ export type JoinApplyResult = {
   applied: number
   cuts: number
   effects: number
-  generated: number
   issues: JoinApplyIssue[]
 }
 
@@ -46,7 +33,6 @@ export function applyJoinsToShots(shots: ProjectShot[], joins: JoinDraft[]): Joi
   let applied = 0
   let cuts = 0
   let effects = 0
-  let generated = 0
 
   for (const j of joins) {
     const afterNo = String(j.after_no || '').trim()
@@ -82,47 +68,18 @@ export function applyJoinsToShots(shots: ProjectShot[], joins: JoinDraft[]): Joi
       continue
     }
 
-    const mode = j.mode === 'effect' ? 'effect' : 'generated'
     const base = normalizeTransitionOut(source.transition_out, toKey)
-    let transitionOut: TransitionOut
-
-    if (mode === 'effect') {
-      const presetId = j.effect?.preset_id
-      transitionOut = {
-        ...base,
-        to: toKey,
-        mode: 'effect',
-        effect: normalizeEffect({
-          type: j.effect?.type as any,
-          presetId,
-          seconds: j.effect?.seconds,
-        }),
-        generated: base.generated,
-      }
-      effects++
-    } else {
-      const g = normalizeGenerated({
-        ...base.generated,
-        prompt: String(j.generated?.prompt ?? base.generated?.prompt ?? ''),
-        soundPrompt: String(j.generated?.sound_prompt ?? base.generated?.soundPrompt ?? ''),
-        targetSeconds:
-          Number(j.generated?.target_seconds) || base.generated?.targetSeconds || undefined,
-      })
-      if (j.taxonomy || j.generated?.taxonomy) {
-        g.taxonomy = j.taxonomy ?? j.generated?.taxonomy
-      }
-      const recipeIds = [...new Set([...(j.recipe_ids ?? []), ...(j.generated?.recipe_ids ?? [])])]
-      if (recipeIds.length) g.recipeIds = recipeIds
-      if (j.generated?.variant_id) g.variantId = String(j.generated.variant_id)
-      transitionOut = {
-        ...base,
-        to: toKey,
-        mode: 'generated',
-        effect: base.effect,
-        generated: g,
-      }
-      generated++
+    const transitionOut: TransitionOut = {
+      ...base,
+      to: toKey,
+      mode: 'effect',
+      effect: normalizeEffect({
+        type: j.effect?.type as any,
+        presetId: j.effect?.preset_id,
+        seconds: j.effect?.seconds,
+      }),
     }
+    effects++
 
     const idx = next.findIndex((s) => s.id === source.id)
     if (idx >= 0) {
@@ -135,7 +92,7 @@ export function applyJoinsToShots(shots: ProjectShot[], joins: JoinDraft[]): Joi
     }
   }
 
-  return { shots: next, applied, cuts, effects, generated, issues }
+  return { shots: next, applied, cuts, effects, issues }
 }
 
 /** 播放序中下一镜；用于接缝行对齐与错位警告 */
@@ -152,13 +109,8 @@ export function nextShotInEpisodeOrder(shots: ProjectShot[], source: ProjectShot
 export function seamSummary(transitionOut: TransitionOut | null | undefined, relation: JoinRelation): string {
   if (relation === 'cut' || !transitionOut) return '硬切'
   const t = normalizeTransitionOut(transitionOut)
-  if (t.mode === 'effect') {
-    const sec = t.effect?.seconds ?? 0.5
-    return `效果 ${t.effect?.presetId || t.effect?.type || '叠化'} ${sec}s`
-  }
-  const sec = t.generated?.targetSeconds ?? 1.2
-  const tax = (t.generated as any)?.taxonomy
-  return `生成 ${sec}s${tax ? ` · ${tax}` : ''}`
+  const sec = t.effect?.seconds ?? 0.5
+  return `效果 ${t.effect?.presetId || t.effect?.type || '叠化'} ${sec}s`
 }
 
 export function transitionOutMismatch(

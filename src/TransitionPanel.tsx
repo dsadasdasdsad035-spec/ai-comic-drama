@@ -1,49 +1,17 @@
 import { useMemo, useState } from 'react'
-import { type AppSettings, type Cap, type ModelEntry, type Stage } from './api'
-import type { StagePick } from './ModelSelect'
-import type { CharacterSheet } from './characters'
 import type { ShotEdgeType, ShotNodeType } from './data'
-import type { Pricing } from './pricing'
-import { money, videoCost } from './pricing'
 import type { Relation, ShotData, TransitionEffect, TransitionOut } from './types'
-import type { BoundarySource } from './types'
 import {
-  DEFAULT_GENERATED_SECONDS,
   DEFAULT_TRANSITION_SECONDS,
   MAX_EFFECT_SECONDS,
-  MAX_GENERATED_TARGET,
-  MIN_EFFECT_SECONDS,
   clampEffectSeconds,
   effectLabel,
-  generatedFade,
   normalizeEffect,
-  normalizeGenerated,
   normalizeTransitionOut,
   resolveJoin,
-  transitionFingerprint,
 } from './transition'
-import {
-  autoTransitionVideoPrompt,
-  buildTransitionVideoPreview,
-  defaultTransitionPrompt,
-  effectiveTransitionVideoPrompt,
-  ensureTransitionBoundary,
-  INPUT_MODE_LABEL,
-  OMIT_REASON_LABELS,
-  transitionPreviewToPromptPanelModel,
-  transitionRefCandidates,
-  transitionDialogueText,
-  transitionRequestSeconds,
-  transitionStyleRefTokens,
-} from './transitionGen'
-import { audioRefCapabilitiesFor } from './nativeAudio'
-import OutgoingReferencePickerModal, { type OutgoingBoundarySlot } from './OutgoingReferencePickerModal'
-import GenErrorNote from './GenErrorNote'
-import { parseUpstreamTaskIdFromError } from './videoRecover'
-import OutgoingVideoPromptPanel, { refSourceLabel } from './OutgoingVideoPromptPanel'
 import Fold from './Fold'
 import { PRESET_CATEGORY_LABEL, TRANSITION_PRESETS, type TransitionPresetCategory } from './transitionPresets'
-import { TransitionNativeAudioBlock, VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
 
 const PRESET_ORDER: TransitionPresetCategory[] = ['classic', 'rhythm', 'geometry', 'motion']
 /** 常用段固定 4 项：覆盖叠化、黑场淡出、白场淡入、推移 */
@@ -60,57 +28,26 @@ type Props = {
   edge: ShotEdgeType
   source: ShotNodeType
   target: ShotNodeType
-  nodes: ShotNodeType[]
-  characters: CharacterSheet[]
-  missingMedia: Set<string>
-  settings: AppSettings | null
-  pick: Partial<Record<Cap, string>>
   projectName: string
-  price: Pricing
-  vidRes: '480p' | '720p'
   inactive: boolean
   onPatch: (id: string, p: Partial<ShotData>) => void
   onSetRelation: (edgeId: string, relation: Relation) => void
   onClose: () => void
-  onGenerateVideo: (edgeId: string) => void
-  onRecoverVideo?: (edgeId: string) => void
-  onCancelVideo: (edgeId: string) => void
-  onFocusShot: (nodeId: string) => void
-  onPick: (cap: Cap, key: string) => void
-  onVidResChange: (v: '480p' | '720p') => void
-  projectStyle: string
-  stagePick: StagePick
-  onPickStage: (stage: Stage, key: string) => void
-  /** 本轮由 Agent 写入的参考 token：出片区与附件列表据此打 Agent 标记 */
-  agentRefTokens?: string[]
 }
 
+/**
+ * 接缝设置：只负责效果转场的预设与时长。
+ * 文件名沿用 TransitionPanel —— 它描述的是数据域（transition），标题描述的是用户动作。
+ */
 export default function TransitionPanel({
   edge,
   source,
   target,
-  nodes,
-  characters,
-  missingMedia,
-  settings,
-  pick,
   projectName,
-  price,
-  vidRes,
   inactive,
   onPatch,
   onSetRelation,
   onClose,
-  onGenerateVideo,
-  onRecoverVideo,
-  onCancelVideo,
-  onFocusShot,
-  onPick,
-  onVidResChange,
-  projectStyle: _projectStyle,
-  stagePick,
-  onPickStage,
-  agentRefTokens = [],
 }: Props) {
   const relation: Relation = edge.data?.relation ?? 'cut'
   const t = useMemo(
@@ -118,31 +55,11 @@ export default function TransitionPanel({
     [source.data.transitionOut, target],
   )
   const effect = normalizeEffect(t.effect)
-  const g = normalizeGenerated(t.generated)
   const aDur = durOf(source)
   const bDur = durOf(target)
-  const styleTokens = useMemo(
-    () => transitionStyleRefTokens(source, target, nodes, characters, missingMedia, g),
-    [source, target, nodes, characters, missingMedia, g],
-  )
-  const fingerprint = transitionFingerprint(source.data, target.data, g, effect, styleTokens)
-  const join = relation === 'transition' ? resolveJoin(t, aDur, bDur, fingerprint) : { mode: 'cut' as const }
-  const stale = Boolean(g.video?.url && t.meta?.fingerprint && t.meta.fingerprint !== fingerprint)
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  // 出片设置只留一行摘要，与分镜视频 Tab 保持同一套折叠语言
-  const [vidSettingsOpen, setVidSettingsOpen] = useState(false)
+  const join = relation === 'transition' ? resolveJoin(t, aDur, bDur) : { mode: 'cut' as const }
   // 全部预设默认收起，常用段固定 4 项
   const [allPresetsOpen, setAllPresetsOpen] = useState(false)
-  const summaryModel = useMemo(() => {
-    const family = (settings?.models ?? []).filter(
-      (m) => m.cap === 'video' || m.cap === 'videoRef',
-    )
-    return (
-      family.find((m) => m.key === (pick.video || settings?.defaults?.video)) || family[0]
-    )
-  }, [settings, pick.video])
-  const [continuityOpen, setContinuityOpen] = useState(false)
-  const [refPickerOpen, setRefPickerOpen] = useState(false)
   const presetGroups = useMemo(() => {
     const m = new Map<TransitionPresetCategory, typeof TRANSITION_PRESETS>()
     for (const cat of PRESET_ORDER) m.set(cat, [])
@@ -154,82 +71,6 @@ export default function TransitionPanel({
     return PRESET_ORDER.map((cat) => ({ cat, label: PRESET_CATEGORY_LABEL[cat], items: m.get(cat) ?? [] }))
   }, [])
 
-  const videoKey = pick.video || settings?.defaults?.video || ''
-  const entry: ModelEntry | undefined = settings?.models.find((m) => m.key === videoKey)
-  const videoProvider = settings?.providers.find((p) => p.id === entry?.provider)
-  const modelForPreview = entry
-    ? { ...entry, providerKind: videoProvider?.kind, features: entry.features }
-    : null
-  const req = transitionRequestSeconds(
-    g.targetSeconds,
-    entry?.model,
-    Boolean(g.boundary?.out && g.boundary?.in),
-    { nativeAudio: g.audioMode === 'native' },
-  )
-  const estCost = videoCost(price, req.seconds, vidRes)
-  const audioCaps = useMemo(
-    () =>
-      audioRefCapabilitiesFor({
-        providerKind: videoProvider?.kind,
-        model: entry?.model,
-        audioOut: entry?.features?.audioOut,
-      }),
-    [videoProvider, entry],
-  )
-  const nativeAudioData = useMemo((): ShotData => {
-    return {
-      no: '',
-      seconds: req.seconds,
-      size: '中景',
-      move: '固定',
-      prompt: '',
-      dialogue: transitionDialogueText(source, target),
-      performance: [...(source.data.performance ?? []), ...(target.data.performance ?? [])],
-      refIds: [],
-      marks: [],
-      audioMode: g.audioMode,
-      audioRef: g.audioRef,
-      audioMeta: g.audioMeta,
-    }
-  }, [source, target, g, req.seconds])
-
-  const preview = useMemo(
-    () =>
-      buildTransitionVideoPreview({
-        source,
-        target,
-        generated: g,
-        model: modelForPreview,
-        nodes,
-        characters,
-        missingMedia,
-      }),
-    [source, target, g, modelForPreview, nodes, characters, missingMedia],
-  )
-
-  const refCandidates = useMemo(
-    () => transitionRefCandidates(source, target, nodes, characters, missingMedia),
-    [source, target, nodes, characters, missingMedia],
-  )
-  const dedicatedRefTokens = useMemo(() => new Set(g.refIds ?? []), [g.refIds])
-  const assetPickCandidates = useMemo(
-    () => refCandidates.filter((c) => c.source === 'asset'),
-    [refCandidates],
-  )
-  const charPickCandidates = useMemo(
-    () => refCandidates.filter((c) => c.source === 'character'),
-    [refCandidates],
-  )
-  const autoPrompt = useMemo(
-    () => autoTransitionVideoPrompt(source, target, { ...g, videoPromptOverride: undefined }),
-    [source, target, g],
-  )
-  // 空正文时的「预填」建议：只在用户主动点按钮时使用，不参与出片拼装
-  const prefillPrompt = useMemo(
-    () => (autoPrompt.trim() ? autoPrompt : defaultTransitionPrompt(source, target)),
-    [autoPrompt, source, target],
-  )
-
   const commit = (next: Partial<TransitionOut>) => {
     const merged = normalizeTransitionOut({ ...t, ...next, to: shotKey(target) }, shotKey(target))
     onPatch(source.id, {
@@ -238,181 +79,18 @@ export default function TransitionPanel({
     })
   }
 
-  const setMode = (mode: 'effect' | 'generated') => {
-    if (relation !== 'transition') onSetRelation(edge.id, 'transition')
-    commit({ mode })
-  }
-
   const setEffect = (patch: Partial<TransitionEffect>) => {
-    commit({ mode: 'effect', effect: { ...effect, ...patch } })
+    commit({ effect: { ...effect, ...patch } })
   }
 
-  const setGenerated = (patch: Partial<ReturnType<typeof normalizeGenerated>>) => {
-    commit({ mode: 'generated', generated: { ...g, bridging: 'morph', ...patch } })
-  }
-
-  const setBoundaryUrl = (side: 'out' | 'in', url: string, from?: BoundarySource) => {
-    const next = url.trim()
-    const cur = g.boundary ?? {}
-    setGenerated({
-      boundary: {
-        ...cur,
-        [side]: next || undefined,
-        ...(side === 'out'
-          ? { outFrom: next ? from ?? 'manual' : undefined }
-          : { inFrom: next ? from ?? 'manual' : undefined }),
-      },
-    })
-  }
-
-  const [extractBusy, setExtractBusy] = useState(false)
-  const [extractError, setExtractError] = useState('')
-  /** 抽取成功但边界帧接近黑场：只提示，不参与禁用与失败语义 */
-  const [extractNotices, setExtractNotices] = useState('')
-
-  /** 抽取即写入：首帧取上镜成片尾帧，尾帧取下镜成片首帧；失败侧保留原值 */
-  const extractBoundary = async () => {
-    setExtractBusy(true)
-    setExtractError('')
-    setExtractNotices('')
-    try {
-      const { boundary, warnings, notices } = await ensureTransitionBoundary(source, target)
-      const cur = g.boundary ?? {}
-      const out = boundary.out ?? cur.out
-      const inn = boundary.in ?? cur.in
-      setGenerated({
-        boundary: {
-          ...(out ? { out, outFrom: boundary.out ? ('source-tail' as const) : cur.outFrom } : {}),
-          ...(inn ? { in: inn, inFrom: boundary.in ? ('target-head' as const) : cur.inFrom } : {}),
-        },
-      })
-      setExtractError(warnings.join('；'))
-      setExtractNotices(notices.join('；'))
-    } catch (e) {
-      setExtractError((e as Error).message || '抽取失败')
-    } finally {
-      setExtractBusy(false)
-    }
-  }
-
-  const boundarySlots: OutgoingBoundarySlot[] = useMemo(() => {
-    if (preview.bridging !== 'morph') return []
-    return [
-      {
-        side: 'out' as const,
-        label: '首帧 · 过渡起点',
-        purpose: '上一镜成片的最后一帧',
-        value: g.boundary?.out ?? '',
-        from: g.boundary?.outFrom,
-      },
-      {
-        side: 'in' as const,
-        label: '尾帧 · 过渡终点',
-        purpose: '下一镜成片的第一帧',
-        value: g.boundary?.in ?? '',
-        from: g.boundary?.inFrom,
-      },
-    ]
-  }, [preview.bridging, g.boundary])
-
-  const clearBoundary = (side: 'out' | 'in') => setBoundaryUrl(side, '')
-
-  const excludeRef = (token: string) => {
-    setGenerated({
-      excludeRefIds: [...new Set([...(g.excludeRefIds ?? []), token])],
-    })
-  }
-
-  const restoreRef = (token: string) => {
-    setGenerated({
-      excludeRefIds: (g.excludeRefIds ?? []).filter((t) => t !== token),
-    })
-  }
-
-  const removeAddedRef = (token: string) => {
-    setGenerated({ refIds: (g.refIds ?? []).filter((t) => t !== token) })
-  }
-
-  const toggleDedicatedRef = (token: string) => {
-    const cur = g.refIds ?? []
-    if (cur.includes(token)) removeAddedRef(token)
-    else setGenerated({ refIds: [...new Set([...cur, token])] })
-  }
-
-  const omitBanner =
-    preview.styleRefs.length > 0 && preview.submittedStyleCount === 0
-      ? OMIT_REASON_LABELS[preview.styleRefs[0]?.omittedReason ?? ''] ?? '风格参考图本次不提交'
-      : ''
-
-  const delta =
-    join.mode === 'effect'
-      ? -join.seconds
-      : join.mode === 'generated'
-        ? join.seconds - generatedFade(aDur, join.seconds) - generatedFade(join.seconds, bDur)
-        : 0
+  const delta = join.mode === 'effect' ? -join.seconds : 0
   const deltaText = `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}s`
   const clamped = clampEffectSeconds(effect.seconds, aDur, bDur)
-  const videoState = g.video?.state ?? 'idle'
-  const hasOverride = preview.promptSource === 'override'
-  /** 正文未填写：语义层没有正文，出片会阻塞，面板要把这件事说清楚 */
-  const promptEmpty = !hasOverride && autoPrompt.trim().length === 0
-  const boundaryBlocking = preview.blocking.some((m) => m.code === 'transition-boundary-missing')
-  const panelModel = useMemo(() => transitionPreviewToPromptPanelModel(preview, vidRes), [preview, vidRes])
-  const transitionEffective = useMemo(
-    () => effectiveTransitionVideoPrompt(source, target, g, styleTokens),
-    [source, target, g, styleTokens],
-  )
-  const effectivePrompt = useMemo(
-    () => ({
-      text: preview.prompt,
-      source: preview.promptSource,
-      stale: preview.promptStale,
-      autoKind: transitionEffective.autoKind,
-      renderStale: transitionEffective.renderStale,
-      templateStale: transitionEffective.templateStale,
-    }),
-    [preview.prompt, preview.promptSource, preview.promptStale, transitionEffective],
-  )
-  const videoMeta =
-    g.video?.videoMeta && g.video.videoMeta.url === g.video.url ? g.video.videoMeta : null
-  const videoReason = preview.blocking[0]?.message ?? ''
-
-  const showGeneratedFoot = relation === 'transition' && t.mode === 'generated'
-
-  const manualRefCount = dedicatedRefTokens.size
 
   return (
-  <>
-    <OutgoingReferencePickerModal
-      open={refPickerOpen}
-      onClose={() => setRefPickerOpen(false)}
-      title={`转场参考 · ${source.data.no} → ${target.data.no}`}
-      boundarySlots={boundarySlots}
-      onClearBoundary={clearBoundary}
-      onExtractBoundary={() => void extractBoundary()}
-      extractBusy={extractBusy}
-      extractError={extractError}
-      boundaryNotice={extractNotices}
-      onFocusSourceShot={() => onFocusShot(source.id)}
-      onFocusTargetShot={() => onFocusShot(target.id)}
-      charItems={charPickCandidates.map((c) => ({
-        token: c.token,
-        label: c.label,
-        url: c.url,
-        source: 'character' as const,
-      }))}
-      assetItems={assetPickCandidates.map((c) => ({
-        token: c.token,
-        label: c.label,
-        url: c.url,
-        source: 'asset' as const,
-      }))}
-      selectedTokens={dedicatedRefTokens}
-      onToggleToken={toggleDedicatedRef}
-    />
-    <aside className={`inspector tr-panel${showGeneratedFoot ? ' tr-panel--foot' : ''}`}>
+    <aside className="inspector tr-panel">
       <header className="panel-head">
-        <b>转场</b>
+        <b>接缝设置</b>
         <span className="panel-sid">
           {source.data.no} → {target.data.no}
         </span>
@@ -422,452 +100,125 @@ export default function TransitionPanel({
       </header>
 
       <div className="tr-panel-body si-scroll">
-      {inactive ? (
-        <div className="tr-warn">
-          未参与成片：两镜在播放序列里不相邻。把下一镜拖到相邻位置，或删掉这条线。
-        </div>
-      ) : null}
-
-      <div className="field">
-        <span>接缝</span>
-        <div className="tr-seg">
-          <button
-            className={`btn-mini ${relation === 'cut' ? 'on' : ''}`}
-            onClick={() => onSetRelation(edge.id, 'cut')}
-          >
-            硬切
-          </button>
-          <button
-            className={`btn-mini ${relation === 'transition' && t.mode === 'effect' ? 'on' : ''}`}
-            onClick={() => setMode('effect')}
-          >
-            效果
-          </button>
-          <button
-            className={`btn-mini ${relation === 'transition' && t.mode === 'generated' ? 'on' : ''}`}
-            onClick={() => setMode('generated')}
-          >
-            生成
-          </button>
-        </div>
-      </div>
-
-      {relation !== 'transition' ? (
-        <div className="tr-note">
-          旁白不断 →「效果」叠化；天气/环境大变 →「生成」+ 下方出片预览里改提示词与边界。
-        </div>
-      ) : null}
-
-      {relation === 'transition' && t.mode === 'effect' ? (
-        <div className="field">
-          <span>效果预设</span>
-          <div className="tr-preset-group tr-preset-common">
-            <span className="tr-preset-cat">常用</span>
-            <div className="tr-grid tr-grid-common">
-              {COMMON_PRESETS.map((p) => {
-                const on = (effect.presetId ?? 'dissolve') === p.id
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={`btn-mini ${on ? 'on' : ''}`}
-                    title={p.xfade}
-                    onClick={() =>
-                      setEffect({
-                        presetId: p.id,
-                        type: p.legacyType,
-                        ...(p.legacyDir ? { dir: p.legacyDir } : {}),
-                      })
-                    }
-                  >
-                    {p.label}
-                  </button>
-                )
-              })}
-            </div>
+        {inactive ? (
+          <div className="tr-warn">
+            未参与成片：两镜在播放序列里不相邻。把下一镜拖到相邻位置，或删掉这条线。
           </div>
-          <Fold
-            className="tr-preset-all"
-            idPrefix="tr-presets"
-            sectionId="effectPresets"
-            title="全部预设"
-            meta={`${TRANSITION_PRESETS.length - COMMON_PRESETS.length} 种`}
-            open={allPresetsOpen}
-            onToggle={() => setAllPresetsOpen((v) => !v)}
-          >
-            {presetGroups.map((group) => {
-              const items = group.items.filter((p) => !COMMON_PRESET_SET.has(p.id))
-              if (!items.length) return null
-              return (
-                <div key={group.cat} className="tr-preset-group">
-                  <span className="tr-preset-cat">{group.label}</span>
-                  <div className="tr-grid">
-                    {items.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        className={`btn-mini ${(effect.presetId ?? 'dissolve') === p.id ? 'on' : ''}`}
-                        title={p.xfade}
-                        onClick={() =>
-                          setEffect({
-                            presetId: p.id,
-                            type: p.legacyType,
-                            ...(p.legacyDir ? { dir: p.legacyDir } : {}),
-                          })
-                        }
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </Fold>
-          <label className="tr-inline">
-            <span>重叠</span>
-            <input
-              type="number"
-              min={0}
-              max={MAX_EFFECT_SECONDS}
-              step={0.1}
-              value={effect.seconds}
-              onChange={(e) => setEffect({ seconds: Number(e.target.value) || DEFAULT_TRANSITION_SECONDS })}
-            />
-            <span className="tr-unit">秒</span>
-          </label>
-          {clamped <= 0 ? (
-            <div className="tr-warn">两侧镜头太短，实际按硬切处理。</div>
-          ) : clamped < effect.seconds - 0.001 ? (
-            <div className="tr-note">短镜限制，实际时长 {clamped.toFixed(1)}s。</div>
-          ) : null}
+        ) : null}
+
+        <div className="field">
+          <span>接缝</span>
+          <div className="tr-seg">
+            <button
+              className={`btn-mini ${relation === 'cut' ? 'on' : ''}`}
+              onClick={() => onSetRelation(edge.id, 'cut')}
+            >
+              硬切
+            </button>
+            <button
+              className={`btn-mini ${relation === 'transition' ? 'on' : ''}`}
+              onClick={() => onSetRelation(edge.id, 'transition')}
+            >
+              转场
+            </button>
+          </div>
         </div>
-      ) : null}
 
-      {relation === 'transition' && t.mode === 'generated' ? (
-        <>
-          <label className="field tr-inline tr-target-sec">
-            <span>成片时长</span>
-            <input
-              type="number"
-              min={0.8}
-              max={MAX_GENERATED_TARGET}
-              step={0.1}
-              value={g.targetSeconds}
-              onChange={(e) =>
-                setGenerated({ targetSeconds: Number(e.target.value) || DEFAULT_GENERATED_SECONDS })
-              }
-            />
-            <span className="tr-unit">秒</span>
-            <span className="tr-note">
-              时间轴 {deltaText}
-              {t.mode === 'generated' && g.video?.url
-                ? ` · 生成段 ${join.mode === 'generated' ? join.seconds.toFixed(1) : '—'}s`
-                : ''}
-            </span>
-          </label>
-
-          <label className="field">
-            <span>
-              画面与过渡
-              <i className="hint-inline" title="写入转场提示词；留空则出片会提示正文未填写">
-                Seedance
-              </i>
-            </span>
-            <textarea
-              className="tr-prompt"
-              value={g.prompt}
-              placeholder="环境、运动、人物衔接…留空会提示正文未填写，可点下方「用上下镜正文预填」"
-              onChange={(e) => setGenerated({ prompt: e.target.value })}
-              rows={3}
-            />
-          </label>
-          {promptEmpty ? (
-            <div className="tr-warn tr-prompt-empty">
-              <span>正文未填写：留空无法出片，请补写一段桥接描述。</span>
-              <button
-                type="button"
-                className="btn-ghost"
-                title="把上/下镜正文拼成一段可继续编辑的过渡描述"
-                onClick={() => setGenerated({ prompt: prefillPrompt })}
-              >
-                用上下镜正文预填
-              </button>
-            </div>
-          ) : null}
-          {hasOverride ? (
-            <div className="gen-note vp-field-note">
-              当前使用手改提示词，本字段的修改不会影响出片；要重新接管请在上方面板点「重新拼装」。
-            </div>
-          ) : null}
-          <label className="field">
-            <span>声音描述</span>
-            <textarea
-              className="tr-prompt"
-              value={g.soundPrompt ?? ''}
-              placeholder="例：雨声由无到有，雷声远处滚过，环境底噪加大…"
-              onChange={(e) => setGenerated({ soundPrompt: e.target.value })}
-              rows={2}
-            />
-            <em className="st-hint">环境声与氛围；对白音色请用下方「原生音频」。</em>
-          </label>
-          {hasOverride ? (
-            <div className="gen-note vp-field-note">
-              当前使用手改提示词，声音描述修改不会影响出片；要重新接管请在上方面板点「重新拼装」。
-            </div>
-          ) : null}
-
-          <div className="gen-box vid-box tr-vid-box">
-            {g.video?.url ? (
-              <div className="si-video-preview">
-                <video src={g.video.url} muted loop autoPlay playsInline controls preload="metadata" />
-                <a
-                  className="btn-ghost vid-save"
-                  href={g.video.url}
-                  download={`transition-${source.data.shotId || source.data.no}-${target.data.shotId || target.data.no}.mp4`}
-                >
-                  保存成片
-                </a>
+        {relation !== 'transition' ? (
+          <div className="tr-note">选「转场」后默认叠化 0.5 秒；旁白不断时用叠化最稳。</div>
+        ) : (
+          <div className="field">
+            <span>效果预设</span>
+            <div className="tr-preset-group tr-preset-common">
+              <span className="tr-preset-cat">常用</span>
+              <div className="tr-grid tr-grid-common">
+                {COMMON_PRESETS.map((p) => {
+                  const on = (effect.presetId ?? 'dissolve') === p.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`btn-mini ${on ? 'on' : ''}`}
+                      title={p.xfade}
+                      onClick={() =>
+                        setEffect({
+                          presetId: p.id,
+                          type: p.legacyType,
+                          ...(p.legacyDir ? { dir: p.legacyDir } : {}),
+                        })
+                      }
+                    >
+                      {p.label}
+                    </button>
+                  )
+                })}
               </div>
-            ) : null}
-            {/* 参考素材条默认可见：不展开折叠也要能核对这次到底送了哪些图 */}
-            <div className="tr-refs-strip" data-tr-refs>
-              <span className="tr-refs-title">参考素材</span>
-              {preview.refs.length === 0 ? (
-                <span className="tr-refs-empty">无参考图</span>
-              ) : (
-                preview.refs.map((r) => (
-                  <figure className="tr-ref-chip" key={`${r.slot}-${r.index}-${r.url}`}>
-                    <img src={r.url} alt="" loading="lazy" />
-                    <figcaption>
-                      图{r.index} {r.label}
-                    </figcaption>
-                    {refSourceLabel(r.source) ? (
-                      <span className="tr-ref-src">{refSourceLabel(r.source)}</span>
-                    ) : null}
-                    {r.token && agentRefTokens.includes(r.token) ? (
-                      <span className="tr-ref-agent">Agent</span>
-                    ) : null}
-                  </figure>
-                ))
-              )}
             </div>
             <Fold
-              className="vid-settings"
-              idPrefix="tr-settings"
-              sectionId="videoSettings"
-              title="出片设置"
-              meta={`${summaryModel?.label ?? '未选模型'} · ${vidRes} · ${Math.min(12, Math.max(2, Math.round(preview.seconds)))}s · ¥${money(estCost)}`}
-              open={vidSettingsOpen}
-              onToggle={() => setVidSettingsOpen((v) => !v)}
+              className="tr-preset-all"
+              idPrefix="tr-presets"
+              sectionId="effectPresets"
+              title="全部预设"
+              meta={`${TRANSITION_PRESETS.length - COMMON_PRESETS.length} 种`}
+              open={allPresetsOpen}
+              onToggle={() => setAllPresetsOpen((v) => !v)}
             >
-            <VideoOutgoingModelRow
-              settings={settings}
-              pick={pick}
-              onPick={onPick}
-              vidRes={vidRes}
-              onVidResChange={onVidResChange}
-            />
-            <div className="gen-controls">
-              <span className="vid-len">
-                {Math.min(12, Math.max(2, Math.round(preview.seconds)))}s ·{' '}
-                {preview.bridging === 'morph' ? '首尾直变' : '关键帧首帧'}
-                {preview.trimTo ? ` · 裁到 ${preview.trimTo.toFixed(1)}s` : ''}
-              </span>
-            </div>
-
-            <TransitionNativeAudioBlock
-              data={nativeAudioData}
-              characters={characters}
-              caps={audioCaps}
-              modelKey={videoKey}
-              onPatch={(patch) =>
-                setGenerated({
-                  audioMode: patch.audioMode,
-                  audioRef: patch.audioRef,
-                  audioMeta: patch.audioMeta,
-                })
-              }
-            />
-
-            <p className="vid-note">
-              连线参考图走<b>多参考图模式</b>（reference_image）；连线了视频素材则同时送
-              <b> reference_video</b>（首期只取第一条）。未连线参考图时仍可用首尾直变。时长取转场成片时长（约
-              0.8~{MAX_GENERATED_TARGET} 秒），按 tokens 计费。
-            </p>
-            {omitBanner ? <p className="vid-refs">{omitBanner}</p> : null}
-            </Fold>
-
-            <OutgoingVideoPromptPanel
-              summary={panelModel.summaryLine}
-              refs={preview.refs}
-              refPrefix={panelModel.refPrefix}
-              video={preview.video}
-              omitted={preview.omitted}
-              omittedVideos={preview.omittedVideos}
-              blocking={preview.blocking}
-              warnings={preview.warnings}
-              effective={effectivePrompt}
-              staleMessage="参考、边界或分层字段已变化，当前正文是保存时的旧快照。"
-              onSaveOverride={(text) =>
-                setGenerated({
-                  videoPromptOverride: {
-                    text,
-                    fingerprint: preview.promptFingerprint,
-                    createdAt: new Date().toISOString(),
-                  },
-                })
-              }
-              onClearOverride={() => setGenerated({ videoPromptOverride: undefined })}
-              onRebuildOverride={() =>
-                setGenerated({
-                  videoPromptOverride: {
-                    // 重新拼装用可编辑的预填正文，避免写出一段空的手改正文
-                    text: prefillPrompt,
-                    fingerprint: preview.promptFingerprint,
-                    createdAt: new Date().toISOString(),
-                  },
-                })
-              }
-              videoMeta={videoMeta}
-              hasVideoUrl={Boolean(g.video?.url)}
-              agentTokens={agentRefTokens}
-              advancedSlot={
-                <Fold
-                  className="tr-advanced"
-                  idPrefix="tr-advanced"
-                  title="转场与边界"
-                  meta={`首帧${g.boundary?.out ? '已选' : '未选'} · 尾帧${g.boundary?.in ? '已选' : '未选'}`}
-                  open={advancedOpen}
-                  onToggle={() => setAdvancedOpen((v) => !v)}
-                >
-                  <p className="tr-note">
-                    不自动继承镜头连线；画布拖线仍可写入本条转场（先点接缝边）。首尾帧只由两镜成片抽取，集中操作用下方按钮。
-                  </p>
-                  <div className="tr-row tr-ref-launch">
-                    <button type="button" className="btn" onClick={() => setRefPickerOpen(true)}>
-                      选择出片参考…
-                    </button>
-                    <span className="tr-ref-summary">
-                      首帧{g.boundary?.out ? '已选' : '未选'} · 尾帧{g.boundary?.in ? '已选' : '未选'}
-                      {' · 本次 '}
-                      {INPUT_MODE_LABEL[preview.inputMode]}
-                      {' · 手动 '}
-                      {manualRefCount} 项
-                    </span>
-                  </div>
-                  {extractError ? <div className="gen-note vp-field-note">{extractError}</div> : null}
-                  {extractNotices ? (
-                    <div className="gen-note vp-field-note boundary-dim-note">{extractNotices}</div>
-                  ) : null}
-                  {boundaryBlocking ? (
-                    <div className="gen-error">首尾帧还没齐：打开「选择出片参考 → 首尾帧」点「抽取两镜成片帧」（上镜与下镜都要有成片）。</div>
-                  ) : null}
-                  <ul className="vp-refs tr-ref-actions">
-                    {preview.styleRefs.map((r) => (
-                      <li key={r.token} className={r.submitted ? '' : 'omitted'}>
-                        {r.label}
-                        <span>
-                          {r.submitted ? '将提交' : r.omittedReason ? OMIT_REASON_LABELS[r.omittedReason] : '未提交'}
-                        </span>
-                        {r.kind === 'added' ? (
-                          <button type="button" className="btn-mini" onClick={() => removeAddedRef(r.token)}>
-                            移除
-                          </button>
-                        ) : (
-                          <button type="button" className="btn-mini" onClick={() => excludeRef(r.token)}>
-                            排除
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                    {(g.excludeRefIds ?? []).map((token) => {
-                      const hit = refCandidates.find((c) => c.token === token)
-                      if (!hit) return null
-                      return (
-                        <li className="omitted" key={`ex-${token}`}>
-                          <b>已排除</b> {hit.label}
-                          <button type="button" className="btn-mini" onClick={() => restoreRef(token)}>
-                            恢复
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                  {!hasOverride && preview.continuityPreview.trim() ? (
-                    <div className="tr-continuity">
-                      <button
-                        type="button"
-                        className="vp-toggle tr-continuity-toggle"
-                        onClick={() => setContinuityOpen((v) => !v)}
-                      >
-                        {continuityOpen ? '▾' : '▸'} 自动衔接约束（只读，不参与发送）
-                      </button>
-                      {continuityOpen ? (
-                        <pre className="vp-text tr-continuity-text">{preview.continuityPreview.trim()}</pre>
-                      ) : null}
+              {presetGroups.map((group) => {
+                const items = group.items.filter((p) => !COMMON_PRESET_SET.has(p.id))
+                if (!items.length) return null
+                return (
+                  <div key={group.cat} className="tr-preset-group">
+                    <span className="tr-preset-cat">{group.label}</span>
+                    <div className="tr-grid">
+                      {items.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`btn-mini ${(effect.presetId ?? 'dissolve') === p.id ? 'on' : ''}`}
+                          title={p.xfade}
+                          onClick={() =>
+                            setEffect({
+                              presetId: p.id,
+                              type: p.legacyType,
+                              ...(p.legacyDir ? { dir: p.legacyDir } : {}),
+                            })
+                          }
+                        >
+                          {p.label}
+                        </button>
+                      ))}
                     </div>
-                  ) : null}
-                </Fold>
-              }
-            />
-
-            {g.video?.error ? <GenErrorNote message={g.video.error} summary="转场出片失败" /> : null}
-            {stale ? <div className="tr-warn">出片条件已变，建议重出视频。</div> : null}
+                  </div>
+                )
+              })}
+            </Fold>
+            <label className="tr-inline">
+              <span>重叠</span>
+              <input
+                type="number"
+                min={0}
+                max={MAX_EFFECT_SECONDS}
+                step={0.1}
+                value={effect.seconds}
+                onChange={(e) => setEffect({ seconds: Number(e.target.value) || DEFAULT_TRANSITION_SECONDS })}
+              />
+              <span className="tr-unit">秒</span>
+            </label>
+            {clamped <= 0 ? (
+              <div className="tr-warn">两侧镜头太短，实际按硬切处理。</div>
+            ) : clamped < effect.seconds - 0.001 ? (
+              <div className="tr-note">短镜限制，实际时长 {clamped.toFixed(1)}s。</div>
+            ) : null}
           </div>
-        </>
-      ) : null}
+        )}
 
-      {relation !== 'transition' || t.mode !== 'generated' ? (
         <div className="tr-note">
-          {effectLabel(effect)} · 重叠 {clamped.toFixed(1)}s · 成片 {deltaText}
+          {relation === 'transition'
+            ? `${effectLabel(effect)} · 重叠 ${clamped.toFixed(1)}s · 成片 ${deltaText}`
+            : `直接拼接 · 成片 ${deltaText}`}
         </div>
-      ) : null}
-      {projectName ? <div className="tr-note">保存到项目：{projectName}</div> : null}
+        {projectName ? <div className="tr-note">保存到项目：{projectName}</div> : null}
       </div>
-
-      {showGeneratedFoot ? (
-        <footer className="si-foot" data-shot-footer>
-          <button
-            type="button"
-            className="btn primary block"
-            onClick={() => (videoState === 'running' ? onCancelVideo(edge.id) : onGenerateVideo(edge.id))}
-            disabled={videoState !== 'running' && preview.blocking.length > 0}
-            title={
-              videoState === 'running'
-                ? '取消本次转场出片（本地停止等待，远端任务可能仍在跑）'
-                : undefined
-            }
-          >
-            {videoState === 'running' ? '取消生成' : g.video?.url ? '重出视频' : '生成视频'}
-          </button>
-          {videoState === 'error' &&
-          onRecoverVideo &&
-          (g.video?.upstreamRecover?.upstreamTaskId ||
-            parseUpstreamTaskIdFromError(g.video?.error || '')) ? (
-            <button
-              type="button"
-              className="btn block"
-              onClick={() => onRecoverVideo(edge.id)}
-              title="按报错里的上游 task_id 向云端查询并下载，不会重新提交生成"
-            >
-              重新拉取成片
-            </button>
-          ) : null}
-          <div className="si-foot-note">
-            {g.video?.error && !preview.blocking.length ? (
-              <GenErrorNote message={g.video.error} summary="转场出片失败" />
-            ) : videoReason ? (
-              videoReason
-            ) : videoState === 'running' ? (
-              '出片中…'
-            ) : (
-              `约 ¥${money(estCost)} / 次`
-            )}
-          </div>
-        </footer>
-      ) : null}
     </aside>
-  </>
   )
 }

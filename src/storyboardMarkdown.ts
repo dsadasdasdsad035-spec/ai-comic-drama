@@ -19,6 +19,7 @@ import {
   renderRefCell,
 } from './shotCellSyntax'
 import type { DialogueDelivery } from './types'
+import { effectLabel, normalizeEffect } from './transition'
 
 /** 文件名里不能出现的字符（POSIX 与 Windows 并集，含路径分隔符） */
 const ILLEGAL_FILENAME = /[\\/:*?"<>|]/g
@@ -345,16 +346,10 @@ function footnote(shots: ProjectShot[], allShots: ProjectShot[], index?: RefInde
     if (!t) continue
     const target = byId.get(t.to)
     const targetNo = String(target?.no ?? t.to).trim()
-    if (t.mode === 'effect') {
-      const kind = t.effect?.type ? String(t.effect.type) : '效果'
-      const secs = Number(t.effect?.seconds)
-      const dir = t.effect?.dir ? ` ${t.effect.dir}` : ''
-      transitions.push(
-        `${String(s.no).trim() || s.id} → ${targetNo}：${kind}${dir}${Number.isFinite(secs) ? ` ${fmtOne(secs)}s` : ''}`,
-      )
-    } else {
-      transitions.push(`${String(s.no).trim() || s.id} → ${targetNo}：AI 生成过渡`)
-    }
+    const effect = normalizeEffect(t.effect)
+    transitions.push(
+      `${String(s.no).trim() || s.id} → ${targetNo}：${effectLabel(effect)} ${fmtOne(effect.seconds)}s`,
+    )
   }
 
   const missingKeyframe = shots

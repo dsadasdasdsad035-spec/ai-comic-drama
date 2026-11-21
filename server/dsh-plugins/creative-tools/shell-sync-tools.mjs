@@ -15,9 +15,7 @@ export const STUDIO_SHELL_SYNC_TOOLS = new Set([
   'submit_joins',
   'set_character_visual',
   'set_shot_camera_lexicon',
-  'attach_transition_refs',
   'link_shot_refs',
-  'set_transition_audio',
 ])
 
 export function isStudioShellSyncTool(name) {

@@ -1,42 +1,26 @@
 import type { ShotEdgeType, ShotNodeType } from './data'
 import type { TransitionEffect, TransitionOut } from './types'
-import {
-  defaultTransition,
-  generatedFade,
-  resolveJoin,
-  transitionFingerprint,
-} from './transition'
+import { defaultTransition, resolveJoin } from './transition'
 
 export type EditJoin =
   | { kind: 'cut' }
   | { kind: 'effect'; effect: TransitionEffect; seconds: number; xfade: string; edgeId?: string }
 
 export type EditItem = {
-  /** 镜头用节点 id；生成转场用 edge id 加 tr- 前缀 */
+  /** 镜头用节点 id */
   id: string
-  kind: 'shot' | 'transition'
-  node?: ShotNodeType
-  edgeId?: string
+  kind: 'shot'
+  node: ShotNodeType
   duration: number
   start: number
   end: number
   joinIn: EditJoin
-  /** 生成转场片段的视频地址 */
-  media?: string
-  /** 仅首帧模型：成片里裁到这个时长 */
-  trimTo?: number
-  /** 生成转场依赖的边界已变化 */
-  stale?: boolean
-  /** 生成还没出片，当前按效果配置兜底 */
-  fallback?: boolean
 }
 
 export type EditList = {
   items: EditItem[]
   total: number
   shots: number
-  transitions: number
-  stale: string[]
   inactive: { edgeId: string; reason: 'not-adjacent' }[]
 }
 
@@ -60,7 +44,7 @@ const shotKey = (n: ShotNodeType) => String(n.data.shotId || n.id)
 
 const durationOf = (n: ShotNodeType) => Math.max(0.4, Number(n.data.seconds) || 3)
 
-/** 源镜头上与目标匹配的转场配置；缺失时按默认叠化解释（读时兜底，不写存档） */
+/** 源镜头上与目标匹配的接缝配置；缺失时按默认叠化解释（读时兜底，不写存档） */
 export function transitionFor(
   source: ShotNodeType,
   target: ShotNodeType,
@@ -73,14 +57,13 @@ export function transitionFor(
 
 /**
  * 由节点顺序（播放顺序）和画布连线生成唯一剪辑序列。
- * 效果转场重叠、生成转场插入，起点由折叠得出；时间线、预览、导出都读这里。
+ * 效果转场重叠两镜，起点由折叠得出；时间线、预览、导出都读这里。
  */
 export function buildEditList(nodes: ShotNodeType[], edges: ShotEdgeType[]): EditList {
   // 播放顺序 = 集内镜号顺序，不受 project.json 数组顺序影响
   const shots = nodes.filter(isShotNode).slice().sort(compareShotOrder)
   const indexOf = new Map<string, number>()
   shots.forEach((n, i) => indexOf.set(n.id, i))
-  const byId = new Map(shots.map((n) => [n.id, n]))
 
   const edgeByPair = new Map<string, ShotEdgeType>()
   const inactive: { edgeId: string; reason: 'not-adjacent' }[] = []
@@ -99,7 +82,6 @@ export function buildEditList(nodes: ShotNodeType[], edges: ShotEdgeType[]): Edi
   }
 
   const items: EditItem[] = []
-  const stale: string[] = []
   let cursor = 0
 
   for (let i = 0; i < shots.length; i++) {
@@ -128,42 +110,8 @@ export function buildEditList(nodes: ShotNodeType[], edges: ShotEdgeType[]): Edi
     let start = cursor
 
     if (edge) {
-      const t = transitionFor(prev, node)
-      const fingerprint = transitionFingerprint(prev.data, node.data, t.generated)
-      const resolved = resolveJoin(t, prevDur, dur, fingerprint)
-
-      if (resolved.mode === 'generated') {
-        const clipDur = resolved.seconds
-        const fadeIn = generatedFade(prevDur, clipDur)
-        const fadeOut = generatedFade(clipDur, dur)
-        const clipStart = cursor - fadeIn
-        const clipEnd = clipStart + clipDur
-        // 生成片段两端固定用短叠化；效果配置只作为未出片时的兜底
-        const fadeInEffect: TransitionEffect = { type: 'dissolve', seconds: fadeIn }
-        const fadeOutEffect: TransitionEffect = { type: 'dissolve', seconds: fadeOut }
-        const clipJoin: EditJoin =
-          fadeIn > 0
-            ? { kind: 'effect', effect: fadeInEffect, seconds: fadeIn, xfade: 'fade', edgeId: edge.id }
-            : { kind: 'cut' }
-        items.push({
-          id: `tr-${edge.id}`,
-          kind: 'transition',
-          edgeId: edge.id,
-          duration: clipDur,
-          start: clipStart,
-          end: clipEnd,
-          joinIn: clipJoin,
-          media: resolved.video,
-          ...(resolved.trimTo ? { trimTo: resolved.trimTo } : {}),
-          ...(resolved.stale ? { stale: true } : {}),
-        })
-        if (resolved.stale) stale.push(edge.id)
-        start = clipEnd - fadeOut
-        joinIn =
-          fadeOut > 0
-            ? { kind: 'effect', effect: fadeOutEffect, seconds: fadeOut, xfade: 'fade', edgeId: edge.id }
-            : { kind: 'cut' }
-      } else if (resolved.mode === 'effect') {
+      const resolved = resolveJoin(transitionFor(prev, node), prevDur, dur)
+      if (resolved.mode === 'effect') {
         start = cursor - resolved.seconds
         joinIn = {
           kind: 'effect',
@@ -190,14 +138,12 @@ export function buildEditList(nodes: ShotNodeType[], edges: ShotEdgeType[]): Edi
   return {
     items,
     total: Math.round(cursor * 100) / 100,
-    shots: items.filter((x) => x.kind === 'shot').length,
-    transitions: items.filter((x) => x.kind === 'transition').length,
-    stale,
+    shots: items.length,
     inactive,
   }
 }
 
 /** 某个镜头在序列里的条目（含起点），没有返回 undefined */
 export function shotItemOf(list: EditList, id: string): EditItem | undefined {
-  return list.items.find((x) => x.kind === 'shot' && x.id === id)
+  return list.items.find((x) => x.id === id)
 }

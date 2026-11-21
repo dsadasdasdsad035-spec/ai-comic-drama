@@ -80,7 +80,6 @@ import BoardEpisodeGrid from './board/BoardEpisodeGrid'
 import ScriptEpisodeHub from './board/ScriptEpisodeHub'
 import ScriptEpisodeDetail from './board/ScriptEpisodeDetail'
 import EpisodeScriptImportDialog from './board/EpisodeScriptImportDialog'
-import { applyEpisodeScriptMarkdownFromText } from './board/scriptIntake'
 import { episodeScriptUi } from './board/episodeScriptUi'
 import {
   blankEpisode,
@@ -675,9 +674,6 @@ function Shell() {
   const [boardPhase, setBoardPhase] = useState<'episodes' | 'canvas'>('episodes')
   const [scriptPhase, setScriptPhase] = useState<'list' | 'detail'>('list')
   const [scriptDetailEpNo, setScriptDetailEpNo] = useState<number | null>(null)
-  /** 返回书架后的「上次读到」：与 scriptDetailEpNo 分开，后者回列表就被清空 */
-  const [scriptLastReadEpNo, setScriptLastReadEpNo] = useState<number | null>(null)
-  const [scriptLastReadSceneNo, setScriptLastReadSceneNo] = useState<number | null>(null)
   const [scriptImportOpen, setScriptImportOpen] = useState(false)
   const [scriptHintEpNo, setScriptHintEpNo] = useState<number | undefined>()
   const [addEpisodeBusy, setAddEpisodeBusy] = useState(false)
@@ -851,8 +847,6 @@ function Shell() {
   useEffect(() => {
     if (view !== 'script' || scriptPhase !== 'detail') return
     setScriptDetailEpNo(epNo)
-    // 进过详情就算「读过」：返回书架时该集常驻选中态
-    setScriptLastReadEpNo(epNo)
   }, [view, scriptPhase, epNo])
 
   /** 切项目：剧本有未保存分集时先确认；切换期间禁止写回旧数据 */
@@ -1064,25 +1058,6 @@ function Shell() {
       window.setTimeout(() => setToast(''), 3200)
     },
     [readyProject],
-  )
-
-  const handleApplyScriptMarkdownFromDetail = useCallback(
-    async (markdown: string, hintEpNo: number) => {
-      if (!readyProject) throw new Error('项目未就绪')
-      try {
-        const { episodes: nextEps, summary } = applyEpisodeScriptMarkdownFromText(episodes, markdown, hintEpNo)
-        await patchProject(readyProject, { episodes: nextEps })
-        setEpisodes(nextEps)
-        setEpVersion((v) => v + 1)
-        setToast(summary)
-        window.setTimeout(() => setToast(''), 3600)
-      } catch (e) {
-        setToast((e as Error).message || '剧本写回失败')
-        window.setTimeout(() => setToast(''), 3600)
-        throw e
-      }
-    },
-    [readyProject, episodes],
   )
 
   const requestDeleteEpisodeScript = useCallback(
@@ -4466,8 +4441,6 @@ function Shell() {
                 setScriptImportOpen(true)
               }}
               onDeleteEpisodeScript={() => requestDeleteEpisodeScript(scriptDetailEpNo)}
-              onApplyScriptMarkdown={(md) => handleApplyScriptMarkdownFromDetail(md, scriptDetailEpNo)}
-              onReadProgress={(sceneNo) => setScriptLastReadSceneNo(sceneNo)}
             />
           ) : (
             <ScriptEpisodeHub
@@ -4478,8 +4451,6 @@ function Shell() {
               onOpenEpisode={openScriptEpisode}
               onImportScript={openScriptImport}
               onGoCreative={() => changeView('creative')}
-              lastEpNo={scriptLastReadEpNo}
-              lastSceneNo={scriptLastReadSceneNo}
             />
           )
         ) : view === 'assets' ? (

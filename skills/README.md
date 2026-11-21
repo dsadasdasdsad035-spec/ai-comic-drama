@@ -81,6 +81,8 @@ metadata:
 | submit_prompts | prompts-v1 |
 | submit_joins | joins-v1 |
 
+`submit_joins` 只写效果接缝（预设 + 时长）；生成式转场已退役，`joins-v1` 不再接受 `mode: generated`。
+
 另有 read_source、read_shots、read_skill_text、read_skill_file 等。创意 Pi **默认绑定**；写回须顶栏已选项目。
 
 ## 3D 运行时例外

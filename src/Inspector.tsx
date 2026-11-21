@@ -10,6 +10,9 @@ import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from '.
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { AppSettings, Cap, Stage } from './api'
+import type { ProjectEpisode, ProjectShot } from './api'
+import { nodeToShot } from './shotSync'
+import VideoPromptAuditPanel from './VideoPromptAuditPanel'
 import { listVideoFiles, type VideoFile } from './api'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
@@ -419,6 +422,13 @@ type Props = {
   characters: CharacterSheet[]
   /** 选中镜头的出片请求预览；与生成请求共用同一个拼装器 */
   videoRequest: ShotVideoRequest | null
+  /** 视频提示词审计：同集镜头与集数据，供视频页只读展示合规结果 */
+  episodeShots?: ProjectShot[]
+  episodes?: ProjectEpisode[]
+  /** 审计用的参考集摘要；由画布侧解析后传入，缺省时不查参考一致性 */
+  auditRefs?: Array<{ kind?: string; name?: string }>
+  auditSceneNames?: string[]
+  auditPropNames?: string[]
   projectStyle: string
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
@@ -709,6 +719,11 @@ function InspectorBody({
   projectName,
   characters,
   videoRequest,
+  episodeShots,
+  episodes,
+  auditRefs,
+  auditSceneNames,
+  auditPropNames,
   stagePick,
   onPickStage,
   onAddAssetCard,
@@ -1288,7 +1303,19 @@ function InspectorBody({
           </div>
         )}
         {videoRequest ? (
-          <ShotVideoPromptPanel
+          <>
+            {episodeShots && episodes ? (
+              <VideoPromptAuditPanel
+                shot={nodeToShot(d, node.id)}
+                episodeShots={episodeShots}
+                episodes={episodes}
+                chars={characters}
+                refs={auditRefs}
+                castSceneNames={auditSceneNames}
+                propNames={auditPropNames}
+              />
+            ) : null}
+            <ShotVideoPromptPanel
             data={d}
             request={videoRequest}
             onPatch={set}
@@ -1302,6 +1329,7 @@ function InspectorBody({
               ratio,
             }}
           />
+          </>
         ) : null}
         <Fold
           className="vid-settings"

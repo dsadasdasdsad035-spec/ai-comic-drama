@@ -165,101 +165,19 @@ export type TransitionEffect = {
   presetId?: string
 }
 
-/** 首尾帧手选来源；旧数据缺省按未知处理 */
-export type BoundarySource =
-  | 'source-frame'
-  | 'target-frame'
-  | 'source-tail'
-  | 'target-head'
-  | 'library'
-  | 'manual'
-
-export type TransitionBoundary = {
-  /** 首帧：用户为过渡起点手选的画面 */
-  out?: string
-  /** 尾帧：用户为过渡终点手选的画面 */
-  in?: string
-  /** 首帧来源类别；用于标签，不参与出片指纹 */
-  outFrom?: BoundarySource
-  /** 尾帧来源类别；用于标签，不参与出片指纹 */
-  inFrom?: BoundarySource
-  outAt?: number
-  inAt?: number
-}
-
-export type TransitionKeyframe = {
-  candidates: string[]
-  activeIdx?: number
-  /** 当前选中的候选，生成视频时作为关键帧 */
-  image?: string
-  /** 用户可编辑的过渡画面提示词 */
-  prompt?: string
-  state?: 'idle' | 'running' | 'error'
-  error?: string
-}
-
-export type TransitionVideo = {
-  url?: string
-  modelKey?: string
-  upstreamRecover?: VideoUpstreamRecover
-  /** 实际请求的生成时长（秒） */
-  seconds?: number
-  /** 仅首帧模型：成片里裁到这个目标时长；首尾帧模型不裁 */
-  trimTo?: number
-  state?: 'idle' | 'running' | 'error'
-  error?: string
-  at?: number
-  /** 最近一次成功出片的提示词来源 */
-  videoMeta?: VideoMeta
-}
-
-/** keyframe：过渡关键帧→下一镜首帧；morph：上一镜尾帧→下一镜首帧（天气变化等大跨度） */
-export type TransitionBridging = 'keyframe' | 'morph'
-
-export type TransitionGenerated = {
-  targetSeconds: number
-  prompt: string
-  /** 环境/天气/音效描述，拼进出片正文（无 reference audio 时的唯一声音控制） */
-  soundPrompt?: string
-  /** 手改后的完整出片正文；有值时优先于自动拼装 */
-  videoPromptOverride?: VideoPromptOverride
-  /** 九段模板渲染的完整出片正文 */
-  renderedPrompt?: string
-  /** 模板渲染元数据（指纹对齐转场拼装指纹） */
-  renderMeta?: VideoPromptRenderMeta
-  /** 生成转场视频的锚点策略，默认 keyframe */
-  bridging?: TransitionBridging
-  /** 默认继承相邻两镜已连的角色/素材参考 */
-  inheritRefs: boolean
-  /** 额外补充的参考 token（char-* / asset-* / extra:*） */
-  refIds?: string[]
-  /** 从继承里移除的参考 token */
-  excludeRefIds?: string[]
-  boundary?: TransitionBoundary
-  keyframe?: TransitionKeyframe
-  video?: TransitionVideo
-  /** 转场成片音轨：off = 静音，native = Seedance 原生声音 + 音色参考 */
-  audioMode?: ShotAudioMode
-  audioRef?: AudioRef | null
-  audioMeta?: AudioMeta
-  /** Agent / 画布接缝：主分类 */
-  taxonomy?: 'scene' | 'character' | 'space' | 'vfx' | 'camera' | 'ai_video'
-  /** video-shotcraft 等食谱卡片 id */
-  recipeIds?: string[]
-  /** 技法卡（kind: technique）命中时选定的变体 id；缺省则用卡级内容 */
-  variantId?: string
-}
-
 /**
- * 一条连线上的转场配置，存在源镜头上（transitionOut），
+ * 一条连线上的接缝配置，存在源镜头上（transitionOut），
  * 这样重推镜头、重建画布节点后仍能按 to 找回。
+ *
+ * 只承载效果转场。`mode` 是为兼容旧存档保留的判别位：旧数据里可能是
+ * 已退役的生成模式，读取时一律按 effect 解释，写入恒为 'effect'。
+ * `meta` 只做历史保留，不再参与失效判定。
  */
 export type TransitionOut = {
   /** 目标镜头的稳定键：优先 shotId，没有时退回画布节点 id */
   to: string
-  mode: 'effect' | 'generated'
+  mode: 'effect'
   effect?: TransitionEffect
-  generated?: TransitionGenerated
   meta?: {
     fingerprint: string
     modelKey?: string

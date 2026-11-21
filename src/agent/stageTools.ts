@@ -6,7 +6,6 @@ import { assetNodesFromAssets, composeShotCanvasNodes } from '../canvasShots'
 import { nodeToShot } from '../shotSync'
 import type { ShotNodeType } from '../data'
 import { buildShotVideoRequest, type VideoModelInput } from '../videoPrompt'
-import { buildTransitionVideoPreview, transitionNativeAudioReadiness, transitionRefCandidateView } from '../transitionGen'
 import {
   contractWriteHint,
   getContractToolSchema,
@@ -775,35 +774,6 @@ export function createStageToolSet(
     },
   })
 
-  const readTransitionRecipes = defineTool({
-    name: 'read_transition_recipes',
-    description:
-      '读取转场食谱索引。可按 taxonomy 或关键词过滤。卡片可能含 whenToUse（适用接缝）、energy（能量等级）、durationHint（秒）、principle（视觉机制）、variants（技法卡多式）、pitfalls（已知坑）、seedanceHints（可直接进提示词的完整句子）。',
-    schema: z.object({
-      taxonomy: z
-        .enum(['scene', 'character', 'space', 'vfx', 'camera', 'ai_video'])
-        .optional()
-        .describe('六类接缝主分类'),
-      q: z.string().optional().describe('标题/intent/tags 关键词'),
-      limit: z.number().int().min(1).max(40).optional(),
-    }),
-    run: async ({ taxonomy, q, limit }) => {
-      const { listTransitionRecipes, searchTransitionRecipes } = await import('../transitionRecipes')
-      let list = listTransitionRecipes()
-      if (taxonomy) list = list.filter((r) => r.taxonomy === taxonomy)
-      if (q?.trim()) list = searchTransitionRecipes(q.trim())
-      if (limit) list = list.slice(0, limit)
-      const packed = packRecords(list, LIST_BUDGET)
-      const note = truncationNote(packed)
-      return {
-        ok: true,
-        recipes: packed.items,
-        ...packFields(packed),
-        ...(note ? { note: `${note}；可用 taxonomy / q / limit 收窄` } : {}),
-      }
-    },
-  })
-
   const readEpisode = defineTool({
     name: 'read_episode',
     description: '读取某一集的场次与镜头摘要。只读。',
@@ -957,160 +927,6 @@ export function createStageToolSet(
         fingerprint: request.fingerprint,
         promptEmpty: !request.prompt.trim(),
         note: '正文由人或 Agent 写入（video_prompt / submit_prompts / set_shot_video_override），运行时不再追加任何段落。',
-      }
-    },
-  })
-
-  /**
-   * 转场出片输入读取：与分镜的 `read_shot_video_inputs` 对等。
-   * 有序参考、省略项、互斥原因与请求时长全部取自出片同一处的预览计算，
-   * 不给正文（正文用 read_shot_detail 的 transition_out.generated.prompt）。
-   */
-  const readTransitionVideoInputs = defineTool({
-    name: 'read_transition_video_inputs',
-    description:
-      '只读：读取某个镜间转场（接缝）出片请求的实际输入——输入模式、桥接方式、是否提交尾帧、镜头秒数与请求秒数、' +
-      '按提交顺序排列的参考图槽位（index 从 1 起）、被互斥或截断的参考与原因、参考视频与音轨。' +
-      '同时回候选参考池（candidates：能选什么、各自是否已提交）与原生音频就绪度（audio.caps / audio.sample / readinessReason），' +
-      '以及一句 candidateSummary。' +
-      '用它来写转场正文：参考图按这里的 index 对应 [图N]，不要凭 refIds 臆测顺序。' +
-      '本工具不返回正文；正文用 read_shot_detail 读 transition_out.generated.prompt，写入用 submit_joins。' +
-      '补参考用 attach_transition_refs，开关角色音色用 set_transition_audio。',
-    schema: z.object({
-      after_no: z.string().describe('接缝前镜（源镜）的镜号，如 S03'),
-      to_no: z
-        .string()
-        .optional()
-        .describe('接缝后镜（目标镜）的镜号；省略时取源镜 transition_out.to 指向的镜头'),
-      episode: z.number().int().min(1).optional().describe('第 N 集，用于消歧'),
-    }),
-    run: async ({ after_no, to_no, episode }) => {
-      const found = await locateShot(shotsData, { no: after_no, episode })
-      if (!found.ok) return found
-      const sourceShot = found.shot
-      const project = await snapshot()
-      const ctx = shotVideoInputsContext(project, adapter.shotVideoContext?.())
-      const sourceId = shotIdOf(sourceShot)
-      const sourceNode = ctx.nodes.find((n) => String(n.data?.shotId ?? '') === sourceId)
-      if (!sourceNode) {
-        return {
-          ok: false,
-          error: `镜 ${shotNoOf(sourceShot)} 不在画布上，无法解析转场参考。下一步：刷新画布或重新导入分镜后重试`,
-        }
-      }
-      const out = sourceNode.data.transitionOut
-      if (!out) {
-        return {
-          ok: false,
-          error: `镜 ${shotNoOf(sourceShot)} 未配置转场（transition_out 为空）。下一步：先用 submit_joins 建立接缝，或在画布上连线后重试`,
-        }
-      }
-      // 目标镜：显式镜号优先；否则按 transition_out.to 的稳定键（shotId 或节点 id）找回
-      let targetNode: ShotNodeType | undefined
-      if (to_no) {
-        const target = await locateShot(shotsData, { no: to_no, episode })
-        if (!target.ok) return target
-        const targetId = shotIdOf(target.shot)
-        targetNode = ctx.nodes.find((n) => String(n.data?.shotId ?? '') === targetId)
-        if (!targetNode) {
-          return {
-            ok: false,
-            error: `镜 ${shotNoOf(target.shot)} 不在画布上，无法解析转场参考。下一步：刷新画布或重新导入分镜后重试`,
-          }
-        }
-      } else {
-        const wanted = String(out.to ?? '')
-        targetNode =
-          ctx.nodes.find((n) => String(n.data?.shotId ?? '') === wanted) ??
-          ctx.nodes.find((n) => n.id === wanted)
-        if (!targetNode) {
-          return {
-            ok: false,
-            error: `转场目标「${wanted || '(空)'}」找不到对应镜头。下一步：用 read_shots 确认镜号，或用 submit_joins 重设接缝`,
-          }
-        }
-      }
-
-      const preview = buildTransitionVideoPreview({
-        source: sourceNode,
-        target: targetNode,
-        generated: out.generated,
-        model: transitionModelOf(ctx.model),
-        nodes: ctx.nodes,
-        characters: ctx.characters,
-        missingMedia: ctx.missingMedia,
-      })
-      const recordedTo = String(out.to ?? '')
-      const refView = transitionRefCandidateView({
-        source: sourceNode,
-        target: targetNode,
-        nodes: ctx.nodes,
-        characters: ctx.characters,
-        missingMedia: ctx.missingMedia,
-        generated: out.generated,
-      })
-      const audioReadiness = transitionNativeAudioReadiness({
-        source: sourceNode,
-        target: targetNode,
-        characters: ctx.characters,
-        model: transitionModelOf(ctx.model),
-        targetSeconds: preview.seconds,
-        submitsLastFrame: preview.submitsLastFrame,
-      })
-      return {
-        ok: true,
-        seam: {
-          after_no: shotNoOf(sourceShot),
-          after_shot_id: sourceId,
-          to_no: String(targetNode.data?.no ?? ''),
-          recorded_to: recordedTo,
-          mode: out.mode,
-          overridden: Boolean(to_no) && recordedTo !== String(targetNode.data?.shotId ?? ''),
-        },
-        inputMode: preview.inputMode,
-        bridging: preview.bridging,
-        submitsLastFrame: preview.submitsLastFrame,
-        supportsLastFrame: preview.supportsLastFrame,
-        seconds: preview.seconds,
-        requestSeconds: preview.requestSeconds,
-        ...(preview.trimTo ? { trimTo: preview.trimTo } : {}),
-        modelLabel: preview.modelLabel ?? '',
-        refs: preview.refs.map((r) => ({
-          index: r.index,
-          label: r.label,
-          purpose: r.purpose,
-          source: r.source ?? '',
-        })),
-        refTotal: preview.refs.length,
-        submittedStyleCount: preview.submittedStyleCount,
-        styleRefs: preview.styleRefs.map((r) => ({
-          token: r.token,
-          label: r.label,
-          kind: r.kind,
-          submitted: r.submitted,
-          ...(r.omittedReason ? { omittedReason: r.omittedReason } : {}),
-        })),
-        styleOmitted: preview.styleOmitted.map((r) => ({ token: r.token, label: r.label, reason: r.reason })),
-        omitted: preview.omitted,
-        omittedVideos: preview.omittedVideos,
-        candidates: refView.candidates,
-        candidateSummary: refView.summary,
-        video: preview.video ? { label: preview.video.label, purpose: preview.video.purpose } : null,
-        audio: {
-          mode: preview.audio.mode,
-          label: preview.audio.label,
-          detail: preview.audio.detail,
-          ...(preview.audio.character ? { character: preview.audio.character } : {}),
-          caps: audioReadiness.caps,
-          sample: audioReadiness.sample,
-          ...(audioReadiness.reason ? { readinessReason: audioReadiness.reason } : {}),
-        },
-        blocking: preview.blocking.map((b) => ({ code: b.code, message: b.message })),
-        warnings: preview.warnings.map((w) => ({ code: w.code, message: w.message })),
-        promptSource: preview.promptSource,
-        promptStale: preview.promptStale,
-        promptEmpty: !preview.prompt.trim(),
-        note: '正文由人或 Agent 写入（submit_joins 的 generated.prompt），运行时不再追加任何段落。',
       }
     },
   })
@@ -1367,8 +1183,6 @@ export function createStageToolSet(
     [readShotDetail.name, readShotDetail],
     [readShotVideoPrompt.name, readShotVideoPrompt],
     [readShotVideoInputs.name, readShotVideoInputs],
-    [readTransitionVideoInputs.name, readTransitionVideoInputs],
-    [readTransitionRecipes.name, readTransitionRecipes],
     [listCameraLexicon.name, listCameraLexicon],
     [getCameraLexicon.name, getCameraLexicon],
     [readEpisode.name, readEpisode],
@@ -1476,7 +1290,15 @@ export function createStageToolSet(
       }
       const applied = await adapter.applyDraft(checked.value, { partial })
       adapter.onDraftChanged?.()
-      if (!applied.ok) return { ok: false, error: applied.error || applied.summary }
+      if (!applied.ok) {
+        // 审计失败时把逐项清单与修改指引一并透传，Agent 才能按 evidence 重写
+        return {
+          ok: false,
+          error: applied.error || applied.summary,
+          ...(applied.checks ? { checks: applied.checks } : {}),
+          ...(applied.hint ? { hint: applied.hint } : {}),
+        }
+      }
 
       const acceptedCount =
         plan && Array.isArray((checked.value as Record<string, unknown>)?.[plan.key])

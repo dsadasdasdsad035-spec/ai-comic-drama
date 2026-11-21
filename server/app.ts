@@ -4971,34 +4971,6 @@ export function createAppHandler({ root }: { root: string }) {
           return
         }
 
-        if (url === '/api/transition/suggest') {
-          res.setHeader('Content-Type', 'application/json; charset=utf-8')
-          if (req.method !== 'POST') {
-            res.statusCode = 405
-            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
-            return
-          }
-          try {
-            const body = await readJson(req)
-            const { suggestTransition, validateSuggestion } = await import('../src/transitionSuggest')
-            const source = body.source
-            const target = body.target
-            if (!source || !target) throw new Error('缺少 source / target 镜头数据')
-            const suggestion = validateSuggestion(
-              suggestTransition({
-                source,
-                target,
-                transitionOut: body.transitionOut ?? null,
-              }),
-            )
-            res.end(JSON.stringify({ ok: true, suggestion }))
-          } catch (e) {
-            res.statusCode = 400
-            res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
-          }
-          return
-        }
-
         // ---- 视觉理解：只接受声明 vision 能力的模型与参考板 dataURL ----
         if (url === '/api/vision') {
           res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -6709,28 +6681,9 @@ export function createAppHandler({ root }: { root: string }) {
               refImages.unshift(image)
               image = ''
             }
-            // 转场输入按降级链判定：首尾帧 → 单首帧 → 参考图 → 参考视频 → 纯文本。
-            // 首尾帧是可选的，不再因为没有边界帧就拒绝。
-            const rawTransition = body.transition && typeof body.transition === 'object' ? body.transition : null
-            const transition = rawTransition
-              ? {
-                  keyframe: String(rawTransition.keyframe || ''),
-                  boundaryOut: String(rawTransition.boundaryOut || ''),
-                  boundaryIn: String(rawTransition.boundaryIn || ''),
-                  bridging: rawTransition.bridging === 'morph' ? 'morph' : 'keyframe',
-                }
-              : null
-            const morphTransition = transition?.bridging === 'morph'
-            // 首尾帧齐全 = 真的会提交尾帧
-            const boundaryBoth = morphTransition && Boolean(transition?.boundaryOut && transition?.boundaryIn)
-            // 只提交首帧（有 out 无 in，或旧版关键帧）
-            const boundaryFirstOnly =
-              Boolean(transition) &&
-              !boundaryBoth &&
-              (morphTransition ? Boolean(transition?.boundaryOut) : Boolean(transition?.keyframe))
-            const transitionMode = boundaryBoth || boundaryFirstOnly
-            const videoRefMode = !transitionMode && refVideos.length > 0
-            const refMode = !transitionMode && refImages.length > 0
+            // 出片输入只有三类互斥形态：首帧、全模态参考（图/视频）、纯文本。
+            const videoRefMode = refVideos.length > 0
+            const refMode = !videoRefMode && refImages.length > 0
             // 全模态参考（图 / 视频）与首帧互斥
             const referenceMode = refMode || videoRefMode
 
@@ -6771,7 +6724,7 @@ export function createAppHandler({ root }: { root: string }) {
             }
             let model = pick.entry?.model || (referenceMode ? effVideoRefModel() : effVideoModel())
             // 没有任何图片输入时只能走纯文本：仅对声明 textToVideo 的模型放行
-            const textMode = !image && !referenceMode && !transitionMode
+            const textMode = !image && !referenceMode
             const supportsText = Boolean(pick.entry?.features?.textToVideo)
             if (textMode && !supportsText) {
               res.statusCode = 400
@@ -6828,18 +6781,6 @@ export function createAppHandler({ root }: { root: string }) {
               }
             }
 
-            if (generateAudio && transitionMode && provider?.kind === 'ark') {
-              res.statusCode = 400
-              res.end(
-                JSON.stringify({
-                  ok: false,
-                  message: '方舟渠道暂不支持转场与 Seedance 原生声音同时使用',
-                  kind: 'bad-request',
-                }),
-              )
-              return
-            }
-
             if (provider?.kind === 'apimart') {
               const family = videoFamilyFor(model)
               if (generateAudio && family !== 'seedance-2.5') {
@@ -6873,38 +6814,14 @@ export function createAppHandler({ root }: { root: string }) {
               const refSkipReasons: string[] = []
               const refUrls: string[] = []
               const refVideoUrls: string[] = []
-              // 转场分流：首尾帧模式用边界帧；只首帧模式用首帧；纯文本模式两者都空。
-              // Seedance 2.5 首尾直变：尾帧与 reference_image 互斥；非互斥时转场与分镜一样可送 reference_image / reference_video。
-              const tKeyframe = transition?.keyframe || ''
-              const tOut = transition?.boundaryOut || ''
-              const tIn = transition?.boundaryIn || ''
-              const useLastFrame =
-                Boolean(transition) && morphTransition && Boolean(tOut && tIn) && Boolean(tIn)
-              const firstSource = transition
-                ? morphTransition
-                  ? tOut
-                  : tKeyframe
-                : image
-              const lastSource = transition ? (useLastFrame ? tIn : '') : String(body.lastFrame || '')
-              // 首尾帧模式要求模型支持尾帧；单首帧与纯文本不需要
-              if (useLastFrame && family !== 'kling-v3' && family !== 'seedance-2.5') {
-                res.statusCode = 400
-                res.end(
-                  JSON.stringify({
-                    ok: false,
-                    message: '首尾直变须使用支持尾帧的模型（如 Seedance 2.5 / Kling v3）；也可只保留首帧或改用纯文本',
-                    kind: 'unsupported',
-                  }),
-                )
-                return
-              }
-              const morphRefMutex =
-                Boolean(transition) && morphTransition && useLastFrame && Boolean(tIn)
-              const refSources = transition ? (morphRefMutex ? [] : refImages) : refImages
-              const effRefMode = transition ? !morphRefMutex && refImages.length > 0 : refMode
-              const effVideoRefMode = transition ? !morphRefMutex && refVideos.length > 0 : videoRefMode
-              const effReferenceMode = effRefMode || effVideoRefMode
-              const withFrames = transition ? true : !effReferenceMode
+              // 首帧与全模态参考互斥：有参考时不提交首帧。
+              const firstSource = image
+              const lastSource = String(body.lastFrame || '')
+              const refSources = refImages
+              const effRefMode = refMode
+              const effVideoRefMode = videoRefMode
+              const effReferenceMode = refMode || videoRefMode
+              const withFrames = !effReferenceMode
               const uploadApimartRef = async (ref: string, tag: string) => {
                 const dataUrl = resolveRef(ref, root)
                 if (/^https?:\/\//i.test(dataUrl)) return dataUrl
@@ -6991,15 +6908,13 @@ export function createAppHandler({ root }: { root: string }) {
 
               const mode = generateAudio
                 ? 'native'
-                : transitionMode
-                  ? 'transition'
-                  : videoRefMode
-                    ? 'video'
-                    : refMode
-                      ? 'ref'
-                      : textMode
-                        ? 'text'
-                        : 'first'
+                : videoRefMode
+                  ? 'video'
+                  : refMode
+                    ? 'ref'
+                    : textMode
+                      ? 'text'
+                      : 'first'
               const apimartVidBill = guardApimartVideo({
                 provider,
                 req,
@@ -7123,12 +7038,7 @@ export function createAppHandler({ root }: { root: string }) {
             const skipped: string[] = []
             const refSkipReasons: string[] = []
             const tempVideos: string[] = []
-            // 方舟没有尾帧：转场用关键帧/上一镜尾帧当首帧，生成后由成片裁到目标时长
-            const arkImage = transition
-              ? morphTransition
-                ? transition.boundaryOut || transition.keyframe
-                : transition.keyframe
-              : image
+            const arkImage = image
             try {
               if (refMode) {
                 for (const r of refImages) {
@@ -7220,7 +7130,7 @@ export function createAppHandler({ root }: { root: string }) {
               return
             }
 
-            const mode = transitionMode ? 'transition' : videoRefMode ? 'video' : refMode ? 'ref' : 'first'
+            const mode = videoRefMode ? 'video' : refMode ? 'ref' : 'first'
             // dryRun：只回显将要提交的请求体，不真的出片（调试 / 验证用）
             if (body.dryRun) {
               res.end(
