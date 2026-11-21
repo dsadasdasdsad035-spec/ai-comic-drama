@@ -30,6 +30,22 @@ export function readM3dAnimalsManifest(appRoot: string): {
 
 export function m3dAnimalsVendorReady(appRoot: string): boolean
 
+export function readM3dFurnitureManifest(appRoot: string): {
+  schemaVersion: number
+  samples: Array<{
+    id: string
+    title: string
+    source: string
+    license?: string
+    categories?: string[]
+    url: string
+  }>
+  entries?: unknown[]
+  updatedAt?: string
+}
+
+export function m3dFurnitureVendorReady(appRoot: string): boolean
+
 export function readMergedCc0PropsManifest(appRoot: string): {
   schemaVersion: number
   source?: string
@@ -46,4 +62,5 @@ export function readMergedCc0PropsManifest(appRoot: string): {
   }>
   charactersReady?: boolean
   animalsReady?: boolean
+  furnitureReady?: boolean
 }

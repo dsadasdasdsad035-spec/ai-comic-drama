@@ -14,6 +14,9 @@ type Props = {
   itchFiltered: ItchPropEntry[]
   charactersReady: boolean
   animalsReady: boolean
+  /** 家具目录里 Grab3D 补库件的数量（显示在摘要里） */
+  furnitureGapFillCount: number
+  furnitureReady: boolean
   propSource: PropSource
   onPropSource: (s: PropSource) => void
   propQuery: string
@@ -38,6 +41,8 @@ export default function Material3dAddPanel({
   itchFiltered,
   charactersReady,
   animalsReady,
+  furnitureGapFillCount,
+  furnitureReady,
   propSource,
   onPropSource,
   propQuery,
@@ -74,8 +79,10 @@ export default function Material3dAddPanel({
           kind: 'cc0' as const,
           prop: p,
           title: cc0PropDisplayTitle(p),
-          meta: p.license || 'CC0',
+          // Grab3D 补库件标一下来源，读者能看出它是轻量 PBR 而不是 Poly Haven 写实件
+          meta: p.source === 'grab3d' ? 'CC0 · Grab3D 轻量' : p.license || 'CC0',
           url: p.url,
+          disabled: p.source === 'grab3d' ? !furnitureReady : false,
         }))
       : propSource === 'itch'
         ? itchFiltered.map((p) => ({
@@ -112,7 +119,9 @@ export default function Material3dAddPanel({
       ? !samplesReady
         ? '加载目录…'
         : cc0Filtered.length || cc0Props.length
-          ? `${cc0Filtered.length || cc0Props.length} 件家具/道具 CC0 · 首次加入会拉取 glTF`
+          ? `${cc0Filtered.length || cc0Props.length} 件布景家具 · Poly Haven${
+              furnitureGapFillCount ? ` + Grab3D 补库 ${furnitureGapFillCount}` : ''
+            }`
           : '无目录：npm run sync:cc0-props'
       : propSource === 'itch'
         ? !samplesReady
@@ -208,8 +217,9 @@ export default function Material3dAddPanel({
             type="button"
             className={propSource === 'cc0' ? 'on' : undefined}
             onClick={() => onPropSource('cc0')}
+            data-m3d-source-furniture
           >
-            CC0 家具
+            布景家具
             {cc0Filtered.length ? <span>{cc0Filtered.length}</span> : null}
           </button>
           <button

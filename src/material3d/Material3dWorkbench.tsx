@@ -100,6 +100,7 @@ export default function Material3dWorkbench({
   const [propSource, setPropSource] = useState<PropSource>('characters')
   const [charactersReady, setCharactersReady] = useState(false)
   const [animalsReady, setAnimalsReady] = useState(false)
+  const [furnitureReady, setFurnitureReady] = useState(false)
   const [propQuery, setPropQuery] = useState('')
   const [samplesReady, setSamplesReady] = useState(false)
   const [itchVendorReady, setItchVendorReady] = useState(false)
@@ -134,6 +135,7 @@ export default function Material3dWorkbench({
         setItchVendorReady(Boolean(itch.vendorReady))
         setCharactersReady(Boolean(cc0.charactersReady))
         setAnimalsReady(Boolean(cc0.animalsReady))
+        setFurnitureReady(Boolean(cc0.furnitureReady))
         setSamplesReady(true)
       })
       .catch(() => {
@@ -440,6 +442,11 @@ export default function Material3dWorkbench({
     () => cc0Props.filter((p) => !isCharacterProp(p) && !isAnimalProp(p)),
     [cc0Props, isCharacterProp, isAnimalProp],
   )
+  /** 家具目录里 Grab3D 的补库件（轻量 PBR），与 Poly Haven 写实件分开展示 */
+  const furnitureGapFillProps = useMemo(
+    () => furnitureProps.filter((p) => p.source === 'grab3d'),
+    [furnitureProps],
+  )
   const characterFiltered = useMemo(() => filterProps(characterProps), [characterProps, filterProps])
   const animalFiltered = useMemo(() => filterProps(animalProps), [animalProps, filterProps])
   const cc0Filtered = useMemo(() => filterProps(furnitureProps), [furnitureProps, filterProps])
@@ -636,6 +643,8 @@ export default function Material3dWorkbench({
                 cc0Filtered={cc0Filtered}
                 characterFiltered={characterFiltered}
                 animalFiltered={animalFiltered}
+                furnitureGapFillCount={furnitureGapFillProps.length}
+                furnitureReady={furnitureReady}
                 itchFiltered={itchFiltered}
                 charactersReady={charactersReady}
                 animalsReady={animalsReady}

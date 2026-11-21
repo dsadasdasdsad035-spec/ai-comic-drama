@@ -44,6 +44,32 @@ const PHRASES: { en: string; zh: string }[] = [
   { en: 'smoke detector', zh: '烟雾报警器' },
   { en: 'cash register', zh: '收银机' },
   { en: 'pool ball', zh: '台球' },
+  { en: 'painted wooden', zh: '彩绘木质' },
+  { en: 'vintage day bed', zh: '复古躺床' },
+  { en: 'day bed', zh: '躺床' },
+  { en: 'old bed frame', zh: '旧床架' },
+  { en: 'bed frame', zh: '床架' },
+  { en: 'bookshelf worn', zh: '旧书架' },
+  { en: 'shelf 01', zh: '置物架01' },
+  { en: 'shelf', zh: '置物架' },
+  { en: 'modular street seating', zh: '组合街椅' },
+  { en: 'plastic monobloc chair', zh: '塑料单椅' },
+  { en: 'outdoor table chair set', zh: '户外桌椅套装' },
+  { en: 'steel frame shelves', zh: '钢架置物架' },
+  { en: 'wooden picnic table', zh: '木质野餐桌' },
+  { en: 'side table tall', zh: '高边桌' },
+  { en: 'metal office desk', zh: '金属办公桌' },
+  { en: 'industrial storage cart', zh: '工业收纳车' },
+  { en: 'wooden display shelves', zh: '木质展示架' },
+  { en: 'vintage wooden drawer', zh: '复古木抽屉柜' },
+  { en: 'wooden bookshelf', zh: '木书架' },
+  { en: 'dining bench', zh: '餐凳' },
+  { en: 'chinese screen panels', zh: '中式屏风' },
+  { en: 'classic console', zh: '经典玄关桌' },
+  { en: 'painted wooden nightstand', zh: '彩绘木质床头柜' },
+  { en: 'worn metal rack', zh: '旧金属架' },
+  { en: 'stone fire pit', zh: '石火盆' },
+  { en: 'tool cart', zh: '工具推车' },
 ].sort((a, b) => b.en.length - a.en.length)
 
 const WORDS: Record<string, string> = {
@@ -78,7 +104,7 @@ const WORDS: Record<string, string> = {
   sofa: '沙发',
   bench: '长凳',
   cabinet: '柜',
-  shelf: '架',
+  shelf: '置物架',
   shelves: '置物架',
   lamp: '灯',
   light: '灯',
@@ -159,6 +185,39 @@ const WORDS: Record<string, string> = {
   prop: '道具',
   props: '道具',
   gallinera: '加利亚内拉', // 保留音译专有款名
+  ottoman: '脚凳',
+  rockingchair: '摇椅',
+  nightstand: '床头柜',
+  ornate: '华丽',
+  console: '玄关桌',
+  screen: '屏风',
+  panels: '屏风',
+  rack: '架',
+  tool: '工具',
+  pit: '火盆',
+  stone: '石',
+  painted: '彩绘',
+  worn: '旧',
+  modular: '组合',
+  street: '街',
+  seating: '座椅',
+  outdoor: '户外',
+  plastic: '塑料',
+  monobloc: '单椅',
+  steel: '钢',
+  frame: '框架',
+  picnic: '野餐',
+  tall: '高',
+  school: '学校',
+  day: '日间',
+  office: '办公',
+  commode: '斗柜',
+  bookshelf: '书架',
+  shop: '商店',
+  barber: '理发',
+  set: '套装',
+  storage: '收纳',
+  cart: '推车',
 }
 
 function translateWords(rest: string): string {
@@ -195,7 +254,19 @@ export function localizePolyHavenTitle(title: string): string {
 }
 
 /** CC0 / Poly Haven 道具列表展示名 */
-export function cc0PropDisplayTitle(entry: Pick<Cc0PropEntry, 'title' | 'source'>): string {
+/**
+ * 同名的两件 Poly Haven 桌子（`WoodenTable_02` 与 `wooden_table_02`）是不同资产：
+ * 前者是 1514 面的小圆桌，后者是 196 面的乡野方桌。只按 title 翻译会撞名，
+ * 所以这里用 id 直接给出可区分的名字。
+ */
+const ID_TITLE_OVERRIDE: Record<string, string> = {
+  WoodenTable_02: '木质小圆桌02',
+  wooden_table_02: '木质乡野桌02',
+}
+
+export function cc0PropDisplayTitle(entry: Pick<Cc0PropEntry, 'title' | 'source' | 'id'>): string {
+  const override = ID_TITLE_OVERRIDE[String(entry.id || '')]
+  if (override) return override
   const title = String(entry.title || '').trim()
   if (!title) return title
   if (entry.source === 'grab3d' || /[\u4e00-\u9fff]/.test(title)) return title

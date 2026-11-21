@@ -107,11 +107,12 @@ desktop/bin/
 # 用 /* 排除子目录内容而不是排除整个目录：被排除的目录 git 不会进去看，
 # 那样下面的白名单永远不会生效。
 vendor/cc0-props/*
-# 例外：写实动物随仓库分发（短剧最常用的宠物与动物角色，开箱即用）。
-# 只有 11 个 light GLB、合计约 120MB，单个最大 14MB，在 GitHub 限制内。
-# 需要扩大目录时改 public/presets/m3d-animals/manifest.json，再跑
-# node scripts/sync-m3d-animal-props.mjs —— 但先确认体积仍可接受。
+# 例外：写实动物与布景家具补库随仓库分发（短剧最常用的宠物与家具，
+# 开箱即用）。动物 11 件约 120MB、家具 20 件约 17MB，单个最大 14MB，
+# 在 GitHub 限制内。要扩目录改对应 manifest 再跑
+# node scripts/sync-m3d-animal-props.mjs [--bucket furniture] —— 先确认体积。
 !vendor/cc0-props/animals/
+!vendor/cc0-props/furniture/
 
 # itch 等平台自入库 3D 包（清单在 public/presets/itch-props）
 vendor/itch-props/

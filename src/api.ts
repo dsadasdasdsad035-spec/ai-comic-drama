@@ -750,6 +750,8 @@ export type Cc0PropManifest = {
   charactersReady?: boolean
   /** Grab3D 写实动物 GLB 是否已全部在 vendor */
   animalsReady?: boolean
+  /** Grab3D 布景家具补库 GLB 是否已全部在 vendor */
+  furnitureReady?: boolean
   samples: Cc0PropEntry[]
 }
 

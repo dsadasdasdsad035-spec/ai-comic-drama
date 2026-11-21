@@ -1,0 +1,4 @@
+懒人沙发（Bean Bag Chair）— Grab3D bean-bag-chair
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/furniture/bean-bag-chair/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

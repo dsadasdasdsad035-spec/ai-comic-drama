@@ -43,9 +43,9 @@ export function m3dCharactersVendorReady(appRoot) {
   })
 }
 
-/** 场景三维分镜动物库（Grab3D CC0 写实动物） */
-export function readM3dAnimalsManifest(appRoot) {
-  const file = path.join(resolveStaticRoot(appRoot), 'presets', 'm3d-animals', 'manifest.json')
+/** Grab3D 清单读取：presets/<dir>/manifest.json → samples（缺 samples 时按 entries 推导） */
+function readGrab3dManifest(appRoot, dir, bucket, category, defaultStyle) {
+  const file = path.join(resolveStaticRoot(appRoot), 'presets', dir, 'manifest.json')
   if (!fs.existsSync(file)) {
     return { schemaVersion: 1, samples: [], entries: [] }
   }
@@ -57,8 +57,8 @@ export function readM3dAnimalsManifest(appRoot) {
       title: e.title,
       source: 'grab3d',
       license: e.license || 'CC0-1.0',
-      categories: ['animals', e.style || 'realistic'],
-      url: `/cc0-props/animals/${e.slug}/${e.file}`,
+      categories: [category, e.style || defaultStyle],
+      url: `/cc0-props/${bucket}/${e.slug}/${e.file}`,
     }))
     const samples = fromSamples.length ? fromSamples : fromEntries
     return { ...raw, samples }
@@ -67,11 +67,10 @@ export function readM3dAnimalsManifest(appRoot) {
   }
 }
 
-export function m3dAnimalsVendorReady(appRoot) {
-  const m = readM3dAnimalsManifest(appRoot)
-  if (!m.samples.length) return false
+function grab3dVendorReady(appRoot, samples) {
+  if (!samples.length) return false
   const cacheRoot = cc0PropsCacheRoot(appRoot)
-  return m.samples.every((s) => {
+  return samples.every((s) => {
     const rel = String(s.url || '').replace(/^\/cc0-props\//, '')
     if (!rel || rel.includes('..')) return false
     const full = path.join(cacheRoot, rel)
@@ -79,21 +78,42 @@ export function m3dAnimalsVendorReady(appRoot) {
   })
 }
 
-/** Poly Haven + 人形分镜素材 + 写实动物 */
+/** 场景三维分镜动物库（Grab3D CC0 写实动物） */
+export function readM3dAnimalsManifest(appRoot) {
+  return readGrab3dManifest(appRoot, 'm3d-animals', 'animals', 'animals', 'realistic')
+}
+
+export function m3dAnimalsVendorReady(appRoot) {
+  return grab3dVendorReady(appRoot, readM3dAnimalsManifest(appRoot).samples)
+}
+
+/** 场景三维布景家具补库（Grab3D CC0 轻量 PBR，补沙发/床/衣柜缺口） */
+export function readM3dFurnitureManifest(appRoot) {
+  return readGrab3dManifest(appRoot, 'm3d-furniture', 'furniture', 'furniture', 'stylized')
+}
+
+export function m3dFurnitureVendorReady(appRoot) {
+  return grab3dVendorReady(appRoot, readM3dFurnitureManifest(appRoot).samples)
+}
+
+/** Poly Haven 家具 + 人形 + 写实动物 + Grab3D 布景家具补库 */
 export function readMergedCc0PropsManifest(appRoot) {
   const furniture = readCc0PropsManifest(appRoot)
   const characters = readM3dCharactersManifest(appRoot)
   const animals = readM3dAnimalsManifest(appRoot)
+  const gapFill = readM3dFurnitureManifest(appRoot)
+  // Poly Haven 侧只保留家具；人形/动物/补库各自有来源标签，不重复计入
   const poly = (furniture.samples || []).filter(
     (s) => !(s.categories || []).includes('characters') && s.source !== 'grab3d',
   )
   return {
     ...furniture,
-    sources: ['polyhaven', 'grab3d-characters', 'grab3d-animals'],
-    license: 'CC0 (Poly Haven + Grab3D 人形与动物)',
-    updatedAt: animals.updatedAt || characters.updatedAt || furniture.updatedAt,
-    samples: [...(characters.samples || []), ...(animals.samples || []), ...poly],
+    sources: ['polyhaven', 'grab3d-characters', 'grab3d-animals', 'grab3d-furniture'],
+    license: 'CC0 (Poly Haven + Grab3D)',
+    updatedAt: gapFill.updatedAt || animals.updatedAt || characters.updatedAt || furniture.updatedAt,
+    samples: [...(characters.samples || []), ...(animals.samples || []), ...poly, ...(gapFill.samples || [])],
     charactersReady: m3dCharactersVendorReady(appRoot),
     animalsReady: m3dAnimalsVendorReady(appRoot),
+    furnitureReady: m3dFurnitureVendorReady(appRoot),
   }
 }
