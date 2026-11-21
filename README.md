@@ -68,6 +68,8 @@ brew install --cask blender    # 或自行安装到 /Applications
 - **拆角色**：全剧读项目 `source + episodes`；本集读当前集的 `project.shots`（cast / 台词 / 画面），不依赖浏览器里残留的画布节点。角色页也能直接切集，切完镜头上下文与聊天上下文一起跟着走。
 - **素材**：场景/道具设定存项目的 `designs`，和画布素材库分开；设定图可以单卡或批量发布成 `scene` / `prop` 素材卡。素材守则在设置页默认启用，按地点/道具去重，场景图固定空镜、道具图固定多角度隔离表。**场景三维** Tab 用浏览器（Babylon）编排设定立板、项目内 GLB 与机位书签；**CC0 道具**来自 **Poly Haven**（`public/presets/cc0-props/manifest.json`，`npm run sync:cc0-props` 刷新），缓存在 `vendor/cc0-props/`；**itch 等家具包**走本地 manifest（`public/presets/itch-props/manifest.json`，`node scripts/ingest-itch-prop-pack.mjs` 入库到 `vendor/itch-props/`，`npm run validate:itch-props` 校验）。成片 MP4 仍在创意 Blender 三维专家。
 
+  **预设户型**：场景三维列表页的「预设户型」一键落地整套装修好的空间——硬装（墙/地板/天花/踢脚线）+ 家具 + 电器 + 软装 + 预设机位。当前两套：一室一厅一卫（55 对象）、办公场地（63 对象）。预设是声明式的（`src/material3d/material3dPresets.ts` 的 `arch()` / `gltf()` / `cam()`），加户型照现有 `build` 函数写一个再注册即可。硬装面是程序生成的 `arch` 对象（floor / wall / ceiling / baseboard），能像其它对象一样选中、拖动、改色、删除；天花默认 `visible:false`，否则俯视机位看下去是一整块白板。验收：`node verify-m3d-presets.mjs`（结构+资产层秒级断言，外加 Playwright 真跑两个预设，核对对象数/机位数/零素材 404）。
+
 ### 新建与删除项目
 
 新建入口在全局带、项目选择器右侧的「项目 ▾」里，不再依赖任何工作台工具条（窄宽度会把工具条整块收起）。同一个菜单的「管理项目…」提供项目列表、搜索与删除；设置页「数据」分区内嵌同一面板。
