@@ -1,0 +1,4 @@
+大熊猫（Panda）— Grab3D panda
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/panda/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

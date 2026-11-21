@@ -1,0 +1,4 @@
+狼（Wolf）— Grab3D wolf
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/wolf/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

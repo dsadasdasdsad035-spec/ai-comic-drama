@@ -1,0 +1,4 @@
+小猫（Kitten）— Grab3D kitten
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/kitten/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

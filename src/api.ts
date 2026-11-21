@@ -748,6 +748,8 @@ export type Cc0PropManifest = {
   vendorReady?: boolean
   /** Grab3D 人形分镜 GLB 是否已全部在 vendor */
   charactersReady?: boolean
+  /** Grab3D 写实动物 GLB 是否已全部在 vendor */
+  animalsReady?: boolean
   samples: Cc0PropEntry[]
 }
 

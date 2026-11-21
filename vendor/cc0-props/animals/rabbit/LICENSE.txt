@@ -1,0 +1,4 @@
+兔子（Rabbit）— Grab3D rabbit
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/rabbit/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

@@ -1,0 +1,4 @@
+绿头鸭（Mallard Duck）— Grab3D duck
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/duck/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

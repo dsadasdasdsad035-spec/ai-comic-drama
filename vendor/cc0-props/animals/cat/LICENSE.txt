@@ -1,0 +1,4 @@
+虎斑猫（Tabby Cat）— Grab3D cat
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/cat/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "source": "https://grab3d.com",
+  "license": "CC0 1.0 (Grab3D)",
+  "note": "写实动物 11 件；GLB 自包含（内嵌贴图），二进制在 vendor/cc0-props/animals/",
+  "updatedAt": "2026-11-21T10:28:18.098Z",
+  "entries": [
+    {
+      "id": "cat",
+      "slug": "cat",
+      "title": "虎斑猫",
+      "titleEn": "Tabby Cat",
+      "file": "cat-light.glb",
+      "bytes": 11706732,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/cat/"
+    },
+    {
+      "id": "dog",
+      "slug": "dog",
+      "title": "狗",
+      "titleEn": "Dog",
+      "file": "dog-light.glb",
+      "bytes": 5306844,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/dog/"
+    },
+    {
+      "id": "kitten",
+      "slug": "kitten",
+      "title": "小猫",
+      "titleEn": "Kitten",
+      "file": "kitten-light.glb",
+      "bytes": 13392820,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/kitten/"
+    },
+    {
+      "id": "puppy",
+      "slug": "puppy",
+      "title": "幼犬",
+      "titleEn": "Puppy",
+      "file": "puppy-light.glb",
+      "bytes": 13998828,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/puppy/"
+    },
+    {
+      "id": "rabbit",
+      "slug": "rabbit",
+      "title": "兔子",
+      "titleEn": "Rabbit",
+      "file": "rabbit-light.glb",
+      "bytes": 13439776,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/rabbit/"
+    },
+    {
+      "id": "duck",
+      "slug": "duck",
+      "title": "绿头鸭",
+      "titleEn": "Mallard Duck",
+      "file": "duck-light.glb",
+      "bytes": 9595728,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/duck/"
+    },
+    {
+      "id": "lion",
+      "slug": "lion",
+      "title": "狮子",
+      "titleEn": "Lion",
+      "file": "lion-light.glb",
+      "bytes": 13690472,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/lion/"
+    },
+    {
+      "id": "tiger",
+      "slug": "tiger",
+      "title": "孟加拉虎",
+      "titleEn": "Bengal Tiger",
+      "file": "tiger-light.glb",
+      "bytes": 12406100,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/tiger/"
+    },
+    {
+      "id": "horse",
+      "slug": "horse",
+      "title": "马",
+      "titleEn": "Bay Horse",
+      "file": "horse-light.glb",
+      "bytes": 12251716,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/horse/"
+    },
+    {
+      "id": "wolf",
+      "slug": "wolf",
+      "title": "狼",
+      "titleEn": "Wolf",
+      "file": "wolf-light.glb",
+      "bytes": 7061420,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/wolf/"
+    },
+    {
+      "id": "panda",
+      "slug": "panda",
+      "title": "大熊猫",
+      "titleEn": "Panda",
+      "file": "panda-light.glb",
+      "bytes": 12773572,
+      "style": "realistic",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/animals/panda/"
+    }
+  ],
+  "samples": [
+    {
+      "id": "cat",
+      "title": "虎斑猫",
+      "titleEn": "Tabby Cat",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/cat/cat-light.glb"
+    },
+    {
+      "id": "dog",
+      "title": "狗",
+      "titleEn": "Dog",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/dog/dog-light.glb"
+    },
+    {
+      "id": "kitten",
+      "title": "小猫",
+      "titleEn": "Kitten",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/kitten/kitten-light.glb"
+    },
+    {
+      "id": "puppy",
+      "title": "幼犬",
+      "titleEn": "Puppy",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/puppy/puppy-light.glb"
+    },
+    {
+      "id": "rabbit",
+      "title": "兔子",
+      "titleEn": "Rabbit",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/rabbit/rabbit-light.glb"
+    },
+    {
+      "id": "duck",
+      "title": "绿头鸭",
+      "titleEn": "Mallard Duck",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/duck/duck-light.glb"
+    },
+    {
+      "id": "lion",
+      "title": "狮子",
+      "titleEn": "Lion",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/lion/lion-light.glb"
+    },
+    {
+      "id": "tiger",
+      "title": "孟加拉虎",
+      "titleEn": "Bengal Tiger",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/tiger/tiger-light.glb"
+    },
+    {
+      "id": "horse",
+      "title": "马",
+      "titleEn": "Bay Horse",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/horse/horse-light.glb"
+    },
+    {
+      "id": "wolf",
+      "title": "狼",
+      "titleEn": "Wolf",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/wolf/wolf-light.glb"
+    },
+    {
+      "id": "panda",
+      "title": "大熊猫",
+      "titleEn": "Panda",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "animals",
+        "realistic"
+      ],
+      "url": "/cc0-props/animals/panda/panda-light.glb"
+    }
+  ]
+}

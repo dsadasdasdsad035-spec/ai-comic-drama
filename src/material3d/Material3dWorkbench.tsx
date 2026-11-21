@@ -99,6 +99,7 @@ export default function Material3dWorkbench({
   const [railTab, setRailTab] = useState<Material3dRailTab>(() => (sceneDoc.objects.length > 0 ? 'compose' : 'library'))
   const [propSource, setPropSource] = useState<PropSource>('characters')
   const [charactersReady, setCharactersReady] = useState(false)
+  const [animalsReady, setAnimalsReady] = useState(false)
   const [propQuery, setPropQuery] = useState('')
   const [samplesReady, setSamplesReady] = useState(false)
   const [itchVendorReady, setItchVendorReady] = useState(false)
@@ -132,6 +133,7 @@ export default function Material3dWorkbench({
         setItchProps(itch.samples ?? [])
         setItchVendorReady(Boolean(itch.vendorReady))
         setCharactersReady(Boolean(cc0.charactersReady))
+        setAnimalsReady(Boolean(cc0.animalsReady))
         setSamplesReady(true)
       })
       .catch(() => {
@@ -427,9 +429,19 @@ export default function Material3dWorkbench({
     (p: Cc0PropEntry) => (p.categories || []).includes('characters'),
     [],
   )
+  const isAnimalProp = useCallback(
+    (p: Cc0PropEntry) => (p.categories || []).includes('animals'),
+    [],
+  )
   const characterProps = useMemo(() => cc0Props.filter(isCharacterProp), [cc0Props, isCharacterProp])
-  const furnitureProps = useMemo(() => cc0Props.filter((p) => !isCharacterProp(p)), [cc0Props, isCharacterProp])
+  const animalProps = useMemo(() => cc0Props.filter(isAnimalProp), [cc0Props, isAnimalProp])
+  // 家具目录要同时排除人形与动物：两者各有自己的 tab
+  const furnitureProps = useMemo(
+    () => cc0Props.filter((p) => !isCharacterProp(p) && !isAnimalProp(p)),
+    [cc0Props, isCharacterProp, isAnimalProp],
+  )
   const characterFiltered = useMemo(() => filterProps(characterProps), [characterProps, filterProps])
+  const animalFiltered = useMemo(() => filterProps(animalProps), [animalProps, filterProps])
   const cc0Filtered = useMemo(() => filterProps(furnitureProps), [furnitureProps, filterProps])
   const itchFiltered = useMemo(() => filterProps(itchProps), [itchProps, filterProps])
 
@@ -623,8 +635,10 @@ export default function Material3dWorkbench({
                 itchProps={itchProps}
                 cc0Filtered={cc0Filtered}
                 characterFiltered={characterFiltered}
+                animalFiltered={animalFiltered}
                 itchFiltered={itchFiltered}
                 charactersReady={charactersReady}
+                animalsReady={animalsReady}
                 propSource={propSource}
                 onPropSource={setPropSource}
                 propQuery={propQuery}

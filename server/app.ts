@@ -4715,6 +4715,7 @@ export function createAppHandler({ root }: { root: string }) {
               ok: true,
               vendorReady: cc0PropsVendorReady(root),
               charactersReady: manifest.charactersReady,
+              animalsReady: manifest.animalsReady,
               ...manifest,
             }),
           )

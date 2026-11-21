@@ -1,0 +1,4 @@
+马（Bay Horse）— Grab3D horse
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/animals/horse/
+Note: AI-assisted content (Meshy base mesh, cleaned in Blender).

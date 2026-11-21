@@ -1,7 +1,7 @@
 import type { Cc0PropEntry, DesignSheet, ItchPropEntry, ProjectAsset } from '../api'
 import { cc0PropDisplayTitle } from './cc0PropDisplayTitle'
 
-export type PropSource = 'project' | 'characters' | 'cc0' | 'itch'
+export type PropSource = 'project' | 'characters' | 'animals' | 'cc0' | 'itch'
 
 type Props = {
   designOptions: DesignSheet[]
@@ -10,8 +10,10 @@ type Props = {
   itchProps: ItchPropEntry[]
   cc0Filtered: Cc0PropEntry[]
   characterFiltered: Cc0PropEntry[]
+  animalFiltered: Cc0PropEntry[]
   itchFiltered: ItchPropEntry[]
   charactersReady: boolean
+  animalsReady: boolean
   propSource: PropSource
   onPropSource: (s: PropSource) => void
   propQuery: string
@@ -32,8 +34,10 @@ export default function Material3dAddPanel({
   itchProps,
   cc0Filtered,
   characterFiltered,
+  animalFiltered,
   itchFiltered,
   charactersReady,
+  animalsReady,
   propSource,
   onPropSource,
   propQuery,
@@ -56,6 +60,15 @@ export default function Material3dAddPanel({
           url: p.url,
           disabled: !charactersReady,
         }))
+      : propSource === 'animals'
+      ? animalFiltered.map((p) => ({
+          kind: 'cc0' as const,
+          prop: p,
+          title: cc0PropDisplayTitle(p),
+          meta: p.license || 'CC0',
+          url: p.url,
+          disabled: !animalsReady,
+        }))
       : propSource === 'cc0'
       ? cc0Filtered.map((p) => ({
           kind: 'cc0' as const,
@@ -76,6 +89,7 @@ export default function Material3dAddPanel({
         : []
 
   const characterCount = cc0Props.filter((p) => (p.categories || []).includes('characters')).length
+  const animalCount = cc0Props.filter((p) => (p.categories || []).includes('animals')).length
 
   const catalogHint =
     propSource === 'characters'
@@ -86,6 +100,14 @@ export default function Material3dAddPanel({
           : charactersReady
             ? `${characterCount} 款分镜人形 · CC0 Grab3D`
             : '本地缺 GLB：在项目根执行 npm run sync:m3d-characters'
+      : propSource === 'animals'
+      ? !samplesReady
+        ? '加载目录…'
+        : !animalCount
+          ? '无动物目录：npm run sync:m3d-animal-props'
+          : animalsReady
+            ? `${animalCount} 款写实动物 · CC0 Grab3D`
+            : '本地缺 GLB：在项目根执行 npm run sync:m3d-animal-props'
       : propSource === 'cc0'
       ? !samplesReady
         ? '加载目录…'
@@ -153,7 +175,7 @@ export default function Material3dAddPanel({
       <section className="m3d-panel-block m3d-add-card">
         <header className="m3d-panel-block-head">
           <h5>三维素材</h5>
-          <p>人形、家具或项目 GLB；可先「加入场景」或「存素材」</p>
+          <p>人形、动物、家具或项目 GLB；可先「加入场景」或「存素材」</p>
         </header>
         <nav className="m3d-source-tabs m3d-source-tabs--stack" aria-label="模型来源">
           <button
@@ -172,6 +194,15 @@ export default function Material3dAddPanel({
           >
             人形
             {characterCount ? <span>{characterCount}</span> : null}
+          </button>
+          <button
+            type="button"
+            className={propSource === 'animals' ? 'on' : undefined}
+            onClick={() => onPropSource('animals')}
+            data-m3d-source-animals
+          >
+            动物
+            {animalCount ? <span>{animalCount}</span> : null}
           </button>
           <button
             type="button"
@@ -222,18 +253,22 @@ export default function Material3dAddPanel({
               placeholder={
                 propSource === 'characters'
                   ? '搜索木人、男性、西装…'
-                  : propSource === 'cc0'
-                    ? '搜索餐椅、咖啡桌、沙发…'
-                    : '搜索本地包…'
+                  : propSource === 'animals'
+                    ? '搜索猫、狗、马、熊猫…'
+                    : propSource === 'cc0'
+                      ? '搜索餐椅、咖啡桌、沙发…'
+                      : '搜索本地包…'
               }
               value={propQuery}
               onChange={(e) => onPropQuery(e.target.value)}
               disabled={
                 propSource === 'characters'
                   ? !characterCount
-                  : propSource === 'cc0'
-                    ? !cc0Filtered.length
-                    : !itchProps.length
+                  : propSource === 'animals'
+                    ? !animalCount
+                    : propSource === 'cc0'
+                      ? !cc0Filtered.length
+                      : !itchProps.length
               }
             />
             <p className="m3d-meta-line">{catalogHint}</p>
