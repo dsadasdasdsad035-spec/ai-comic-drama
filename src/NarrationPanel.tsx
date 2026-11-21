@@ -3,8 +3,8 @@ import type { AppSettings } from './api'
 import type { NarratorVoice } from './api'
 import { listVoicesCached, type VoiceOption } from './api'
 import {
-  extractNarrationLines,
   narrationVoiceStale,
+  narrativeLinesForShot,
   type NarratorVoiceConfig,
 } from './narration'
 import type { ShotData } from './types'
@@ -19,8 +19,9 @@ type Props = {
 }
 
 export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoice, onGenerate, settings }: Props) {
-  // extractNarrationLines 自己会按文本/结构化两种形态解析台词，这里不必先 parseDialogue
-  const lines = useMemo(() => extractNarrationLines(data.dialogue), [data.dialogue])
+  // 没有明确旁白行时退回整段台词；extractNarrationLines 自己会解析文本/结构化两种形态
+  const narrative = useMemo(() => narrativeLinesForShot(data.dialogue), [data.dialogue])
+  const lines = narrative.lines
   const stale = useMemo(
     () =>
       narrationVoiceStale(
@@ -87,7 +88,11 @@ export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoic
         <i className="hint-inline">仅本镜试听与下载，不进连播与导出成片</i>
       </span>
       {lines.length === 0 ? (
-        <p className="gen-note">台词里没有旁白行（说话人：旁白 / VO / 画外音等）。</p>
+        <p className="gen-note">这一镜没有台词可念。</p>
+      ) : narrative.fallback ? (
+        <p className="gen-note">
+          台词里没有旁白行，将用旁白音色把全部台词念出（共 {lines.length} 段，不念角色名）。
+        </p>
       ) : (
         <p className="gen-note">本镜 {lines.length} 条旁白将参与合成，角色对白不会念出。</p>
       )}
@@ -129,7 +134,7 @@ export default function NarrationPanel({ data, narratorVoice, onSaveNarratorVoic
           title={
             !ready
               ? !lines.length
-                ? '这一镜没有旁白行（说话人写「旁白」「画外音」「VO」等）'
+                ? '这一镜没有台词可念'
                 : '请先选择旁白引擎与音色'
               : undefined
           }

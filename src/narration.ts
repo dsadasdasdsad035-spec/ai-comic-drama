@@ -36,6 +36,37 @@ export type NarratorVoiceConfig = {
   voiceId: string
 }
 
+/**
+ * 旁白行；没有明确旁白说话人时退回「把整段台词念出来」。
+ *
+ * 为什么允许退化：很多镜头写的是「小明：你好」这种纯角色对白，没有
+ * 旁白/VO 这类说话人。以前这种情况直接判定「这一镜没有旁白行」，按钮
+ * 灰着、点了报错，用户只能去改台词。实际上旁白配音的诉求是「用旁白音色
+ * 把这镜要说的内容读出来」，所以没有旁白行时把全部台词当旁白念更符合
+ * 直觉——角色名不念，只念正文。
+ *
+ * 返回 { lines, fallback }：fallback 为 true 表示这次是整段退化的结果，
+ * UI 据此换一句说明，不要再说「没有旁白行」。
+ */
+export function narrativeLinesForShot(dialogue: unknown): {
+  lines: NarrationLine[]
+  fallback: boolean
+} {
+  const explicit = extractNarrationLines(dialogue)
+  if (explicit.length) return { lines: explicit, fallback: false }
+
+  const parsed = Array.isArray(dialogue)
+    ? dialogue
+    : parseDialogue(dialogueToText(dialogue))
+  const all: NarrationLine[] = []
+  parsed.forEach((line, dialogueIndex) => {
+    const text = String((line as { text?: string })?.text ?? '').trim()
+    if (!text) return
+    all.push({ speaker: '', text, dialogueIndex })
+  })
+  return { lines: all, fallback: all.length > 0 }
+}
+
 export function narratorConfigFingerprint(cfg: NarratorVoiceConfig | undefined): string {
   if (!cfg?.modelKey || !cfg?.voiceId) return ''
   return shortHash(JSON.stringify({ modelKey: cfg.modelKey, voiceId: cfg.voiceId }))
@@ -78,14 +109,15 @@ export type NarrationVoicePayload =
     }
   | { text: string; voice: string; modelKey: string; rate?: number; performance?: DialogueDelivery }
 
-/** 构造旁白 TTS 请求体；无旁白行返回 null。 */
+/** 构造旁白 TTS 请求体；整段台词都为空时返回 null。 */
 export function buildNarrationPayload(input: {
   dialogue: unknown
   dialogueDelivery?: DialogueDelivery[]
   narrator: NarratorVoiceConfig
   voiceRate?: number
 }): NarrationVoicePayload | null {
-  const narr = extractNarrationLines(input.dialogue)
+  // 没有明确旁白行时退回整段台词（见 narrativeLinesForShot 的说明）
+  const narr = narrativeLinesForShot(input.dialogue).lines
   if (!narr.length) return null
   const { modelKey, voiceId } = input.narrator
   if (!modelKey || !voiceId) return null

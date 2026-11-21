@@ -133,6 +133,7 @@ import { deliveryForSpeaker, voiceFingerprint } from './performance'
 import {
   buildNarrationPayload,
   extractNarrationLines,
+  narrativeLinesForShot,
   voiceFingerprintNarration,
 } from './narration'
 import { audioRefCapabilitiesFor, nativeAudioFingerprint } from './nativeAudio'
@@ -3490,9 +3491,11 @@ function Shell() {
         patch(id, { voiceState: 'error', voiceError: '请先在旁白区配置项目旁白音色' })
         return
       }
-      const narrLines = extractNarrationLines(node.data.dialogue)
+      // 没有明确旁白行时退回整段台词（narration.ts 的 narrativeLinesForShot），
+      // 只有台词完全为空才拒绝
+      const narrLines = narrativeLinesForShot(node.data.dialogue).lines
       if (!narrLines.length) {
-        patch(id, { voiceState: 'error', voiceError: '这一镜没有旁白行' })
+        patch(id, { voiceState: 'error', voiceError: '这一镜没有台词可念' })
         return
       }
       const payload = buildNarrationPayload({
