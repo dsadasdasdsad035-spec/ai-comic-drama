@@ -1,0 +1,4 @@
+收银机（Cash Register）— Grab3D cash-register
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/props/cash-register/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

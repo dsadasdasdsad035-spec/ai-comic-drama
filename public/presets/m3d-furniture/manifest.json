@@ -3,7 +3,7 @@
   "source": "https://grab3d.com",
   "license": "CC0 1.0 (Grab3D)",
   "note": "现代家居家具与软装 93 件（沙发/床/桌/椅/柜/软装/绿植/灯具/厨卫/收纳）；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
-  "updatedAt": "2026-11-21T12:27:19.908Z",
+  "updatedAt": "2026-11-21T13:14:57.577Z",
   "entries": [
     {
       "id": "sofa",
@@ -988,6 +988,150 @@
       "license": "CC0-1.0",
       "group": "decor",
       "page": "https://grab3d.com/models/furniture/office-divider/"
+    },
+    {
+      "id": "diner_booth",
+      "slug": "diner-booth",
+      "title": "卡座",
+      "titleEn": "Diner Booth",
+      "file": "diner-booth-light.glb",
+      "bytes": 736604,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "seat",
+      "page": "https://grab3d.com/models/furniture/diner-booth/"
+    },
+    {
+      "id": "diner_counter",
+      "slug": "diner-counter",
+      "title": "餐台",
+      "titleEn": "Diner Counter",
+      "file": "diner-counter-light.glb",
+      "bytes": 773620,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/furniture/diner-counter/"
+    },
+    {
+      "id": "checkout_counter",
+      "slug": "checkout-counter",
+      "title": "收银台",
+      "titleEn": "Checkout Counter",
+      "file": "checkout-counter.glb",
+      "bytes": 1900692,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/furniture/checkout-counter/"
+    },
+    {
+      "id": "cash_register",
+      "slug": "cash-register",
+      "title": "收银机",
+      "titleEn": "Cash Register",
+      "file": "cash-register.glb",
+      "bytes": 1224572,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "kitchen",
+      "page": "https://grab3d.com/models/props/cash-register/"
+    },
+    {
+      "id": "menu_board",
+      "slug": "menu-board",
+      "title": "菜单板",
+      "titleEn": "Menu Board",
+      "file": "menu-board.glb",
+      "bytes": 782464,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/props/menu-board/"
+    },
+    {
+      "id": "table_setting",
+      "slug": "table-setting",
+      "title": "餐具摆设",
+      "titleEn": "Table Setting",
+      "file": "table-setting.glb",
+      "bytes": 924272,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/food/table-setting/"
+    },
+    {
+      "id": "podium",
+      "slug": "podium",
+      "title": "讲台",
+      "titleEn": "Podium",
+      "file": "podium.glb",
+      "bytes": 555104,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "storage",
+      "page": "https://grab3d.com/models/furniture/podium/"
+    },
+    {
+      "id": "lectern",
+      "slug": "lectern",
+      "title": "读经台",
+      "titleEn": "Lectern",
+      "file": "lectern.glb",
+      "bytes": 385276,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "storage",
+      "page": "https://grab3d.com/models/furniture/lectern/"
+    },
+    {
+      "id": "chalkboard",
+      "slug": "chalkboard",
+      "title": "黑板",
+      "titleEn": "Chalkboard",
+      "file": "chalkboard.glb",
+      "bytes": 1582608,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/chalkboard/"
+    },
+    {
+      "id": "school_desk",
+      "slug": "school-desk",
+      "title": "课桌",
+      "titleEn": "School Desk",
+      "file": "school-desk.glb",
+      "bytes": 637492,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "table",
+      "page": "https://grab3d.com/models/furniture/school-desk/"
+    },
+    {
+      "id": "stackable_school_chair",
+      "slug": "stackable-school-chair",
+      "title": "课椅",
+      "titleEn": "Stackable School Chair",
+      "file": "stackable-school-chair.glb",
+      "bytes": 609548,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "seat",
+      "page": "https://grab3d.com/models/furniture/stackable-school-chair/"
+    },
+    {
+      "id": "cork_board",
+      "slug": "cork-board",
+      "title": "软木公告板",
+      "titleEn": "Cork Board",
+      "file": "cork-board.glb",
+      "bytes": 605280,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "group": "decor",
+      "page": "https://grab3d.com/models/furniture/cork-board/"
     }
   ],
   "samples": [
@@ -2056,6 +2200,162 @@
       ],
       "group": "decor",
       "url": "/cc0-props/furniture/office-divider/office-divider.glb"
+    },
+    {
+      "id": "diner_booth",
+      "title": "卡座",
+      "titleEn": "Diner Booth",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "seat",
+      "url": "/cc0-props/furniture/diner-booth/diner-booth-light.glb"
+    },
+    {
+      "id": "diner_counter",
+      "title": "餐台",
+      "titleEn": "Diner Counter",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/diner-counter/diner-counter-light.glb"
+    },
+    {
+      "id": "checkout_counter",
+      "title": "收银台",
+      "titleEn": "Checkout Counter",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/checkout-counter/checkout-counter.glb"
+    },
+    {
+      "id": "cash_register",
+      "title": "收银机",
+      "titleEn": "Cash Register",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "kitchen",
+      "url": "/cc0-props/furniture/cash-register/cash-register.glb"
+    },
+    {
+      "id": "menu_board",
+      "title": "菜单板",
+      "titleEn": "Menu Board",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/menu-board/menu-board.glb"
+    },
+    {
+      "id": "table_setting",
+      "title": "餐具摆设",
+      "titleEn": "Table Setting",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/table-setting/table-setting.glb"
+    },
+    {
+      "id": "podium",
+      "title": "讲台",
+      "titleEn": "Podium",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "storage",
+      "url": "/cc0-props/furniture/podium/podium.glb"
+    },
+    {
+      "id": "lectern",
+      "title": "读经台",
+      "titleEn": "Lectern",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "storage",
+      "url": "/cc0-props/furniture/lectern/lectern.glb"
+    },
+    {
+      "id": "chalkboard",
+      "title": "黑板",
+      "titleEn": "Chalkboard",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/chalkboard/chalkboard.glb"
+    },
+    {
+      "id": "school_desk",
+      "title": "课桌",
+      "titleEn": "School Desk",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "table",
+      "url": "/cc0-props/furniture/school-desk/school-desk.glb"
+    },
+    {
+      "id": "stackable_school_chair",
+      "title": "课椅",
+      "titleEn": "Stackable School Chair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "seat",
+      "url": "/cc0-props/furniture/stackable-school-chair/stackable-school-chair.glb"
+    },
+    {
+      "id": "cork_board",
+      "title": "软木公告板",
+      "titleEn": "Cork Board",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "group": "decor",
+      "url": "/cc0-props/furniture/cork-board/cork-board.glb"
     }
   ]
 }
