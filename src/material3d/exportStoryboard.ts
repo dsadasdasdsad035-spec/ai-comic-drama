@@ -48,7 +48,11 @@ export function buildStoryboardJson(scene: Material3dScene, designs: DesignSheet
       label: material3dObjectLabel(o, designs),
       locked: Boolean(o.locked),
       transform: o.transform,
-      ...(o.kind === 'gltf' ? { assetUrl: o.assetUrl } : { designId: o.designId }),
+      ...(o.kind === 'gltf'
+        ? { assetUrl: o.assetUrl }
+        : o.kind === 'arch'
+          ? { archKind: o.archKind, size: o.size, color: o.color }
+          : { designId: o.designId }),
     })),
     designRefs: scene.designRefs,
   }

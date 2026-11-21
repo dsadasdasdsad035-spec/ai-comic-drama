@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { getProject, patchProject, type DesignSheet, type ProjectAsset, type ProjectData } from '../api'
 import { newMaterial3dScene, type Material3dScene } from './material3dTypes'
+import { MATERIAL3D_PRESETS } from './material3dPresets'
 
 const LazyMaterial3dWorkbench = lazy(() => import('./Material3dWorkbench'))
 
@@ -47,10 +48,17 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
     }
   }, [projectName, toast, onScenesCountChange])
 
+  // 只在项目切换时重置打开的 scene 并重读。
+  // 不能依赖 load：它带着 toast / onScenesCountChange 的闭包身份，
+  // 父组件每次重渲染都会让它换新，effect 跟着重跑就会把刚套用的预设场景踢掉。
+  const loadedFor = useRef<string | null>(null)
   useEffect(() => {
+    if (loadedFor.current === projectName) return
+    loadedFor.current = projectName
     setOpenId(null)
     void load()
-  }, [load])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName])
 
   useEffect(() => {
     if (!projectName || !ready) return
@@ -89,6 +97,18 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
   }
 
   const openScene = scenes.find((s) => s.id === openId) ?? null
+
+  /** 从预设户型一次性建场景：硬装 + 家具 + 电器 + 软装 + 机位都在 build 里 */
+  const createFromPreset = (presetId: string) => {
+    const preset = MATERIAL3D_PRESETS.find((p) => p.id === presetId)
+    if (!preset) return
+    const s = preset.build(new Date().toISOString())
+    const next = [...scenes, s]
+    setScenes(next)
+    setOpenId(s.id)
+    void persistScenes(next).catch((e) => toast((e as Error).message || '保存失败'))
+    toast(`已套用「${preset.title}」：${s.objects.length} 个对象、${s.cameras.length} 个机位`)
+  }
 
   const createAndOpen = () => {
     const s = newMaterial3dScene()
@@ -135,16 +155,46 @@ export default function Material3dStudio({ projectName, designs, missing, onScen
             <li>③ 分镜机位导出</li>
           </ol>
         </div>
-        <button type="button" className="btn primary" data-m3d-new-scene disabled={!ready} onClick={createAndOpen}>
-          新建三维场景
-        </button>
+        <div className="m3d-studio-actions">
+          <button type="button" className="btn primary" data-m3d-new-scene disabled={!ready} onClick={createAndOpen}>
+            新建三维场景
+          </button>
+          {MATERIAL3D_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="btn"
+              data-m3d-preset={p.id}
+              disabled={!ready}
+              title={p.summary}
+              onClick={() => createFromPreset(p.id)}
+            >
+              预设户型 · {p.title}
+            </button>
+          ))}
+        </div>
       </header>
 
       {scenes.length === 0 ? (
-        <button type="button" className="m3d-studio-empty" disabled={!ready} onClick={createAndOpen}>
-          <strong>还没有三维场景</strong>
-          <span>创建后从「素材库」加入立板、人形或家具，再在「分镜」保存机位</span>
-        </button>
+        <div className="m3d-studio-empty-wrap">
+          <button type="button" className="m3d-studio-empty" disabled={!ready} onClick={createAndOpen}>
+            <strong>还没有三维场景</strong>
+            <span>创建后从「素材库」加入立板、人形或家具，再在「分镜」保存机位</span>
+          </button>
+          {MATERIAL3D_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className="m3d-studio-empty"
+              data-m3d-preset-empty={p.id}
+              disabled={!ready}
+              onClick={() => createFromPreset(p.id)}
+            >
+              <strong>直接套用预设 · {p.title}</strong>
+              <span>{p.summary}</span>
+            </button>
+          ))}
+        </div>
       ) : (
         <ul className="m3d-scene-grid">
           {scenes.map((s) => (

@@ -1,5 +1,10 @@
 import type { DesignSheet } from '../api'
-import { MATERIAL3D_OBJECT_META, resolveBillboardSize, type Material3dScene } from './material3dTypes'
+import {
+  MATERIAL3D_OBJECT_META,
+  resolveBillboardSize,
+  type Material3dArchObject,
+  type Material3dScene,
+} from './material3dTypes'
 import { resolveDesignBillboardUrl } from './billboardFromDesign'
 
 export type SyncSceneContext = {
@@ -17,6 +22,17 @@ export async function clearUserMeshes(scene: import('@babylonjs/core').Scene): P
   for (const r of roots) r.dispose()
 }
 
+/** #rrggbb → 0-1 分量；非法值退回中性灰，避免整面墙变黑 */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const h = String(hex || '').replace('#', '').trim()
+  if (h.length !== 6) return { r: 0.8, g: 0.8, b: 0.78 }
+  return {
+    r: parseInt(h.slice(0, 2), 16) / 255,
+    g: parseInt(h.slice(2, 4), 16) / 255,
+    b: parseInt(h.slice(4, 6), 16) / 255,
+  }
+}
+
 function applyTransform(
   node: import('@babylonjs/core').TransformNode,
   t: { position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number }; scale: { x: number; y: number; z: number } },
@@ -29,6 +45,7 @@ function applyTransform(
 export type SyncSceneResult = {
   billboardCount: number
   gltfCount: number
+  archCount: number
   meshCount: number
 }
 
@@ -61,20 +78,49 @@ export async function syncSceneFromDoc(
   await import('@babylonjs/loaders')
 
   if (syncAborted(scene, opts)) {
-    return { billboardCount: 0, gltfCount: 0, meshCount: 0 }
+    return { billboardCount: 0, gltfCount: 0, archCount: 0, meshCount: 0 }
   }
 
   await clearUserMeshes(scene)
   if (syncAborted(scene, opts)) {
-    return { billboardCount: 0, gltfCount: 0, meshCount: 0 }
+    return { billboardCount: 0, gltfCount: 0, archCount: 0, meshCount: 0 }
   }
 
   const designById = new Map(ctx.designs.map((d) => [d.id, d]))
   let billboardCount = 0
   let gltfCount = 0
+  let archCount = 0
 
   for (const obj of doc.objects) {
     if (syncAborted(scene, opts)) break
+    if (obj.kind === 'arch') {
+      // 硬装面：尺寸来自文档，材质用纯色 StandardMaterial。
+      // 与其它对象一样打 metadata，clearUserMeshes 才能在下次同步时清掉它。
+      //
+      // 尺寸走 mesh 的 boundingInfo 而不是 scaling：applyTransform 会把
+      // scaling 重置成对象的 scale，若先 scaling 再 applyTransform 就全变
+      // 1×1×1 立方体（实测所有墙都成了方块）。这里用 CreateBox 的 width/
+      // height/depth 直接定尺寸，scaling 只承载对象自身的缩放。
+      const box = BABYLON.MeshBuilder.CreateBox(
+        `arch-${obj.id}`,
+        { width: obj.size.x, height: obj.size.y, depth: obj.size.z },
+        scene,
+      )
+      box.metadata = { [MATERIAL3D_OBJECT_META]: obj.id, material3dLocked: Boolean(obj.locked) }
+      applyTransform(box, obj.transform)
+      // 天花这类面可以只登记不渲染：俯视机位要靠它让开视线
+      if (obj.visible === false) box.setEnabled(false)
+      const mat = new BABYLON.StandardMaterial(`arch-mat-${obj.id}`, scene)
+      const c = hexToRgb(obj.color)
+      mat.diffuseColor = new BABYLON.Color3(c.r, c.g, c.b)
+      mat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02)
+      mat.emissiveColor = new BABYLON.Color3(c.r * 0.08, c.g * 0.08, c.b * 0.08)
+      box.material = mat
+      box.isPickable = true
+      // 天花从下方看：关掉背面剔除会让它盖住整个画面，保持剔除
+      archCount++
+      continue
+    }
     if (obj.kind === 'billboard') {
       const design = designById.get(obj.designId)
       if (!design) continue
@@ -101,13 +147,13 @@ export async function syncSceneFromDoc(
         container = await BABYLON.SceneLoader.LoadAssetContainerAsync(rootUrl, sceneFilename, scene)
       } catch (e) {
         if (syncAborted(scene, opts)) {
-          return { billboardCount, gltfCount, meshCount: 0 }
+          return { billboardCount, gltfCount, archCount, meshCount: 0 }
         }
         throw e
       }
       if (syncAborted(scene, opts)) {
         container.dispose()
-        return { billboardCount, gltfCount, meshCount: 0 }
+        return { billboardCount, gltfCount, archCount, meshCount: 0 }
       }
       const root = new BABYLON.TransformNode(`gltf-${obj.id}`, scene)
       root.metadata = { [MATERIAL3D_OBJECT_META]: obj.id, material3dLocked: Boolean(obj.locked) }
@@ -121,18 +167,16 @@ export async function syncSceneFromDoc(
         t.metadata = { ...(t.metadata || {}), [MATERIAL3D_OBJECT_META]: obj.id }
       }
       applyTransform(root, obj.transform)
-      // 挂接完成后释放容器壳，避免每次同步累积 AssetContainer（网格留在 scene）
-      try {
-        container.dispose()
-      } catch {
-        /* 已释放 */
-      }
+      // 不要 container.dispose()：Babylon 的 AssetContainer.dispose() 会连同
+      // 容器内的网格一起销毁，即使已经 addAllToScene —— 实测表现为每个模型
+      // 只剩一个空 root，画面里是一堆立方体占位。网格已经挂在 root 下，
+      // 由 clearUserMeshes 靠 metadata 统一回收，不需要容器壳。
       gltfCount++
     }
   }
 
   const meshCount = scene.meshes.filter((m) => m.metadata?.[MATERIAL3D_OBJECT_META]).length
-  const result = { billboardCount, gltfCount, meshCount }
+  const result = { billboardCount, gltfCount, archCount, meshCount }
   opts?.onAfterSync?.(result)
   return result
 }

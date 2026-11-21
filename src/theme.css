@@ -3244,6 +3244,31 @@ body.si-resizing {
   text-align: center;
 }
 
+/* 预设户型入口：主操作在右，预设与新建并列 */
+.m3d-studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.m3d-studio-empty-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 空状态里的预设卡：比「新建」窄，强调它是快捷路径 */
+.m3d-studio-empty-wrap .m3d-studio-empty:not(:first-child) {
+  padding: 22px 24px;
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-2));
+}
+
+.m3d-studio-empty-wrap .m3d-studio-empty:not(:first-child):hover {
+  border-color: var(--accent);
+}
+
 .m3d-studio-empty strong {
   font-size: var(--fs-md);
 }

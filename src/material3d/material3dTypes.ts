@@ -66,7 +66,40 @@ export type Material3dGltfObject = Material3dObjectBase & {
   assetUrl: string
 }
 
-export type Material3dObject = Material3dBillboardObject | Material3dGltfObject
+/**
+ * 硬装面：墙、地板、天花、踢脚线这类由程序生成的长方体。
+ * 与 gltf/billboard 并列存进场景文档，因此预设户型能整套复用，
+ * 也能像其它对象一样被选中、拖动、改色、删除。
+ *
+ * 用 box 而不是导入模型：墙体尺寸随户型变，纯色材质也够——分镜布景
+ * 真正要看的是空间关系与主光，墙面纹理不是这一层的事。
+ */
+export type Material3dArchKind = 'floor' | 'wall' | 'ceiling' | 'baseboard'
+
+export type Material3dArchObject = Material3dObjectBase & {
+  kind: 'arch'
+  archKind: Material3dArchKind
+  /** 长方体尺寸（米）；墙体默认厚度 0.12 */
+  size: Material3dVec3
+  /** #rrggbb 漫反射色 */
+  color: string
+  /** 0-1；墙与地板用 0.9 左右，避免塑料感 */
+  roughness?: number
+  /** false 时不渲染但保留在文档里；天花用它在俯视时让开视线 */
+  visible?: boolean
+}
+
+export type Material3dObject =
+  | Material3dBillboardObject
+  | Material3dGltfObject
+  | Material3dArchObject
+
+/** 按 archKind 给出默认厚度，避免每处手写 0.12 */
+export const ARCH_DEFAULT_THICKNESS = 0.12
+
+export function isArchObject(o: Material3dObject): o is Material3dArchObject {
+  return o.kind === 'arch'
+}
 
 export type Material3dBookmark = {
   id: string
