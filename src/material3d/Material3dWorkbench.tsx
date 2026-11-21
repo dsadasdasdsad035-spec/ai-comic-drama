@@ -27,6 +27,7 @@ import { applyMaterial3dEnvironment } from './sceneEnvironment'
 import { syncSceneFromDoc } from './syncSceneFromDoc'
 import {
   DEFAULT_TRANSFORM,
+  MATERIAL3D_OBJECT_META,
   newBookmarkId,
   newMaterial3dObjectId,
   type Material3dBookmark,
@@ -40,6 +41,9 @@ import Material3dAddPanel, { type PropSource } from './Material3dAddPanel'
 import Material3dDebugPanel from './Material3dDebugPanel'
 import Material3dHierarchyPanel from './Material3dHierarchyPanel'
 import Material3dShotPanel from './Material3dShotPanel'
+import type { OrbitSliderKey } from './Material3dCameraPanel'
+import { applyCameraPose, readCameraPose, setRadiusLimits, type OrbitPose } from './createEngine'
+import { FIT_BETA, FIT_MIN_DIAGONAL, degToRad, fitDistanceForBox, poseNearlyEqual } from './orbitPose'
 
 export type Material3dRailTab = 'library' | 'compose' | 'shot' | 'debug'
 
@@ -94,6 +98,22 @@ export default function Material3dWorkbench({
   const inspectorOpenRef = useRef(false)
   const inspectorHostRef = useRef<HTMLDivElement>(null)
   const [ready, setReady] = useState(false)
+  /** 当前相机位姿（面板滑杆的数据源） */
+  const [pose, setPose] = useState<OrbitPose | null>(null)
+  /**
+   * 谁在控制相机：null = 鼠标；非 null = 该滑杆正在拖动。
+   * 用 ref 而不是 state —— onBeforeRender 每帧要读它，state 会拿到旧闭包。
+   */
+  const sliderActiveRef = useRef<OrbitSliderKey | null>(null)
+  /** 最近一次由滑杆写入的位姿：回写仲裁用，避免「滑杆写相机 -> 相机回写滑杆」打架 */
+  const poseRef = useRef<OrbitPose | null>(null)
+  /**
+   * fitView 的反向引用：refreshMeshes 的 onAfterSync 里要用它，但把 fitView
+   * 放进 refreshMeshes 的依赖会让它每次重建、连带重新灌一遍场景。
+   */
+  const fitViewRef = useRef<((opts?: { silent?: boolean }) => boolean) | null>(null)
+  /** 已经自动取景过的场景签名；避免每次对象增删都重新取景把用户视角踢掉 */
+  const autoFitDoneRef = useRef<string>('')
   const [cc0Props, setCc0Props] = useState<Cc0PropEntry[]>([])
   const [itchProps, setItchProps] = useState<ItchPropEntry[]>([])
   const [railTab, setRailTab] = useState<Material3dRailTab>(() => (sceneDoc.objects.length > 0 ? 'compose' : 'library'))
@@ -200,6 +220,14 @@ export default function Material3dWorkbench({
           if (still !== selectedIdRef.current) setSelectedId(still)
           gizmoRef.current?.selectById(still)
           if (inspectorOpenRef.current) void syncInspectorSelection(host.scene, still)
+          // 自动取景：场景首次有内容、或切换到另一个场景时取一次。
+          // 注意只有 fitView 真的成功（包围盒有效）才记账 —— 首轮同步时每个 GLB
+          // 还在异步加载，包围盒是空的；若此时就写 autoFitDoneRef，后续轮次
+          // 再也不会重试，自动取景永远不生效。
+          const sceneKey = sceneDoc.id
+          if (sceneDoc.objects.length > 0 && autoFitDoneRef.current !== sceneKey) {
+            if (fitViewRef.current?.({ silent: true })) autoFitDoneRef.current = sceneKey
+          }
         },
       })
     } catch (e) {
@@ -207,6 +235,153 @@ export default function Material3dWorkbench({
       toast((e as Error).message || '同步场景失败')
     }
   }, [sceneDoc, designs, missing, toast])
+
+  /**
+   * 相机 -> 面板。订阅 onBeforeRender 而不是 onViewMatrixChanged：
+   * 后者在「读矩阵」时也会触发，回调里读 alpha/beta 会构成重入（Babylon 类型
+   * 声明里明确警告过 reentrance）。onBeforeRender 每帧一跳，与读相机无关。
+   */
+  useEffect(() => {
+    const host = hostRef.current
+    if (!ready || !host) return
+    const scene = host.scene
+    const observer = scene.onBeforeRenderObservable.add(() => {
+      // 滑杆正在拖：由滑杆单向写相机，绝不回写，避免两股来源互相覆盖
+      if (sliderActiveRef.current) return
+      const live = readCameraPose(host)
+      const prev = poseRef.current
+      if (prev && poseNearlyEqual(prev, live)) return
+      poseRef.current = live
+      setPose(live)
+    })
+    // 建好订阅后先取一次初值，避免面板在第一次交互前是空的
+    const initial = readCameraPose(host)
+    poseRef.current = initial
+    setPose(initial)
+    return () => {
+      scene.onBeforeRenderObservable.remove(observer)
+    }
+  }, [ready])
+
+  /** 滑杆写入相机（单向，不回写 state —— 下一帧 onBeforeRender 会发现值已相等） */
+  const applyPoseFromSlider = useCallback(
+    (next: OrbitPose) => {
+      const host = hostRef.current
+      if (!host) return
+      applyCameraPose(host, next)
+      poseRef.current = next
+      setPose(next)
+    },
+    [],
+  )
+
+  /**
+   * 拖动滑杆期间把相机输入摘掉：否则拖滑杆时滚轮/指针仍会改相机，
+   * 与滑杆打架。三条结束路径都要恢复（pointerup / pointercancel / blur）。
+   */
+  const setSliderActive = useCallback((key: OrbitSliderKey | null) => {
+    const host = hostRef.current
+    const canvas = canvasRef.current
+    const wasActive = sliderActiveRef.current !== null
+    sliderActiveRef.current = key
+    if (!host || !canvas) return
+    try {
+      if (key && !wasActive) host.camera.detachControl()
+      else if (!key && wasActive) host.camera.attachControl(canvas, true)
+    } catch {
+      /* 相机可能已随引擎释放 */
+    }
+  }, [])
+
+  /** 场景包围盒（只认带 material3dObjectId 的网格，排除宿主地面与灯光辅助体） */
+  const contentBounds = useCallback(
+    (): { center: [number, number, number]; diagonal: number; width: number; height: number } | null => {
+      const host = hostRef.current
+      if (!host) return null
+      const ext = host.scene.getWorldExtends(
+        (m) => Boolean(m.metadata?.[MATERIAL3D_OBJECT_META]),
+      )
+      if (!ext?.min || !ext?.max) return null
+      const sx = ext.max.x - ext.min.x
+      const sy = ext.max.y - ext.min.y
+      const sz = ext.max.z - ext.min.z
+      const diag = Math.sqrt(sx * sx + sy * sy + sz * sz)
+      if (!Number.isFinite(diag) || diag < FIT_MIN_DIAGONAL) return null
+      return {
+        center: [
+          (ext.min.x + ext.max.x) / 2,
+          (ext.min.y + ext.max.y) / 2,
+          (ext.min.z + ext.max.z) / 2,
+        ],
+        diagonal: diag,
+        // 轨道相机在不同方位角下看到的横向跨度不同，取 X/Z 的较大者最稳
+        width: Math.max(sx, sz),
+        height: Math.max(sy, 0.4),
+      }
+    },
+    [],
+  )
+
+  /**
+   * 适应视图：按实际内容包围盒取景。
+   * 顺序很重要 —— 先放宽半径 limit 再写 radius，否则会被上一个户型的旧 limit 截断。
+   */
+  const fitView = useCallback(
+    (opts?: { silent?: boolean }) => {
+      const host = hostRef.current
+      if (!host) return false
+      const bounds = contentBounds()
+      if (!bounds) {
+        if (!opts?.silent) toast('场景里还没有可适配的对象')
+        return false
+      }
+      setRadiusLimits(host, bounds.diagonal)
+      // 按真实视场算距离：宽高比从引擎拿，fov 用相机当前值（Babylon 默认 0.8）
+      const engine = host.engine
+      const aspect = engine.getRenderWidth() / Math.max(1, engine.getRenderHeight())
+      const radius = fitDistanceForBox({
+        width: bounds.width,
+        height: bounds.height,
+        fov: host.camera.fov,
+        aspect,
+        padding: 1.15,
+      })
+      const next: OrbitPose = {
+        alpha: host.camera.alpha,
+        beta: FIT_BETA,
+        radius,
+        target: { x: bounds.center[0], y: bounds.center[1], z: bounds.center[2] },
+      }
+      applyCameraPose(host, next)
+      poseRef.current = next
+      setPose(next)
+      return true
+    },
+    [contentBounds, toast],
+  )
+
+  /** 俯视：保留当前方位角，只把仰角推到接近正上方 */
+  const toTopView = useCallback(() => {
+    const host = hostRef.current
+    if (!host) return
+    const cur = readCameraPose(host)
+    const next: OrbitPose = { ...cur, beta: degToRad(6) }
+    applyCameraPose(host, next)
+    poseRef.current = next
+    setPose(next)
+  }, [])
+
+  /** 正视：仰角回到水平，并转到从 +Z 看向 -Z（面朝北墙，与预设户型朝向一致） */
+  const toFrontView = useCallback(() => {
+    const host = hostRef.current
+    if (!host) return
+    const cur = readCameraPose(host)
+    const next: OrbitPose = { ...cur, alpha: -Math.PI / 2, beta: Math.PI / 2 }
+    applyCameraPose(host, next)
+    poseRef.current = next
+    setPose(next)
+  }, [])
+  fitViewRef.current = fitView
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -273,6 +448,7 @@ export default function Material3dWorkbench({
     if (!ready || !host) return
     void applyMaterial3dEnvironment(host.scene, host.envHandles, sceneDoc.environment)
   }, [ready, sceneDoc.environment])
+
 
   useEffect(() => {
     if (!inspectorOpen) {
@@ -717,8 +893,16 @@ export default function Material3dWorkbench({
                 environment={sceneDoc.environment}
                 cameras={sceneDoc.cameras}
                 bookmarkLabel={bookmarkLabel}
+                pose={pose}
                 onEnvironmentChange={onEnvironmentChange}
                 onBookmarkLabel={setBookmarkLabel}
+                onPoseChange={applyPoseFromSlider}
+                onSliderActive={setSliderActive}
+                onFitView={() => {
+                  fitView()
+                }}
+                onTopView={toTopView}
+                onFrontView={toFrontView}
                 onSave={saveBookmark}
                 onRestore={restoreBookmark}
                 onRemove={removeBookmark}
@@ -744,7 +928,7 @@ export default function Material3dWorkbench({
           <canvas ref={canvasRef} className="m3d-canvas" data-m3d-canvas />
           <div className="m3d-viewport-hud" aria-hidden>
             <div className="m3d-viewport-hud-row">
-              <span>左键旋转 · 滚轮缩放 · 点选对象后 Gizmo 移动</span>
+              <span>左键旋转 · 滚轮缩放 · 中键/Ctrl+左键平移 · 点选对象后 Gizmo 移动</span>
             </div>
             {selectedId ? (
               <div className="m3d-viewport-hud-row">

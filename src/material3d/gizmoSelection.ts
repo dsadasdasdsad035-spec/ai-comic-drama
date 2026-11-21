@@ -22,10 +22,69 @@ export function findNodeForObjectId(scene: Scene, objectId: string): Node | null
   return mesh ?? null
 }
 
-export function pickObjectIdAt(scene: Scene, x: number, y: number): string | null {
-  const pick = scene.pick(x, y, (mesh) => !!readMaterial3dObjectId(mesh.metadata))
-  if (!pick?.hit || !pick.pickedMesh) return null
-  return readMaterial3dObjectId(pick.pickedMesh.metadata)
+/**
+ * 点击拾取。精确 pick 打不中时，退一步找「屏幕投影离点击点最近」的对象。
+ *
+ * 为什么需要兜底：动物模型是真实物理尺寸（小猫 0.37m 宽），在常规观察
+ * 距离下只占几十像素；小物件、细长物件（台灯、花瓶）用精确 raycast 很难
+ * 点中，用户感觉是「这个模型坏了，选不了」。
+ *
+ * 容差按画布短边的一个比例给，不用固定像素 —— 高分屏与窄画布下才不会失效。
+ */
+const PICK_TOLERANCE_RATIO = 0.05
+
+/**
+ * @param BABYLON 已加载的 Babylon 命名空间。调用方（createGizmoSelection）本就
+ *   在 async 环境里 import 过它，从这里再 import 一次既多余又让本函数变异步。
+ */
+export function pickObjectIdAt(
+  scene: Scene,
+  x: number,
+  y: number,
+  BABYLON: typeof import('@babylonjs/core'),
+): string | null {
+  const precise = scene.pick(x, y, (mesh) => !!readMaterial3dObjectId(mesh.metadata))
+  if (precise?.hit && precise.pickedMesh) {
+    return readMaterial3dObjectId(precise.pickedMesh.metadata)
+  }
+  return pickNearestByProjection(scene, x, y, BABYLON)
+}
+
+/** 精确 pick 失败时的兜底：按屏幕投影距离找最近的候选对象 */
+function pickNearestByProjection(
+  scene: Scene,
+  x: number,
+  y: number,
+  BABYLON: typeof import('@babylonjs/core'),
+): string | null {
+  const engine = scene.getEngine()
+  const w = engine.getRenderWidth()
+  const h = engine.getRenderHeight()
+  if (w <= 0 || h <= 0) return null
+  const tolerance = Math.min(w, h) * PICK_TOLERANCE_RATIO
+  if (!Number.isFinite(tolerance) || tolerance <= 0) return null
+
+  const identity = BABYLON.Matrix.Identity()
+  let bestId: string | null = null
+  let bestDist2 = tolerance * tolerance
+  for (const mesh of scene.meshes) {
+    const id = readMaterial3dObjectId(mesh.metadata)
+    if (!id) continue
+    if (!mesh.isEnabled() || !mesh.isVisible) continue
+    // 包围盒中心作为代表点：比逐顶点投影便宜，对小物件足够准
+    const center = mesh.getBoundingInfo().boundingBox.centerWorld
+    const projected = BABYLON.Vector3.Project(center, identity, scene.getTransformMatrix(), scene.activeCamera!.viewport.toGlobal(w, h))
+    // 点在相机背后时 Project 会给出镜像坐标，用 z 判断可见性
+    if (projected.z < 0 || projected.z > 1) continue
+    const dx = projected.x - x
+    const dy = projected.y - y
+    const dist2 = dx * dx + dy * dy
+    if (dist2 <= bestDist2) {
+      bestDist2 = dist2
+      bestId = id
+    }
+  }
+  return bestId
 }
 
 export type GizmoSelectionController = {
@@ -91,7 +150,7 @@ export async function createGizmoSelection(
     if (pointerInfo.type !== BABYLON.PointerEventTypes.POINTERDOWN) return
     const evt = pointerInfo.event
     if (evt.button !== 0) return
-    const id = pickObjectIdAt(scene, scene.pointerX, scene.pointerY)
+    const id = pickObjectIdAt(scene, scene.pointerX, scene.pointerY, BABYLON)
     callbacks.onSelect(id)
     attachToId(id)
   })
