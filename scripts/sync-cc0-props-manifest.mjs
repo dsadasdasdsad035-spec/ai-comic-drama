@@ -2,9 +2,12 @@
 /**
  * 从 Poly Haven API 生成 CC0 布景家具 manifest。
  *
- * 只收「能撑起一个场景」的家具：座椅、桌、柜架、床。装饰摆件、餐具、
- * 灯具、电器、食物、植物、工具都不进目录——它们要么该用素材卡立板，
- * 要么与分镜布景无关。想临时恢复一类，把它的品类加回 CATS。
+ * 两道筛选：
+ * 1) 品类只要座椅/桌/柜架/床——装饰摆件、餐具、灯具、电器、食物、
+ *    植物、工具撑不起场景，要它们该用素材卡立板。
+ * 2) 风格只留现代款。Poly Haven 本身是废墟/古堡风素材库（85 件家具里
+ *    有 51 件带 vintage、33 件 old、25 件 antique），留给短剧现代生活
+ *    场景的只有十几件。带任何复古标签的一律不入目录。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -17,6 +20,47 @@ const CATS = new Set(['furniture', 'seating', 'table', 'shelves', 'bed'])
 const HOME_PRIO = ['seating', 'furniture', 'table', 'bed', 'shelves']
 /** 不设上限：家具品类在 Poly Haven 只有几十个，全收比截断更有用 */
 const MAX = Infinity
+/**
+ * 复古风格标签：命中任意一个就排除。Poly Haven 的 tags 是资产作者打的，
+ * 比标题更可靠——标题写 `Modern Arm Chair` 也可能带 fancy 的仿古饰线。
+ */
+const VINTAGE_TAGS = new Set([
+  'vintage',
+  'old',
+  'antique',
+  'gothic',
+  'victorian',
+  'ornate',
+  'traditional',
+  'rustic',
+  'worn',
+  'aged',
+  'weathered',
+  'rusted',
+  'dirty',
+  'farmhouse',
+  'classic',
+  'fancy',
+  'varnished',
+  'asian',
+  'chinese',
+  'abandoned',
+])
+/** 现代款判定：必须至少命中一个才保留 */
+const MODERN_TAGS = new Set(['modern', 'contemporary', 'minimalist', 'sleek', 'industrial'])
+/**
+ * 标签缺失但形态确实是现代款的几件（人工核对过）：
+ * 皮质布艺沙发、皮革脚凳、金属塑料校椅、移动咖啡车、皮质现代扶手椅、皮质餐椅。
+ * 它们只是作者没打 modern 标签，一并保留。
+ */
+const MODERN_ID_ALLOWLIST = new Set([
+  'sofa_02',
+  'Ottoman_01',
+  'SchoolChair_01',
+  'CoffeeCart_01',
+  'modern_arm_chair_01',
+  'dining_chair_02',
+])
 /**
  * 集合里的成员也照样收：`collection: the_shed` 之类的标签只说明它出现在哪个
  * Poly Haven 套装里，不代表它不能单独使用。真正要跳过的只有集合本身。
@@ -31,7 +75,11 @@ function log(msg) {
 function matchesPropAsset(id, entry) {
   if (SKIP_ID.test(String(id || ''))) return false
   const cats = entry.categories || []
-  return cats.some((c) => CATS.has(c))
+  if (!cats.some((c) => CATS.has(c))) return false
+  if (MODERN_ID_ALLOWLIST.has(id)) return true
+  const tags = new Set(entry.tags || [])
+  if ([...VINTAGE_TAGS].some((t) => tags.has(t))) return false
+  return [...MODERN_TAGS].some((t) => tags.has(t))
 }
 
 function homeRank(categories) {

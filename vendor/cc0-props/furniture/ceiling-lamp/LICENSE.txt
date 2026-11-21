@@ -1,0 +1,4 @@
+吸顶灯（Ceiling Lamp）— Grab3D ceiling-lamp
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/furniture/ceiling-lamp/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

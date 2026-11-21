@@ -1,0 +1,4 @@
+站立办公桌（Standing Desk）— Grab3D standing-desk
+License: CC0 1.0 Universal (Public Domain Dedication)
+Page: https://grab3d.com/models/furniture/standing-desk/
+Note: AI-assisted content (base mesh from an AI image-to-3D tool, cleaned in Blender).

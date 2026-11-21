@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "source": "https://grab3d.com",
   "license": "CC0 1.0 (Grab3D)",
-  "note": "补齐 Poly Haven 家具缺口：沙发/床/衣柜/椅凳 20 件；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
-  "updatedAt": "2026-11-21T10:59:25.524Z",
+  "note": "现代家居家具 44 件（沙发/床/桌/椅/柜/软装）；GLB 自包含，二进制在 vendor/cc0-props/furniture/",
+  "updatedAt": "2026-11-21T11:24:12.406Z",
   "entries": [
     {
       "id": "sofa",
@@ -28,17 +28,6 @@
       "page": "https://grab3d.com/models/furniture/corner-sofa/"
     },
     {
-      "id": "chesterfield_sofa",
-      "slug": "chesterfield-sofa",
-      "title": "切斯特菲尔德沙发",
-      "titleEn": "Chesterfield Sofa",
-      "file": "chesterfield-sofa.glb",
-      "bytes": 1144080,
-      "style": "stylized",
-      "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/chesterfield-sofa/"
-    },
-    {
       "id": "bean_bag_chair",
       "slug": "bean-bag-chair",
       "title": "懒人沙发",
@@ -50,15 +39,92 @@
       "page": "https://grab3d.com/models/furniture/bean-bag-chair/"
     },
     {
-      "id": "papasan_chair",
-      "slug": "papasan-chair",
-      "title": "圆椅",
-      "titleEn": "Papasan Chair",
-      "file": "papasan-chair.glb",
-      "bytes": 1114780,
+      "id": "pouf",
+      "slug": "pouf",
+      "title": "针织坐墩",
+      "titleEn": "Knitted Pouf",
+      "file": "pouf.glb",
+      "bytes": 713752,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/papasan-chair/"
+      "page": "https://grab3d.com/models/furniture/pouf/"
+    },
+    {
+      "id": "armchair",
+      "slug": "armchair",
+      "title": "休闲扶手椅",
+      "titleEn": "Armchair",
+      "file": "armchair.glb",
+      "bytes": 641456,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/armchair/"
+    },
+    {
+      "id": "office_chair",
+      "slug": "office-chair",
+      "title": "办公椅",
+      "titleEn": "Office Chair",
+      "file": "office-chair.glb",
+      "bytes": 1261664,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/office-chair/"
+    },
+    {
+      "id": "gaming_chair",
+      "slug": "gaming-chair",
+      "title": "电竞椅",
+      "titleEn": "Gaming Chair",
+      "file": "gaming-chair-light.glb",
+      "bytes": 691248,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/gaming-chair/"
+    },
+    {
+      "id": "dining_chair",
+      "slug": "dining-chair",
+      "title": "餐椅",
+      "titleEn": "Dining Chair",
+      "file": "dining-chair.glb",
+      "bytes": 613796,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/dining-chair/"
+    },
+    {
+      "id": "director_chair",
+      "slug": "director-chair",
+      "title": "导演椅",
+      "titleEn": "Director's Chair",
+      "file": "director-chair.glb",
+      "bytes": 634800,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/director-chair/"
+    },
+    {
+      "id": "bar_stool",
+      "slug": "bar-stool",
+      "title": "吧凳",
+      "titleEn": "Bar Stool",
+      "file": "bar-stool.glb",
+      "bytes": 535544,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/bar-stool/"
+    },
+    {
+      "id": "bench",
+      "slug": "bench",
+      "title": "餐凳",
+      "titleEn": "Dining Bench",
+      "file": "bench.glb",
+      "bytes": 454536,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/bench/"
     },
     {
       "id": "bed",
@@ -94,37 +160,15 @@
       "page": "https://grab3d.com/models/furniture/bunk-bed/"
     },
     {
-      "id": "canopy_bed",
-      "slug": "canopy-bed",
-      "title": "四柱床",
-      "titleEn": "Canopy Bed",
-      "file": "canopy-bed-light.glb",
-      "bytes": 880228,
+      "id": "nightstand",
+      "slug": "nightstand",
+      "title": "床头柜",
+      "titleEn": "Nightstand",
+      "file": "nightstand.glb",
+      "bytes": 720720,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/canopy-bed/"
-    },
-    {
-      "id": "wardrobe",
-      "slug": "wardrobe",
-      "title": "衣柜",
-      "titleEn": "Wardrobe",
-      "file": "wardrobe-light.glb",
-      "bytes": 968836,
-      "style": "stylized",
-      "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/wardrobe/"
-    },
-    {
-      "id": "old_wardrobe",
-      "slug": "old-wardrobe",
-      "title": "旧衣柜",
-      "titleEn": "Old Wardrobe",
-      "file": "old-wardrobe-light.glb",
-      "bytes": 977824,
-      "style": "stylized",
-      "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/old-wardrobe/"
+      "page": "https://grab3d.com/models/furniture/nightstand/"
     },
     {
       "id": "dresser",
@@ -138,6 +182,17 @@
       "page": "https://grab3d.com/models/furniture/dresser/"
     },
     {
+      "id": "wardrobe",
+      "slug": "wardrobe",
+      "title": "衣柜",
+      "titleEn": "Wardrobe",
+      "file": "wardrobe-light.glb",
+      "bytes": 968836,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/wardrobe/"
+    },
+    {
       "id": "filing_cabinet",
       "slug": "filing-cabinet",
       "title": "文件柜",
@@ -149,81 +204,279 @@
       "page": "https://grab3d.com/models/furniture/filing-cabinet/"
     },
     {
-      "id": "armchair",
-      "slug": "armchair",
-      "title": "扶手椅",
-      "titleEn": "Armchair",
-      "file": "armchair.glb",
-      "bytes": 641456,
+      "id": "shelf_unit",
+      "slug": "shelf-unit",
+      "title": "置物架",
+      "titleEn": "Shelf Unit",
+      "file": "shelf-unit-light.glb",
+      "bytes": 664952,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/armchair/"
+      "page": "https://grab3d.com/models/furniture/shelf-unit/"
     },
     {
-      "id": "wingback_chair",
-      "slug": "wingback-chair",
-      "title": "翼背椅",
-      "titleEn": "Wingback Chair",
-      "file": "wingback-chair.glb",
-      "bytes": 693252,
+      "id": "bookshelf",
+      "slug": "bookshelf",
+      "title": "书架",
+      "titleEn": "Bookshelf",
+      "file": "bookshelf.glb",
+      "bytes": 2897208,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/wingback-chair/"
+      "page": "https://grab3d.com/models/furniture/bookshelf/"
     },
     {
-      "id": "office_chair",
-      "slug": "office-chair",
-      "title": "办公椅",
-      "titleEn": "Office Chair",
-      "file": "office-chair.glb",
-      "bytes": 1261664,
+      "id": "coffee_table",
+      "slug": "coffee-table",
+      "title": "咖啡桌",
+      "titleEn": "Coffee Table",
+      "file": "coffee-table.glb",
+      "bytes": 347180,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/office-chair/"
+      "page": "https://grab3d.com/models/furniture/coffee-table/"
     },
     {
-      "id": "director_chair",
-      "slug": "director-chair",
-      "title": "导演椅",
-      "titleEn": "Director's Chair",
-      "file": "director-chair.glb",
-      "bytes": 634800,
+      "id": "side_table",
+      "slug": "side-table",
+      "title": "边桌",
+      "titleEn": "Side Table",
+      "file": "side-table.glb",
+      "bytes": 550272,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/director-chair/"
+      "page": "https://grab3d.com/models/furniture/side-table/"
     },
     {
-      "id": "bar_stool",
-      "slug": "bar-stool",
-      "title": "吧凳",
-      "titleEn": "Bar Stool",
-      "file": "bar-stool.glb",
-      "bytes": 535544,
+      "id": "dining_table",
+      "slug": "dining-table",
+      "title": "餐桌",
+      "titleEn": "Dining Table",
+      "file": "dining-table.glb",
+      "bytes": 493856,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/bar-stool/"
+      "page": "https://grab3d.com/models/furniture/dining-table/"
     },
     {
-      "id": "milking_stool",
-      "slug": "milking-stool",
-      "title": "挤奶凳",
-      "titleEn": "Milking Stool",
-      "file": "milking-stool.glb",
-      "bytes": 568400,
+      "id": "round_table",
+      "slug": "round-table",
+      "title": "圆桌",
+      "titleEn": "Round Pedestal Table",
+      "file": "round-table.glb",
+      "bytes": 778264,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/milking-stool/"
+      "page": "https://grab3d.com/models/furniture/round-table/"
     },
     {
-      "id": "pouf",
-      "slug": "pouf",
-      "title": "针织坐墩",
-      "titleEn": "Knitted Pouf",
-      "file": "pouf.glb",
-      "bytes": 713752,
+      "id": "meeting_table",
+      "slug": "meeting-table",
+      "title": "会议桌",
+      "titleEn": "Meeting Table",
+      "file": "meeting-table.glb",
+      "bytes": 590732,
       "style": "stylized",
       "license": "CC0-1.0",
-      "page": "https://grab3d.com/models/furniture/pouf/"
+      "page": "https://grab3d.com/models/furniture/meeting-table/"
+    },
+    {
+      "id": "office_desk",
+      "slug": "office-desk",
+      "title": "办公桌",
+      "titleEn": "Office Desk",
+      "file": "office-desk.glb",
+      "bytes": 967176,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/office-desk/"
+    },
+    {
+      "id": "standing_desk",
+      "slug": "standing-desk",
+      "title": "站立办公桌",
+      "titleEn": "Standing Desk",
+      "file": "standing-desk.glb",
+      "bytes": 651976,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/standing-desk/"
+    },
+    {
+      "id": "kitchen_island",
+      "slug": "kitchen-island",
+      "title": "中岛台",
+      "titleEn": "Kitchen Island",
+      "file": "kitchen-island-light.glb",
+      "bytes": 697804,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/kitchen-island/"
+    },
+    {
+      "id": "bar_counter",
+      "slug": "bar-counter",
+      "title": "吧台",
+      "titleEn": "Bar Counter",
+      "file": "bar-counter-light.glb",
+      "bytes": 609364,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/bar-counter/"
+    },
+    {
+      "id": "rug",
+      "slug": "rug",
+      "title": "地毯",
+      "titleEn": "Area Rug",
+      "file": "rug.glb",
+      "bytes": 857032,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/rug/"
+    },
+    {
+      "id": "curtains",
+      "slug": "curtains",
+      "title": "窗帘",
+      "titleEn": "Curtains",
+      "file": "curtains-light.glb",
+      "bytes": 616048,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/curtains/"
+    },
+    {
+      "id": "cushion",
+      "slug": "cushion",
+      "title": "抱枕套装",
+      "titleEn": "Throw Cushion Set",
+      "file": "cushion.glb",
+      "bytes": 836384,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/cushion/"
+    },
+    {
+      "id": "full_length_mirror",
+      "slug": "full-length-mirror",
+      "title": "全身镜",
+      "titleEn": "Full Length Mirror",
+      "file": "full-length-mirror.glb",
+      "bytes": 513360,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/full-length-mirror/"
+    },
+    {
+      "id": "floor_lamp",
+      "slug": "floor-lamp",
+      "title": "落地灯",
+      "titleEn": "Floor Lamp",
+      "file": "floor-lamp.glb",
+      "bytes": 711096,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/floor-lamp/"
+    },
+    {
+      "id": "ceiling_lamp",
+      "slug": "ceiling-lamp",
+      "title": "吸顶灯",
+      "titleEn": "Ceiling Lamp",
+      "file": "ceiling-lamp.glb",
+      "bytes": 565608,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/ceiling-lamp/"
+    },
+    {
+      "id": "table_lamp",
+      "slug": "table-lamp",
+      "title": "台灯",
+      "titleEn": "Table Lamp",
+      "file": "table-lamp.glb",
+      "bytes": 994120,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/table-lamp/"
+    },
+    {
+      "id": "wall_clock",
+      "slug": "wall-clock",
+      "title": "挂钟",
+      "titleEn": "Wall Clock",
+      "file": "wall-clock.glb",
+      "bytes": 1230160,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/wall-clock/"
+    },
+    {
+      "id": "tv_stand",
+      "slug": "tv-stand",
+      "title": "电视柜",
+      "titleEn": "TV Stand",
+      "file": "tv-stand.glb",
+      "bytes": 1314324,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/tv-stand/"
+    },
+    {
+      "id": "laundry_basket",
+      "slug": "laundry-basket",
+      "title": "洗衣篮",
+      "titleEn": "Laundry Basket",
+      "file": "laundry-basket.glb",
+      "bytes": 1048916,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/laundry-basket/"
+    },
+    {
+      "id": "coat_rack",
+      "slug": "coat-rack",
+      "title": "衣帽架",
+      "titleEn": "Coat Rack",
+      "file": "coat-rack.glb",
+      "bytes": 1011116,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/coat-rack/"
+    },
+    {
+      "id": "trash_can",
+      "slug": "trash-can",
+      "title": "垃圾桶",
+      "titleEn": "Trash Can",
+      "file": "trash-can.glb",
+      "bytes": 1020852,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/trash-can/"
+    },
+    {
+      "id": "desk_organizer",
+      "slug": "desk-organizer",
+      "title": "桌面收纳",
+      "titleEn": "Desk Organizer",
+      "file": "desk-organizer.glb",
+      "bytes": 653356,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/desk-organizer/"
+    },
+    {
+      "id": "coffee_machine",
+      "slug": "coffee-machine",
+      "title": "咖啡机",
+      "titleEn": "Coffee Machine",
+      "file": "coffee-machine.glb",
+      "bytes": 1261560,
+      "style": "stylized",
+      "license": "CC0-1.0",
+      "page": "https://grab3d.com/models/furniture/coffee-machine/"
     }
   ],
   "samples": [
@@ -252,18 +505,6 @@
       "url": "/cc0-props/furniture/corner-sofa/corner-sofa.glb"
     },
     {
-      "id": "chesterfield_sofa",
-      "title": "切斯特菲尔德沙发",
-      "titleEn": "Chesterfield Sofa",
-      "source": "grab3d",
-      "license": "CC0-1.0",
-      "categories": [
-        "furniture",
-        "stylized"
-      ],
-      "url": "/cc0-props/furniture/chesterfield-sofa/chesterfield-sofa.glb"
-    },
-    {
       "id": "bean_bag_chair",
       "title": "懒人沙发",
       "titleEn": "Bean Bag Chair",
@@ -276,16 +517,100 @@
       "url": "/cc0-props/furniture/bean-bag-chair/bean-bag-chair.glb"
     },
     {
-      "id": "papasan_chair",
-      "title": "圆椅",
-      "titleEn": "Papasan Chair",
+      "id": "pouf",
+      "title": "针织坐墩",
+      "titleEn": "Knitted Pouf",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/papasan-chair/papasan-chair.glb"
+      "url": "/cc0-props/furniture/pouf/pouf.glb"
+    },
+    {
+      "id": "armchair",
+      "title": "休闲扶手椅",
+      "titleEn": "Armchair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/armchair/armchair.glb"
+    },
+    {
+      "id": "office_chair",
+      "title": "办公椅",
+      "titleEn": "Office Chair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/office-chair/office-chair.glb"
+    },
+    {
+      "id": "gaming_chair",
+      "title": "电竞椅",
+      "titleEn": "Gaming Chair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/gaming-chair/gaming-chair-light.glb"
+    },
+    {
+      "id": "dining_chair",
+      "title": "餐椅",
+      "titleEn": "Dining Chair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/dining-chair/dining-chair.glb"
+    },
+    {
+      "id": "director_chair",
+      "title": "导演椅",
+      "titleEn": "Director's Chair",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/director-chair/director-chair.glb"
+    },
+    {
+      "id": "bar_stool",
+      "title": "吧凳",
+      "titleEn": "Bar Stool",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/bar-stool/bar-stool.glb"
+    },
+    {
+      "id": "bench",
+      "title": "餐凳",
+      "titleEn": "Dining Bench",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/bench/bench.glb"
     },
     {
       "id": "bed",
@@ -324,40 +649,16 @@
       "url": "/cc0-props/furniture/bunk-bed/bunk-bed-light.glb"
     },
     {
-      "id": "canopy_bed",
-      "title": "四柱床",
-      "titleEn": "Canopy Bed",
+      "id": "nightstand",
+      "title": "床头柜",
+      "titleEn": "Nightstand",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/canopy-bed/canopy-bed-light.glb"
-    },
-    {
-      "id": "wardrobe",
-      "title": "衣柜",
-      "titleEn": "Wardrobe",
-      "source": "grab3d",
-      "license": "CC0-1.0",
-      "categories": [
-        "furniture",
-        "stylized"
-      ],
-      "url": "/cc0-props/furniture/wardrobe/wardrobe-light.glb"
-    },
-    {
-      "id": "old_wardrobe",
-      "title": "旧衣柜",
-      "titleEn": "Old Wardrobe",
-      "source": "grab3d",
-      "license": "CC0-1.0",
-      "categories": [
-        "furniture",
-        "stylized"
-      ],
-      "url": "/cc0-props/furniture/old-wardrobe/old-wardrobe-light.glb"
+      "url": "/cc0-props/furniture/nightstand/nightstand.glb"
     },
     {
       "id": "dresser",
@@ -372,6 +673,18 @@
       "url": "/cc0-props/furniture/dresser/dresser.glb"
     },
     {
+      "id": "wardrobe",
+      "title": "衣柜",
+      "titleEn": "Wardrobe",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/wardrobe/wardrobe-light.glb"
+    },
+    {
       "id": "filing_cabinet",
       "title": "文件柜",
       "titleEn": "Filing Cabinet",
@@ -384,88 +697,304 @@
       "url": "/cc0-props/furniture/filing-cabinet/filing-cabinet.glb"
     },
     {
-      "id": "armchair",
-      "title": "扶手椅",
-      "titleEn": "Armchair",
+      "id": "shelf_unit",
+      "title": "置物架",
+      "titleEn": "Shelf Unit",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/armchair/armchair.glb"
+      "url": "/cc0-props/furniture/shelf-unit/shelf-unit-light.glb"
     },
     {
-      "id": "wingback_chair",
-      "title": "翼背椅",
-      "titleEn": "Wingback Chair",
+      "id": "bookshelf",
+      "title": "书架",
+      "titleEn": "Bookshelf",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/wingback-chair/wingback-chair.glb"
+      "url": "/cc0-props/furniture/bookshelf/bookshelf.glb"
     },
     {
-      "id": "office_chair",
-      "title": "办公椅",
-      "titleEn": "Office Chair",
+      "id": "coffee_table",
+      "title": "咖啡桌",
+      "titleEn": "Coffee Table",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/office-chair/office-chair.glb"
+      "url": "/cc0-props/furniture/coffee-table/coffee-table.glb"
     },
     {
-      "id": "director_chair",
-      "title": "导演椅",
-      "titleEn": "Director's Chair",
+      "id": "side_table",
+      "title": "边桌",
+      "titleEn": "Side Table",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/director-chair/director-chair.glb"
+      "url": "/cc0-props/furniture/side-table/side-table.glb"
     },
     {
-      "id": "bar_stool",
-      "title": "吧凳",
-      "titleEn": "Bar Stool",
+      "id": "dining_table",
+      "title": "餐桌",
+      "titleEn": "Dining Table",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/bar-stool/bar-stool.glb"
+      "url": "/cc0-props/furniture/dining-table/dining-table.glb"
     },
     {
-      "id": "milking_stool",
-      "title": "挤奶凳",
-      "titleEn": "Milking Stool",
+      "id": "round_table",
+      "title": "圆桌",
+      "titleEn": "Round Pedestal Table",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/milking-stool/milking-stool.glb"
+      "url": "/cc0-props/furniture/round-table/round-table.glb"
     },
     {
-      "id": "pouf",
-      "title": "针织坐墩",
-      "titleEn": "Knitted Pouf",
+      "id": "meeting_table",
+      "title": "会议桌",
+      "titleEn": "Meeting Table",
       "source": "grab3d",
       "license": "CC0-1.0",
       "categories": [
         "furniture",
         "stylized"
       ],
-      "url": "/cc0-props/furniture/pouf/pouf.glb"
+      "url": "/cc0-props/furniture/meeting-table/meeting-table.glb"
+    },
+    {
+      "id": "office_desk",
+      "title": "办公桌",
+      "titleEn": "Office Desk",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/office-desk/office-desk.glb"
+    },
+    {
+      "id": "standing_desk",
+      "title": "站立办公桌",
+      "titleEn": "Standing Desk",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/standing-desk/standing-desk.glb"
+    },
+    {
+      "id": "kitchen_island",
+      "title": "中岛台",
+      "titleEn": "Kitchen Island",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/kitchen-island/kitchen-island-light.glb"
+    },
+    {
+      "id": "bar_counter",
+      "title": "吧台",
+      "titleEn": "Bar Counter",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/bar-counter/bar-counter-light.glb"
+    },
+    {
+      "id": "rug",
+      "title": "地毯",
+      "titleEn": "Area Rug",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/rug/rug.glb"
+    },
+    {
+      "id": "curtains",
+      "title": "窗帘",
+      "titleEn": "Curtains",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/curtains/curtains-light.glb"
+    },
+    {
+      "id": "cushion",
+      "title": "抱枕套装",
+      "titleEn": "Throw Cushion Set",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/cushion/cushion.glb"
+    },
+    {
+      "id": "full_length_mirror",
+      "title": "全身镜",
+      "titleEn": "Full Length Mirror",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/full-length-mirror/full-length-mirror.glb"
+    },
+    {
+      "id": "floor_lamp",
+      "title": "落地灯",
+      "titleEn": "Floor Lamp",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/floor-lamp/floor-lamp.glb"
+    },
+    {
+      "id": "ceiling_lamp",
+      "title": "吸顶灯",
+      "titleEn": "Ceiling Lamp",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/ceiling-lamp/ceiling-lamp.glb"
+    },
+    {
+      "id": "table_lamp",
+      "title": "台灯",
+      "titleEn": "Table Lamp",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/table-lamp/table-lamp.glb"
+    },
+    {
+      "id": "wall_clock",
+      "title": "挂钟",
+      "titleEn": "Wall Clock",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/wall-clock/wall-clock.glb"
+    },
+    {
+      "id": "tv_stand",
+      "title": "电视柜",
+      "titleEn": "TV Stand",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/tv-stand/tv-stand.glb"
+    },
+    {
+      "id": "laundry_basket",
+      "title": "洗衣篮",
+      "titleEn": "Laundry Basket",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/laundry-basket/laundry-basket.glb"
+    },
+    {
+      "id": "coat_rack",
+      "title": "衣帽架",
+      "titleEn": "Coat Rack",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/coat-rack/coat-rack.glb"
+    },
+    {
+      "id": "trash_can",
+      "title": "垃圾桶",
+      "titleEn": "Trash Can",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/trash-can/trash-can.glb"
+    },
+    {
+      "id": "desk_organizer",
+      "title": "桌面收纳",
+      "titleEn": "Desk Organizer",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/desk-organizer/desk-organizer.glb"
+    },
+    {
+      "id": "coffee_machine",
+      "title": "咖啡机",
+      "titleEn": "Coffee Machine",
+      "source": "grab3d",
+      "license": "CC0-1.0",
+      "categories": [
+        "furniture",
+        "stylized"
+      ],
+      "url": "/cc0-props/furniture/coffee-machine/coffee-machine.glb"
     }
   ]
 }

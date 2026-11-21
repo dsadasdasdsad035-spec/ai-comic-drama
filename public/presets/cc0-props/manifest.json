@@ -2,74 +2,8 @@
   "schemaVersion": 1,
   "source": "https://polyhaven.com/models",
   "license": "CC0 (Poly Haven)",
-  "updatedAt": "2026-11-21T10:50:44.611Z",
+  "updatedAt": "2026-11-21T11:24:36.379Z",
   "samples": [
-    {
-      "id": "ArmChair_01",
-      "title": "Arm Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/ArmChair_01/ArmChair_01_1k.gltf"
-    },
-    {
-      "id": "bar_chair_round_01",
-      "title": "Bar Chair Round 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/bar_chair_round_01/bar_chair_round_01_1k.gltf"
-    },
-    {
-      "id": "BarberShopChair_01",
-      "title": "Barber Shop Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/BarberShopChair_01/BarberShopChair_01_1k.gltf"
-    },
-    {
-      "id": "chinese_armchair",
-      "title": "Chinese Armchair",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_armchair/chinese_armchair_1k.gltf"
-    },
-    {
-      "id": "chinese_sofa",
-      "title": "Chinese Sofa",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_sofa/chinese_sofa_1k.gltf"
-    },
-    {
-      "id": "chinese_stool",
-      "title": "Chinese Stool",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_stool/chinese_stool_1k.gltf"
-    },
     {
       "id": "dining_chair_02",
       "title": "Dining Chair 02",
@@ -82,51 +16,6 @@
       "url": "/cc0-props/polyhaven/dining_chair_02/dining_chair_02_1k.gltf"
     },
     {
-      "id": "folding_wooden_stool",
-      "title": "Folding Wooden Stool",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/folding_wooden_stool/folding_wooden_stool_1k.gltf"
-    },
-    {
-      "id": "gallinera_chair",
-      "title": "Gallinera Chair",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/gallinera_chair/gallinera_chair_1k.gltf"
-    },
-    {
-      "id": "GreenChair_01",
-      "title": "Green Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/GreenChair_01/GreenChair_01_1k.gltf"
-    },
-    {
-      "id": "metal_stool_01",
-      "title": "Metal Stool 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/metal_stool_01/metal_stool_01_1k.gltf"
-    },
-    {
       "id": "metal_stool_02",
       "title": "Metal Stool 02",
       "source": "polyhaven",
@@ -137,18 +26,6 @@
         "seating"
       ],
       "url": "/cc0-props/polyhaven/metal_stool_02/metal_stool_02_1k.gltf"
-    },
-    {
-      "id": "metal_stool_03",
-      "title": "Metal Stool 03",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/metal_stool_03/metal_stool_03_1k.gltf"
     },
     {
       "id": "mid_century_lounge_chair",
@@ -197,95 +74,6 @@
       "url": "/cc0-props/polyhaven/Ottoman_01/Ottoman_01_1k.gltf"
     },
     {
-      "id": "outdoor_table_chair_set_01",
-      "title": "Outdoor Table Chair Set 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/outdoor_table_chair_set_01/outdoor_table_chair_set_01_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_bench",
-      "title": "Painted Wooden Bench",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_bench/painted_wooden_bench_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_chair_01",
-      "title": "Painted Wooden Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_chair_01/painted_wooden_chair_01_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_chair_02",
-      "title": "Painted Wooden Chair 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_chair_02/painted_wooden_chair_02_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_sofa",
-      "title": "Painted Wooden Sofa",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_sofa/painted_wooden_sofa_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_stool",
-      "title": "Painted Wooden Stool",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_stool/painted_wooden_stool_1k.gltf"
-    },
-    {
-      "id": "plastic_monobloc_chair_01",
-      "title": "Plastic Monobloc Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating",
-        "collection: the_shed"
-      ],
-      "url": "/cc0-props/polyhaven/plastic_monobloc_chair_01/plastic_monobloc_chair_01_1k.gltf"
-    },
-    {
-      "id": "Rockingchair_01",
-      "title": "Rockingchair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/Rockingchair_01/Rockingchair_01_1k.gltf"
-    },
-    {
       "id": "SchoolChair_01",
       "title": "School Chair 01",
       "source": "polyhaven",
@@ -297,17 +85,6 @@
       "url": "/cc0-props/polyhaven/SchoolChair_01/SchoolChair_01_1k.gltf"
     },
     {
-      "id": "Sofa_01",
-      "title": "Sofa 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/Sofa_01/Sofa_01_1k.gltf"
-    },
-    {
       "id": "sofa_02",
       "title": "Sofa 02",
       "source": "polyhaven",
@@ -317,152 +94,6 @@
         "seating"
       ],
       "url": "/cc0-props/polyhaven/sofa_02/sofa_02_1k.gltf"
-    },
-    {
-      "id": "sofa_03",
-      "title": "Sofa 03",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/sofa_03/sofa_03_1k.gltf"
-    },
-    {
-      "id": "vintage_day_bed",
-      "title": "Vintage Day Bed",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "bed",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/vintage_day_bed/vintage_day_bed_1k.gltf"
-    },
-    {
-      "id": "WoodenChair_01",
-      "title": "Wooden Chair 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating"
-      ],
-      "url": "/cc0-props/polyhaven/WoodenChair_01/WoodenChair_01_1k.gltf"
-    },
-    {
-      "id": "wooden_picnic_table",
-      "title": "Wooden Picnic Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "seating",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/wooden_picnic_table/wooden_picnic_table_1k.gltf"
-    },
-    {
-      "id": "wooden_stool_01",
-      "title": "Wooden Stool 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture",
-        "collection: the_shed"
-      ],
-      "url": "/cc0-props/polyhaven/wooden_stool_01/wooden_stool_01_1k.gltf"
-    },
-    {
-      "id": "wooden_stool_02",
-      "title": "Wooden Stool 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "seating",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/wooden_stool_02/wooden_stool_02_1k.gltf"
-    },
-    {
-      "id": "chinese_cabinet",
-      "title": "Chinese Cabinet",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "shelves",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_cabinet/chinese_cabinet_1k.gltf"
-    },
-    {
-      "id": "chinese_commode",
-      "title": "Chinese Commode",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_commode/chinese_commode_1k.gltf"
-    },
-    {
-      "id": "chinese_console_table",
-      "title": "Chinese Console Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "table",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_console_table/chinese_console_table_1k.gltf"
-    },
-    {
-      "id": "chinese_screen_panels",
-      "title": "Chinese Screen Panels",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_screen_panels/chinese_screen_panels_1k.gltf"
-    },
-    {
-      "id": "chinese_tea_table",
-      "title": "Chinese Tea Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "table",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/chinese_tea_table/chinese_tea_table_1k.gltf"
-    },
-    {
-      "id": "ClassicConsole_01",
-      "title": "Classic Console 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/ClassicConsole_01/ClassicConsole_01_1k.gltf"
-    },
-    {
-      "id": "ClassicNightstand_01",
-      "title": "Classic Nightstand 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/ClassicNightstand_01/ClassicNightstand_01_1k.gltf"
     },
     {
       "id": "CoffeeCart_01",
@@ -478,17 +109,6 @@
       "url": "/cc0-props/polyhaven/CoffeeCart_01/CoffeeCart_01_1k.gltf"
     },
     {
-      "id": "CoffeeTable_01",
-      "title": "Coffee Table 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/CoffeeTable_01/CoffeeTable_01_1k.gltf"
-    },
-    {
       "id": "coffee_table_round_01",
       "title": "Coffee Table Round 01",
       "source": "polyhaven",
@@ -500,18 +120,6 @@
       "url": "/cc0-props/polyhaven/coffee_table_round_01/coffee_table_round_01_1k.gltf"
     },
     {
-      "id": "dining_table",
-      "title": "Dining Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/dining_table/dining_table_1k.gltf"
-    },
-    {
       "id": "drawer_cabinet",
       "title": "Drawer Cabinet",
       "source": "polyhaven",
@@ -520,85 +128,6 @@
         "furniture"
       ],
       "url": "/cc0-props/polyhaven/drawer_cabinet/drawer_cabinet_1k.gltf"
-    },
-    {
-      "id": "gallinera_table",
-      "title": "Gallinera Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/gallinera_table/gallinera_table_1k.gltf"
-    },
-    {
-      "id": "GothicBed_01",
-      "title": "Gothic Bed 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "bed"
-      ],
-      "url": "/cc0-props/polyhaven/GothicBed_01/GothicBed_01_1k.gltf"
-    },
-    {
-      "id": "GothicCabinet_01",
-      "title": "Gothic Cabinet 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/GothicCabinet_01/GothicCabinet_01_1k.gltf"
-    },
-    {
-      "id": "gothic_coffee_table",
-      "title": "Gothic Coffee Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/gothic_coffee_table/gothic_coffee_table_1k.gltf"
-    },
-    {
-      "id": "GothicCommode_01",
-      "title": "Gothic Commode 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/GothicCommode_01/GothicCommode_01_1k.gltf"
-    },
-    {
-      "id": "industrial_coffee_table",
-      "title": "Industrial Coffee Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/industrial_coffee_table/industrial_coffee_table_1k.gltf"
-    },
-    {
-      "id": "metal_office_desk",
-      "title": "Metal Office Desk",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "table",
-        "office"
-      ],
-      "url": "/cc0-props/polyhaven/metal_office_desk/metal_office_desk_1k.gltf"
     },
     {
       "id": "modern_coffee_table_01",
@@ -634,128 +163,6 @@
       "url": "/cc0-props/polyhaven/modern_wooden_cabinet/modern_wooden_cabinet_1k.gltf"
     },
     {
-      "id": "old_bed_frame",
-      "title": "Old Bed Frame",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "bed",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/old_bed_frame/old_bed_frame_1k.gltf"
-    },
-    {
-      "id": "ornate_mirror_01",
-      "title": "Ornate Mirror 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "decorative",
-        "wall decoration",
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/ornate_mirror_01/ornate_mirror_01_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_cabinet",
-      "title": "Painted Wooden Cabinet",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_cabinet/painted_wooden_cabinet_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_cabinet_02",
-      "title": "Painted Wooden Cabinet 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_cabinet_02/painted_wooden_cabinet_02_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_nightstand",
-      "title": "Painted Wooden Nightstand",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_nightstand/painted_wooden_nightstand_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_shelves",
-      "title": "Painted Wooden Shelves",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_shelves/painted_wooden_shelves_1k.gltf"
-    },
-    {
-      "id": "painted_wooden_table",
-      "title": "Painted Wooden Table",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/painted_wooden_table/painted_wooden_table_1k.gltf"
-    },
-    {
-      "id": "round_wooden_table_01",
-      "title": "Round Wooden Table 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/round_wooden_table_01/round_wooden_table_01_1k.gltf"
-    },
-    {
-      "id": "round_wooden_table_02",
-      "title": "Round Wooden Table 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/round_wooden_table_02/round_wooden_table_02_1k.gltf"
-    },
-    {
-      "id": "SchoolDesk_01",
-      "title": "School Desk 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/SchoolDesk_01/SchoolDesk_01_1k.gltf"
-    },
-    {
-      "id": "Shelf_01",
-      "title": "Shelf 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/Shelf_01/Shelf_01_1k.gltf"
-    },
-    {
       "id": "side_table_01",
       "title": "Side Table 01",
       "source": "polyhaven",
@@ -765,28 +172,6 @@
         "table"
       ],
       "url": "/cc0-props/polyhaven/side_table_01/side_table_01_1k.gltf"
-    },
-    {
-      "id": "side_table_tall_01",
-      "title": "Side Table Tall 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/side_table_tall_01/side_table_tall_01_1k.gltf"
-    },
-    {
-      "id": "small_wooden_table_01",
-      "title": "Small Wooden Table 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/small_wooden_table_01/small_wooden_table_01_1k.gltf"
     },
     {
       "id": "steel_frame_shelves_03",
@@ -800,54 +185,6 @@
       "url": "/cc0-props/polyhaven/steel_frame_shelves_03/steel_frame_shelves_03_1k.gltf"
     },
     {
-      "id": "stone_fire_pit",
-      "title": "Stone Fire Pit",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "structures",
-        "buildings",
-        "furniture",
-        "collection: the_shed"
-      ],
-      "url": "/cc0-props/polyhaven/stone_fire_pit/stone_fire_pit_1k.gltf"
-    },
-    {
-      "id": "vintage_cabinet_01",
-      "title": "Vintage Cabinet 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves"
-      ],
-      "url": "/cc0-props/polyhaven/vintage_cabinet_01/vintage_cabinet_01_1k.gltf"
-    },
-    {
-      "id": "vintage_wooden_drawer_01",
-      "title": "Vintage Wooden Drawer 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/vintage_wooden_drawer_01/vintage_wooden_drawer_01_1k.gltf"
-    },
-    {
-      "id": "wooden_bookshelf_worn",
-      "title": "Wooden Bookshelf Worn",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "shelves",
-        "collection: the_shed"
-      ],
-      "url": "/cc0-props/polyhaven/wooden_bookshelf_worn/wooden_bookshelf_worn_1k.gltf"
-    },
-    {
       "id": "wooden_display_shelves_01",
       "title": "Wooden Display Shelves 01",
       "source": "polyhaven",
@@ -857,62 +194,6 @@
         "shelves"
       ],
       "url": "/cc0-props/polyhaven/wooden_display_shelves_01/wooden_display_shelves_01_1k.gltf"
-    },
-    {
-      "id": "WoodenTable_01",
-      "title": "Wooden Table 01",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture"
-      ],
-      "url": "/cc0-props/polyhaven/WoodenTable_01/WoodenTable_01_1k.gltf"
-    },
-    {
-      "id": "WoodenTable_02",
-      "title": "Wooden Table 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/WoodenTable_02/WoodenTable_02_1k.gltf"
-    },
-    {
-      "id": "wooden_table_02",
-      "title": "Wooden Table 02",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/wooden_table_02/wooden_table_02_1k.gltf"
-    },
-    {
-      "id": "WoodenTable_03",
-      "title": "Wooden Table 03",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "furniture",
-        "collection: the_shed"
-      ],
-      "url": "/cc0-props/polyhaven/WoodenTable_03/WoodenTable_03_1k.gltf"
-    },
-    {
-      "id": "industrial_storage_cart",
-      "title": "Industrial Storage Cart",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "table",
-        "furniture",
-        "industrial"
-      ],
-      "url": "/cc0-props/polyhaven/industrial_storage_cart/industrial_storage_cart_1k.gltf"
     },
     {
       "id": "steel_frame_shelves_01",
@@ -939,32 +220,6 @@
         "collection: the_shed"
       ],
       "url": "/cc0-props/polyhaven/steel_frame_shelves_02/steel_frame_shelves_02_1k.gltf"
-    },
-    {
-      "id": "tool_cart",
-      "title": "Tool Cart",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "industrial",
-        "furniture",
-        "table"
-      ],
-      "url": "/cc0-props/polyhaven/tool_cart/tool_cart_1k.gltf"
-    },
-    {
-      "id": "worn_metal_rack",
-      "title": "Worn Metal Rack",
-      "source": "polyhaven",
-      "license": "CC0",
-      "categories": [
-        "collection: project_lighthouse",
-        "furniture",
-        "shelves",
-        "industrial"
-      ],
-      "url": "/cc0-props/polyhaven/worn_metal_rack/worn_metal_rack_1k.gltf"
     }
   ]
 }
