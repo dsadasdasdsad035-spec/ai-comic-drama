@@ -199,6 +199,7 @@ import { readCharacters, toProject } from './charMap'
 import { STAGE_PICK_KEY, stageModelKey, type StagePick } from './ModelSelect'
 import { ensureSkillsMigrated } from './skills/migrate'
 import { buildEditList, transitionFor } from './editList'
+import { buildEpisodeSrt, buildShotCaptions } from './captions'
 import {
   defaultTransition,
   normalizeEffect,
@@ -3361,6 +3362,58 @@ function Shell() {
     window.setTimeout(() => setToast(''), 3200)
   }, [edges, patch])
 
+  /**
+   * 本集每条镜头的字幕 cue（相对各自镜头起点）。
+   * 供「导出本集字幕」使用，也用来在菜单里显示可导出的条数。
+   */
+  const episodeCaptions = useMemo(() => {
+    const rows: { no: string; startMs: number; cues: ReturnType<typeof buildShotCaptions> }[] = []
+    for (const item of edit.items) {
+      if (item.kind !== 'shot' || !item.node) continue
+      const d = item.node.data
+      rows.push({
+        no: String(d.no || ''),
+        startMs: Math.round(item.start * 1000),
+        cues: buildShotCaptions({
+          shotId: item.node.id,
+          dialogue: d.dialogue || '',
+          // 成片里这一镜实际占的时长（含转场重叠），与时间线/预览一致
+          shotSeconds: item.duration,
+          voiceSeconds: Number(d.voiceSeconds) || 0,
+          voiceOffset: Number(d.voiceOffset) || 0,
+          subOffset: Number(d.subOffset) || 0,
+          audioMode: d.audioMode === 'native' ? 'native' : 'off',
+        }),
+      })
+    }
+    return rows
+  }, [edit])
+
+  const episodeCaptionCount = useMemo(
+    () => episodeCaptions.reduce((n, row) => n + row.cues.filter((c) => String(c.text || '').trim()).length, 0),
+    [episodeCaptions],
+  )
+
+  /** 导出本集完整 SRT：按镜号顺序（即 edit 的播放序）把 cue 平移到成片绝对时间 */
+  const exportEpisodeSrt = useCallback(() => {
+    if (!episodeCaptionCount) {
+      setToast('本集还没有台词，没有可导出的字幕')
+      window.setTimeout(() => setToast(''), 2600)
+      return
+    }
+    const srt = buildEpisodeSrt(episodeCaptions)
+    const label = `E${String(epNo).padStart(2, '0')}`
+    const blob = new Blob(['\ufeff', srt], { type: 'text/srt;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${readyProject || 'project'}-${label}.srt`
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    setToast(`已导出本集字幕：${episodeCaptionCount} 条 cue`)
+    window.setTimeout(() => setToast(''), 2600)
+  }, [episodeCaptions, episodeCaptionCount, epNo, readyProject])
+
   /** 台词配音：走本地 TTS provider（当前是 macOS say） */
   const generateVoiceOne = useCallback(
     async (id: string) => {
@@ -4185,6 +4238,8 @@ function Shell() {
                 onAddVideoShot={() => void addShot('video')}
                 onGenAll={generateAll}
                 onUnifyTransitions={unifyTransitions}
+                onExportEpisodeSrt={exportEpisodeSrt}
+                episodeCaptionCount={episodeCaptionCount}
                 onFit={() => fitView({ padding: 0.2, duration: 400 })}
                 onTidy={tidyCanvas}
                 onToggleChars={toggleChars}

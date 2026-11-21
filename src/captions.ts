@@ -319,3 +319,68 @@ export function serializeSrt(
     )
     .join('\n')
 }
+
+/**
+ * 单镜字幕包：cue 列表 + 可直接下载的 SRT。
+ *
+ * 时间从 0 起算（相对镜头起点），适用于「只要这一镜的字幕文件」。
+ * 整集导出走 buildEpisodeSrt，那里会把每镜的 cue 按播放序累加成绝对时间。
+ */
+export type ShotCaptionBundle = {
+  shotId: string
+  cues: CaptionCue[]
+  issues: CaptionIssue[]
+  srt: string
+  /** 估算计时（无配音时按镜长均分） */
+  estimated: boolean
+}
+
+/** 从镜头数据生成该镜字幕；台词为空时返回空包而不是 null，UI 据 cues.length 判断 */
+export function buildShotCaptionBundle(input: {
+  shotId: string
+  dialogue: string
+  shotSeconds: number
+  voiceSeconds?: number
+  voiceOffset?: number
+  subOffset?: number
+  audioMode?: 'off' | 'native'
+}): ShotCaptionBundle {
+  const cues = buildShotCaptions(input)
+  const issues = validateCaptions(cues, input.shotSeconds)
+  return {
+    shotId: input.shotId,
+    cues,
+    issues,
+    srt: serializeSrt(cues.map((c) => ({ startMs: c.startOffsetMs, endMs: c.endOffsetMs, text: c.text }))),
+    estimated: cues.some((c) => c.estimated),
+  }
+}
+
+/** 整集导出用的输入：每镜的 cue 相对自身起点，startMs 为该镜在成片里的绝对起点 */
+export type EpisodeCaptionShot = {
+  no: string
+  startMs: number
+  cues: CaptionCue[]
+}
+
+/**
+ * 整集 SRT：把各镜 cue 从「相对镜头」换算成「相对成片起点」后拼接。
+ *
+ * 镜间过短导致的 cue 越界已在单镜阶段夹紧，这里只做平移与排序，
+ * 不再二次夹紧 —— 否则跨镜边界的 cue 会被截掉结尾。
+ */
+export function buildEpisodeSrt(shots: EpisodeCaptionShot[]): string {
+  const rows: { startMs: number; endMs: number; text: string }[] = []
+  for (const shot of shots) {
+    for (const cue of shot.cues) {
+      const text = String(cue.text || '').trim()
+      if (!text) continue
+      rows.push({
+        startMs: Math.round(shot.startMs + cue.startOffsetMs),
+        endMs: Math.round(shot.startMs + cue.endOffsetMs),
+        text,
+      })
+    }
+  }
+  return serializeSrt(rows)
+}

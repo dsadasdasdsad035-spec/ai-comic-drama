@@ -12,6 +12,10 @@ type Props = {
   onAddVideoShot: () => void
   onGenAll: () => void
   onUnifyTransitions: () => void
+  /** 导出本集字幕（按镜号顺序累加时间，输出一份完整 SRT） */
+  onExportEpisodeSrt: () => void
+  /** 本集可导出的字幕 cue 数；0 时按钮禁用 */
+  episodeCaptionCount: number
   onFit: () => void
   /** 按分区与栅格重排画布（只改位置，可重复执行） */
   onTidy: () => void
@@ -37,6 +41,8 @@ export default function BoardMenu({
   onAddVideoShot,
   onGenAll,
   onUnifyTransitions,
+  onExportEpisodeSrt,
+  episodeCaptionCount,
   onFit,
   onTidy,
   onToggleChars,
@@ -103,6 +109,20 @@ export default function BoardMenu({
           >
             全片统一叠化
             <span className="bm-hint">0.5s · 跳过生成</span>
+          </button>
+          <button
+            className="bm-item"
+            onClick={act(onExportEpisodeSrt)}
+            disabled={busy || episodeCaptionCount === 0}
+            data-export-episode-srt
+            title={
+              episodeCaptionCount
+                ? `按镜号顺序生成本集完整字幕，时间累加（${episodeCaptionCount} 条 cue）`
+                : '本集还没有台词，没有可导出的字幕'
+            }
+          >
+            导出本集字幕
+            <span className="bm-hint">{episodeCaptionCount ? `${episodeCaptionCount} 条` : '无台词'}</span>
           </button>
 
           <div className="bm-sec">画布</div>

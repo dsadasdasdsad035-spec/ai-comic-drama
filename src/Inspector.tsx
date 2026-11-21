@@ -12,6 +12,7 @@ import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { AppSettings, Cap, Stage } from './api'
 import type { NarratorVoice, ProjectEpisode, ProjectShot } from './api'
 import NarrationPanel from './NarrationPanel'
+import CaptionPanel from './CaptionPanel'
 import { nodeToShot } from './shotSync'
 import VideoPromptAuditPanel from './VideoPromptAuditPanel'
 import { listVideoFiles, type VideoFile } from './api'
@@ -1518,6 +1519,15 @@ function InspectorBody({
           只作数据与字幕：不会自动并入出片正文，需要时由创意会话读取后写进运动提示词；原生音频见下方。
         </em>
       </label>
+
+      {/* 字幕紧跟台词：它就是台词的派生，放在旁白与表演之前 */}
+      <div
+        className="si-section"
+        data-shot-tab={prodKind === 'image' ? 'narrative' : 'audio'}
+        hidden={prodKind === 'image' ? effectiveTab !== 'narrative' : effectiveTab !== 'audio'}
+      >
+        <CaptionPanel data={d} shotNo={String(d.no || 'shot')} />
+      </div>
 
       <InspectorSection
         id="performance"
