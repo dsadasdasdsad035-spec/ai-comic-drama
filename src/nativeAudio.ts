@@ -13,7 +13,7 @@ export type AudioRefCapabilities = {
   source: string
 }
 
-/** 真实 APIMart 探测结果：单个 audio_url 字符串；2 秒视频被拒绝。产品门禁：名义镜头须大于 4 秒（不含 4）。 */
+/** 真实 APIMart 探测结果：单个 audio_url 字符串（可选参考）；2 秒视频被拒绝，4 秒合法。产品门禁：镜头须 ≥4 秒。 */
 
 export const APIMART_SEEDANCE_AUDIO_CAPS: AudioRefCapabilities = {
   supported: true,
@@ -48,9 +48,40 @@ export function speakingNames(
   return [...names]
 }
 
+/**
+ * 解析结果分三种，调用方必须显式分流：
+ * - `reference`：有可用样本，带 `audio_url` 提交，音色跨镜一致。
+ * - `no-reference`：**可以出片**，但只发 `generate_audio`，声音由模型决定。
+ * - `blocked`：真差错或上游不支持（模型没能力、多说话人、镜头太短、样本不合规）。
+ *
+ * 以前的形状只有 `ok: true/false`，把「没有样本」和「不能出片」混成一个 false，
+ * 结果是无样本时整条降级成静音视频——与 spec「无样本可选无参考」直接冲突。
+ * 2026-11-22 实测证明 `generate_audio:true` 不传 `audio_url` 也能出声带台词
+ * （`task_01M81KX9X0DN2JBVBSXS9KCGY1`），所以这里把它拆成可提交的独立状态。
+ */
 export type NativeAudioRefResult =
-  | { ok: true; character: string; url: string; ref: AudioRef; sampleSeconds: number }
-  | { ok: false; reason: string }
+  | {
+      ok: true
+      kind: 'reference'
+      character: string
+      url: string
+      ref: AudioRef
+      sampleSeconds: number
+    }
+  | {
+      ok: true
+      kind: 'no-reference'
+      /** 说话角色（能判定时）；纯空镜为 '' */
+      character: string
+      /** 为什么没有参考，直接用于 UI 说明与出片 warn */
+      reason: string
+    }
+  | { ok: false; kind: 'blocked'; reason: string }
+
+/** 构造阻断结果；`reason` 必须可直接展示给用户 */
+function blocked(reason: string): NativeAudioRefResult {
+  return { ok: false, kind: 'blocked', reason }
+}
 
 function findCharacter(characters: CharacterSheet[], name: string): CharacterSheet | undefined {
   return characters.find((c) => c.name === name || c.id === name)
@@ -73,6 +104,10 @@ function characterLabel(card: CharacterSheet): string {
  * 仍然拦住多说话人：APIMart Seedance 2.5 只接受一个 audio_url
  * （`maxRefAudios: 1`、`supportsMultiSpeaker: false`），混两段音色不是保守做法，
  * 而是上游根本不支持。
+ *
+ * **没有样本不再拦截**：返回 `no-reference`，出片照常，只是声音由模型决定。
+ * 只有样本存在但不合 provider 约束（时长超范围）才拦，因为那需要用户先改样本，
+ * 静默换别的角色音色或悄悄去掉参考都会让人以为用的是自己的音色。
  */
 export function nativeAudioRef(input: {
   dialogue: { speaker: string; text: string }[]
@@ -83,38 +118,71 @@ export function nativeAudioRef(input: {
   /** 镜上已保存的音色角色；没有台词时用它决定取谁的样本 */
   preferredCharacter?: string
 }): NativeAudioRefResult {
-  if (!input.caps?.supported) return { ok: false, reason: '当前视频模型没有通过音频参考探测' }
-  const minReq = input.caps.minVideoSeconds + 1
+  if (!input.caps?.supported) return blocked('当前视频模型没有通过音频参考探测')
+  // 下限是含边界的：Seedance 2.5 实测 4 秒合法
+  const minReq = Math.max(0, Number(input.caps.minVideoSeconds) || 0)
   if (Number(input.seconds) < minReq) {
-    return {
-      ok: false,
-      reason: `原生音频请求须至少 ${minReq} 秒（当前按 ${input.seconds}s 计）`,
-    }
+    return blocked(`原生音频请求最短 ${minReq} 秒（当前按 ${input.seconds}s 计）`)
   }
   const speakers = speakingNames(input.dialogue, input.performance)
   if (speakers.length > 1) {
-    return { ok: false, reason: '首期原生音频只支持单说话人；请拆成单人镜或改用静音视频 + TTS' }
+    return blocked('首期原生音频只支持单说话人；请拆成单人镜或改用静音视频')
   }
 
   // 有唯一说话人时以说话人为准；无声镜沿用已保存的角色。
   // 两条路径都先按名字定位，只有「一个名字都没有」时才去扫可用样本。
   const named = speakers[0] || String(input.preferredCharacter || '').trim()
   const card = named ? findCharacter(input.characters, named) : undefined
-  if (named && !card) return { ok: false, reason: `找不到角色卡：${named}` }
+  if (named && !card) return blocked(`找不到角色卡：${named}`)
+  /** 无参考时的角色名：能定位到卡就用卡名，否则沿用台词里的说话人 */
+  const speakerLabel = card ? characterLabel(card) : named
 
   const chosen = card ?? input.characters.find((c) => isVoiceSampleUsable(c.voiceSample))
   if (!chosen) {
-    return { ok: false, reason: '没有可用的角色音色样本：请先在某张角色卡里生成 2-30 秒的音色样本' }
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character: speakerLabel,
+      reason: '没有可用的角色音色样本',
+    }
   }
   const character = characterLabel(chosen)
   const sample = chosen.voiceSample
-  if (!sample) return { ok: false, reason: `角色「${character}」还没有音色样本` }
-  if (sample.stale) return { ok: false, reason: `角色「${character}」的音色样本已失效，请重生成` }
+  if (!sample) {
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character,
+      reason: `角色「${character}」还没有音色样本`,
+    }
+  }
+  // 样本存在但已失效（换过 voiceId/模型/试音稿）：按无参考出片，但要说清原因，
+  // 不能让人以为这次用的是旧样本。
+  if (sample.stale) {
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character,
+      reason: `角色「${character}」的音色样本已失效，本次声音由模型决定`,
+    }
+  }
+  // 样本记录没有音频文件：等同没样本（没有东西可解析成 audio_url）
+  if (!String(sample.url || '').trim()) {
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character,
+      reason: `角色「${character}」的音色样本缺少音频文件`,
+    }
+  }
   if (!isVoiceSampleUsable(sample)) {
-    return { ok: false, reason: `角色「${character}」样本 ${sample.seconds.toFixed(1)}s，需 ${input.caps.minSeconds}-${input.caps.maxSeconds} 秒` }
+    return blocked(
+      `角色「${character}」样本 ${sample.seconds.toFixed(1)}s，需 ${input.caps.minSeconds}-${input.caps.maxSeconds} 秒`,
+    )
   }
   return {
     ok: true,
+    kind: 'reference',
     character,
     url: sample.url,
     ref: { character, url: sample.url, label: `${character} 音色` },
@@ -122,7 +190,7 @@ export function nativeAudioRef(input: {
   }
 }
 
-/** 原生音频提示词只写声音段；运动提示词仍由调用方单独拼。 */
+/** 原生音频提示词只写声音段；出片正文由调用方单独写。 */
 export function nativeAudioPrompt(
   character: string,
   dialogue: { speaker: string; text: string }[],

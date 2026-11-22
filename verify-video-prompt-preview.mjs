@@ -1,7 +1,7 @@
 /**
- * 出片提示词预览/手改验收：
+ * 出片提示词预览/正文验收：
  * 1) 拼装器单测：参考顺序、调度帧去冲突、视频参考、原生音频、指纹、阻止项
- * 2) UI：面板可见、预览与请求逐字一致、手改保存/刷新保留/旧快照/重新拼装、来源记录
+ * 2) UI：面板可见、预览与请求逐字一致、正文保存写回 video_prompt、刷新保留、存量快照只读兼容
  * 跑法：node verify-video-prompt-preview.mjs
  */
 import { chromium } from 'playwright-core'
@@ -261,7 +261,7 @@ const unit = await p.evaluate(async () => {
     model: { key: 'v' },
   })
   const noOverride = m.effectiveVideoPrompt(basic, undefined)
-  const stale = m.effectiveVideoPrompt(basic, { text: '手改', fingerprint: 'nope', createdAt: '' })
+  const legacy = m.effectiveVideoPrompt(basic, { text: '手改', fingerprint: 'nope', createdAt: '' })
   const same = m.effectiveVideoPrompt(basic, {
     text: '手改',
     fingerprint: basic.fingerprint,
@@ -283,12 +283,12 @@ const unit = await p.evaluate(async () => {
     schedule,
     model: { key: 'v' },
   })
-  const perfStale = m.effectiveVideoPrompt(withPerf, {
+  const perfIgnored = m.effectiveVideoPrompt(withPerf, {
     text: '手改',
     fingerprint: basic.fingerprint,
     createdAt: '',
   })
-  return { basic, frames, video, native, neighbor, fpA, fpB, noOverride, stale, same, withPerf, perfStale }
+  return { basic, frames, video, native, neighbor, fpA, fpB, noOverride, legacy, same, withPerf, perfIgnored }
 })
 
 const { basic, frames, video, native, neighbor, fpA, fpB } = unit
@@ -302,14 +302,17 @@ const sync = await p.evaluate(async () => {
     handEdited: ['video_prompt_override'],
   }
   const gen = { id: 'x', video_prompt: '新' }
+  const locked = { ...old, handEdited: ['video_prompt'] }
   return {
     merged: m.mergeGenerated([old], [gen])[0],
+    lockedMerge: m.mergeGenerated([locked], [gen])[0],
     cleared: m.mergeGenerated([{ ...old, video_prompt_override: null }], [gen])[0],
     wrote: m.nodeToShot(base, 'x').video_prompt_override,
     read: m.shotToData({ id: 'x', video_prompt_override: null }, base).videoPromptOverride,
   }
 })
-check('重新生成保留手改正文、其他字段可更新', sync.merged.video_prompt === '新' && sync.merged.video_prompt_override?.text === '手改', JSON.stringify(sync.merged))
+check('存量快照在重新生成后仍保留', sync.merged.video_prompt_override?.text === '手改', JSON.stringify(sync.merged))
+check('handEdited 含 video_prompt 时模型不能覆盖正文', sync.lockedMerge.video_prompt === '旧', JSON.stringify(sync.lockedMerge))
 check('清除后写 null 不复活', sync.wrote === null && sync.read === undefined && sync.cleared.video_prompt_override === null, JSON.stringify(sync))
 
 const pngPixel =
@@ -354,11 +357,11 @@ check('原生音频模式返回音色槽位', native.mode === 'native' && native
 check('原生音频不改写正文', native.prompt === '雨夜追车，镜头推进', native.prompt)
 check('相邻镜缺图阻止出片', neighbor.blocking.some((x) => x.code === 'neighbor-missing'), JSON.stringify(neighbor.blocking))
 check('参考变化会改变指纹', fpA.fingerprint !== fpB.fingerprint)
-check('无手改时使用自动正文', unit.noOverride.source === 'auto' && unit.noOverride.text === basic.prompt)
-check('手改指纹不匹配标记旧快照', unit.stale.source === 'override' && unit.stale.stale === true)
-check('手改指纹匹配不算过期', unit.same.stale === false)
+check('无快照时正文来源是 video_prompt', unit.noOverride.source === 'video_prompt' && unit.noOverride.text === basic.prompt)
+check('存量快照只读优先且不再标记过期', unit.legacy.source === 'legacy-override' && unit.legacy.text === '手改' && unit.legacy.stale === false)
+check('存量快照指纹匹配也不影响来源', unit.same.source === 'legacy-override' && unit.same.stale === false)
 check('有表演时正文仍逐字', unit.withPerf.prompt === '雨夜追车，镜头推进', unit.withPerf.prompt.slice(0, 120))
-check('表演变更使旧手改指纹过期', unit.perfStale.stale === true)
+check('表演变更不再产生过期状态', unit.perfIgnored.stale === false && unit.perfIgnored.source === 'legacy-override')
 
 // ---------------------------------------------------------------- UI 路径
 await p.locator('.react-flow__node').first().click()
@@ -381,20 +384,30 @@ check('请求参考图与清单一致', JSON.stringify(posts[0]?.refImages) === 
 await p.waitForTimeout(3600)
 check('生成成功后显示当前视频提示词', (await panel.innerText()).includes('当前视频的提示词'))
 
-// 手改
+// 正文编辑：唯一入口在出片面板，保存写回 video_prompt
 const edited = '镜头快速推近，陈默抬头说话，雨丝斜切画面，冷青色调，24fps，no overexposure'
-await p.locator('[data-video-prompt-panel] button', { hasText: '编辑' }).click()
+check('运镜与语义区块不再有正文输入框', (await p.locator('textarea[placeholder^="只写动作与运镜"]').count()) === 0)
+await p.locator('[data-video-prompt-panel] button', { hasText: '编辑正文' }).click()
 await p.locator('[data-video-prompt-panel] textarea').fill(edited)
-await p.locator('[data-video-prompt-panel] button', { hasText: '保存手改' }).click()
-await p.waitForTimeout(500)
+await p.locator('[data-video-prompt-panel] button', { hasText: '保存正文' }).click()
+await p.waitForTimeout(600)
 check('保存后显示已手改', (await panel.innerText()).includes('已手改'))
-check('手改正文不回填自动段落', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
-check('手改后运动提示词字段提示不生效', (await p.locator('.vp-field-note').count()) === 1)
-await p.waitForTimeout(1600)
+check('保存后正文等于编辑全文', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
+check('保存后不再有手改快照字段提示', (await p.locator('.vp-field-note').count()) === 0)
+const persisted = await p.evaluate(async () => {
+  const r = await fetch('/api/projects/vp-test')
+  const j = await r.json()
+  const s = (j.shots || []).find((x) => x.no === 'S01')
+  return { video_prompt: s?.video_prompt, override: s?.video_prompt_override ?? null, handEdited: s?.handEdited || [] }
+})
+check('保存写回 video_prompt', persisted.video_prompt === edited, JSON.stringify(persisted).slice(0, 200))
+check('保存不再产生 video_prompt_override', persisted.override === null, JSON.stringify(persisted.override))
+check('保存后 handEdited 含 video_prompt', persisted.handEdited.includes('video_prompt'), JSON.stringify(persisted.handEdited))
+await p.waitForTimeout(1200)
 
 await p.locator('button', { hasText: /生成视频|重出视频/ }).first().click()
 await p.waitForTimeout(1000)
-check('手改后请求逐字使用手改全文', posts[1]?.prompt === edited, (posts[1]?.prompt || '').slice(0, 80))
+check('保存后请求逐字使用正文全文', posts[1]?.prompt === edited, (posts[1]?.prompt || '').slice(0, 80))
 await p.waitForTimeout(3600)
 
 // 刷新持久化
@@ -403,11 +416,11 @@ await p.waitForTimeout(1600)
 await ensureCanvas()
 await p.locator('.react-flow__node').first().click()
 await p.waitForTimeout(600)
-check('刷新后仍显示手改', (await p.locator('[data-video-prompt-panel]').innerText()).includes('已手改'))
+check('刷新后仍显示已手改', (await p.locator('[data-video-prompt-panel]').innerText()).includes('已手改'))
 check('刷新后正文保留', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
 check('刷新后仍能看到当前视频提示词', (await p.locator('[data-video-prompt-panel]').innerText()).includes('当前视频的提示词'))
 
-// 改参考 → 旧快照（手工参考 URL 在「元数据」tab）
+// 改参考：正文保持人工版本，且不再产生过期警告
 await p.locator('#si-tab-meta').click({ force: true })
 await p.waitForTimeout(300)
 const adv = p.locator('[data-section="advanced"]')
@@ -423,32 +436,98 @@ for (const url of ['/generated/probe-x1.jpg', '/generated/probe-x2.jpg', '/gener
 }
 await p.locator('#si-tab-outgoing').click({ force: true })
 await p.waitForTimeout(300)
-check('参考变化后显示旧快照', (await p.locator('[data-video-prompt-panel]').innerText()).includes('旧快照'))
-check('旧快照正文仍是手改版本', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
+check('参考变化后不显示旧快照警告', !(await p.locator('[data-video-prompt-panel]').innerText()).includes('旧快照'))
+check('参考变化后正文仍是人工版本', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
 const panelText = await p.locator('[data-video-prompt-panel]').innerText()
 check('新增参考后全部列出', panelText.includes('参考图 5') && !panelText.includes('省略 2'), panelText.slice(0, 220))
 
-await p.locator('[data-video-prompt-panel] button', { hasText: '重新拼装' }).click()
-await p.waitForTimeout(500)
-check('重新拼装回到自动拼装', (await p.locator('[data-video-prompt-panel]').innerText()).includes('语义层'))
-check('重新拼装回到 video_prompt 逐字内容', (await p.locator('[data-video-prompt-text]').innerText()) === shot.video_prompt, await p.locator('[data-video-prompt-text]').innerText())
+// 交由模型重写：解除手改标记但保留正文
+await p.locator('[data-video-prompt-panel] button', { hasText: '交由模型重写' }).click()
+await p.waitForTimeout(600)
+check('解除手改后正文保留', (await p.locator('[data-video-prompt-text]').innerText()) === edited)
+check('解除手改后徽章回到正文', (await p.locator('[data-video-prompt-panel]').innerText()).includes('正文') && !(await p.locator('[data-video-prompt-panel]').innerText()).includes('已手改'))
+const unlocked = await p.evaluate(async () => {
+  const r = await fetch('/api/projects/vp-test')
+  const j = await r.json()
+  const s = (j.shots || []).find((x) => x.no === 'S01')
+  return { handEdited: s?.handEdited || [], video_prompt: s?.video_prompt }
+})
+check('解除手改后 handEdited 不再含 video_prompt', !unlocked.handEdited.includes('video_prompt'), JSON.stringify(unlocked.handEdited))
 
-// 空正文阻断：清空运动提示词后给出补写入口并禁用出片
-await p.locator('#si-tab-outgoing').click({ force: true })
-await p.waitForTimeout(300)
-const motionSection = p.locator('[data-section="motionPrompt"]')
-if ((await motionSection.getAttribute('data-open')) === 'false') {
-  await motionSection.locator('.fold-head').click()
-  await p.waitForTimeout(250)
-}
-const motionField = p.locator('textarea[placeholder^="只写动作与运镜"]')
-await motionField.fill('')
-await p.waitForTimeout(500)
+// 空正文阻断：把该镜正文置空后刷新，应给出补写入口并禁用出片
+await p.evaluate(async () => {
+  const r = await fetch('/api/project?name=vp-test')
+  const j = await r.json()
+  const shots = (j.project?.shots || []).map((s) =>
+    s.no === 'S01' ? { ...s, video_prompt: '', video_prompt_override: null, handEdited: [] } : s,
+  )
+  await fetch('/api/project', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'vp-test', shots }),
+  })
+})
+await p.reload({ waitUntil: 'networkidle' })
+await p.waitForTimeout(1600)
+await ensureCanvas()
+await p.locator('.react-flow__node').first().click()
+await p.waitForTimeout(800)
 const blockBox = p.locator('[data-vp-blocking]')
 check('空正文显示阻断', (await blockBox.count()) === 1 && (await blockBox.innerText()).includes('正文未填写'), await blockBox.innerText().catch(() => ''))
-check('空正文无残留拼装正文', (await p.locator('[data-video-prompt-text]').innerText()) === '', await p.locator('[data-video-prompt-text]').innerText())
+check('空正文时正文区为空', (await p.locator('[data-video-prompt-text]').innerText()) === '', await p.locator('[data-video-prompt-text]').innerText())
 check('空正文时出片按钮禁用', await p.locator('button', { hasText: /生成视频|重出视频/ }).first().isDisabled())
-check('空正文时给出手改入口', (await p.locator('[data-video-prompt-panel] button', { hasText: '手改编辑' }).count()) === 1)
+check('空正文时给出编辑正文入口', (await p.locator('[data-video-prompt-panel] button', { hasText: '编辑正文' }).count()) === 1)
+
+// 存量兼容：旧项目里带 video_prompt_override 的镜头仍按快照逐字出片
+await p.evaluate(async () => {
+  const legacyText = '升级前保存的旧版正文：镜头缓慢后退，雨停'
+  const r = await fetch('/api/project?name=vp-test')
+  const j = await r.json()
+  const shots = (j.project?.shots || []).map((s) =>
+    s.no === 'S01'
+      ? {
+          ...s,
+          video_prompt: '镜头里后来写的正文',
+          video_prompt_override: { text: legacyText, fingerprint: 'fp-legacy', createdAt: '2026-01-01' },
+          handEdited: ['video_prompt_override'],
+        }
+      : s,
+  )
+  await fetch('/api/project', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'vp-test', shots }),
+  })
+})
+await p.reload({ waitUntil: 'networkidle' })
+await p.waitForTimeout(1600)
+await ensureCanvas()
+await p.locator('.react-flow__node').first().click()
+await p.waitForTimeout(800)
+const legacyPanel = p.locator('[data-video-prompt-panel]')
+check('存量快照显示旧版本正文徽章', (await legacyPanel.innerText()).includes('旧版本正文'))
+check('存量快照给出迁移提示', (await p.locator('[data-vp-legacy-note]').count()) === 1)
+check('存量快照正文逐字为快照全文', (await p.locator('[data-video-prompt-text]').innerText()) === '升级前保存的旧版正文：镜头缓慢后退，雨停')
+const postsBeforeLegacy = posts.length
+await p.locator('button', { hasText: /生成视频|重出视频/ }).first().click()
+await p.waitForTimeout(1000)
+check('存量快照仍按快照提交', posts[postsBeforeLegacy]?.prompt === '升级前保存的旧版正文：镜头缓慢后退，雨停', (posts[postsBeforeLegacy]?.prompt || '').slice(0, 80))
+await p.waitForTimeout(3600)
+
+// 在正文区保存一次即迁移到 video_prompt
+await p.locator('[data-video-prompt-panel] button', { hasText: '编辑正文' }).click()
+await p.locator('[data-video-prompt-panel] textarea').fill('迁移后的新正文')
+await p.locator('[data-video-prompt-panel] button', { hasText: '保存正文' }).click()
+await p.waitForTimeout(600)
+const migrated = await p.evaluate(async () => {
+  const r = await fetch('/api/project?name=vp-test')
+  const j = await r.json()
+  const s = (j.project?.shots || []).find((x) => x.no === 'S01')
+  return { video_prompt: s?.video_prompt, override: s?.video_prompt_override ?? null, handEdited: s?.handEdited || [] }
+})
+check('保存后旧快照被清空', migrated.override === null, JSON.stringify(migrated.override))
+check('保存后正文落到 video_prompt', migrated.video_prompt === '迁移后的新正文', migrated.video_prompt)
+check('迁移后不再是旧版本徽章', !(await p.locator('[data-video-prompt-panel]').innerText()).includes('旧版本正文'))
 
 check('无 pageerror', errors.length === 0, errors[0]?.split('\n')[0] ?? '')
 await p.locator('.si-scroll').evaluate((el) => { el.scrollTop = 0 })

@@ -134,12 +134,16 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
             // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
             preferredCharacter: shot.audio_ref?.character,
           })
-          // 模型不支持原生音频才是硬错误；音色样本缺失只降级，不拒绝设置
+          // 模型不支持原生音频才是硬错误；音色样本缺失只是没有音色锚点，不拒绝设置
           if (!caps?.supported) {
             return { ok: false, error: '当前模型不支持原生音频' }
           }
+          if (!ref.ok) {
+            // 多说话人 / 镜头太短 / 样本不合规：这些才是真的不能提交
+            return { ok: false, error: ref.reason }
+          }
           patch.audio_mode = 'native'
-          if (ref.ok) {
+          if (ref.kind === 'reference') {
             patch.audio_ref = { character: ref.ref.character, url: ref.ref.url }
             patch.audio_meta = {
               fingerprint: nativeAudioFingerprint({
@@ -152,10 +156,10 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
             }
             notes.push('原生音频：开')
           } else {
-            // 与面板一致：偏好记为 native，出片时由拼装器降级并给 warn
+            // 无参考仍走 native：出片只发 generate_audio，声音由模型决定
             patch.audio_ref = undefined
             patch.audio_meta = undefined
-            notes.push(`原生音频：开（无音色参考，出片会降级为静音：${ref.reason}）`)
+            notes.push(`原生音频：开（无音色参考，声音由模型决定：${ref.reason}）`)
           }
         }
       }
@@ -167,46 +171,27 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
   })
 }
 
-/** 手改正文保存/清除 */
+/** 保存/清除镜头正文 */
 export function createSetShotVideoOverrideTool(deps: MaterialToolDeps): ToolDef {
   return defineTool({
     name: 'set_shot_video_override',
     description:
-      '【平台内置】保存或清除某镜出手改正文（video_prompt_override）。' +
-      '保存时须提供 fingerprint，且须与当前出片请求一致（可先 read_shot_video_inputs）。' +
-      '存在 override 时 generate_clip 逐字使用 override，忽略参数 prompt。',
+      '【平台内置】保存或清除某镜的出片正文（写回 video_prompt 并记入 handEdited）。' +
+      '正文只有一个落点：保存后 generate_clip 逐字使用它，模型重新生成提示词也不会覆盖。' +
+      'clear=true 只解除人工编辑标记，正文保留，下次模型重写时可以接管；同时清空升级前的存量手改快照。' +
+      '工具名保留是为了兼容既有技能清单，语义已从「手改快照」收敛为「镜头正文」。',
     schema: z.object({
       no: z.string().min(1).describe('镜号'),
       episode: z.number().int().min(1).optional(),
-      text: z.string().optional().describe('手改正文；与 clear 二选一'),
-      fingerprint: z.string().min(1).optional().describe('当前出片请求指纹；保存时必填'),
-      clear: z.boolean().optional().describe('true 清除手改'),
+      text: z.string().optional().describe('正文；与 clear 二选一'),
+      fingerprint: z
+        .string()
+        .optional()
+        .describe('已停用：单一正文模型下不再校验指纹，传了也会忽略'),
+      clear: z.boolean().optional().describe('true 解除人工编辑标记（正文保留）'),
     }),
-    run: async ({ no, episode, text, fingerprint, clear }) => {
+    run: async ({ no, episode, text, clear }) => {
       if (!deps.projectName().trim()) return { ok: false, error: NO_PROJECT }
-      if (clear) {
-        let project: ProjectData
-        try {
-          project = await deps.load()
-        } catch (e) {
-          return { ok: false, error: (e as Error)?.message || String(e) }
-        }
-        const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : deps.epNo()
-        const shot = findShot(project, ep, no)
-        if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
-        const written = await deps.writeShot(project, {
-          ...shot,
-          video_prompt_override: null,
-          handEdited: (shot.handEdited || []).filter((f) => f !== 'video_prompt_override'),
-        })
-        if (!written.ok) return written
-        return { ok: true, summary: `镜 ${shot.no} 已清除手改正文`, no: shot.no }
-      }
-      const body = String(text ?? '').trim()
-      const fp = String(fingerprint ?? '').trim()
-      if (!body) return { ok: false, error: '保存手改正文需要非空 text' }
-      if (!fp) return { ok: false, error: '保存手改正文需要 fingerprint（先调用 read_shot_video_inputs）' }
-
       let project: ProjectData
       try {
         project = await deps.load()
@@ -216,25 +201,39 @@ export function createSetShotVideoOverrideTool(deps: MaterialToolDeps): ToolDef 
       const ep = Number(episode) > 0 ? Math.floor(Number(episode)) : deps.epNo()
       const shot = findShot(project, ep, no)
       if (!shot) return { ok: false, error: `第 ${ep} 集找不到镜号 ${String(no).trim()}` }
-      const built = buildRequest(deps, project, shot)
-      if (!built.ok) return built
-      if (built.request.fingerprint !== fp) {
+
+      if (clear) {
+        const written = await deps.writeShot(project, {
+          ...shot,
+          video_prompt_override: null,
+          handEdited: (shot.handEdited || []).filter((f) => f !== 'video_prompt'),
+          // 服务端合并是并集（只增不减），去掉标记必须带显式解锁信号
+          handEditedUnlocked: ['video_prompt'],
+        })
+        if (!written.ok) return written
         return {
-          ok: false,
-          error: `fingerprint 与当前出片请求不一致（期望 ${built.request.fingerprint.slice(0, 12)}…）。先 read_shot_video_inputs 再保存`,
+          ok: true,
+          summary: `镜 ${shot.no} 已解除正文的人工编辑标记（正文保留，模型下次重写可覆盖）`,
+          no: shot.no,
         }
       }
+
+      const body = String(text ?? '').trim()
+      if (!body) return { ok: false, error: '保存正文需要非空 text' }
+
       const written = await deps.writeShot(project, {
         ...shot,
-        video_prompt_override: {
-          text: body,
-          fingerprint: fp,
-          createdAt: new Date().toISOString(),
-        },
-        handEdited: [...new Set([...(shot.handEdited || []), 'video_prompt_override'])],
+        video_prompt: body,
+        // 保存动作本身就是迁移：清掉存量快照，避免它继续盖住新正文
+        video_prompt_override: null,
+        handEdited: [
+          ...new Set([...(shot.handEdited || []).filter((f) => f !== 'video_prompt_override'), 'video_prompt']),
+        ],
+        // 旧快照的锁也要显式解除，否则 handEdited 里的 video_prompt_override 会一直留着
+        handEditedUnlocked: ['video_prompt_override'],
       })
       if (!written.ok) return written
-      return { ok: true, summary: `镜 ${shot.no} 已保存手改正文（${body.length} 字）`, no: shot.no }
+      return { ok: true, summary: `镜 ${shot.no} 已保存出片正文（${body.length} 字）`, no: shot.no }
     },
   })
 }

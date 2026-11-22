@@ -1999,9 +1999,24 @@ export function mergeShots(existing = [], incoming = [], mode = 'partial') {
       if (v === undefined) continue
       merged[k] = v
     }
-    // handEdited 只增不减：一旦手改过就永久留痕
-    const hand = new Set([...(old.handEdited || []), ...(Array.isArray(inc.handEdited) ? inc.handEdited : [])])
-    if (hand.size) merged.handEdited = [...hand]
+    // handEdited 只增不减：一旦手改过就永久留痕。
+    // 例外只有显式解锁：incoming 带 `handEditedUnlocked`（非空字符串数组）时，
+    // 这些字段从标记里移除——「交由模型重写」这类动作必须能真的解除锁，
+    // 否则正文会被永久冻结。其余字段仍按并集保留。
+    const unlocked = Array.isArray(inc.handEditedUnlocked)
+      ? inc.handEditedUnlocked.map((x) => String(x)).filter(Boolean)
+      : []
+    if (unlocked.length) {
+      const keep = new Set([...(old.handEdited || []), ...(Array.isArray(inc.handEdited) ? inc.handEdited : [])])
+      for (const k of unlocked) keep.delete(k)
+      if (keep.size) merged.handEdited = [...keep]
+      else delete merged.handEdited
+    } else {
+      const hand = new Set([...(old.handEdited || []), ...(Array.isArray(inc.handEdited) ? inc.handEdited : [])])
+      if (hand.size) merged.handEdited = [...hand]
+    }
+    // 解锁指令只是一次性信号，不落库
+    delete merged.handEditedUnlocked
     delete merged.orphan
     out.push(merged)
   }

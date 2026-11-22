@@ -36,12 +36,12 @@ export type OutgoingVideoPromptPanelProps = {
   blocking: VideoRequestIssue[]
   warnings: VideoRequestIssue[]
   effective: EffectiveVideoPrompt
-  staleMessage?: string
-  renderStaleMessage?: string
-  templateStaleMessage?: string
-  onSaveOverride: (text: string) => void
-  onClearOverride: () => void
-  onRebuildOverride?: () => void
+  /** 正文是否已由人工编辑（`video_prompt` 在 `handEdited` 中）。 */
+  handEdited: boolean
+  /** 保存正文：写回本镜 `video_prompt` 并记入 `handEdited`。 */
+  onSaveBody: (text: string) => void
+  /** 清除人工编辑标记，让模型下次重写时可以接管正文。 */
+  onClearHandEdit?: () => void
   videoMeta: VideoMeta | null
   hasVideoUrl: boolean
   advancedSlot?: ReactNode
@@ -82,12 +82,9 @@ export default function OutgoingVideoPromptPanel({
   blocking,
   warnings,
   effective,
-  staleMessage = '参考、台词或模式已变化，当前正文是保存时的旧快照。',
-  renderStaleMessage = '模板渲染与当前输入不一致，请点「模板渲染」更新。',
-  templateStaleMessage = '内置模板已升级，建议重新模板渲染。',
-  onSaveOverride,
-  onClearOverride,
-  onRebuildOverride,
+  handEdited,
+  onSaveBody,
+  onClearHandEdit,
   videoMeta,
   hasVideoUrl,
   advancedSlot,
@@ -106,37 +103,19 @@ export default function OutgoingVideoPromptPanel({
   const save = () => {
     const text = draft.trim()
     if (!text) return
-    onSaveOverride(text)
-    setEditing(false)
-  }
-  const restore = () => {
-    onClearOverride()
+    onSaveBody(text)
     setEditing(false)
   }
 
-  const renderStale = 'renderStale' in effective && Boolean(effective.renderStale)
-  const templateStale = 'templateStale' in effective && Boolean(effective.templateStale)
+  /**
+   * 正文只有三种状态：人工编辑过、镜头正文、升级前保存的旧版本正文。
+   * 「语义层 / 脚本拼装 / 模板渲染」随运行时拼装层一起删除，不再有对应来源。
+   */
+  const legacySnapshot = effective.source === 'legacy-override'
+  const badgeClass = legacySnapshot ? 'warn' : handEdited ? 'manual' : 'semantic'
+  const badgeLabel = legacySnapshot ? '旧版本正文' : handEdited ? '已手改' : '正文'
 
-  const badgeClass =
-    effective.source === 'override'
-      ? effective.stale
-        ? 'warn'
-        : 'manual'
-      : effective.autoKind === 'template'
-        ? 'template'
-        : 'semantic'
-
-  const badgeLabel =
-    effective.source === 'override'
-      ? effective.stale
-        ? '旧快照'
-        : '已手改'
-      : effective.autoKind === 'template'
-        ? '模板渲染'
-        : '语义层'
-
-  const needsAttention =
-    Boolean(effective.stale || renderStale || templateStale) || blocking.length > 0
+  const needsAttention = blocking.length > 0
 
   const textChars = effective.text.length
   const peekLine = useMemo(() => {
@@ -159,13 +138,8 @@ export default function OutgoingVideoPromptPanel({
   const [warnsOpen, setWarnsOpen] = useState(false)
 
   const warnItems = useMemo(
-    () => [
-      ...warnings.map((w) => ({ code: w.code, message: w.message })),
-      ...(effective.stale ? [{ code: 'stale', message: staleMessage }] : []),
-      ...(renderStale ? [{ code: 'render-stale', message: renderStaleMessage }] : []),
-      ...(templateStale ? [{ code: 'template-stale', message: templateStaleMessage }] : []),
-    ],
-    [warnings, effective.stale, renderStale, templateStale, staleMessage, renderStaleMessage, templateStaleMessage],
+    () => warnings.map((w) => ({ code: w.code, message: w.message })),
+    [warnings],
   )
 
   return (
@@ -186,9 +160,11 @@ export default function OutgoingVideoPromptPanel({
             <span
               className={`vp-badge ${badgeClass}`}
               title={
-                effective.source === 'override'
-                  ? '手改全文优先于自动拼装'
-                  : '当前正文来自镜表语义层'
+                legacySnapshot
+                  ? '升级前保存的手改正文，仍逐字提交；在正文区保存一次即迁移到镜头正文'
+                  : handEdited
+                    ? '该正文已由人工编辑，模型重写提示词时不会覆盖'
+                    : '正文来自该镜的 video_prompt'
               }
             >
               {badgeLabel}
@@ -201,7 +177,7 @@ export default function OutgoingVideoPromptPanel({
               {peekLine}
             </p>
             {needsAttention ? (
-              <p className="vp-disclosure-peek-warn">附件或手改快照需留意，展开查看</p>
+              <p className="vp-disclosure-peek-warn">附件或阻断项需留意，展开查看</p>
             ) : null}
           </>
         }
@@ -311,7 +287,7 @@ export default function OutgoingVideoPromptPanel({
               />
               <div className="vp-actions">
                 <button type="button" className="btn-mini" disabled={!draft.trim()} onClick={save}>
-                  保存手改
+                  保存正文
                 </button>
                 <button type="button" className="btn-mini" onClick={() => setEditing(false)}>
                   取消
@@ -320,6 +296,12 @@ export default function OutgoingVideoPromptPanel({
             </>
           ) : (
             <>
+              {legacySnapshot ? (
+                <p className="vp-legacy-note" data-vp-legacy-note>
+                  这是升级前保存的旧版本正文，仍在逐字提交。在正文区保存一次即迁移到镜头正文。
+                </p>
+              ) : null}
+
               <pre className="vp-text" data-video-prompt-text>
                 {effective.text}
               </pre>
@@ -332,19 +314,12 @@ export default function OutgoingVideoPromptPanel({
                 <span className="vp-actions-label">正文</span>
                 <div className="vp-actions-row">
                   <button type="button" className="btn-mini" onClick={startEdit}>
-                    手改编辑
+                    编辑正文
                   </button>
-                  {effective.source === 'override' ? (
-                    <>
-                      <button type="button" className="btn-mini" onClick={restore}>
-                        {effective.stale ? '重新拼装' : '恢复自动'}
-                      </button>
-                      {onRebuildOverride ? (
-                        <button type="button" className="btn-mini" onClick={onRebuildOverride}>
-                          用字段重填
-                        </button>
-                      ) : null}
-                    </>
+                  {handEdited && onClearHandEdit ? (
+                    <button type="button" className="btn-mini" onClick={onClearHandEdit} title="保留正文，但允许模型下次重写时覆盖它">
+                      交由模型重写
+                    </button>
                   ) : null}
                 </div>
               </div>

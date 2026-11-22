@@ -37,7 +37,7 @@ import Fold from './Fold'
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
 import { audioRefCapabilitiesFor } from './nativeAudio'
-import { effectiveVideoPrompt, type ShotVideoRequest } from './videoPrompt'
+import { effectiveVideoPrompt, isVideoPromptHandEdited, type ShotVideoRequest } from './videoPrompt'
 import { requestSecondsNote } from './videoSeconds'
 import { videoRefLimitLabel } from './videoRefLimits'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
@@ -424,6 +424,11 @@ type Props = {
   characters: CharacterSheet[]
   /** 选中镜头的出片请求预览；与生成请求共用同一个拼装器 */
   videoRequest: ShotVideoRequest | null
+  /**
+   * 解除某镜某字段的手改锁。服务端 handEdited 是并集（只增不减），
+   * 必须走这条显式解锁通道，普通 patch 清标记会被合并逻辑吞掉。
+   */
+  onUnlockHandEdit?: (nodeId: string, fields: string[]) => void
   /** 视频提示词审计：同集镜头与集数据，供视频页只读展示合规结果 */
   episodeShots?: ProjectShot[]
   episodes?: ProjectEpisode[]
@@ -589,16 +594,25 @@ function ShotVideoPromptPanel({
   data,
   request,
   onPatch,
+  onUnlock,
   submitTarget,
 }: {
   data: ShotData
   request: ShotVideoRequest
   onPatch: (p: Partial<ShotData>) => void
+  onUnlock?: (fields: string[]) => void
   submitTarget?: VideoSubmitTarget
 }) {
   const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
   const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
-  const sourceLabel = request.prompt.trim() ? '运动提示词' : '正文未填写'
+  const handEdited = isVideoPromptHandEdited(data)
+  const sourceLabel = effective.text.trim()
+    ? effective.source === 'legacy-override'
+      ? '旧版本正文'
+      : handEdited
+        ? '人工编辑正文'
+        : '镜头正文'
+    : '正文未填写'
 
   return (
     <OutgoingVideoPromptPanel
@@ -627,22 +641,30 @@ function ShotVideoPromptPanel({
       blocking={request.blocking}
       warnings={request.warnings}
       effective={effective}
-      onSaveOverride={(text) =>
+      handEdited={handEdited}
+      onSaveBody={(text) => {
+        // 正文只有一个落点：写回 video_prompt，并锁住它不被模型重写覆盖。
+        // 存量快照同时清空，保存动作本身就是迁移。
         onPatch({
-          videoPromptOverride: {
-            text,
-            fingerprint: request.fingerprint,
-            createdAt: new Date().toISOString(),
-          },
-          handEdited: [...new Set([...(data.handEdited ?? []), 'video_prompt_override'])],
-        })
-      }
-      onClearOverride={() =>
-        onPatch({
+          videoPrompt: text,
           videoPromptOverride: undefined,
-          handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+          handEdited: [
+            ...new Set([
+              ...(data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+              'video_prompt',
+            ]),
+          ],
         })
-      }
+        // 旧快照的 handEdited 标记必须显式解锁，否则会被服务端并集保留
+        if ((data.handEdited ?? []).includes('video_prompt_override')) {
+          onUnlock?.(['video_prompt_override'])
+        }
+      }}
+      onClearHandEdit={() => {
+        // 走显式解锁通道：服务端 handEdited 是并集，普通 patch 去标记会被吞掉
+        onUnlock?.(['video_prompt'])
+        onPatch({ handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt') })
+      }}
       videoMeta={meta}
       hasVideoUrl={Boolean(data.videoUrl)}
       submitTarget={submitTarget}
@@ -724,6 +746,7 @@ function InspectorBody({
   projectName,
   characters,
   videoRequest,
+  onUnlockHandEdit,
   episodeShots,
   episodes,
   auditRefs,
@@ -921,8 +944,8 @@ function InspectorBody({
     candidateCount: d.candidates?.length ?? 0,
     hasVideo: Boolean(d.videoUrl),
     seconds: requestSeconds,
-    promptSource: activeVideoPrompt?.source ?? 'auto',
-    promptStale: activeVideoPrompt?.stale ?? false,
+    promptSource: activeVideoPrompt?.source,
+    promptHandEdited: isVideoPromptHandEdited(d),
     nativeAudio: d.audioMode === 'native',
     refCount: (videoRequest?.refs.length ?? 0) + (videoRequest?.video ? 1 : 0),
   })
@@ -1327,6 +1350,7 @@ function InspectorBody({
             data={d}
             request={videoRequest}
             onPatch={set}
+            onUnlock={(fields) => onUnlockHandEdit?.(node.id, fields)}
             submitTarget={{
               modelLabel: selectedVideoModel?.label ?? '未选模型',
               modelId: selectedVideoModel?.model,
@@ -1411,17 +1435,15 @@ function InspectorBody({
       {prodKind === 'video' ? (
         <InspectorSection
           id="motionPrompt"
-          title="运镜与语义"
-          summary={`${d.size} · ${d.move} · ${
-            (d.videoPrompt ?? '').trim() ? `${(d.videoPrompt ?? '').trim().length} 字` : '运动提示词未填'
-          }`}
+          title="镜头参数"
+          summary={`${d.size} · ${d.move} · ${d.seconds}s`}
           tab="outgoing"
           hidden={effectiveTab !== 'outgoing'}
           open={!prefs.collapsed.motionPrompt}
           onToggle={() => toggleSection('motionPrompt')}
         >
           <p className="gen-note">
-            景别、运镜与镜头语言只作数据：不会自动并入出片正文。需要出现在正文里时，由创意会话读取后写进「运动提示词」。
+            镜号、景别、运镜与镜头语言只作结构化数据：不会自动进入出片正文。出片正文在上方「本次出片提示词」里编辑。
           </p>
           <label className="field">
             <span>镜号</span>
@@ -1455,23 +1477,6 @@ function InspectorBody({
               ))}
             </select>
           </label>
-          <label className="field">
-            <span>
-              运动提示词
-              <i
-                className="hint-inline"
-                title="语义层输入；完整发送正文见上方「本次出片提示词」"
-              >
-                Seedance
-              </i>
-            </span>
-            <textarea
-              rows={3}
-              value={d.videoPrompt ?? ''}
-              placeholder="只写动作与运镜：镜头缓慢前推 20 厘米，雨丝斜切画面"
-              onChange={(e) => set({ videoPrompt: e.target.value })}
-            />
-          </label>
           <ShotLexiconRefBlock
             data={d}
             projectName={projectName}
@@ -1479,15 +1484,6 @@ function InspectorBody({
             onAddAssetCard={onAddAssetCard}
           />
         </InspectorSection>
-      ) : null}
-      {activeVideoPrompt?.source === 'override' && prodKind === 'video' ? (
-        <div
-          className="gen-note vp-field-note"
-          data-shot-tab="outgoing"
-          hidden={effectiveTab !== 'outgoing'}
-        >
-          当前使用手改提示词，运动提示词字段不会影响出片；要重新接管请在上方面板点「重新拼装」。
-        </div>
       ) : null}
 
       <div className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual' || prodKind !== 'image'}>
@@ -1516,7 +1512,7 @@ function InspectorBody({
         <span>台词 / 音效</span>
         <textarea rows={3} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
         <em className="st-hint">
-          只作数据与字幕：不会自动并入出片正文，需要时由创意会话读取后写进运动提示词；原生音频见下方。
+          只作数据与字幕：不会自动并入出片正文，需要时由创意会话读取后写进「本次出片提示词」的正文；原生音频见下方。
         </em>
       </label>
 
@@ -1541,7 +1537,7 @@ function InspectorBody({
         onToggle={() => toggleSection('performance')}
       >
         <p className="gen-note">
-          表演强度、动作与台词表演只作数据：不会自动并入出片正文，需要时由创意会话读取后写进运动提示词。
+          表演强度、动作与台词表演只作数据：不会自动并入出片正文，需要时由创意会话读取后写进「本次出片提示词」的正文。
         </p>
         <div className="field perf-inspector">
           <PerformanceEditor
@@ -1604,7 +1600,7 @@ function InspectorBody({
           </i>
         </span>
         <p className="gen-note">
-          音轨模式与音色参考只影响提交参数：台词不会自动拼进正文，需要时由创意会话读取后写进运动提示词。
+          音轨模式与音色参考只影响提交参数：台词不会自动拼进正文，需要时由创意会话读取后写进「本次出片提示词」的正文。
         </p>
         <NativeAudioPanel
           data={d}

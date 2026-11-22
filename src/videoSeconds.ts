@@ -1,6 +1,6 @@
 /**
  * 出片请求时长的唯一求解入口。
- * 顺序：四舍五入 → 夹 2–12 秒 → 抬到模型下限 → 原生音频再抬到「下限 + 1」。
+ * 顺序：四舍五入 → 夹 2–12 秒 → 抬到模型下限 → 原生音频再抬到能力探测的下限。
  * 纯函数、无依赖，界面、拼装器、转场与服务端对齐都用这一份结果。
  */
 
@@ -13,7 +13,7 @@ export type SecondsFloor = {
   kind: SecondsFloorKind
   /** 抬升后的请求秒数 */
   value: number
-  /** 触发抬升的门槛：模型最小视频秒数（原生音频须严格大于它） */
+  /** 触发抬升的门槛：模型最小视频秒数（原生音频的下限也是含边界的） */
   min: number
 }
 
@@ -67,10 +67,10 @@ export function shotRequestSeconds(input: {
 
   const probeMin = Number(input.nativeAudioMinVideoSeconds)
   if (input.nativeAudio && Number.isFinite(probeMin) && probeMin > 0) {
+    // 原生音频下限是含边界的：Seedance 2.5 实测 4 秒合法，不再 +1 抬到 5 秒
     const audioMin = Math.max(modelMin, Math.round(probeMin))
-    const gate = audioMin + 1
-    if (seconds < gate) {
-      seconds = gate
+    if (seconds < audioMin) {
+      seconds = audioMin
       floor = { kind: 'native-audio', value: seconds, min: audioMin }
     }
   }
@@ -80,7 +80,7 @@ export function shotRequestSeconds(input: {
 /** 抬升原因的一句话说明；无抬升返回空串 */
 export function secondsFloorReason(floor: SecondsFloor | null): string {
   if (!floor) return ''
-  if (floor.kind === 'native-audio') return `原生音频须大于 ${floor.min} 秒`
+  if (floor.kind === 'native-audio') return `原生音频最短 ${floor.min} 秒`
   return `模型下限 ${floor.min} 秒`
 }
 

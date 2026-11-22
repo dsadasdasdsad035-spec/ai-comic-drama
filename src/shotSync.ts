@@ -292,8 +292,18 @@ export function bizSignature(d: ShotData): string {
   })
 }
 
-/** 画布节点 → 可写回 project.json 的镜头（不含画布私有态：坐标/标注/候选） */
-export function nodeToShot(d: ShotData, id: string): ProjectShot {
+/**
+ * 画布节点 → 可写回 project.json 的镜头（不含画布私有态：坐标/标注/候选）
+ *
+ * `unlockedFields` 是一次性解锁信号：服务端据此从 handEdited 里移除这些字段
+ * （正常保存是并集、只增不减）。它只出现在提交载荷里，不落库、不进画布状态。
+ */
+export function nodeToShot(
+  d: ShotData,
+  id: string,
+  opts?: { unlockedFields?: string[] },
+): ProjectShot {
+  const unlocked = (opts?.unlockedFields ?? []).filter(Boolean)
   return {
     id,
     episode: d.episode,
@@ -337,6 +347,7 @@ export function nodeToShot(d: ShotData, id: string): ProjectShot {
     use_expression_ref: Boolean(d.useExpressionRef),
     prod_kind: d.prodKind,
     ...(d.handEdited?.length ? { handEdited: d.handEdited } : {}),
+    ...(unlocked.length ? { handEditedUnlocked: unlocked } : {}),
   }
 }
 

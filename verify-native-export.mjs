@@ -30,7 +30,8 @@ const silent = node('n3', 'S03', { refImage: '/generated/a.jpg', audioMode: 'off
 const items = lib.buildPlaylist([native, tts, silent], [])
 check('native 镜头 audio=native', items[0].audio === 'native')
 check('native 不传 TTS', items[0].voice === undefined)
-check('off 镜头 audio=tts', items[1].audio === 'tts' && items[1].voice === '/voices/tts.mp3')
+// R2：连播/导出只认成片音轨，off 镜头即使还留着 voiceUrl 也不贡献音频
+check('off 镜头 audio=none', items[1].audio === 'none' && items[1].voice === undefined)
 check('无配音镜头 audio=none', items[2].audio === 'none')
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

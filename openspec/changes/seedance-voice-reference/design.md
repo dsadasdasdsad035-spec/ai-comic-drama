@@ -21,7 +21,7 @@
 - 让 native 镜头使用 Seedance 自己的声音和嘴型，不再混该镜 TTS；TTS 样本只做音色参考。
 - 把音色参考选择放在画布视频生成面板，按说话角色自动推导，允许手动取消。
 - 在提交前确认 provider 能力、参考音频可达性、数量/时长限制；不支持时明确禁用，不猜测字段。
-- 旧项目、旧 TTS 路径和 provider 口型路径保持可用。
+- 旧项目、旧 TTS 资产和 provider 口型路径保持可读可用。
 
 **Non-Goals:**
 
@@ -70,7 +70,7 @@ type AudioRef = { character: string; url: string; label?: string }
 type AudioMeta = { fingerprint: string; modelKey?: string; createdAt: string }
 ```
 
-- `off` = 现有静音视频 + TTS 混音；旧镜头缺字段按 off。
+- `off` = 静音视频；旧镜头缺字段按 off。
 - `native` = 该镜视频自带音轨，最终预览/导出使用视频音轨；不再混 `voiceUrl`。
 - `audioRef` 是本镜的单个音色参考（角色 + 音频路径）；`audioMeta` 记录请求指纹，参考样本/台词/模型变化时标 stale。
 - 音色参考从 `performance.speaks` 或台词 speaker 推导；沉默/画外角色默认不选。用户可以取消某个角色，但不会自动删除角色样本。
@@ -100,42 +100,41 @@ App.generateVideoOne
 ```
 
 - **先探测**：读取 APIMart 的 model schema / 文档，确认 Seedance 2.5 接受 `audio_url` 字符串（当前 APIMart），以及音频 2-30 秒/单参考/能否与 reference_image 混用。探测前不写死字段，不把未验证字段发到生产。
-- 首个 adapter 把探测到的字段封装成 `audioRefField`；如果 provider 只接受公网 URL，而项目音频只有本地路径，则 native 入口禁用并提示上传/公网地址，**不回退**成无参考或 TTS。
+- 首个 adapter 把探测到的字段封装成 `audioRefField`；如果 provider 只接受公网 URL，而项目音频只有本地路径，则 native 入口禁用并提示上传/公网地址，**不回退**成无参考。
 - `generateAudio: true` 时，Seedance 2.5 payload 的 `generate_audio` 从 false 改为 true；其他模型如果未通过探测，拒绝 native。
 - 首期只有一个 `audio_url`，提示词固定写“音色参考音频1”；不要让提示词声称存在多个音频槽位。
+- **`audio_url` 是可选增强，不是 `generate_audio` 的前置**：2026-11-22 实测 `generate_audio:true` 不传 `audio_url` 也能成功出片（`task_01M81KX9X0DN2JBVBSXS9KCGY1`，4.064s，AAC 单音轨，cost 0.3883）。没有可用样本时照常提交 `generate_audio: true`、不带 `audio_url`，UI 标「声音由模型决定」。实现里 `server/app.ts` 与 `server/apimart.mjs` 那两道「无参考就 400/throw」是绕开未探测项的保守门，不是上游限制，应予移除。
+- **时长边界是 `>= 4`，不是 `> 4`**：同一实测 `duration: 4` 成功；`src/videoSeconds.ts` 的 `audioMin + 1` 抬升和 `apimart.mjs` 的 `duration <= 4` 拒绝都超出实测，改为 `>= 4`。
 
 替代方案：直接假定 `reference_audio` 字段。APIMart schema 没有列出音频参考，但实测只接受 `audio_url` 字符串；对象/数组会 400。按实测值实现，不猜其他形状。
 
-### 4. 原生音频提示词独立于运动提示词
+### 4. 出片正文不含运行时声音段
 
-`video_prompt` 继续只写运动/表情；native 请求时在 `App` 里追加声音段：
+正文只由人/Agent 写入（`shot-prompt-agent-authored` 既定规则）：`video_prompt` 就是最终发出去的文本，运行时 MUST NOT 追加「声音：」段或台词。
 
-```text
-声音：
-陈默说：“你来了。”音色参考音频1。陈默的嘴型与这句中文台词同步。
-```
-
-- 台词逐字来自 `dialogue`，不重写、不翻译。
+- 声音是视频提示词技能的分内职责：`skills/short-drama-video-prompts/SKILL.md` 已要求正文写「运镜与声音」、音画同出路线写清声源/说话人/语种/逐字台词（`VID-23`、`VID-25`）。
+- 台词逐字来自 `dialogue`，由 Agent/人读到后自行组织；不重写、不翻译。
 - 参考音频只写“音色参考”，不写“原样播放”或“逐字对齐 TTS”。
 - 首期只支持单说话人；多说话人 native 禁用，不做 `@音频1..N` 的多槽绑。
-- 如果 native 选择“无参考”，提示词只写角色和台词，UI 标“声音由模型决定”。
+- `nativeAudioPrompt()` 保留为离线文本工具（生成草稿/测试用），**没有生产调用方**，也不再依赖它进入请求。
+- 无参考时 UI 标「声音由模型决定」；正文缺本镜台词时给软提示「模型可能只出声不说话」，不拦出片、不改正文。
 
-### 5. 预览/导出按镜头选择音轨
+### 5. 预览/导出只认成片音轨
 
-- `Preview.Item` 增加 `audio: 'tts' | 'native' | 'none'`；`buildPlaylist` 根据 `audioMode` 与是否存在视频音轨设置，native 时不把 `voiceUrl` 传给播放器。
-- 导出 `ExportSegment` 增加 `audioMode` / `nativeAudio`；`buildAnimatic`：
-  - native 镜头从视频输入取音轨，按镜头起点延迟/裁剪，与 TTS 镜头一起 `amix`。
-  - off 镜头继续现有 TTS 路径；没有 TTS 的镜头保持静音。
+- `Preview.Item` 的 `audio` 收敛为 `'native' | 'none'`：`: 'tts'` 分支已随 `canvas-prod-modes-no-voice` 的 R2 退场，`off` 镜头不贡献音轨，`voiceUrl` 只用于口型与试听。
+- 导出 `ExportSegment` 传 `audioMode`；`buildAnimatic`：
+  - native 镜头从视频输入取音轨，按镜头起点延迟，与其他 native 镜头一起 `amix`。
+  - 没有任何音轨输入时输出 `-an`（静音成片），这是 `off` 镜头的预期结果。
   - 生成转场片段仍不带音频；native 镜头与转场的音频接缝先按硬切处理，必要时做短淡入淡出，避免爆音。
 - 字幕仍按台词文本和镜头/原生时长生成；没有 TTS 时不再用 `voiceDur` 作为字幕长度。
-- 切回 off 时恢复 TTS 混音；旧 native 视频保留，可再次切回。
+- 切回 off 只改变后续出片请求的音频模式，不恢复 TTS 混音；旧 native 视频保留，可再次切回。
 
 替代方案：在浏览器里把 native 音频再单独混一遍。预览可行，但导出必须由 ffmpeg 服务端统一处理，不能两套时间账；不采纳。
 
 ### 6. 参考音频上限和优先级由 provider 描述
 
 - provider 能力描述包含 `audioRefField`、`maxRefAudios`、`minSeconds`、`maxSeconds`、`maxTotalSeconds`、`supportsMultiSpeaker`。APIMart 实测 `audioRefField: audio_url`、`maxRefAudios: 1`、`supportsMultiSpeaker: false`。
-- 首期只允许一个真正说话的角色；有两个或更多说话人时 native 禁用，提示拆镜或走 off+TTS。
+- 首期只允许一个真正说话的角色；有两个或更多说话人时 native 禁用，提示拆镜或走 off（静音）。
 - 单段短于/长于 provider 范围时不提交，提示重生成样本。
 
 ### 7. 能力探测是提交前的硬门
@@ -155,9 +154,9 @@ GET /api/seedance/audio-capabilities?modelKey=...
 ### 8. 兼容与迁移
 
 - 旧项目没有 `voiceSample`、`audioMode`、`audioRef`、`audioMeta` 时按无样本/off 读取；不批量迁移。
-- 旧 TTS 路径不变；provider 口型路径不变，只是 native 镜头禁用该入口。
+- 旧 TTS 文件与口型结果保持可读；provider 口型路径不变，只是 native 镜头禁用该入口。
 - 如果 APIMart 探测不支持音频参考，角色音色样本仍可交付（试听/未来复用），但 native 入口禁用；不把整个变更阻塞在音频参考上。
-- 回滚：关闭 native 即回到静音视频 + TTS；删除 `voiceSample` 不影响 `voiceId`，旧 TTS 继续可用。
+- 回滚：关闭 native 即回到静音视频（`off`）；删除 `voiceSample` 只影响 native 的音色一致性，旧 TTS 文件继续可用。
 
 ## Risks / Trade-offs
 

@@ -7230,16 +7230,13 @@ export function createAppHandler({ root }: { root: string }) {
                 res.end(JSON.stringify({ ok: false, message: '当前 APIMart 视频族未接入原生音频参考', kind: 'unsupported' }))
                 return
               }
-              if (generateAudio && seconds <= 4) {
+              if (generateAudio && seconds < 4) {
                 res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, message: 'Seedance 2.5 原生音频须大于 4 秒', kind: 'bad-request' }))
+                res.end(JSON.stringify({ ok: false, message: 'Seedance 2.5 原生音频最短 4 秒', kind: 'bad-request' }))
                 return
               }
-              if (generateAudio && !audioRefInput) {
-                res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, message: '原生音频需要角色音色样本', kind: 'bad-request' }))
-                return
-              }
+              // 音色参考是可选增强：没有样本时只发 generate_audio，声音由模型决定。
+              // 2026-11-22 实测 task_01M81KX9X0DN2JBVBSXS9KCGY1 通过（无 audio_url）。
               if (!family) {
                 res.statusCode = 400
                 res.end(
@@ -7326,7 +7323,9 @@ export function createAppHandler({ root }: { root: string }) {
               let nativeAudioUrl = ''
               const finalPrompt = prompt
               try {
-                if (generateAudio) nativeAudioUrl = await resolveApimartAudioRef(root, audioRefInput)
+                // 有参考才解析；无参考时留空，payload 只发 generate_audio（声音由模型决定）。
+                // 有参考但文件不可读/不合规仍然抛错阻止提交，不静默降级。
+                if (generateAudio && audioRefInput) nativeAudioUrl = await resolveApimartAudioRef(root, audioRefInput)
                 payload = buildApimartVideoPayload({
                   family,
                   model,

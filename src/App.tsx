@@ -796,6 +796,14 @@ function Shell() {
   const { colors: themeColors } = useTheme()
   /** 上次同步到 project.json 的业务字段快照：只有之后的改动才写回 */
   const syncedRef = useRef<Map<string, string>>(new Map())
+  /**
+   * 待解锁的手改字段，按 shotId 归集。
+   *
+   * 「交由模型重写」要真的从 handEdited 里移除字段，但服务端默认是并集（只增不减），
+   * 而 handEdited 又不在 bizSignature 里、单改它不会触发写回。所以这里先记账，
+   * 下一次防抖写回时把 `handEditedUnlocked` 一起发出去，成功后清账。
+   */
+  const pendingUnlockRef = useRef<Map<string, Set<string>>>(new Map())
   /** 角色上一次同步到 project.json 的快照 */
   const charSnapRef = useRef<string>('')
 
@@ -1467,6 +1475,7 @@ function Shell() {
     [setNodes],
   )
 
+
   const patchCharacter = useCallback(
     (id: string, p: Partial<CharacterSheet>): CharacterSheet[] => {
       const next = charactersRef.current.map((c) => {
@@ -1824,6 +1833,37 @@ function Shell() {
     if (projectSnapRef.current) projectSnapRef.current = { ...projectSnapRef.current, revision }
   }, [])
 
+  /**
+   * 显式解除某镜的手改锁并立即写回。
+   *
+   * 不能只靠 patch：`handEdited` 不在 bizSignature 里，单改它不会触发防抖写回；
+   * 而且服务端合并是并集（只增不减），必须带 `handEditedUnlocked` 才真的移除。
+   */
+  const unlockHandEdit = useCallback(
+    (nodeId: string, fields: string[]) => {
+      if (!projectName || readyProject !== projectName) return
+      const node = nodesRef.current.find((n) => n.id === nodeId)
+      const shotId = node?.data.shotId
+      if (!node || !shotId) return
+      const keep = (node.data.handEdited ?? []).filter((f) => !fields.includes(f))
+      const nextData: ShotData = { ...node.data, handEdited: keep.length ? keep : undefined }
+      setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: nextData } : n)))
+      syncedRef.current.set(String(shotId), bizSignature(nextData))
+      void mergeProjectShots(projectName, [
+        nodeToShot(nextData, String(shotId), { unlockedFields: fields }),
+      ])
+        .then((r) => {
+          bumpProjectRevision(r.revision)
+          pushStudioCanvasNow()
+        })
+        .catch(() => {
+          setToast('解除手改锁失败，稍后会自动重试')
+          window.setTimeout(() => setToast(''), 3000)
+        })
+    },
+    [projectName, readyProject, setNodes, bumpProjectRevision, pushStudioCanvasNow],
+  )
+
   /** 出片成功后立刻写 clip 到 project.json（与 patch 同事务传入字段，避免 nodesRef 尚未提交） */
   const flushShotClip = useCallback(
     async (nodeId: string, fields: Partial<ShotData>) => {
@@ -1927,8 +1967,8 @@ function Shell() {
   /**
    * 把提示词案例写进当前选中镜头。
    *
-   * `prompt` 写画面提示词，`videoPrompt` 写运动提示词：两者都是画布既有字段，
-   * 走同一条 patch → 自动保存链路，不新增镜像字段，也不写「手改快照」。
+   * `prompt` 写画面提示词，`videoPrompt` 写出片正文：两者都是画布既有字段，
+   * 走同一条 patch → 自动保存链路，不新增镜像字段，也不写手改快照。
    */
   const applyPromptCase = useCallback(
     async (caseId: string, slot: 'prompt' | 'videoPrompt') => {
@@ -3113,18 +3153,25 @@ function Shell() {
     if (syncedRef.current.size === 0) return
     const timer = window.setTimeout(() => {
       const changed: ProjectShot[] = []
+      const unlockedByShot = new Map<string, string[]>()
       for (const n of nodes) {
         const id = n.data.shotId
         if (!id) continue
+        const unlocked = pendingUnlockRef.current.get(String(id))
         const sig = bizSignature(n.data)
-        if (syncedRef.current.get(id) === sig) continue
+        if (syncedRef.current.get(id) === sig && !unlocked) continue
         syncedRef.current.set(id, sig)
-        changed.push(nodeToShot(n.data, id))
+        if (unlocked) unlockedByShot.set(String(id), [...unlocked])
+        changed.push(
+          nodeToShot(n.data, id, unlocked ? { unlockedFields: [...unlocked] } : undefined),
+        )
       }
       if (changed.length === 0) return
       // 局部写回（不标孤儿）：这里只发本次真正改过的镜，未改的必须原样保留
       mergeProjectShots(projectName, changed)
         .then((r) => {
+          // 写回成功才清账：失败时留着重试，否则解锁意图会静默丢失
+          for (const id of unlockedByShot.keys()) pendingUnlockRef.current.delete(id)
           bumpProjectRevision(r.revision)
           pushStudioCanvasNow()
         })
@@ -4695,6 +4742,7 @@ function Shell() {
             projectName={projectName}
             characters={characters}
             videoRequest={selectedVideoRequest}
+            onUnlockHandEdit={unlockHandEdit}
             projectStyle={projectStyle}
             stagePick={stagePick}
             onPickStage={pickStageModel}

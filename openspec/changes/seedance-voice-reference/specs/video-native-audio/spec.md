@@ -2,18 +2,18 @@
 
 ## Purpose
 
-让画布的视频生成可以使用 Seedance 2.5 的原生音频，并把一个角色的 TTS 音色样本作为音色参考；模型重新发声和生成嘴型，参考音频不会被原样播放。首期只支持单说话人镜头。
+让画布的视频生成可以使用 Seedance 2.5 的原生音频，并把一个角色的 TTS 音色样本作为**可选**音色参考；模型重新发声和生成嘴型，参考音频不会被原样播放。没有可用样本时仍可开原生音轨，声音由模型决定。首期只支持单说话人镜头。
 
 ## ADDED Requirements
 
 ### Requirement: 原生音频只对已确认支持的模型开放
 
-每个镜头 SHALL 保存 `off`（静音，现有 TTS 流程）或 `native`（原生音频）模式，旧镜头默认 `off`。只有声明了 `audioOut` 且通过实际音频参考探测的视频模型 MUST 允许 `native`；其他模型 MUST 隐藏或禁用入口并说明原因。
+每个镜头 SHALL 保存 `off`（静音）或 `native`（原生音频）模式，旧镜头默认 `off`。只有声明了 `audioOut` 且通过实际音频参考探测的视频模型 MUST 允许 `native`；其他模型 MUST 隐藏或禁用入口并说明原因。
 
 #### Scenario: 旧镜头
 
 - **WHEN** 打开一个没有音频模式字段的旧项目
-- **THEN** 镜头按 `off` 读取，视频请求和现有 TTS 行为不变
+- **THEN** 镜头按 `off` 读取，视频请求保持静音，不出现 `generate_audio`
 
 #### Scenario: 不支持的模型
 
@@ -23,7 +23,7 @@
 #### Scenario: 切换模型
 
 - **WHEN** 用户从一个支持原生音频的模型切到不支持的原生音频模型
-- **THEN** 已保存的原生音频模式保留但显示不可用，不静默改写成 TTS
+- **THEN** 已保存的原生音频模式保留但显示不可用，不静默改写模式
 
 ### Requirement: APIMart 使用单个 audio_url 字符串
 
@@ -46,7 +46,7 @@
 
 ### Requirement: 原生音频首期只支持单说话人
 
-一个 `native` 镜头 MUST 只有一个真正说话的角色。镜头有两个或更多说话人时 MUST 禁用 native，提示拆成单人镜或使用 `off` + TTS；MUST NOT 把多个角色混成一个 `audio_url` 或冒充多参考。
+一个 `native` 镜头 MUST 只有一个真正说话的角色。镜头有两个或更多说话人时 MUST 禁用 native，提示拆成单人镜或改用 `off`（静音视频）；MUST NOT 把多个角色混成一个 `audio_url` 或冒充多参考。
 
 #### Scenario: 单说话人
 
@@ -56,45 +56,54 @@
 #### Scenario: 双人对话
 
 - **WHEN** 镜头里陈默和林岚都有台词
-- **THEN** native 禁用并说明“首期只支持单说话人”，`off`/TTS 仍可用
+- **THEN** native 禁用并说明“首期只支持单说话人”，`off` 仍可用
 
 #### Scenario: 画外音
 
 - **WHEN** 画面内只有一个人说话，另一句是画外音
 - **THEN** 只有画面内说话人进入 `audio_url`；画外音不驱动 native
 
-### Requirement: 原生音频请求必须带音色参考绑定
+### Requirement: 原生音频的音色参考是可选增强
 
-`native` 镜头提交视频时 MUST 设置 `generate_audio: true`，并把该说话角色的有效音色样本作为 `audio_url`；提示词 MUST 写出角色、逐字台词和“音色参考音频1”的关系。MUST NOT 把参考音频说成会原样播放或保证逐字口型。
+`native` 镜头提交视频时 MUST 设置 `generate_audio: true`。有可用音色样本时 MUST 把该说话角色的样本作为 `audio_url` 提交；没有可用样本时 MUST NOT 阻止提交，也 MUST NOT 伪造或复用一个无关的 `audio_url`，MUST 在该镜与请求预览里标明「无音色参考，声音由模型决定」。
 
-#### Scenario: 单说话人
+音色参考只约束音色；MUST NOT 把参考音频说成会原样播放或保证逐字口型。
 
-- **WHEN** 陈默说“你来了。”且样本有效
-- **THEN** 请求带 `generate_audio:true` 和 `audio_url`，提示词写“陈默说：‘你来了。’音色参考音频1”
+台词不进入运行时拼装：出片正文只由人/Agent 写入（见 `shot-prompt-agent-authored`）。系统 MUST NOT 为了原生音频自动追加声音段或改写正文；正文缺少本镜台词时 MUST 给出软提示说明「模型可能只出声不说话」，但 MUST NOT 拦截出片。
+
+#### Scenario: 单说话人且样本有效
+
+- **WHEN** 陈默说“你来了。”且陈默样本有效
+- **THEN** 请求带 `generate_audio:true` 和 `audio_url`，提示词由人/Agent 自行写出角色与逐字台词
 
 #### Scenario: 没有样本
 
 - **WHEN** 说话角色没有有效音色样本
-- **THEN** 用户可以选择无参考并看到“声音由模型决定”警告，不得假装已绑定参考
+- **THEN** 请求仍带 `generate_audio:true` 但不带 `audio_url`，任务照常提交；UI 标「声音由模型决定」，不得假装已绑定参考
 
 #### Scenario: 失效样本
 
 - **WHEN** 样本已失效或文件缺失
-- **THEN** native 提交被阻止或要求用户明确确认无参考，不静默使用旧音频
+- **THEN** 视同「没有样本」处理，MUST NOT 静默使用旧音频
 
-### Requirement: 原生音频视频最短 4 秒
+#### Scenario: 正文缺台词
 
-`native` 镜头 MUST 使用 Seedance 2.5 支持的视频时长；当前实测最短 4 秒，2 秒会被 provider 拒绝。镜头时长短于 4 秒时 MUST 禁用 native 并提示加长镜头或改用 `off`。
+- **WHEN** 已开 native，但出片正文里没有任何一句本镜台词
+- **THEN** 面板给出「正文没写台词，模型可能只出声不说话」软提示，出片不被阻止，正文不被自动改写
+
+### Requirement: 原生音频视频最短 4 秒（含 4 秒）
+
+`native` 镜头 MUST 使用 Seedance 2.5 支持的视频时长。实测边界是 4-30 秒：**恰好 4 秒合法**，2 秒会被 provider 拒绝。镜头时长短于 4 秒时 MUST 禁用 native 并提示加长镜头或改用 `off`；镜头时长 ≥4 秒时 MUST NOT 再额外抬高请求时长。
 
 #### Scenario: 2 秒镜头
 
 - **WHEN** 镜头只有 2 秒时长，用户切到 native
 - **THEN** 开关禁用并提示“原生音频最短 4 秒”
 
-#### Scenario: 4 秒镜头
+#### Scenario: 恰好 4 秒
 
-- **WHEN** 镜头为 4 秒或更长，其他条件满足
-- **THEN** 允许提交 native 请求
+- **WHEN** 镜头为 4 秒，其他条件满足
+- **THEN** 请求 `duration: 4` 直接提交，不抬到 5 秒（2026-11-22 实测 `task_01M81KX9X0DN2JBVBSXS9KCGY1` 成功）
 
 #### Scenario: 模型决定的时长
 
@@ -122,7 +131,7 @@
 
 ### Requirement: 音频参考必须可读取且通过内容审核
 
-系统 SHALL 在提交前确认音频可被 provider 读取；公网 URL 或 data URL 不可访问时 MUST 阻止提交并给出可读错误。参考音频仍受 provider 内容安全/版权限制，失败时 MUST 显示原始原因，不自动换成无参考或 TTS。
+系统 SHALL 在提交前确认音频可被 provider 读取；公网 URL 或 data URL 不可访问时 MUST 阻止提交并给出可读错误。参考音频仍受 provider 内容安全/版权限制，失败时 MUST 显示原始原因，不自动降级成无参考。
 
 #### Scenario: data URL 成功
 
@@ -141,7 +150,7 @@
 
 ### Requirement: 原生音频镜头的最终音轨不使用该镜 TTS
 
-`native` 镜头成功出片后，预览和导出 MUST 使用视频自带音轨，MUST NOT 再混入该镜 `voiceUrl`；字幕仍使用台词文本。切回 `off` MUST 恢复现有 TTS 混音路径，旧视频和旧 TTS 保留。
+`native` 镜头成功出片后，预览和导出 MUST 使用视频自带音轨，MUST NOT 再混入该镜 `voiceUrl`；字幕仍使用台词文本。`off` 镜头同样不混 `voiceUrl`（连播/导出只认成片音轨，见 `canvas-prod-modes-no-voice` 的 R2）；切回 `off` MUST 只改变后续出片请求的音频模式，旧视频与旧 TTS 文件均保留。
 
 #### Scenario: 原生镜头导出
 
@@ -151,7 +160,7 @@
 #### Scenario: 切回静音
 
 - **WHEN** 用户把镜头从 native 切回 off
-- **THEN** 预览和导出重新使用该镜 TTS（如果有），原生视频保留可再次切回
+- **THEN** 该镜不再贡献任何音轨；旧 native 视频保留，可再次切回 native
 
 #### Scenario: 混合项目
 
@@ -179,7 +188,7 @@
 
 ### Requirement: native 失败不自动降级
 
-原生音频请求失败、参考音频不可用或 provider 返回不支持时，系统 MUST 显示错误并保留原视频/原 TTS，MUST NOT 自动改成 `off` 后重新提交，也不得静默丢弃参考。
+原生音频请求失败、参考音频不可用或 provider 返回不支持时，系统 MUST 显示错误并保留原视频，MUST NOT 自动改成 `off` 后重新提交，也不得静默丢弃参考。
 
 #### Scenario: provider 不支持
 

@@ -86,7 +86,7 @@ check('bundle kind=shot', bundleJson.kind === 'shot')
 check('bundle 含风格', bundleJson.video.visualStyle === '赛博')
 
 // ---- 语义层：正文逐字等于 video_prompt，右侧字段一律不进正文 ----
-check('有运动提示词用语义层', req.textSource === 'video_prompt', req.textSource)
+check('正文来源标记为 video_prompt', req.textSource === 'video_prompt', req.textSource)
 check('正文逐字等于 video_prompt', req.prompt === '镜头缓慢前推', req.prompt)
 for (const mark of ['【运镜】', '【台词】', '【表演方向】', '声音：', '参考图：', '@视频1', '【约束】']) {
   check(`正文不含 ${mark}`, !req.prompt.includes(mark), req.prompt)
@@ -115,7 +115,7 @@ const reqScript = lib.buildShotVideoRequest({
 check('空正文被 shot-prompt-empty 阻断', reqScript.blocking.some((b) => b.code === 'shot-prompt-empty'), JSON.stringify(reqScript.blocking.map((b) => b.code)))
 check('空正文请求正文为空', reqScript.prompt === '')
 check('忽略 video_prompt_rendered', !reqScript.prompt.includes('旧九段'))
-check('面板 autoKind=semantic', lib.effectiveVideoPrompt(reqScript, undefined).autoKind === 'semantic')
+check('面板正文来源为 video_prompt', lib.effectiveVideoPrompt(reqScript, undefined).source === 'video_prompt')
 
 
 const manual = lib.effectiveVideoPrompt(reqScript, {
@@ -123,7 +123,7 @@ const manual = lib.effectiveVideoPrompt(reqScript, {
   fingerprint: reqScript.fingerprint,
   createdAt: new Date().toISOString(),
 })
-check('手改逐字发送', manual.text === '手写正文，不追加' && manual.source === 'override')
+check('存量快照逐字发送', manual.text === '手写正文，不追加' && manual.source === 'legacy-override')
 
 // ---- 参考视频：只进槽位，不进正文 ----
 const videoData = {

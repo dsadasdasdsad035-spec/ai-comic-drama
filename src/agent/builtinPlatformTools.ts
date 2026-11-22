@@ -740,7 +740,7 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
     description:
       '【平台内置】为一个分镜提交出片任务，提交成功立刻返回 jobId，不等成片。' +
       '参考图、参考视频、音频由画布连线经统一拼装决定。' +
-      '正文优先级：手改 override → 本次参数 prompt → 镜上运动提示词 video_prompt。' +
+      '正文优先级：存量手改快照 → 本次参数 prompt → 镜上正文 video_prompt。' +
       '既没有首帧也没有连线参考时会拒绝提交。可选 modelKey/resolution 仅作用于本次提交，不改顶栏默认。' +
       '生成前必须取得成本确认。成片由任务中心轮询落库，这里不会写 clip 字段。',
     schema: z.object({
@@ -805,11 +805,12 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
       if (hardBlock) return { ok: false, error: `${hardBlock.message}（镜 ${shot.no}）` }
       const effective = effectiveVideoPrompt(request, node.data.videoPromptOverride)
       let submitPrompt = effective.text
-      if (effective.source !== 'override' && paramPrompt) submitPrompt = paramPrompt
+      // 存量快照只读优先；否则本次参数 prompt 可以顶替镜头正文，只为这次提交
+      if (effective.source !== 'legacy-override' && paramPrompt) submitPrompt = paramPrompt
       if (!submitPrompt.trim()) {
         return {
           ok: false,
-          error: `镜 ${shot.no} 还没有出片正文。下一步：submit_prompts 写入 video_prompt，或传 prompt 参数，或 set_shot_video_override 保存手改。`,
+          error: `镜 ${shot.no} 还没有出片正文。下一步：submit_prompts 写入 video_prompt，或传 prompt 参数，或用 set_shot_video_override 保存正文。`,
         }
       }
       const seconds = request.seconds || Math.max(1, Number(shot.seconds) || 5)

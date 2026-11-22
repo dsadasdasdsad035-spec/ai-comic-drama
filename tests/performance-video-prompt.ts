@@ -4,7 +4,7 @@ import {
   performanceVideoEntryCount,
   performanceVideoPromptBlock,
 } from '../src/performance.ts'
-import { buildShotVideoRequest, effectiveVideoPrompt } from '../src/videoPrompt.ts'
+import { buildShotVideoRequest, effectiveVideoPrompt, isVideoPromptHandEdited } from '../src/videoPrompt.ts'
 
 function check(name: string, fn: () => void) {
   try {
@@ -103,7 +103,7 @@ check('video_prompt 为空时阻断，不用首帧正文或硬编码顶替', () 
   assert.equal(empty.level, 'error')
 })
 
-check('表演变更使手改快照过期', () => {
+check('存量手改快照只读优先，且不再标记过期', () => {
   const base = {
     no: 'S01',
     seconds: 5,
@@ -130,8 +130,23 @@ check('表演变更使手改快照过期', () => {
     nodes: [{ id: 'n1', type: 'shot', data: changed, position: { x: 0, y: 0 } } as never],
     characters: [],
   })
-  const stale = effectiveVideoPrompt(b, { text: '手改', fingerprint: a.fingerprint, createdAt: '' })
-  assert.equal(stale.stale, true)
+  // 指纹不同也不再产生「旧快照」：正文收敛为单一来源后没有可比较的基线
+  const legacy = effectiveVideoPrompt(b, { text: '手改', fingerprint: a.fingerprint, createdAt: '' })
+  assert.equal(legacy.text, '手改')
+  assert.equal(legacy.source, 'legacy-override')
+  assert.equal(legacy.stale, false)
+  // 无快照时正文来源是 video_prompt
+  const plain = effectiveVideoPrompt(b, undefined)
+  assert.equal(plain.source, 'video_prompt')
+  assert.equal(plain.text, b.prompt)
+})
+
+check('isVideoPromptHandEdited 只认 video_prompt 标记', () => {
+  assert.equal(isVideoPromptHandEdited({ handEdited: ['video_prompt'] } as never), true)
+  assert.equal(isVideoPromptHandEdited({ handEdited: ['seconds', 'video_prompt'] } as never), true)
+  assert.equal(isVideoPromptHandEdited({ handEdited: ['seconds'] } as never), false)
+  assert.equal(isVideoPromptHandEdited({} as never), false)
+  assert.equal(isVideoPromptHandEdited({ handEdited: undefined } as never), false)
 })
 
 check('refIds 指向不存在的素材卡只报警告不抛错', () => {

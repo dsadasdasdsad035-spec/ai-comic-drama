@@ -526,16 +526,13 @@ export function buildVideoPayload({
   const vids = (Array.isArray(referenceVideos) ? referenceVideos : []).map(String).filter(Boolean)
 
   if (family === 'seedance-2.5') {
-    if (generateAudio && Number(seconds) <= 4) {
-      throw new ApimartError('Seedance 2.5 原生音频须大于 4 秒', { kind: 'bad-request' })
-    }
-    if (generateAudio && !String(audioUrl || '').trim()) {
-      throw new ApimartError('原生音频需要 audio_url 音色参考', { kind: 'bad-request' })
+    // 实测边界是 4-30 秒：4 秒合法（task_01M81KX9X0DN2JBVBSXS9KCGY1）。
+    // 音色参考是可选增强——没有 audio_url 时仍发 generate_audio，声音由模型决定。
+    const audio = String(audioUrl || '').trim()
+    if (generateAudio && Number(seconds) < 4) {
+      throw new ApimartError('Seedance 2.5 原生音频最短 4 秒', { kind: 'bad-request' })
     }
     const duration = clampDuration(seconds, 4, 30, 'Seedance 2.5')
-    if (generateAudio && duration <= 4) {
-      throw new ApimartError('Seedance 2.5 原生音频须大于 4 秒（四舍五入后至少 5 秒）', { kind: 'bad-request' })
-    }
     const res = ['480p', '720p', '1080p'].includes(String(resolution)) ? String(resolution) : '720p'
     // 首尾帧任务输出跟随首帧画幅，官方只接受 adaptive；普通图生视频才用显式比例
     const hasBoundary = Boolean(first || last)
@@ -556,7 +553,7 @@ export function buildVideoPayload({
       resolution: res,
       ...(images.length ? { image_with_roles: images } : {}),
       ...(vids.length ? { video_urls: vids } : {}),
-      ...(generateAudio ? { audio_url: String(audioUrl).trim(), generate_audio: true } : { generate_audio: false }),
+      ...(generateAudio ? { generate_audio: true, ...(audio ? { audio_url: audio } : {}) } : { generate_audio: false }),
       watermark: false,
     }
   }

@@ -121,6 +121,34 @@ check('mergeShots partial 保留既有 orphan', keptMark.find((s) => s.id === 'C
 const washed = db.mergeShots([{ id: 'A', seconds: 1, orphan: true }], [{ id: 'A', seconds: 2 }], 'partial')
 check('mergeShots 命中即洗白 orphan', washed[0].orphan === undefined)
 
+// 显式解锁：handEditedUnlocked 能从并集里移除指定字段，其余字段仍保留
+const unlockSeed = [{ id: 'A', seconds: 3, handEdited: ['seconds', 'video_prompt', 'transition_out'] }]
+const unlockedOne = db.mergeShots(unlockSeed, [
+  { id: 'A', handEdited: ['seconds', 'transition_out'], handEditedUnlocked: ['video_prompt'] },
+])
+check(
+  'handEditedUnlocked 移除指定字段',
+  !unlockedOne[0].handEdited.includes('video_prompt') &&
+    unlockedOne[0].handEdited.includes('seconds') &&
+    unlockedOne[0].handEdited.includes('transition_out'),
+  JSON.stringify(unlockedOne[0].handEdited),
+)
+check('handEditedUnlocked 不落库', unlockedOne[0].handEditedUnlocked === undefined, JSON.stringify(unlockedOne[0]))
+const unlockedAll = db.mergeShots(unlockSeed, [
+  { id: 'A', handEdited: [], handEditedUnlocked: ['seconds', 'video_prompt', 'transition_out'] },
+])
+check('解锁全部时 handEdited 被清空', unlockedAll[0].handEdited === undefined, JSON.stringify(unlockedAll[0]))
+// 没有解锁信号时仍是并集：即使 incoming 少了字段也不能丢
+const noSignal = db.mergeShots(unlockSeed, [{ id: 'A', handEdited: ['seconds'] }])
+check(
+  '无解锁信号时 handEdited 仍只增不减',
+  ['seconds', 'video_prompt', 'transition_out'].every((k) => noSignal[0].handEdited.includes(k)),
+  JSON.stringify(noSignal[0].handEdited),
+)
+// 空数组解锁信号等同无信号（避免误清）
+const emptySignal = db.mergeShots(unlockSeed, [{ id: 'A', handEditedUnlocked: [] }])
+check('空解锁信号不清标记', emptySignal[0].handEdited.length === 3, JSON.stringify(emptySignal[0].handEdited))
+
 let modeErr = ''
 try {
   db.normalizeShotsMode('whole')

@@ -144,15 +144,15 @@ function transitionModelOf(
 }
 
 export type ShotVideoPromptRead = {  text: string | null
-  /** 与画布出片预览同序：手改快照 → 语义层 video_prompt；都没有即阻断 */
-  source: 'override' | 'video_prompt' | 'blocked'
-  /** 手改快照指纹与最近一次模板渲染指纹不一致；只提示，不阻止出片 */
+  /** 与画布出片预览同序：存量手改快照 → 镜头正文 video_prompt；都没有即阻断 */
+  source: 'legacy-override' | 'video_prompt' | 'blocked'
+  /** 单一正文模型下恒为 false；保留字段只为不改消费者形状 */
   stale: boolean
   note?: string
 }/**
  * 该镜最终会发给视频模型的正文。
  *
- * 顺序对齐画布 `buildShotVideoRequest` + `effectiveVideoPrompt`：手改快照整段逐字发送；
+ * 顺序对齐画布 `buildShotVideoRequest` + `effectiveVideoPrompt`：存量手改快照整段逐字发送；
  * 否则 `video_prompt`；两者都没有时画布直接阻断出片——所以这里也返回 `blocked`，
  * 不给首帧正文或脚本拼装的近似结果。
  */
@@ -160,16 +160,11 @@ export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideo
   const override = asRecord(shot.video_prompt_override)
   const overrideText = typeof override.text === 'string' ? override.text : ''
   if (overrideText.trim()) {
-    const meta = asRecord(shot.video_prompt_render_meta)
-    const fp = String(override.fingerprint || '')
-    const stale = Boolean(fp && meta.fingerprint && String(meta.fingerprint) !== fp)
     return {
       text: overrideText,
-      source: 'override',
-      stale,
-      ...(stale
-        ? { note: '手改快照与最近一次模板渲染指纹不一致：画布内容可能已变，出片预览会提示过期（但仍按手改发送）' }
-        : {}),
+      source: 'legacy-override',
+      stale: false,
+      note: '这是升级前保存的手改正文，仍在逐字提交；用户在出片面板保存一次正文即迁移到 video_prompt',
     }
   }
   const vp = typeof shot.video_prompt === 'string' ? shot.video_prompt : ''
@@ -178,7 +173,7 @@ export function resolveShotVideoPrompt(shot: Record<string, unknown>): ShotVideo
     text: null,
     source: 'blocked',
     stale: false,
-    note: '该镜没有出片正文：画布会阻断出片。下一步：用 submit_prompts 写入 video_prompt，或让用户在「运动提示词」里填写',
+    note: '该镜没有出片正文：画布会阻断出片。下一步：用 submit_prompts 写入 video_prompt，或让用户在出片面板「本次出片提示词」里填写',
   }
 }
 

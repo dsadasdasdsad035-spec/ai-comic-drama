@@ -33,14 +33,16 @@ const check = (name, cond, extra = '') => {
 const D25 = 'seedance-2.5'
 const NATIVE = { nativeAudio: true, nativeAudioMinVideoSeconds: 4 }
 
-// 原生音频：请求必须严格大于 4 秒
+// 原生音频：门槛是含边界的 4 秒（实测 duration:4 合法），不再 +1 抬到 5
 let r = lib.shotRequestSeconds({ seconds: 4.2, modelId: D25, ...NATIVE })
-check('4.2s + 原生音频 = 5', r.seconds === 5, JSON.stringify(r))
-check('4.2s + 原生音频 抬升原因是原生音频', r.floor?.kind === 'native-audio' && r.floor.min === 4)
+check('4.2s + 原生音频 = 4 且无抬升', r.seconds === 4 && r.floor === null, JSON.stringify(r))
 r = lib.shotRequestSeconds({ seconds: 4.0, modelId: D25, ...NATIVE })
-check('4.0s + 原生音频 = 5', r.seconds === 5, JSON.stringify(r))
+check('4.0s + 原生音频 = 4 且无抬升', r.seconds === 4 && r.floor === null, JSON.stringify(r))
 r = lib.shotRequestSeconds({ seconds: 4.4, modelId: D25, ...NATIVE })
-check('4.4s + 原生音频 = 5', r.seconds === 5, JSON.stringify(r))
+check('4.4s + 原生音频 = 4 且无抬升', r.seconds === 4 && r.floor === null, JSON.stringify(r))
+// 原生门槛高于模型下限时才由它抬升（Seedance 2.5 两者都是 4，抬升原因归 model-min）
+r = lib.shotRequestSeconds({ seconds: 2.6, ...NATIVE })
+check('2.6s + 原生门槛 4 抬到 4 且原因是原生音频', r.seconds === 4 && r.floor?.kind === 'native-audio' && r.floor.min === 4, JSON.stringify(r))
 r = lib.shotRequestSeconds({ seconds: 5, modelId: D25, ...NATIVE })
 check('5s + 原生音频保持 5 且无抬升', r.seconds === 5 && r.floor === null, JSON.stringify(r))
 r = lib.shotRequestSeconds({ seconds: 6.6, modelId: D25, ...NATIVE })
@@ -70,7 +72,7 @@ check('无音频能力信息只套模型下限', r.seconds === 3 && r.floor === 
 check('Seedance 2.5 上限 30', lib.videoMaxSeconds(D25) === 30)
 check('Kling v3 上限 15', lib.videoMaxSeconds('kling-v3') === 15)
 check('未知模型上限退回 12', lib.videoMaxSeconds('unknown-model') === 12)
-check('原生音频说明', lib.secondsFloorReason({ kind: 'native-audio', value: 5, min: 4 }).includes('大于 4'))
+check('原生音频说明', lib.secondsFloorReason({ kind: 'native-audio', value: 4, min: 4 }).includes('最短 4'))
 check('模型下限说明', lib.secondsFloorReason({ kind: 'model-min', value: 4, min: 4 }).includes('下限 4'))
 check('无抬升无文案', lib.secondsFloorReason(null) === '')
 
@@ -94,13 +96,12 @@ const build = (seconds) =>
   })
 
 let req = build(4.2)
-check('4.2s 原生音频请求 5s', req.seconds === 5, JSON.stringify({ seconds: req.seconds, shotSeconds: req.shotSeconds }))
+check('4.2s 原生音频请求 4s', req.seconds === 4, JSON.stringify({ seconds: req.seconds, shotSeconds: req.shotSeconds }))
 check('同时带回镜头时长 4.2s', req.shotSeconds === 4.2)
-check('抬升原因进入面板提示而非阻止', req.secondsFloor?.kind === 'native-audio' && req.blocking.length === 0 && req.warnings.some((w) => w.code === 'seconds-raised'), req.blocking.map((b) => b.message).join(';'))
-check('4.2s 原生音频仍然可出片', req.audio?.slot === 'audio')
+check('4.2s 原生音频不阻止且带音色参考', req.blocking.length === 0 && req.audio?.slot === 'audio', req.blocking.map((b) => b.message).join(';'))
 
 req = build(4.0)
-check('4.0s 原生音频请求 5s 且不阻止', req.seconds === 5 && req.blocking.length === 0)
+check('4.0s 原生音频请求 4s 且不阻止', req.seconds === 4 && req.blocking.length === 0, JSON.stringify({ seconds: req.seconds, blocking: req.blocking.map((b) => b.code) }))
 req = build(5)
 check('5s 原生音频请求保持 5s', req.seconds === 5 && req.secondsFloor === null)
 
@@ -115,11 +116,12 @@ const silent = lib.buildShotVideoRequest({
 check('3s 静音 + Seedance 2.5 请求 4s', silent.seconds === 4 && silent.secondsFloor?.kind === 'model-min')
 
 /**
- * 没有可用音色样本时也必须能出片。
+ * 没有可用音色样本时仍然出**带声音**的视频。
  *
- * 音色参考只是音轨的增强项：拿不到样本不该把「出片」整条堵死，用户点了按钮
- * 就该得到视频。这里钉住降级语义——不阻塞、走普通出片模式（没有 audio 附件）、
- * 给出 warn，且时长按普通出片算（不再为不存在的原生音轨抬到 5s）。
+ * 音色参考只是音轨的增强项：拿不到样本不该把「出片」整条堵死，也不该把
+ * 「有没有声音」一起丢掉。2026-11-22 实测确认 `generate_audio:true` 不带
+ * `audio_url` 能出片且会念台词，所以这里钉住新语义——不阻塞、仍走 native
+ * 模式、没有 audio 附件、给出 no-reference warn，时长仍按原生门槛（含 4）。
  */
 const noSample = { ...characters[0], voiceSample: undefined }
 const buildNoSample = (seconds) =>
@@ -134,19 +136,22 @@ const buildNoSample = (seconds) =>
 
 const degraded = buildNoSample(4.2)
 check('无音色样本不阻塞出片', degraded.blocking.length === 0, degraded.blocking.map((b) => b.message).join(';'))
-check('无音色样本降级为普通出片', degraded.mode !== 'native', degraded.mode)
+check('无音色样本仍走 native', degraded.mode === 'native', degraded.mode)
 check('无音色样本不带 audio 附件', degraded.audio === null)
 check(
-  '无音色样本给出 warn 说明',
-  degraded.warnings.some((w) => w.code === 'native-degraded'),
+  '无音色样本给出 no-reference warn',
+  degraded.warnings.some((w) => w.code === 'native-no-reference'),
   degraded.warnings.map((w) => w.code).join(','),
 )
-check('降级后时长不再按原生音频抬到 5s', degraded.seconds === 4, String(degraded.seconds))
+check(
+  '无音色样本不再报 degraded',
+  !degraded.warnings.some((w) => w.code === 'native-degraded'),
+  degraded.warnings.map((w) => w.code).join(','),
+)
+check('无音色样本时长按原生门槛（4）', degraded.seconds === 4, String(degraded.seconds))
 
-// 完全没有角色卡时，音色缺失本身仍然不阻塞出片。
-// 注意这里不能用 shotData()：它带着 refIds: ['char-陈默']，角色清空后
-// 「找不到参考图」会正常阻塞——那是参考图的问题，与音色无关。
-const bareShot = { ...shotData(6), refIds: [] }
+// 零角色卡 + 无台词的纯空镜：没有任何可判定的说话人，照样能走 native
+const bareShot = { ...shotData(6), refIds: [], dialogue: '' }
 const noChars = lib.buildShotVideoRequest({
   data: bareShot,
   nodeId: 'n1',
@@ -156,11 +161,30 @@ const noChars = lib.buildShotVideoRequest({
   resolution: '720p',
 })
 check(
-  '零角色卡时音色缺失不阻塞',
+  '零角色卡空镜不因音色缺失阻塞',
   !noChars.blocking.some((b) => b.code === 'native-unavailable'),
   noChars.blocking.map((b) => b.code).join(','),
 )
-check('零角色卡降级为普通出片', noChars.mode !== 'native' && noChars.audio === null)
+check('零角色卡空镜仍走 native 且无 audio 附件', noChars.mode === 'native' && noChars.audio === null, noChars.mode)
+
+/**
+ * 台词点名了一个角色库里没有的说话人：这是数据不一致，不是「没有样本」。
+ * 猜不出该用谁的音色，也不该静默按无参考出片——明确拦下让人先补角色卡。
+ */
+const missingCard = { ...shotData(6), refIds: [] }
+const noCardHit = lib.buildShotVideoRequest({
+  data: missingCard,
+  nodeId: 'n1',
+  nodes: [{ id: 'n1', type: 'shot', position: { x: 0, y: 0 }, data: missingCard }],
+  characters: [],
+  model,
+  resolution: '720p',
+})
+check(
+  '说话人不在角色库时降级并说明',
+  noCardHit.mode !== 'native' && noCardHit.warnings.some((w) => w.code === 'native-degraded'),
+  noCardHit.warnings.map((w) => w.code).join(','),
+)
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

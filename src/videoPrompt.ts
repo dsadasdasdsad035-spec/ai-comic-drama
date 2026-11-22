@@ -216,7 +216,7 @@ export function buildShotVideoRequest(input: {
   })
   /** 唯一时长来源：取整、模型下限与原生音频门槛都在这里解出，后续一律读 seconds */
   const shotSeconds = Number(d.seconds) || 0
-  /** 先按原生音频门槛算一次：音色参考解析要用到它（原生须严格大于模型下限） */
+  /** 先按原生音频门槛算一次：音色参考解析要用到它（原生下限含边界，4 秒合法） */
   const nativeSeconds = nativeMode
     ? shotRequestSeconds({
         seconds: shotSeconds,
@@ -236,12 +236,16 @@ export function buildShotVideoRequest(input: {
         preferredCharacter: d.audioRef?.character,
       })
     : null
+  /** 只在「模型没有原生音频能力」或「音色样本不合规」时降级；无样本仍走 native */
+  const nativeBlocked = Boolean(nativeRef && !nativeRef.ok)
   /**
-   * 音色参考没解析出来时按**普通出片**重算时长：原生音频的「下限 + 1」抬升
-   * 只在真的要带音轨时才成立，降级后还按 5 秒请求等于白等一段没有声音的时长。
+   * 被拦下时按**普通出片**重算时长：原生音频的门槛只在真的要带音轨时才成立，
+   * 降级后还按 4 秒请求等于白等一段没有声音的时长。无参考**不算**降级——
+   * 它照常发 `generate_audio`，所以时长仍按原生门槛算。
    */
-  const { seconds, floor: secondsFloor } =
-    nativeMode && nativeRef?.ok
+  const { seconds, floor: secondsFloor } = nativeBlocked
+    ? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
+    : nativeMode
       ? (nativeSeconds ?? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model }))
       : shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
 
@@ -273,23 +277,27 @@ export function buildShotVideoRequest(input: {
         : `超过参考图上限（${videoRefLimitLabel(cap)}）`,
   }))
 
-  /** 正文只由人/Agent 写入：逐字取运动提示词，运行时不再拼装任何段落 */
+  /** 正文只由人/Agent 写入：逐字取该镜 video_prompt，运行时不再拼装任何段落 */
   const vpTrim = (d.videoPrompt || '').trim()
   const textSource: ShotVideoRequest['textSource'] = 'video_prompt'
   /** 运镜文案只来自条目自身的 motion_note，不再从几何数据推导 */
   const liveMotionNote = d.motionNote || ''
 
   /**
-   * 音色参考解析不出来时**不阻塞出片**：原生音轨只是增强项，用户点了按钮就该
-   * 得到视频。没有可用样本就降级成普通出片（`generate_audio: false`），并在
-   * warnings 里说明这次没带原生声音。
+   * 音色参考是**可选增强**，不是原生音轨的前置条件。
    *
-   * 上游约束（server/apimart.mjs）：`generate_audio` 必须同时给 `audio_url`，
-   * 所以「开音轨但无参考」不是合法组合，只能整条降级。
+   * - 有可用样本 → 带上 `audio_url`（`audio` 附件），音色跨镜一致。
+   * - 没有样本（`no-reference`）→ 照常 native，只发 `generate_audio`，声音由
+   *   模型决定。2026-11-22 实测这条组合能出片且会念出台词
+   *   （`task_01M81KX9X0DN2JBVXS9KCGY1` 同类任务），不是非法请求。
+   * - `blocked`（模型没能力 / 样本不合规）→ 才降级成普通静音出片并在 warnings
+   *   里说明原因，避免让用户以为拿到的是带音轨的成片。
    */
-  const nativeDegraded = Boolean(nativeMode && nativeRef && !nativeRef.ok)
+  const nativeDegraded = Boolean(nativeMode && nativeBlocked)
+  const nativeNoReference =
+    nativeMode && nativeRef?.ok === true && nativeRef.kind === 'no-reference' ? nativeRef : null
   const audio: VideoAttachment | null =
-    nativeMode && nativeRef?.ok
+    nativeMode && nativeRef?.ok === true && nativeRef.kind === 'reference'
       ? {
           slot: 'audio',
           index: 1,
@@ -406,7 +414,15 @@ export function buildShotVideoRequest(input: {
       message: `${invalidNeighbor.label}：${invalidNeighbor.reason}`,
     })
   }
-  // 拿不到音色参考不阻塞：降级成普通出片，只提示这次没带原生音轨
+  // 无参考不是问题：它照样带原生音轨出片，只在提示里说清声音由模型决定
+  if (nativeNoReference) {
+    warnings.push({
+      code: 'native-no-reference',
+      level: 'warn',
+      message: `无音色参考，声音由模型决定：${nativeNoReference.reason}`,
+    })
+  }
+  // 模型没有原生音频能力 / 样本不合规才降级，这时明确说本次没有原生音轨
   if (nativeDegraded && nativeRef && !nativeRef.ok) {
     warnings.push({
       code: 'native-degraded',
@@ -437,12 +453,12 @@ export function buildShotVideoRequest(input: {
     })
   }
 
-  // 正文只来自人/Agent：运动提示词为空即阻断，不用脚本拼装或硬编码文案顶替
+  // 正文只来自人/Agent：video_prompt 为空即阻断，不用脚本拼装或硬编码文案顶替
   if (!vpTrim) {
     blocking.push({
       code: 'shot-prompt-empty',
       level: 'error',
-      message: '正文未填写：请在「运动提示词」写一段出片描述，或保存手改正文后再出片',
+      message: '正文未填写：请在「本次出片提示词」的正文区写一段出片描述后再出片',
     })
   }
   const prompt = vpTrim
@@ -469,29 +485,29 @@ export function buildShotVideoRequest(input: {
 
 export type EffectiveVideoPrompt = {
   text: string
-  source: 'auto' | 'override'
-  autoKind?: 'semantic' | 'template'
+  source: 'video_prompt' | 'legacy-override'
   stale: boolean
 }
 
-/** 手改快照优先；过期只提示，不阻止出片。 */
+/**
+ * 正文只有一个来源：镜头自己的 `video_prompt`。
+ * 升级前保存的 `video_prompt_override` 仍按「只读优先」生效，保证存量镜头出片
+ * 内容逐字不变；新保存的正文一律写回 `video_prompt`，不再产生快照。
+ * 单一正文模型下不存在可比较的基线，`stale` 恒为 false，保留字段只为不改消费者形状。
+ */
 export function effectiveVideoPrompt(
   request: Pick<ShotVideoRequest, 'prompt' | 'fingerprint' | 'textSource'>,
   override?: VideoPromptOverride | null,
 ): EffectiveVideoPrompt {
   if (override?.text) {
-    return {
-      text: override.text,
-      source: 'override',
-      stale: Boolean(override.fingerprint && override.fingerprint !== request.fingerprint),
-    }
+    return { text: override.text, source: 'legacy-override', stale: false }
   }
-  return {
-    text: request.prompt,
-    source: 'auto',
-    autoKind: 'semantic',
-    stale: false,
-  }
+  return { text: request.prompt, source: 'video_prompt', stale: false }
+}
+
+/** 该镜正文是否由人工编辑过（`handEdited` 含 video_prompt）。 */
+export function isVideoPromptHandEdited(data: ShotData): boolean {
+  return (data.handEdited ?? []).includes('video_prompt')
 }
 
 /** 出片前参考省略说明，分镜与转场生成共用 */

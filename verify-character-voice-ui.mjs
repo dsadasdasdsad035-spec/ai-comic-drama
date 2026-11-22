@@ -71,20 +71,25 @@ try {
   await selectProject(page, project.name)
   await page.getByRole('button', { name: '素材', exact: true }).click(); await page.locator('[data-asset-character-tab]').click()
   await page.locator('.char-card').first().waitFor({ timeout: 15000 })
-  await page.getByRole('tab', { name: '音色' }).click()
+  // Tab 标签已从「音色」改名为「声音」（多来源素材库/角色声音工作台）；用 data 属性定位更稳
+  await page.locator('[data-char-tab="voice"]').click()
   check('音色样本区出现', (await page.locator('.char-voice-sample').count()) === 1)
   const voiceHtml = await page.locator('.char-voice select').innerHTML()
   check('音色下拉有来源分组', (await page.locator('.char-voice optgroup').count()) >= 1, voiceHtml.slice(0, 500))
   check('旧音色保留为未知原值', (await page.locator('.char-voice select').innerText()).includes('未知/保留原值'))
   await page.locator('.char-voice select').selectOption('male-qn-qingse')
-  check('选择目录音色后可用', !(await page.locator('.char-sample-actions button', { hasText: '生成音色样本' }).first().isDisabled()))
+  // 按钮文案已从「生成音色样本」改为「生成试音 / 重新生成试音」；用 data 属性定位更稳
+  const sampleBtn = page.locator('[data-char-generate-sample]')
+  check('选择目录音色后可用', !(await sampleBtn.isDisabled()))
 
-  await page.locator('.char-sample-actions button', { hasText: '生成音色样本' }).first().click()
+  await sampleBtn.click()
   await page.waitForTimeout(800)
   check('请求带项目与样本用途', voiceBody?.project === project.name && voiceBody?.purpose === 'character-sample')
   check('请求带角色音色与试音稿', voiceBody?.voice === 'male-qn-qingse' && String(voiceBody?.text || '').length > 10)
   check('项目里写入样本', project.characters[0].voice_sample?.url?.includes('/project-assets/'), JSON.stringify(project.characters[0].voice_sample))
-  check('显示实际时长', (await page.locator('.char-sample-head').innerText()).includes('8.0s'))
+  // 时长现在显示在样本块正文里（原来的 .char-sample-head 已并入区块）
+  const sampleBlock = await page.locator('.char-voice-sample').innerText()
+  check('显示实际时长', sampleBlock.includes('8.0s'), sampleBlock.replace(/\n/g, ' '))
   check('出现试听音频', (await page.locator('.char-sample-audio').count()) === 1)
 
   await page.getByRole('button', { name: '编辑试音稿' }).click()

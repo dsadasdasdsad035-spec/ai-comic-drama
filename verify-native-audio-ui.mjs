@@ -84,10 +84,11 @@ writeProject(rootDir, ${JSON.stringify(PROJECT)}, {
     { name: '林岚', role: '配角', look_cn: '长发', look_en: 'long hair', palette: '红', keywords: [] },
   ],
   shots: [
-    shot('E01-S01', 'S01', 5, [{ speaker: '陈默', text: '你来了。' }], { performance: [{ character: '陈默', emotion: 'calm', intensity: 2, speaks: true }], cast: ['陈默'] }),
+    shot('E01-S01', 'S01', 5, [{ speaker: '陈默', text: '你来了。' }], { performance: [{ character: '陈默', emotion: 'calm', intensity: 2, speaks: true }], cast: ['陈默'], video_prompt: '固定机位。陈默转头看向镜头，低声说：“你来了。”声音设计：安静的室内。' }),
     shot('E01-S02', 'S02', 2, [{ speaker: '陈默', text: '太短。' }], { performance: [{ character: '陈默', emotion: 'calm', intensity: 2, speaks: true }], cast: ['陈默'] }),
     shot('E01-S03', 'S03', 5, [], { cast: ['陈默'] }),
-    shot('E01-S04', 'S04', 5, [{ speaker: '林岚', text: '我没有样本。' }], { performance: [{ character: '林岚', emotion: 'calm', intensity: 2, speaks: true }], cast: ['林岚'] }),
+    // S04 的正文故意不含台词：用来验证「正文没写台词」软提示
+    shot('E01-S04', 'S04', 5, [{ speaker: '林岚', text: '我没有样本。' }], { performance: [{ character: '林岚', emotion: 'calm', intensity: 2, speaks: true }], cast: ['林岚'], video_prompt: '固定机位。林岚站在窗边沉默不语。' }),
   ],
 })
 console.log('{}')
@@ -183,7 +184,7 @@ try {
   check('无声镜写回 audio_mode=native', s03?.audio_mode === 'native', String(s03?.audio_mode))
   check('无声镜写回 audio_ref', s03?.audio_ref?.character === '陈默', JSON.stringify(s03?.audio_ref))
 
-  // 没有音色样本的角色：开关仍可点，只是出片会降级
+  // 没有音色样本的角色：开关仍可点，而且**照常带原生音轨出片**（声音由模型决定）
   await openShotAudioTab('S04')
   const bareBox = page.locator('[data-native-audio] input[type=checkbox]')
   check('无音色样本仍可开启 native', !(await bareBox.isDisabled()))
@@ -194,7 +195,16 @@ try {
   check('无音色样本写回 audio_mode=native', s04?.audio_mode === 'native', String(s04?.audio_mode))
   check('无音色样本不写 audio_ref', !s04?.audio_ref?.url, JSON.stringify(s04?.audio_ref))
   const bareText = await page.locator('[data-native-audio]').innerText()
-  check('说明本次会降级', bareText.includes('降级'))
+  check('说明声音由模型决定', bareText.includes('声音由模型决定'), bareText.replace(/\n/g, ' '))
+  check('不出现「降级为静音」', !bareText.includes('降级为静音'), bareText.replace(/\n/g, ' '))
+  check('给出无音色参考徽章', bareText.includes('无音色参考'), bareText.replace(/\n/g, ' '))
+  // S04 的 video_prompt 里没有台词，所以也要出现「正文没写台词」软提示
+  check('正文缺台词时给软提示', bareText.includes('正文没写台词'), bareText.replace(/\n/g, ' '))
+
+  // S01 的正文写了台词，就不该出现这条软提示（避免把「已写」误报成「没写」）
+  await openShotAudioTab('S01')
+  const s01Text = await page.locator('[data-native-audio]').innerText()
+  check('正文写了台词时不提示', !s01Text.includes('正文没写台词'), s01Text.replace(/\n/g, ' '))
 
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
   await page.screenshot({ path: path.join(EVIDENCE, 'native-audio-ui.png') })

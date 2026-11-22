@@ -378,7 +378,7 @@ check('表演可展开', (await perf.evaluate((el) => el.dataset.open)) === 'tru
 await selectShot('S01')
 await p.locator('.si-tabs [role="tab"]', { hasText: '出片' }).click()
 await p.waitForTimeout(250)
-await p.locator('[data-video-prompt-panel] button', { hasText: '编辑' }).click()
+await p.locator('[data-video-prompt-panel] button', { hasText: '编辑正文' }).click()
 await p.locator('.vp-textarea').fill('这是一份没有保存的草稿')
 await p.locator('.si-tabs [role="tab"]', { hasText: '元数据' }).click()
 await p.waitForTimeout(200)
@@ -391,7 +391,7 @@ await p.locator('[data-video-prompt-panel] button', { hasText: '取消' }).click
 const vidFold = (id) => p.locator(`[data-section="${id}"]`)
 const vidMeta = async () => (await vidFold('videoSettings').locator('.fold-meta').innerText()).trim()
 check('出片设置默认折叠', (await vidFold('videoSettings').evaluate((el) => el.dataset.open)) === 'false')
-check('运动提示词默认折叠', (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'false')
+check('镜头参数默认折叠', (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'false')
 check(
   '提示词面板默认展开',
   (await p.locator('[data-video-prompt-panel]').evaluate((el) => el.dataset.open)) === 'true',
@@ -406,9 +406,13 @@ check(
 )
 const vpBadge = (await p.locator('.vp-badge').innerText()).trim()
 check(
-  '提示词来源徽章为语义层或脚本拼装',
-  ['语义层', '脚本拼装', '已手改'].some((t) => vpBadge.includes(t)),
+  '提示词来源徽章为正文 / 已手改 / 旧版本正文',
+  ['正文', '已手改', '旧版本正文'].some((t) => vpBadge.includes(t)),
   vpBadge,
+)
+check(
+  '运镜与语义区块不含正文输入框',
+  (await p.locator('textarea[placeholder^="只写动作与运镜"]').count()) === 0,
 )
 
 const meta480 = await vidMeta()
@@ -444,7 +448,7 @@ await p.waitForTimeout(250)
 check('出片设置可收起', (await vidFold('videoSettings').evaluate((el) => el.dataset.open)) === 'false')
 await vidFold('motionPrompt').locator('.fold-head').click()
 await p.waitForTimeout(250)
-check('运动提示词可展开', (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'true')
+check('镜头参数可展开', (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'true')
 await p.reload({ waitUntil: 'networkidle' })
 await p.waitForTimeout(1600)
 await selectShot('S01')
@@ -455,7 +459,7 @@ check(
   (await vidFold('videoSettings').evaluate((el) => el.dataset.open)) === 'false',
 )
 check(
-  '重新挂载后运动提示词仍展开',
+  '重新挂载后镜头参数仍展开',
   (await vidFold('motionPrompt').evaluate((el) => el.dataset.open)) === 'true',
 )
 

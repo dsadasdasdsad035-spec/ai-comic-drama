@@ -129,7 +129,7 @@ export function TransitionNativeAudioBlock({
         原生音频
         <i
           className="hint-inline"
-          title="合并相邻两镜台词解析说话人；首期仅单说话人。请求时长在开启时会抬高到大于 4 秒。"
+          title="合并相邻两镜台词解析说话人；首期仅单说话人。请求时长在开启时会抬高到至少 4 秒。"
         >
           视频自带声音
         </i>

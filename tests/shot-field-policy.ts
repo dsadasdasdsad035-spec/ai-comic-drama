@@ -203,6 +203,34 @@ async function main() {
     )
   })
 
+  await check('agent 策略不含 video_prompt：正文只能经 submit_prompts 写', () => {
+    assert.ok(
+      !(SHOT_FIELD_POLICY.agent as readonly string[]).includes('video_prompt'),
+      'agent 策略不该直接写 video_prompt，必须走 prompts-v1',
+    )
+    assert.ok(
+      (SHOT_IMPORT_FIELDS as readonly string[]).includes('video_prompt'),
+      'video_prompt 必须仍可经文件导入写回',
+    )
+  })
+
+  await check('handEdited 含 video_prompt 时合并保留人工正文', () => {
+    const locked = {
+      ...OLD,
+      video_prompt: '人工写的出片正文',
+      handEdited: ['video_prompt'],
+    } as unknown as ProjectShot
+    const incoming = {
+      id: 'E01-S01',
+      no: 'S01',
+      video_prompt: '模型重新生成的新正文',
+    } as unknown as ProjectShot
+    const r = mergeShotsDraft([locked], [incoming], 1, 'merge', 'agent')
+    const s = r.shots[0] as unknown as Record<string, unknown>
+    assert.equal(s.video_prompt, '人工写的出片正文', '手改锁必须回填人工正文')
+    assert.deepEqual(s.handEdited, ['video_prompt'])
+  })
+
   await check('不同集的镜头不受影响', () => {
     const other = { id: 'E02-S01', episode: 2, no: 'S01', desc: '别的集' } as ProjectShot
     const r = mergeShotsDraft([OLD, other], [INCOMING], 1, 'merge', 'agent')

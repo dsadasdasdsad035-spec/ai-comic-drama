@@ -1,7 +1,7 @@
 /**
  * 出片秒数 UI 验收（shot-outgoing-duration）：
  * 1) 出片设置内可直接改镜头时长，并显示「镜头 Xs → 请求 Ys（原因）」
- * 2) 原生音频 4.2s 镜头：请求 5s、面板摘要同值、生成视频按钮可用
+ * 2) 原生音频 4.2s 镜头：请求 4s（4 秒合法，不再抬到 5）、面板摘要同值、生成视频按钮可用
  * 3) 改出片设置时长后，「运镜与语义」同一字段同步
  * 跑法：node verify-shot-outgoing-duration.mjs
  */
@@ -126,25 +126,25 @@ try {
   check('时长输入初值为 4.2', (await secondsInput.inputValue()) === '4.2', await secondsInput.inputValue())
 
   const note = await page.locator('[data-shot-request-seconds]').innerText()
-  check('显示镜头时长与抬升后的请求秒数', note.includes('镜头 4.2s → 请求 5s'), note)
-  check('说明原生音频门槛', note.includes('原生音频须大于 4 秒'), note)
+  check('显示镜头时长与四舍五入后的请求秒数', note.includes('镜头 4.2s → 请求 4s'), note)
+  check('不再出现「原生音频须大于 4 秒」', !note.includes('大于 4 秒'), note)
 
   const settingsMeta = await settingsFold.locator('.fold-meta').innerText()
-  check('折叠摘要用请求秒数', settingsMeta.includes('5s'), settingsMeta)
+  check('折叠摘要用请求秒数', settingsMeta.includes('4s'), settingsMeta)
 
   const panelText = await page.locator('[data-video-prompt-panel]').first().innerText()
-  check('出片面板摘要用请求秒数', panelText.includes('镜头 4.2s → 请求 5s'), panelText.split('\n')[0])
+  check('出片面板摘要用请求秒数', panelText.includes('镜头 4.2s → 请求 4s'), panelText.split('\n')[0])
 
   const genBtn = page.locator('[data-shot-footer] button', { hasText: /生成视频|重出视频/ })
   check('原生音频 4.2s 仍可出片', !(await genBtn.isDisabled()))
 
   const chipText = await page.locator('.si-chips').innerText()
-  check('成片 chip 用请求秒数', chipText.includes('成片 5s'), chipText.replace(/\n/g, ' '))
+  check('成片 chip 用请求秒数', chipText.includes('成片 4s'), chipText.replace(/\n/g, ' '))
 
   await secondsInput.fill('6')
   await page.waitForTimeout(700)
   const noteAfter = await page.locator('[data-shot-request-seconds]').innerText()
-  check('改时长后请求秒数同步为 6s', noteAfter.includes('6s') && !noteAfter.includes('请求 5s'), noteAfter)
+  check('改时长后请求秒数同步为 6s', noteAfter.includes('6s') && !noteAfter.includes('请求 4s'), noteAfter)
 
   const motionFold = page.locator('[data-section="motionPrompt"]')
   if ((await motionFold.getAttribute('data-open')) !== 'true') {

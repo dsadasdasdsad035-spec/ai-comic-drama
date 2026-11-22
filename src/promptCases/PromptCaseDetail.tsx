@@ -112,7 +112,7 @@ function ShotRow({ shot }: { shot: PromptCaseShot }) {
                 <pre>{shot.keyframePrompt || '(空)'}</pre>
               </div>
               <div className="pc-shot-block">
-                <b>运动提示词</b>
+                <b>出片正文</b>
                 <pre>{shot.videoPrompt || '(空)'}</pre>
               </div>
             </>
@@ -255,9 +255,9 @@ export default function PromptCaseDetail({
             className="btn"
             disabled={!canApply || busy || !excerptPrompt()}
             onClick={() => onApply('videoPrompt')}
-            title="写入选中镜头的运动提示词"
+            title="写入选中镜头的出片正文"
           >
-            运动提示词
+            出片正文
           </button>
         </div>
         <p className="board-hint">

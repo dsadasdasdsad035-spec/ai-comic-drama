@@ -221,13 +221,13 @@ export type ShotData = {
   lexiconRefUrl?: string
   /** 为 true 时把 lexiconRefUrl 作为运镜 reference_video（默认关，不占画布连线） */
   motionLexiconAsRef?: boolean
-  /** 出片用的运动提示词（Seedance）：只写动作/运镜，不重复静态外观 */
+  /** 出片正文主体：整段逐字提交给视频模型。人工编辑后记入 `handEdited`，模型重写不覆盖 */
   videoPrompt?: string
-  /** 手改的出片提示词快照；有值时整段逐字发送，不再自动拼装 */
+  /** 退役字段：升级前保存的手改快照，只读优先出片，不再写入新值 */
   videoPromptOverride?: VideoPromptOverride
-  /** 九段模板渲染的完整出片正文（优先于语义层 video_prompt） */
+  /** 九段模板渲染的存档正文；不参与出片，仅供读取与导出 */
   videoPromptRendered?: string
-  /** 模板渲染元数据（指纹对齐 buildShotVideoRequest.fingerprint） */
+  /** 模板渲染元数据（历史存档，不驱动任何界面警告） */
   videoPromptRenderMeta?: VideoPromptRenderMeta
   /** 最近一次成功出片的提示词来源 */
   videoMeta?: VideoMeta

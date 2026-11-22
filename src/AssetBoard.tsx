@@ -71,7 +71,7 @@ type Props = {
   missing: Set<string>
   /** <img> 加载失败时补记缺失 */
   onImageMissing: (ref: string) => void
-  /** 提示词案例「应用到当前镜头」：写画面或运动提示词 */
+  /** 提示词案例「应用到当前镜头」：写画面提示词或出片正文 */
   onApplyPromptCase?: (caseId: string, slot: 'prompt' | 'videoPrompt') => void
   /** 侧栏「素材」徽标：设定卡条数 */
   projectAspect?: string

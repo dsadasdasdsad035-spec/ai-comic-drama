@@ -682,6 +682,8 @@ export type ProjectShot = {
   /** 成片视频（本地相对路径，如 /videos/xxx.mp4） */
   clip?: string
   handEdited?: string[]
+  /** 一次性解锁信号：本次提交要从 handEdited 移除的字段。不落库，只用于「交由模型重写」这类动作 */
+  handEditedUnlocked?: string[]
   orphan?: boolean
   /** 手动附加参考图（场景图/道具图），生成画面时随角色图一起做多图参考 */
   refExtras?: string[]

@@ -188,8 +188,8 @@ export function shotStatusChips(input: {
   candidateCount: number
   hasVideo: boolean
   seconds: number
-  promptSource?: 'auto' | 'override'
-  promptStale?: boolean
+  promptSource?: 'video_prompt' | 'legacy-override'
+  promptHandEdited?: boolean
   nativeAudio?: boolean
   refCount?: number
 }): ShotStatusChip[] {
@@ -219,13 +219,13 @@ export function shotStatusChips(input: {
     {
       id: 'prompt',
       label: `提示词 ${
-        input.promptSource === 'override'
-          ? input.promptStale
-            ? '旧快照'
-            : '已手改'
-          : '自动'
+        input.promptSource === 'legacy-override'
+          ? '旧版本'
+          : input.promptHandEdited
+            ? '已手改'
+            : '正文'
       }`,
-      tone: input.promptStale ? 'warn' : 'muted',
+      tone: input.promptSource === 'legacy-override' ? 'warn' : 'muted',
       tab: 'outgoing',
     },
     {

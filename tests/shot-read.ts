@@ -406,7 +406,7 @@ async function main() {
     const tool = set.byName.get('read_shot_video_prompt')!
 
     const one = (await tool.invoke({ no: 'S01' })) as { text: string; source: string; stale: boolean }
-    assert.deepEqual([one.text, one.source], ['手改正文', 'override'])
+    assert.deepEqual([one.text, one.source], ['手改正文', 'legacy-override'])
 
     const two = (await tool.invoke({ no: 'S02' })) as { text: string; source: string }
     assert.deepEqual([two.text, two.source], ['语义层正文', 'video_prompt'])
@@ -420,10 +420,10 @@ async function main() {
     const four = (await tool.invoke({ no: 'S04' })) as { text: null; source: string; note: string }
     assert.equal(four.text, null, '拼不出来就给 null，不给近似结果')
     assert.equal(four.source, 'blocked')
-    assert.match(four.note, /submit_prompts|运动提示词/, '要给出补写入口')
+    assert.match(four.note, /submit_prompts|本次出片提示词/, '要给出补写入口')
   })
 
-  await check('read_shot_video_prompt 手改正文逐字返回，指纹不一致标 stale', async () => {
+  await check('read_shot_video_prompt 存量快照逐字返回且不再标 stale', async () => {
     const text = '  首行\n第二行  结尾空格  '
     const shots: Shot[] = [
       {
@@ -445,9 +445,11 @@ async function main() {
     ]
     const { set } = makeSet({ shots })
     const tool = set.byName.get('read_shot_video_prompt')!
-    const stale = (await tool.invoke({ no: 'S01' })) as { text: string; stale: boolean }
+    const stale = (await tool.invoke({ no: 'S01' })) as { text: string; stale: boolean; source: string }
     assert.equal(stale.text, text, '逐字一致：不做 trim')
-    assert.equal(stale.stale, true)
+    // 单一正文模型下不再有「快照过期」：指纹变化不产生 stale
+    assert.equal(stale.stale, false)
+    assert.equal(stale.source, 'legacy-override')
 
     const fresh = (await tool.invoke({ no: 'S02' })) as { stale: boolean }
     assert.equal(fresh.stale, false)
