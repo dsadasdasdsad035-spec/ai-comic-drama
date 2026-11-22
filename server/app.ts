@@ -1353,6 +1353,28 @@ type VisionPick = {
 
 /** 视觉模型解析：只认 cap=vision，显式 key 找不到就报错，不静默换文本模型 */
 /**
+ * 按「上游模型名」解析视觉模型。
+ *
+ * 外部 CLI 只知道自己配置里写的模型名（如 `gpt-5.1`），拿不到应用内的模型键。
+ * 这里按 `entry.model` 精确匹配，同一模型名出现在多个渠道时优先默认视觉渠道，
+ * 其次第一个可用的。匹配不到再退到键匹配，避免兼容性问题。
+ */
+function pickVisionModelByUpstreamName(name: string): VisionPick {
+  const wanted = String(name || '').trim()
+  if (!wanted) return { error: 'model-key-not-found' }
+  const s = getAppSettings()
+  const usable = (m: ModelEntry) => modelHasCap(m, 'vision') && isRunnableModel(m)
+  const candidates = s.models.filter((m) => usable(m) && String(m.model || '') === wanted)
+  if (!candidates.length) {
+    // 也可能传的就是应用内键
+    return pickVisionModel(wanted)
+  }
+  const defaultKey = String(s.defaults.vision || '')
+  const entry = candidates.find((m) => m.key === defaultKey) || candidates[0]
+  return { entry, provider: s.providers.find((p) => p.id === entry.provider) }
+}
+
+/**
  * 反推面板的候选视觉模型。
  *
  * 只列声明了 vision 且 runnable 的模型，标出是否等于默认路由的选择。
@@ -3711,10 +3733,25 @@ export function createAppHandler({ root }: { root: string }) {
           }
           try {
             const body = await readJson(req)
-            const picked = pickVisionModel(String(body?.modelKey || '').trim())
+            /**
+             * 模型解析顺序：`modelKey`（应用内键）→ `model`（上游模型名）→ 默认。
+             *
+             * 外部 CLI 只会在请求体里发 `model`（rea-video 就是 `{"model": "gpt-5.1"}`），
+             * 只认 `modelKey` 会静默回退到默认模型——用户在下拉里选的模型形同虚设，
+             * 日志里却显示着他选的那个名字。
+             */
+            const wantedModel = String(body?.model || '').trim()
+            const picked = wantedModel
+              ? pickVisionModelByUpstreamName(wantedModel)
+              : pickVisionModel(String(body?.modelKey || '').trim())
             if (picked.error || !picked.entry) {
               res.statusCode = 400
-              res.end(JSON.stringify({ ok: false, message: `视觉模型不可用：${picked.error || ''}` }))
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  message: `视觉模型不可用：${picked.error === 'model-key-not-found' ? `找不到模型「${wantedModel || body?.modelKey || ''}」` : picked.error || ''}`,
+                }),
+              )
               return
             }
             const entry = picked.entry
@@ -3741,8 +3778,23 @@ export function createAppHandler({ root }: { root: string }) {
             })
             const raw = await r.text()
             if (!r.ok) {
-              res.statusCode = 502
-              res.end(JSON.stringify({ ok: false, message: `${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}` }))
+              /**
+               * 透传上游状态码而不是一律 502：限流（429）与上游 5xx 是「可以再试」
+               * 的信号，压成 502 会让调用方分不清该重试还是该改配置。
+               * 429/5xx 时给一句人话，其余保留原文摘要便于排查。
+               */
+              const retryable = r.status === 429 || r.status >= 500
+              res.statusCode = retryable ? r.status : 502
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  kind: retryable ? 'upstream-busy' : 'upstream-error',
+                  message: retryable
+                    ? `视觉模型服务暂时不可用（${provider.label || provider.kind} ${r.status}），稍后重试；本次未产出视觉判定`
+                    : `${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}`,
+                  detail: raw.slice(0, 300),
+                }),
+              )
               return
             }
             // SSE → 普通 JSON：rea-video 只认非流式响应

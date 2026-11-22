@@ -223,6 +223,37 @@ try {
     `${(health.visionModels || []).length} 个${(health.visionModels || []).length ? '' : '（未配置视觉模型时为空）'}`,
   )
 
+  // VLM 中转：必须按请求体里的 model 路由，不能静默回退到默认模型
+  // （外部 CLI 只发 model，不发应用内 modelKey）
+  const vlmProbe = async (model, withToken = true) => {
+    const r = await fetch(`${server.base}/api/prompt-cases/vlm-proxy/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(withToken ? { 'x-studio-internal': INTERNAL_TOKEN } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'reply with exactly: ok' }],
+        max_tokens: 2000,
+      }),
+    })
+    return { status: r.status, ...(await r.json().catch(() => ({}))) }
+  }
+  const visionNames = (health.visionModels || []).map((m) => m.model).filter(Boolean)
+  if (OFFLINE_ONLY) {
+    note('VLM 中转路由', '--offline')
+  } else if (!visionNames.length) {
+    note('VLM 中转路由', '未配置视觉模型')
+  } else {
+    const ok = await vlmProbe(visionNames[0])
+    check('中转按 model 路由成功', ok.status === 200 && Boolean(ok.choices), `${visionNames[0]} → ${ok.status}`)
+    const bad = await vlmProbe('definitely-not-a-model')
+    check('未知模型名被明确拒绝', bad.status === 400 && /找不到模型/.test(bad.message || ''), (bad.message || '').slice(0, 40))
+    const noTok = await vlmProbe(visionNames[0], false)
+    check('中转拒绝无令牌请求', noTok.status === 403, String(noTok.status))
+  }
+
   const noVideo = await post(`${server.base}/api/prompt-cases/reverse`, {
     project: PROJECT,
     videoUrl: '/project-assets/smoke/missing.mp4',
