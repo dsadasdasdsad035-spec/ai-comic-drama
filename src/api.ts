@@ -73,12 +73,13 @@ function textStreamError(message: string, kind: string): Error & { kind?: string
 function proxyErrorMessage(j: ProxyErrBody, fallback: string): string {
   const base = j.message || fallback
   if (j.kind === 'billing') {
-    if (j.code === 'user_insufficient_credits') return `${base}（平台积分不足，请到左侧「账号与充值」充值）`
+    if (j.code === 'user_insufficient_credits') return `${base}（平台积分不足，请到「账号与充值」页充值）`
     if (j.code === 'upstream_apimart_balance') return `${base}（上游 APIMart 余额不足，请联系管理员）`
     return base
   }
   if (j.kind === 'auth') {
-    if (j.code === 'login_required') return `${base}（请先在左侧「账号与充值」登录）`
+    // 账号页是全局视图（项目大厅顶栏进入），不再位于项目侧栏
+    if (j.code === 'login_required') return `${base}（请先在「账号与充值」页登录）`
     if (j.code === 'email_unverified') return `${base}（请先完成邮箱验证）`
     if (j.code) return base
     return `${base}（密钥无效）`

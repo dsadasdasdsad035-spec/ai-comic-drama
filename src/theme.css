@@ -17318,6 +17318,58 @@ button.crumb:hover {
   outline: none;
 }
 
+/* 大厅顶栏的账号入口：与搜索框同高，未登录时是明确的「登录」动作 */
+.hub-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--bg-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.hub-account span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-account:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--text);
+}
+
+.hub-account[data-logged-in='true'] {
+  color: var(--text);
+}
+
+.hub-account:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/*
+ * 账号页是独立整屏（不套 AppShell），没有面包屑。返回大厅的按钮放在标题左侧，
+ * 与标题之间留一道竖线做分组，避免看起来像标题的一部分。
+ */
+.acct-back {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  padding-left: 6px;
+  padding-right: 10px;
+}
+
+.acct-page .st-topbar {
+  align-items: center;
+}
+
 .hub-body {
   flex: 1 1 auto;
   min-height: 0;

@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Settings as SettingsIcon,
   Sparkles,
-  UserRound,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -13,12 +12,15 @@ import {
  * 项目视图导航的唯一清单。
  *
  * 左栏、路由白名单、快捷键顺序都读这里，避免三处各写一份列表。
- * 注意：这里不包含「提示词」与「镜头表」——首帧/视频提示词只在画布的单镜
- * Inspector 与画布内 Agent 里编辑。
+ * 注意：
+ * - 这里不包含「提示词」与「镜头表」——首帧/视频提示词只在画布的单镜
+ *   Inspector 与画布内 Agent 里编辑。
+ * - 这里不包含「账号与充值」——账号是跨项目的身份，不是项目视图。
+ *   它是全局路由 `#/account`，入口在项目大厅顶栏，见 shell/route.ts。
  */
-export type ViewId = 'overview' | 'creative' | 'assets' | 'script' | 'board' | 'settings' | 'account'
+export type ViewId = 'overview' | 'creative' | 'assets' | 'script' | 'board' | 'settings'
 
-export type NavGroupId = 'main' | 'create' | 'system' | 'account'
+export type NavGroupId = 'main' | 'create' | 'system'
 
 export type NavItem = {
   id: ViewId
@@ -34,7 +36,6 @@ export type NavItem = {
 export const NAV_GROUPS: Array<{ id: NavGroupId; label: string }> = [
   { id: 'main', label: '项目' },
   { id: 'create', label: '创作' },
-  { id: 'account', label: '账户' },
   { id: 'system', label: '系统' },
 ]
 
@@ -44,7 +45,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'assets', label: '素材', group: 'create', icon: Images, crumb: '素材', countKey: 'assets' },
   { id: 'script', label: '剧本', group: 'create', icon: FileText, crumb: '剧本' },
   { id: 'board', label: '画布', group: 'create', icon: Clapperboard, crumb: '画布' },
-  { id: 'account', label: '账号与充值', group: 'account', icon: UserRound, crumb: '账号与充值' },
   { id: 'settings', label: '设置', group: 'system', icon: SettingsIcon, crumb: '设置' },
 ]
 

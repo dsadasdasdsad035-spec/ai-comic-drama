@@ -27,7 +27,12 @@ async function billJson<T>(path: string, init?: RequestInit): Promise<T> {
   return j as T
 }
 
-export async function fetchAuthMe(): Promise<{ user: BillingUser | null; wallet?: BillingWallet }> {
+export async function fetchAuthMe(): Promise<{
+  user: BillingUser | null
+  wallet?: BillingWallet
+  /** 计费开关：前端闸门据此与服务端 guard 用同一边界判断是否要求登录 */
+  billingEnabled?: boolean
+}> {
   return billJson('/api/auth/me')
 }
 

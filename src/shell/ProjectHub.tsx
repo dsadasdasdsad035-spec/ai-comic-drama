@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Search, Sparkles } from 'lucide-react'
+import { LogIn, Search, Sparkles, UserRound } from 'lucide-react'
 import type { ProjectSummary } from '../api'
 import ProjectMenu from '../project/ProjectMenu'
 import NewProjectDialog from '../project/NewProjectDialog'
@@ -15,6 +15,12 @@ export type ProjectHubProps = {
   onCreate: (name: string) => void | Promise<void>
   onDeleted: (names: string[]) => void | Promise<void>
   themeToggle: ReactNode
+  /** 账号入口：账号是跨项目身份，入口放在大厅而不是项目侧栏 */
+  onOpenAccount: () => void
+  /** 当前登录邮箱；未登录为 null（按钮文案据此变化） */
+  accountEmail: string | null
+  /** 会话是否已确定；未知时按钮禁用，避免「登录」闪一下就变成邮箱 */
+  accountReady: boolean
 }
 
 /**
@@ -30,6 +36,9 @@ export default function ProjectHub({
   onCreate,
   onDeleted,
   themeToggle,
+  onOpenAccount,
+  accountEmail,
+  accountReady,
 }: ProjectHubProps) {
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
@@ -91,6 +100,23 @@ export default function ProjectHub({
           onDeleted={onDeleted}
           variant="bar"
         />
+        {/*
+         * 账号入口。账号是跨项目身份，所以它在大厅而不是项目侧栏；
+         * 会话未知时禁用而不是显示「登录」——否则已登录用户每次冷启动
+         * 都会看到按钮文案从「登录」跳成邮箱。
+         */}
+        <button
+          type="button"
+          className="hub-account"
+          data-hub-account
+          data-logged-in={accountEmail ? 'true' : 'false'}
+          onClick={onOpenAccount}
+          disabled={!accountReady}
+          title={accountEmail ? '账号与充值' : '登录账号'}
+        >
+          {accountEmail ? <UserRound size={14} aria-hidden /> : <LogIn size={14} aria-hidden />}
+          <span>{accountEmail || '登录'}</span>
+        </button>
         {themeToggle}
       </header>
 

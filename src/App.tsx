@@ -40,6 +40,7 @@ import OverviewPage from './shell/OverviewPage'
 import { EPISODE_VIEWS, type ViewId } from './shell/nav'
 import {
   ROUTE_EVENT,
+  accountHash,
   clearLastView,
   hubHash,
   navigate,
@@ -62,6 +63,7 @@ import NodeContextMenu from './NodeContextMenu'
 import EdgeContextMenu from './EdgeContextMenu'
 import Settings, { type SettingsInitialSection } from './Settings'
 import AccountPage from './account/AccountPage'
+import { useSession } from './account/useSession'
 import IntakeDialog from './intake/IntakeDialog'
 import WorkbenchBar from './WorkbenchBar'
 import { auditKeyframePrompt } from './promptAudit'
@@ -539,7 +541,49 @@ function Shell() {
   const [route, setRoute] = useState<Route>(() => parseHash(
     typeof window === 'undefined' ? '#/' : window.location.hash,
   ))
-  const view: ViewId = route.kind === 'project' ? route.view : 'overview'
+  /**
+   * 全局登录态。闸门与大厅账号入口都读它，不再各自请求。
+   * 只探会话与计费开关，不拉充值/流水（见 useSession 的注释）。
+   */
+  const session = useSession()
+  /**
+   * 登录闸门：在路由生效**之前**派生，而不是用 effect 回退。
+   *
+   * effect 回退会先渲染一帧目标视图、触发项目加载与画布水合，再跳走——用户
+   * 会看到画布闪一下，还白跑一轮项目请求。派生是同步的，目标视图从未挂载。
+   *
+   * 三个「不拦」的条件都是刻意的：
+   * - 计费关闭：与服务端 guard 的 skipBilling 一致，本地 BYOK 不该被拦；
+   * - 会话未知（loading / 探测失败）：宁可不拦，也不要把「后端挂了」
+   *   渲染成「请登录」；
+   * - 设置页：里面是本地 Key 与模型配置，属配置能力，且填 Key 恰恰是
+   *   BYOK 免登录路径的前提。
+   */
+  const gated = useMemo<Route>(() => {
+    if (route.kind !== 'project') return route
+    if (!session.billingEnabled) return route
+    if (session.status !== 'anonymous') return route
+    if (route.view === 'settings') return route
+    return { kind: 'account', next: projectHash(route.project, route.view) }
+  }, [route, session.billingEnabled, session.status])
+  const view: ViewId = gated.kind === 'project' ? gated.view : 'overview'
+
+  /**
+   * 被闸门拦下时把地址栏同步成账号页。
+   *
+   * 只改渲染不改地址的话，地址栏还停在 `#/p/x/board`：用户刷新会再被拦一次
+   * （无害但费解），分享出去的链接也会把别人带到同一个死路。用 replace 而
+   * 不是 push —— 被拦这件事不该在历史里留下一条可回退的死链。
+   */
+  useEffect(() => {
+    if (gated.kind !== 'account') return
+    if (route.kind !== 'project') return
+    const want = accountHash(gated.next)
+    if (window.location.hash === want) return
+    window.history.replaceState(null, '', want)
+  }, [gated, route.kind])
+
+
   /**
    * 创意入口开关（灰度）：关掉时左栏不显示「创意」，直接打开旧的创意 URL 也回落到概览。
    * 值来自服务端设置而不是构建时常量，所以切换后刷新即可生效，不必重启应用。
@@ -630,10 +674,48 @@ function Shell() {
     if (studioEnabled || route.kind !== 'project' || route.view !== 'creative') return
     navigate(projectHash(route.project, 'overview'))
   }, [studioEnabled, route])
-  /** 项目名是路由的派生值：大厅没有当前项目，因此不会去拉项目详情 */
-  const projectName = route.kind === 'project' ? route.project : ''
+  /**
+   * 项目名是路由的派生值：大厅没有当前项目，因此不会去拉项目详情。
+   * 读 gated 而不是 route：被闸门拦下时不该为一个进不去的项目白跑加载与写回。
+   */
+  const projectName = gated.kind === 'project' ? gated.project : ''
   const { collapsed: railCollapsed, toggle: toggleRail } = useRailCollapsed(view)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
+  /** 项目列表的实时引用：登录回跳要校验目标项目还在不在，不能读闭包里的旧值 */
+  const projectsRef = useRef<ProjectSummary[]>([])
+  projectsRef.current = projects
+  /**
+   * 登录成功后回跳。
+   *
+   * `next` 已在 parseHash / accountHash 里校验过只可能是合法项目路由，
+   * 这里再兜一层：万一指向已删除的项目，落回大厅而不是白屏。
+   */
+  const handleLoggedIn = useCallback(
+    (target?: string) => {
+      void session.refresh()
+      if (!target) {
+        replaceWithHub()
+        return
+      }
+      navigate(target)
+      const name = /^#\/p\/([^/]+)/.exec(target)?.[1]
+      if (!name) return
+      let decoded = ''
+      try {
+        decoded = decodeURIComponent(name)
+      } catch {
+        replaceWithHub()
+        return
+      }
+      // 项目列表还没回来时不能判「不存在」，等一轮再校验
+      window.setTimeout(() => {
+        const list = projectsRef.current
+        if (list.length === 0) return
+        if (!list.some((p) => p.name === decoded)) replaceWithHub()
+      }, 600)
+    },
+    [session],
+  )
   /** 是否已经成功拉过一次项目列表：大厅用它区分「加载中」与「一个项目都没有」 */
   const [projectsLoaded, setProjectsLoaded] = useState(false)
   /** 已经加载完成的项目；只有它等于 projectName 时才允许写回 */
@@ -3957,7 +4039,7 @@ function Shell() {
 
   return (
     <CanvasCtx.Provider value={api}>
-      {route.kind === 'hub' ? (
+      {gated.kind === 'hub' ? (
         <div className="app">
           <ProjectHub
             projects={projects}
@@ -3966,8 +4048,26 @@ function Shell() {
             onCreate={applyProjectCreated}
             onDeleted={applyProjectDeletion}
             themeToggle={<ThemeToggle />}
+            onOpenAccount={() => navigate(accountHash())}
+            accountEmail={session.user?.email ?? null}
+            accountReady={session.status !== 'loading'}
           />
         </div>
+      ) : gated.kind === 'account' ? (
+        /*
+         * 账号页不套 AppShell：未登录时左栏所有项目菜单都不可用，留着外壳
+         * 只会提供一堆点不动的入口。它自己是一整屏，见 AccountPage。
+         */
+        <AccountPage
+          next={gated.next}
+          session={session}
+          onLoggedIn={handleLoggedIn}
+          onBackToHub={replaceWithHub}
+          toast={(m) => {
+            setToast(m)
+            window.setTimeout(() => setToast(''), 2800)
+          }}
+        />
       ) : (
       <AppShell
         view={view}
@@ -4031,13 +4131,6 @@ function Shell() {
             // 创意会话整体交给宿主：这里只放容器与错误态
             <StudioFrame projectName={projectName} />
           ) : null
-        ) : view === 'account' ? (
-          <AccountPage
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 2800)
-            }}
-          />
         ) : view === 'settings' ? (
           <Settings
             currentProjectName={projectName}
