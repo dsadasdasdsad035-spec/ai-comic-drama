@@ -136,6 +136,20 @@ export default function Material3dWorkbench({
   selectedIdRef.current = selectedId
   inspectorOpenRef.current = inspectorOpen
 
+  /**
+   * toast 的稳定引用。
+   *
+   * App 里 toast 是内联箭头函数（`toast={(m) => { setToast(m); ... }}`），每次父组件
+   * 重渲染都会换新身份 —— 而父组件每次提示出现/消失都会重渲染。若建引擎、灌场景的
+   * effect 依赖它，就会跟着重跑：卸载时销毁引擎、再建一个新引擎。清理函数里
+   * `await hideInspector()` 之后 hostRef 已经指向新 host，于是把刚建好的引擎一并杀掉，
+   * 画面停在最后一帧之后永久全黑（实测一条 toast 就重建一次引擎）。
+   *
+   * 引擎只应随组件挂载/卸载启停，所以这里把 toast 钉在 ref 上。
+   */
+  const toastRef = useRef(toast)
+  toastRef.current = toast
+
   const designOptions = useMemo(
     () => designs.filter((d) => d.image && !missing.has(String(d.image).split('?')[0])),
     [designs, missing],
@@ -232,9 +246,11 @@ export default function Material3dWorkbench({
       })
     } catch (e) {
       if (isCancelled()) return
-      toast((e as Error).message || '同步场景失败')
+      toastRef.current((e as Error).message || '同步场景失败')
     }
-  }, [sceneDoc, designs, missing, toast])
+    // 不依赖 toast：它每次父组件重渲染都换身份，会让整场对象（含全部 GLB）
+    // 无谓地清空重灌。清空是异步加载的前置步骤，灌到一半出错就只剩黑场。
+  }, [sceneDoc, designs, missing])
 
   /**
    * 相机 -> 面板。订阅 onBeforeRender 而不是 onViewMatrixChanged：
@@ -399,24 +415,34 @@ export default function Material3dWorkbench({
       })
       .catch((e) => {
         if (!alive) return
-        toast((e as Error).message || '三维引擎启动失败')
+        toastRef.current((e as Error).message || '三维引擎启动失败')
       })
     return () => {
       alive = false
       meshSyncGenRef.current += 1
-      void hideInspector().finally(() => {
-        gizmoRef.current?.dispose()
-        gizmoRef.current = null
-        try {
-          hostRef.current?.dispose()
-        } catch {
-          /* 视口可能已失去 WebGL 上下文 */
-        }
-        hostRef.current = null
-        setReady(false)
-      })
+      // 先认领「要销毁的就是这一次挂载建出来的 host」，再等异步的 hideInspector：
+      // 否则期间若有新 host 写入 hostRef，会被这里误杀。
+      const dying = hostRef.current
+      hostRef.current = null
+      const dyingScene = dying?.scene ?? null
+      void hideInspector()
+        .catch(() => {
+          /* 检视器未加载过 */
+        })
+        .finally(() => {
+          gizmoRef.current?.dispose()
+          gizmoRef.current = null
+          try {
+            // 只清理仍属于本场景的检视器宿主，不碰下一个实例的
+            if (dyingScene && dyingScene.isDisposed) return
+            dying?.dispose()
+          } catch {
+            /* 视口可能已失去 WebGL 上下文 */
+          }
+        })
+      setReady(false)
     }
-  }, [toast])
+  }, [])
 
   useEffect(() => {
     const host = hostRef.current

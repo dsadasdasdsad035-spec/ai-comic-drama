@@ -101,7 +101,18 @@ export async function createGizmoSelection(
   },
 ): Promise<GizmoSelectionController> {
   const BABYLON = await import('@babylonjs/core')
-  const gizmoManager = new BABYLON.GizmoManager(scene)
+  /**
+   * 显式给 GizmoManager 自己的 utility layer / keepDepth layer。
+   *
+   * 默认构造走 `UtilityLayerRenderer.DefaultUtilityLayer`，它读全局的
+   * `EngineStore.LastCreatedScene`。工作台重建引擎的那一瞬间（旧场景已 dispose、新场景
+   * 刚建）这个全局值可能是 null，于是 `new UtilityLayerRenderer(null)` 抛
+   * 「Cannot read properties of null (reading 'getEngine')」，Gizmo 整体不可用。
+   * 显式传本场景的 layer 既绕开全局单例，也避免和画布其它 Babylon 场景共享 gizmo 层。
+   */
+  const utilityLayer = new BABYLON.UtilityLayerRenderer(scene)
+  const keepDepthLayer = new BABYLON.UtilityLayerRenderer(scene)
+  const gizmoManager = new BABYLON.GizmoManager(scene, 1, utilityLayer, keepDepthLayer)
   gizmoManager.positionGizmoEnabled = true
   gizmoManager.rotationGizmoEnabled = true
   gizmoManager.scaleGizmoEnabled = true

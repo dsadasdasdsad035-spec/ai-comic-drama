@@ -119,12 +119,15 @@ try {
       objId,
       { timeout: 10000 },
     )
-    await page.locator('[data-m3d-transform-panel] input').first().fill('2.5')
-    await page.locator('[data-m3d-transform-panel] input').first().blur()
-    await page.waitForResponse(
+    // 先挂等待再触发 blur：onSceneChange 是 immediate 保存，请求在 blur 里同步发出，
+    // 先 fill/blur 后 waitForResponse 会错过响应（实测稳定超时）。
+    const transformSaved = page.waitForResponse(
       (r) => r.url().includes('/api/project') && r.request().method() === 'POST' && r.ok(),
       { timeout: 20000 },
     )
+    await page.locator('[data-m3d-transform-panel] input').first().fill('2.5')
+    await page.locator('[data-m3d-transform-panel] input').first().blur()
+    await transformSaved
     const afterTransform = readProject(root, PROJ)?.material3dScenes?.[0]?.objects?.[0]
     check('数字改 transform 已落库', afterTransform?.transform?.position?.x === 2.5, String(afterTransform?.transform?.position?.x))
     await page.locator('[data-m3d-rail="shot"]').click()
@@ -149,10 +152,12 @@ try {
     )
     await page.reload({ waitUntil: 'networkidle' })
     const afterReloadObj = readProject(root, PROJ)?.material3dScenes?.[0]?.objects?.[0]
+    // 比的是刚才 UI 写入的 2.5，而不是注入时的初始值 transform.position.x（1.25）：
+    // 上一项断言已经把 x 改成 2.5 并落库，拿旧值来比对必然不等。
     check(
       '刷新后 transform 仍在',
-      afterReloadObj?.transform?.position?.x === transform.position.x,
-      JSON.stringify(afterReloadObj?.transform),
+      afterReloadObj?.transform?.position?.x === 2.5,
+      JSON.stringify(afterReloadObj?.transform?.position),
     )
   }
 } finally {
