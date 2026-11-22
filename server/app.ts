@@ -1117,14 +1117,19 @@ function stripKeyState(p: Provider): Provider {
 
 /** 设置页状态条只需要“有没有 Key”，不回传 Key 本身 */
 function withKeyStatus(s: AppSettings): AppSettings {
+  // 先算一遍环境兜底：设置页据此提示「这一项由 .env 提供」，
+  // 否则表单显示「关闭」而运行时却可用，用户无从判断该改哪一边。
+  const envApplied = applyCreativeEnvDefaults(normalizeCreativeSettings(s.creative), process.env)
   return {
     ...s,
     providers: s.providers.map((p) => ({ ...p, keyAvailable: Boolean(providerKey(p)) })),
     // 创意配置里的 DTK Key 同样只回「有没有」
     creative: redactCreativeSettings(normalizeCreativeSettings(s.creative)) as AppSettings['creative'],
+    // 环境兜底来源作为独立字段回传，不混进 creative（它会被整体回写进设置库）
+    creativeFromEnv: envApplied.fromEnv,
     // 在线素材来源的 Key 也不回传原文
     stock: redactStockSettings(s.stock) as AppSettings['stock'],
-  }
+  } as AppSettings
 }
 
 /**

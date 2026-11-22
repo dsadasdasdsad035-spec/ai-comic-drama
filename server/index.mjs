@@ -20,6 +20,7 @@ import { randomBytes } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { MEDIA_DIRS, ensureMediaDir, ensureStateDir, resolveStaticRoot } from './paths.mjs'
 import { applyDefaultProjectsDir } from './default-projects-dir.mjs'
+import { loadDotEnv } from './load-env.mjs'
 import { dbPath, listProjects, resolveRoot } from './db.mjs'
 import { assertNodeVersion } from './runtime-version.mjs'
 import { createCreativeHost } from './creative-host.mjs'
@@ -52,9 +53,15 @@ import { bumpStudioProjectRevision, readProjectRevision } from './studio-project
 // 运行时基线：不达标直接退出，避免界面起来了但创意会话永远打不开
 if (!assertNodeVersion()) process.exit(1)
 
+const ROOT = path.resolve(import.meta.dirname, '..')
+
+// 仓库根 `.env` 先入进程环境：桌面端与 `npm run dev` 都不经过 docker compose，
+// 不加载的话 DTK / yt-dlp 的兜底配置（以及任何直接读 process.env 的渠道）都是空的。
+// 已存在的环境变量优先，不会被文件覆盖。
+loadDotEnv(ROOT)
+
 applyDefaultProjectsDir()
 
-const ROOT = path.resolve(import.meta.dirname, '..')
 const DIST_DIR = path.join(ROOT, 'dist')
 const STATIC_ROOT = resolveStaticRoot(ROOT)
 /** 随代码分发的只读资产目录（构建时 copyPublicDir 已关闭，需要单独兜底） */

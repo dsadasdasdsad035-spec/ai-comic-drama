@@ -87,6 +87,39 @@ export async function assertPublicUrl(raw) {
   return u
 }
 
+/**
+ * DTK 服务地址的「容器内 / 宿主机」双栈兜底。
+ *
+ * 同一个 `.env` 要同时给两种形态用，但两边的回环写法不同：
+ * - 容器里的应用访问宿主机的 DTK：`host.docker.internal:8000`
+ * - 宿主机上的桌面端 / `npm run dev`：`127.0.0.1:8000`
+ *
+ * `host.docker.internal` 在宿主机上没有 DNS（实测 macOS 直接 ENOTFOUND），
+ * 所以宿主机形态下报错文案会变成「连不上 DTK」这种看不出原因的话。
+ * 这里在首次连接失败且主机名是 `host.docker.internal` 时替换成 `127.0.0.1` 重试一次；
+ * 反过来（容器里写了 127.0.0.1）不做猜测 —— 容器里也确实连不上，需要用户改配置。
+ *
+ * @param {string} base 用户配置的 DTK 地址
+ * @returns {string[]} 依次尝试的地址（去重、保持用户配置优先）
+ */
+export function dtkBaseCandidates(base) {
+  const trimmed = String(base || '').trim().replace(/\/+$/, '')
+  if (!trimmed) return []
+  const out = [trimmed]
+  try {
+    const u = new URL(trimmed)
+    if (u.hostname === 'host.docker.internal') {
+      const alt = new URL(trimmed)
+      alt.hostname = '127.0.0.1'
+      const altStr = alt.toString().replace(/\/+$/, '')
+      if (!out.includes(altStr)) out.push(altStr)
+    }
+  } catch {
+    /* 地址不合法时交给调用方报格式错误 */
+  }
+  return out
+}
+
 function writeFileChunk(dir, name, bytes) {
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, name)
@@ -270,19 +303,25 @@ const dtkAdapter = {
     return { ok: true }
   },
   async ingest(input, ctx, cfg = {}) {
-    const base = String(cfg.baseUrl || '').replace(/\/+$/, '')
+    const configuredBase = String(cfg.baseUrl || '').replace(/\/+$/, '')
     const url = String(input.url || '')
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json' }
-    if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`
+    if (cfg.apiKey) {
+      // DTK 的 REST 契约是 X-API-Key；早期版本还认 Authorization: Bearer，
+      // 两个都带上，换版本时不必再改这里。
+      headers['X-API-Key'] = String(cfg.apiKey)
+      headers.Authorization = `Bearer ${cfg.apiKey}`
+    }
 
-    const readEnvelope = async (pathname, init) => {
-      let r
-      try {
-        r = await fetch(`${base}${pathname}`, { ...init, headers, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
-      } catch (e) {
-        const msg = e?.message || String(e)
-        throw new Error(`连不上 DTK（${base}）：${msg}`)
-      }
+    // 首次连接时确定用哪个地址：容器内写 host.docker.internal、宿主机写 127.0.0.1。
+    // 网络层失败（连不上）才换下一个候选；HTTP 错误与信封错误是服务本身的答复，
+    // 换地址重试只会把真实原因掩盖成「全都连不上」。
+    const bases = dtkBaseCandidates(configuredBase)
+    let base = ''
+    const baseErrors = []
+
+    /** 解析统一信封：{success, data, error, meta}；错误码稳定、文案可本地化 */
+    const readBody = async (pathname, r) => {
       const text = await r.text()
       let body
       try {
@@ -290,7 +329,6 @@ const dtkAdapter = {
       } catch {
         throw new Error(`DTK ${pathname} 返回的不是 JSON（HTTP ${r.status}）`)
       }
-      // 统一信封：{success, data, error, meta}；错误码稳定、文案可本地化
       if (body?.success === false) {
         const code = body?.error?.code || ''
         const msg = body?.error?.message || ''
@@ -298,6 +336,28 @@ const dtkAdapter = {
       }
       if (!r.ok) throw new Error(`DTK ${pathname} 返回 HTTP ${r.status}：${text.slice(0, 200)}`)
       return body
+    }
+
+    const readEnvelope = async (pathname, init) => {
+      for (const candidate of base ? [base] : bases) {
+        let r
+        try {
+          r = await fetch(`${candidate}${pathname}`, {
+            ...init,
+            headers,
+            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+          })
+        } catch (e) {
+          baseErrors.push(`${candidate} → ${e?.cause?.code || e?.message || String(e)}`)
+          continue
+        }
+        base = candidate
+        return readBody(pathname, r)
+      }
+      throw new Error(
+        `连不上 DTK：${baseErrors.join('；') || '未配置服务地址'}。` +
+          '容器部署写 host.docker.internal，本机桌面端 / npm run dev 写 127.0.0.1。',
+      )
     }
 
     // 用 ?wait= 让服务端帮我们等，避免自己轮询；

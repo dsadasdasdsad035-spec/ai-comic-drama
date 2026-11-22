@@ -167,7 +167,15 @@ try {
     '推荐一个好物 https://v.douyin.com/ui-flow-test/ 打开看看',
   )
   await page.locator('[data-asset-ingest-submit]').click()
-  await page.waitForTimeout(2500)
+  // 不要用固定 sleep：这一趟要真去公网拉 10MB fixture，机器/网络慢一点就超过任意固定值。
+  // 等列表真的多出一张卡（或超时），失败时再给出当时的数量。
+  await page
+    .waitForFunction(
+      (n) => document.querySelectorAll('[data-asset-video-card]').length > n,
+      listBefore,
+      { timeout: 60000 },
+    )
+    .catch(() => {})
   const listAfter = await page.locator('[data-asset-video-card]').count()
   check('UI 口令下载后列表增加', listAfter > listBefore, `${listBefore}→${listAfter}`)
 

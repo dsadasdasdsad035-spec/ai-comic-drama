@@ -109,7 +109,10 @@ export function StockPane({ wb }: Props) {
               <option value="off">关闭</option>
               <option value="on">启用</option>
             </select>
-            <em>需要自己部署 DTK（Postgres + Redis + 浏览器容器）</em>
+            <em>
+              需要自己部署 DTK（Postgres + Redis + 浏览器容器）
+              {wb.creativeFromEnv?.dtk ? '；当前地址与 Key 由 .env 提供，运行时已生效' : ''}
+            </em>
           </label>
           <div className="st-field">
             <span>适配器状态</span>

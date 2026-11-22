@@ -3,6 +3,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { applyDefaultProjectsDir } from './server/default-projects-dir.mjs'
+import { loadDotEnv } from './server/load-env.mjs'
 import { createAppHandler, runServerShutdownTasks, runServerStartupTasks } from './server/app.ts'
 
 /**
@@ -12,6 +13,8 @@ function appServerPlugin(): Plugin {
   return {
     name: 'storyboard-app-server',
     configureServer(server) {
+      // dev 也不经过 docker compose：不加载 .env 时靠 process.env 兜底的配置（DTK / yt-dlp）全空
+      loadDotEnv(server.config.root)
       applyDefaultProjectsDir()
       const root = server.config.root
       runServerStartupTasks(root)

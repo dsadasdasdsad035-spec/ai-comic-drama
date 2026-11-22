@@ -77,7 +77,19 @@ fs.mkdirSync(PROJECTS, { recursive: true })
 const child = spawn(
   process.execPath,
   [path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'), '--port', String(PORT), '--strictPort'],
-  { cwd: ROOT, env: { ...process.env, SB_PROJECTS_DIR: PROJECTS }, stdio: 'ignore' },
+  {
+    cwd: ROOT,
+    // 本机 .env 可能已经配了 DTK/yt-dlp（开发机常态）。本用例验证的是「没有任何外部
+    // 服务配置」时的默认状态，所以显式把这两项压空——已存在的空值不会被 .env 覆盖。
+    env: {
+      ...process.env,
+      SB_PROJECTS_DIR: PROJECTS,
+      DTK_BASE_URL: '',
+      DTK_API_KEY: '',
+      YTDLP_BIN: '',
+    },
+    stdio: 'ignore',
+  },
 )
 
 const api = async (p, init) => {

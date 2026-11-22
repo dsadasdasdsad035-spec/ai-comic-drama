@@ -1480,6 +1480,8 @@ export type AppSettings = {
   customVoices?: CustomVoice[]
   /** 创意会话：摄取、能力绑定、分析档位与成本闸门；缺省用默认值 */
   creative?: CreativeSettings
+  /** 只读派生：创意摄取里哪些项由 .env 兜底（服务端计算，保存时忽略） */
+  creativeFromEnv?: { dtk?: boolean; ytdlp?: boolean }
   /** 在线素材来源：启用、Key（只回 hasApiKey）与可选 Base URL；缺省全部关闭 */
   stock?: StockSettings
   apiKey: string
