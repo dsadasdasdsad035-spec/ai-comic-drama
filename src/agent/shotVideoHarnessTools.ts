@@ -65,7 +65,8 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
     name: 'set_shot_video_options',
     description:
       '【平台内置】写入某镜出片相关开关：表情参考、原生音频、工位（生图/出片）。' +
-      '至少提供一个字段；开启原生音频前会校验与画布相同的就绪条件（单说话人、有效音色等）。',
+      '至少提供一个字段；只有当前模型不支持原生音频才会拒绝，' +
+      '缺音色样本或说话人无法判定时仍会开启，出片阶段降级为静音视频并给出说明。',
     schema: z
       .object({
         no: z.string().min(1).describe('镜号，例如 S03'),
@@ -133,24 +134,29 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
             // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
             preferredCharacter: shot.audio_ref?.character,
           })
-          if (!caps?.supported || !ref.ok) {
-            return {
-              ok: false,
-              error: ref.ok ? '当前模型不支持原生音频' : ref.reason,
-            }
+          // 模型不支持原生音频才是硬错误；音色样本缺失只降级，不拒绝设置
+          if (!caps?.supported) {
+            return { ok: false, error: '当前模型不支持原生音频' }
           }
           patch.audio_mode = 'native'
-          patch.audio_ref = { character: ref.ref.character, url: ref.ref.url }
-          patch.audio_meta = {
-            fingerprint: nativeAudioFingerprint({
-              modelKey: model?.key,
-              audioRef: ref.ref,
-              dialogue,
-            }),
-            modelKey: model?.key ?? '',
-            createdAt: new Date().toISOString(),
+          if (ref.ok) {
+            patch.audio_ref = { character: ref.ref.character, url: ref.ref.url }
+            patch.audio_meta = {
+              fingerprint: nativeAudioFingerprint({
+                modelKey: model?.key,
+                audioRef: ref.ref,
+                dialogue,
+              }),
+              modelKey: model?.key ?? '',
+              createdAt: new Date().toISOString(),
+            }
+            notes.push('原生音频：开')
+          } else {
+            // 与面板一致：偏好记为 native，出片时由拼装器降级并给 warn
+            patch.audio_ref = undefined
+            patch.audio_meta = undefined
+            notes.push(`原生音频：开（无音色参考，出片会降级为静音：${ref.reason}）`)
           }
-          notes.push('原生音频：开')
         }
       }
 

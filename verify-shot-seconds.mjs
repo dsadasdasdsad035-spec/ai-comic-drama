@@ -114,5 +114,53 @@ const silent = lib.buildShotVideoRequest({
 })
 check('3s 静音 + Seedance 2.5 请求 4s', silent.seconds === 4 && silent.secondsFloor?.kind === 'model-min')
 
+/**
+ * 没有可用音色样本时也必须能出片。
+ *
+ * 音色参考只是音轨的增强项：拿不到样本不该把「出片」整条堵死，用户点了按钮
+ * 就该得到视频。这里钉住降级语义——不阻塞、走普通出片模式（没有 audio 附件）、
+ * 给出 warn，且时长按普通出片算（不再为不存在的原生音轨抬到 5s）。
+ */
+const noSample = { ...characters[0], voiceSample: undefined }
+const buildNoSample = (seconds) =>
+  lib.buildShotVideoRequest({
+    data: shotData(seconds),
+    nodeId: 'n1',
+    nodes: [{ id: 'n1', type: 'shot', position: { x: 0, y: 0 }, data: shotData(seconds) }],
+    characters: [noSample],
+    model,
+    resolution: '720p',
+  })
+
+const degraded = buildNoSample(4.2)
+check('无音色样本不阻塞出片', degraded.blocking.length === 0, degraded.blocking.map((b) => b.message).join(';'))
+check('无音色样本降级为普通出片', degraded.mode !== 'native', degraded.mode)
+check('无音色样本不带 audio 附件', degraded.audio === null)
+check(
+  '无音色样本给出 warn 说明',
+  degraded.warnings.some((w) => w.code === 'native-degraded'),
+  degraded.warnings.map((w) => w.code).join(','),
+)
+check('降级后时长不再按原生音频抬到 5s', degraded.seconds === 4, String(degraded.seconds))
+
+// 完全没有角色卡时，音色缺失本身仍然不阻塞出片。
+// 注意这里不能用 shotData()：它带着 refIds: ['char-陈默']，角色清空后
+// 「找不到参考图」会正常阻塞——那是参考图的问题，与音色无关。
+const bareShot = { ...shotData(6), refIds: [] }
+const noChars = lib.buildShotVideoRequest({
+  data: bareShot,
+  nodeId: 'n1',
+  nodes: [{ id: 'n1', type: 'shot', position: { x: 0, y: 0 }, data: bareShot }],
+  characters: [],
+  model,
+  resolution: '720p',
+})
+check(
+  '零角色卡时音色缺失不阻塞',
+  !noChars.blocking.some((b) => b.code === 'native-unavailable'),
+  noChars.blocking.map((b) => b.code).join(','),
+)
+check('零角色卡降级为普通出片', noChars.mode !== 'native' && noChars.audio === null)
+
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)

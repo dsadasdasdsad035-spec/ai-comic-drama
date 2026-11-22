@@ -58,16 +58,29 @@ export default function NativeAudioPanel({
       audioRef: data.audioRef,
       dialogue,
     })
-  const canEnable = Boolean(caps?.supported && ref.ok)
-  const reason = !caps?.supported
-    ? '当前模型没有通过音频参考探测'
-    : ref.ok
-      ? ''
-      : ref.reason
+  /**
+   * 开关只看模型能力，不看音色样本。
+   *
+   * 以前这里要求 `ref.ok`，等于「没有角色音色样本就没法开原生音轨」。但样本
+   * 缺失只是拿不到音色锚点，不该拦住出片：用户点了按钮就该拿到视频。缺样本时
+   * 仍然记录 native 偏好，出片时 `buildShotVideoRequest` 会降级成普通出片并给出
+   * 说明——降级决策只在一处，面板不重复实现一套。
+   */
+  const canEnable = Boolean(caps?.supported)
+  const reason = !caps?.supported ? '当前模型没有通过音频参考探测' : ''
+  /** 已开原生音轨但拿不到样本：说清这次会怎么出片 */
+  const degradedHint = Boolean(mode === 'native' && !ref.ok)
+  /** 降级原因；degradedHint 为真时 ref 一定不 ok */
+  const degradedReason = ref.ok ? '' : ref.reason
 
   const toggle = (next: 'off' | 'native') => {
     if (next === 'native') {
-      if (!canEnable || !ref.ok) return
+      if (!canEnable) return
+      // 有样本才记音色参考；没有样本也照样开，出片时降级为静音视频
+      if (!ref.ok) {
+        onPatch({ audioMode: 'native', audioRef: undefined, audioMeta: undefined })
+        return
+      }
       onPatch({
         audioMode: 'native',
         audioRef: ref.ref,
@@ -106,10 +119,17 @@ export default function NativeAudioPanel({
           />
           使用 Seedance 原生声音
         </label>
-        {mode === 'native' && <span className="lip-badge">已在 video 请求中开启</span>}
+        {mode === 'native' && !degradedHint && <span className="lip-badge">已在 video 请求中开启</span>}
+        {degradedHint && <span className="lip-badge warn">将降级为静音视频</span>}
         {stale && <span className="lip-badge warn">参考或台词变了，需重生成</span>}
       </div>
       {reason && <div className="lip-hint">{reason}</div>}
+      {degradedHint && (
+        <div className="lip-hint" data-native-degraded>
+          没有可用的音色参考：{degradedReason}。出片仍会继续，只是不带原生音轨；
+          想带上声音，去对应角色卡生成 2-30 秒音色样本即可。
+        </div>
+      )}
       {!reason && silentShot && ref.ok && (
         <div className="lip-hint">
           这一镜没有台词，音色参考取角色「{ref.character}」的样本（只约束音色，不产生对白）。

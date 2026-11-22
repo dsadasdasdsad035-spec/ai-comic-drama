@@ -216,23 +216,34 @@ export function buildShotVideoRequest(input: {
   })
   /** 唯一时长来源：取整、模型下限与原生音频门槛都在这里解出，后续一律读 seconds */
   const shotSeconds = Number(d.seconds) || 0
-  const { seconds, floor: secondsFloor } = shotRequestSeconds({
-    seconds: shotSeconds,
-    modelId: input.model?.model,
-    nativeAudio: nativeMode,
-    nativeAudioMinVideoSeconds: nativeMode ? audioCaps?.minVideoSeconds : undefined,
-  })
+  /** 先按原生音频门槛算一次：音色参考解析要用到它（原生须严格大于模型下限） */
+  const nativeSeconds = nativeMode
+    ? shotRequestSeconds({
+        seconds: shotSeconds,
+        modelId: input.model?.model,
+        nativeAudio: true,
+        nativeAudioMinVideoSeconds: audioCaps?.minVideoSeconds,
+      })
+    : null
   const nativeRef = nativeMode
     ? nativeAudioRef({
         dialogue,
         performance: d.performance,
         characters: input.characters,
         caps: audioCaps,
-        seconds,
+        seconds: nativeSeconds?.seconds ?? shotSeconds,
         // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
         preferredCharacter: d.audioRef?.character,
       })
     : null
+  /**
+   * 音色参考没解析出来时按**普通出片**重算时长：原生音频的「下限 + 1」抬升
+   * 只在真的要带音轨时才成立，降级后还按 5 秒请求等于白等一段没有声音的时长。
+   */
+  const { seconds, floor: secondsFloor } =
+    nativeMode && nativeRef?.ok
+      ? (nativeSeconds ?? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model }))
+      : shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
 
   const { refs: candidates, missing, expressionNote } = collectShotComposerRefs({
     data: d,
@@ -268,7 +279,28 @@ export function buildShotVideoRequest(input: {
   /** 运镜文案只来自条目自身的 motion_note，不再从几何数据推导 */
   const liveMotionNote = d.motionNote || ''
 
-  const mode: VideoRequestMode = nativeMode
+  /**
+   * 音色参考解析不出来时**不阻塞出片**：原生音轨只是增强项，用户点了按钮就该
+   * 得到视频。没有可用样本就降级成普通出片（`generate_audio: false`），并在
+   * warnings 里说明这次没带原生声音。
+   *
+   * 上游约束（server/apimart.mjs）：`generate_audio` 必须同时给 `audio_url`，
+   * 所以「开音轨但无参考」不是合法组合，只能整条降级。
+   */
+  const nativeDegraded = Boolean(nativeMode && nativeRef && !nativeRef.ok)
+  const audio: VideoAttachment | null =
+    nativeMode && nativeRef?.ok
+      ? {
+          slot: 'audio',
+          index: 1,
+          url: nativeRef.url,
+          label: `${nativeRef.character} 音色`,
+          purpose: '音色',
+          character: nativeRef.character,
+        }
+      : null
+
+  const mode: VideoRequestMode = nativeMode && !nativeDegraded
     ? 'native'
     : primaryVideo
       ? 'video'
@@ -295,17 +327,6 @@ export function buildShotVideoRequest(input: {
         source: 'asset',
       }
     : null
-  const audio: VideoAttachment | null =
-    nativeMode && nativeRef?.ok
-      ? {
-          slot: 'audio',
-          index: 1,
-          url: nativeRef.url,
-          label: `${nativeRef.character} 音色`,
-          purpose: '音色',
-          character: nativeRef.character,
-        }
-      : null
 
   const fingerprint = fingerprintOf({
     data: d,
@@ -385,8 +406,13 @@ export function buildShotVideoRequest(input: {
       message: `${invalidNeighbor.label}：${invalidNeighbor.reason}`,
     })
   }
-  if (nativeMode && nativeRef && !nativeRef.ok) {
-    blocking.push({ code: 'native-unavailable', level: 'error', message: nativeRef.reason })
+  // 拿不到音色参考不阻塞：降级成普通出片，只提示这次没带原生音轨
+  if (nativeDegraded && nativeRef && !nativeRef.ok) {
+    warnings.push({
+      code: 'native-degraded',
+      level: 'warn',
+      message: `本次不带原生音轨出片：${nativeRef.reason}`,
+    })
   }
   if (nativeMode && primaryVideo) {
     blocking.push({
@@ -402,7 +428,8 @@ export function buildShotVideoRequest(input: {
       message: '在画布上为分镜连线角色或图片素材，或勾选运镜库视频参考 / 连线视频素材后再出片',
     })
   }
-  if (nativeMode && refs.length === 0) {
+  // 降级出片按普通路径处理，不再要求「原生音频专用」的连线参考图
+  if (nativeMode && !nativeDegraded && refs.length === 0) {
     blocking.push({
       code: 'native-no-image',
       level: 'error',
