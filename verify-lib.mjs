@@ -102,7 +102,9 @@ export async function openBoardEpisode(page, name, opts = {}) {
   const target = await openProject(page, name, 'board', rest)
   const cards = page.locator('.board-ep-card')
   if (await cards.count()) {
-    const card = episode == null ? cards.first() : page.locator(`.board-ep-card[data-board-ep="${episode}"]`)
+    // 分集卡的属性是 data-board-ep-card（BoardEpisodeGrid 里定义的），
+    // 旧写法 data-board-ep 匹配不到任何卡片，脚本会误报「没有第 N 集」
+    const card = episode == null ? cards.first() : page.locator(`.board-ep-card[data-board-ep-card="${episode}"]`)
     if (!(await card.count())) throw new Error(`没有第 ${episode} 集：可选 ${await cards.count()} 集`)
     await card.click()
     await page.locator('.wb-bar-detail').waitFor({ state: 'visible', timeout: 15000 })
