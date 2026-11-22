@@ -296,10 +296,40 @@ async function runReverse() {
   check('缺省档位为快速', rea.normalizeTier('') === 'quick' && rea.normalizeTier('nope') === 'quick')
 
   // 视觉模型环境
-  const envOk = rea.vlmEnvFrom({ model: 'doubao-vision' }, { baseUrl: 'https://ark.example.com/api/v3/', apiKey: 'sk-test' })
-  check('注入三个视觉环境变量', envOk.configured && envOk.env.REA_VLM_MODEL === 'doubao-vision' && envOk.env.REA_VLM_BASE_URL === 'https://ark.example.com/api/v3')
+  // 视觉环境变量只经中转注入；直连路径已移除（见下面的回归断言）
+  const envOk = rea.vlmEnvFrom(
+    { model: 'doubao-vision' },
+    { baseUrl: 'https://ark.example.com/api/v3/', apiKey: 'sk-test' },
+    { localProxy: 'http://127.0.0.1:5400/api/prompt-cases/vlm-proxy', internalToken: 'tok' },
+  )
+  check(
+    '注入视觉环境变量',
+    envOk.configured && envOk.env.REA_VLM_MODEL === 'doubao-vision' && envOk.env.REA_VLM_BASE_URL.endsWith('/vlm-proxy/v1'),
+    envOk.env.REA_VLM_BASE_URL,
+  )
   const envMissing = rea.vlmEnvFrom({ model: 'x' }, { baseUrl: '', apiKey: '' })
   check('缺配置时不注入', envMissing.configured === false && Object.keys(envMissing.env).length === 0)
+
+  /**
+   * 回归：没有中转令牌时**不得**静默退回直连。
+   *
+   * 直连有两条实测走不通的路径（APIMart 只回 SSE、子进程无代理），
+   * 静默降级会让用户看到「VLM 调用失败」而不是「视觉复核不可用」。
+   * 之前还因此让「已选模型」的请求被误判成「未配置模型」。
+   */
+  const noToken = rea.vlmEnvFrom({ model: 'x' }, { baseUrl: 'https://api.example.com', apiKey: 'sk-x' }, {})
+  check('无内部令牌时不退回直连', noToken.configured === false, JSON.stringify(noToken))
+  check('无令牌给出可读原因', noToken.reason === 'no-internal-token', noToken.reason)
+
+  // 有令牌时必须走中转，且 base 带 /v1 后缀（rea-video 会再拼 /chat/completions）
+  const viaProxy = rea.vlmEnvFrom(
+    { model: 'gemini-3.5-flash' },
+    { baseUrl: 'https://api.example.com', apiKey: 'sk-x' },
+    { localProxy: 'http://127.0.0.1:5400/api/prompt-cases/vlm-proxy', internalToken: 'tok' },
+  )
+  check('有令牌时走中转', viaProxy.configured === true && viaProxy.viaProxy === true)
+  check('中转发往 /v1（子进程会拼 /chat/completions）', viaProxy.env.REA_VLM_BASE_URL.endsWith('/v1'), viaProxy.env.REA_VLM_BASE_URL)
+  check('子进程只拿到内部令牌', viaProxy.env.REA_VLM_API_KEY === 'tok')
 
   // 造一个假的源视频文件
   const videoPath = path.join(root, 'sample.mp4')

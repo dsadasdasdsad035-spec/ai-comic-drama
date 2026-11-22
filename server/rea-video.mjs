@@ -352,17 +352,15 @@ export function vlmEnvFrom(entry, provider, opts = {}) {
     }
   }
 
-  const apiKey = String(provider?.apiKey || provider?.key || '').trim()
-  if (!baseUrl || !apiKey) return { env: {}, configured: false }
-  return {
-    env: {
-      REA_VLM_BASE_URL: baseUrl.replace(/\/+$/, ''),
-      REA_VLM_API_KEY: apiKey,
-      REA_VLM_MODEL: model,
-    },
-    configured: true,
-    viaProxy: false,
-  }
+  /**
+   * 没有中转令牌时**不再退回直连**。
+   *
+   * 直连有两条实测走不通的路径（SSE 未归一、子进程无代理），静默降级只会让用户
+   * 看到一个「VLM 调用失败」的迷雾错误。这里明确返回未配置，由调用方给出
+   * 「视觉复核不可用」的可读原因，而不是假装配好了。
+   */
+  void baseUrl
+  return { env: {}, configured: false, reason: 'no-internal-token' }
 }
 
 function appendTail(job, chunk) {

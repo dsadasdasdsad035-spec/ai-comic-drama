@@ -241,6 +241,14 @@ let studioProject = ''
 const STUDIO_GATEWAY_KEY = String(process.env.SB_STUDIO_GATEWAY_KEY || '').trim() || randomBytes(24).toString('base64url')
 /** 工具桥内部令牌：宿主插件持有，浏览器拿不到（它不在任何页面里出现） */
 const STUDIO_INTERNAL_TOKEN = String(process.env.SB_STUDIO_INTERNAL_TOKEN || '').trim() || randomBytes(24).toString('base64url')
+/**
+ * 把令牌写回进程环境。
+ *
+ * 宿主插件与工具桥拿到的是常量，但应用 handler（server/app.ts）只能读 process.env。
+ * 不写回时那边永远是空串，表现为「内部接口 403」与「没有可用的视觉模型」
+ * —— 后者尤其难查：用户明明选好了模型，却被告知去设置里配置。
+ */
+if (!process.env.SB_STUDIO_INTERNAL_TOKEN) process.env.SB_STUDIO_INTERNAL_TOKEN = STUDIO_INTERNAL_TOKEN
 /** @type {import('./studio-tool-bridge.mjs').StudioToolBridge | null} */
 let toolBridge = null
 /** 宿主最近一次注册工具的结果；宿主日志不进应用日志，这里留一份可查的 */

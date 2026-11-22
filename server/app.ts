@@ -3889,8 +3889,16 @@ export function createAppHandler({ root }: { root: string }) {
                     }
                   : { env: {}, configured: false, modelLabel: '' }
               if (body?.useVlm !== false && !vlm.configured) {
+                // 分情况给原因：模型的 Key 与内部令牌是两件事，混成一句话会误导用户
+                const reason = !picked.entry
+                  ? picked.error === 'model-key-not-found'
+                    ? `找不到视觉模型「${wantedKey}」，它可能已被删除或未启用`
+                    : '设置里还没有启用的视觉模型'
+                  : !picked.provider
+                    ? `模型「${picked.entry.label || picked.entry.model}」指向的渠道不存在`
+                    : '视觉复核通道未就绪（内部令牌缺失）'
                 res.statusCode = 400
-                res.end(JSON.stringify({ ok: false, message: '没有可用的视觉模型：先在设置里配置一个，或关闭视觉复核' }))
+                res.end(JSON.stringify({ ok: false, kind: 'vlm-unavailable', message: `反推无法开启视觉复核：${reason}` }))
                 return
               }
               const job = await createReverseJob(root, {

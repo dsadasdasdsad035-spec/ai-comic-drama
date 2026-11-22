@@ -8,6 +8,10 @@ public/generated/
 public/videos/
 public/voices/
 public/exports/
+# 反推案例的证据帧与报告副本（运行时产物，随媒体根备份）
+public/prompt-cases/
+# rea-video 拆解作业目录（含源视频副本与产物）
+.rea-jobs/
 
 # 市场安装 / 上传的技能包（可写状态根；dev 模式下回退仓库根）
 installed-skills/
