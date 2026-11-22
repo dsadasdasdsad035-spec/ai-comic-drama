@@ -130,6 +130,8 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
             characters: readCharacters(project.characters),
             caps,
             seconds,
+            // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
+            preferredCharacter: shot.audio_ref?.character,
           })
           if (!caps?.supported || !ref.ok) {
             return {

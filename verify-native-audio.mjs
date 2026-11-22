@@ -14,8 +14,12 @@ const entry = path.join(tmp, 'entry.ts')
 const abs = (p) => JSON.stringify(path.join(root, p))
 fs.writeFileSync(entry, [`export * from ${abs('src/nativeAudio.ts')}`, `export * from ${abs('src/videoSeconds.ts')}`, `export * from ${abs('server/apimart.mjs')}`].join('\n') + '\n')
 const bundle = path.join(tmp, 'bundle.mjs')
+// esbuild 把 CJS 依赖（undici）打进 ESM 时，`__require` 在纯 ESM 里没有兜底，
+// 运行时报 "Dynamic require of node:assert is not supported"。这里给它一个真的
+// require，否则脚本连打包产物都 import 不进来，纯函数断言根本跑不到。
+const banner = "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);"
 execFileSync(path.join(root, 'node_modules', '.bin', 'esbuild'), [
-  entry, '--bundle', '--platform=node', '--format=esm', '--log-level=error', `--outfile=${bundle}`,
+  entry, '--bundle', '--platform=node', '--format=esm', '--log-level=error', `--banner:js=${banner}`, `--outfile=${bundle}`,
 ])
 const lib = await import(bundle)
 
@@ -47,6 +51,23 @@ r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample:
 check('失效样本禁用', !r.ok && r.reason.includes('失效'))
 r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample: { ...sample, seconds: 1.2 } }], caps, seconds: 5 })
 check('样本过短禁用', !r.ok && r.reason.includes('2-30'))
+
+// 无声镜：没有台词不等于不能用音色参考（音色只约束声音，不依赖台词）
+r = lib.nativeAudioRef({ dialogue: [], characters, caps, seconds: 5, preferredCharacter: '陈默' })
+check('无台词 + 已存角色可用', r.ok && r.character === '陈默', r.ok ? '' : r.reason)
+r = lib.nativeAudioRef({ dialogue: [], characters, caps, seconds: 5 })
+check('无台词无已选角色时取首个可用样本', r.ok && r.character === '陈默', r.ok ? '' : r.reason)
+r = lib.nativeAudioRef({ dialogue: [], characters: [], caps, seconds: 5 })
+check('无台词且无任何角色时给出样本指引', !r.ok && r.reason.includes('音色样本'), r.ok ? '' : r.reason)
+r = lib.nativeAudioRef({ dialogue: [], characters, caps, seconds: 5, preferredCharacter: '林岚' })
+check('已存角色不在角色库时明说找不到', !r.ok && r.reason.includes('找不到角色卡'), r.ok ? '' : r.reason)
+r = lib.nativeAudioRef({
+  dialogue: [{ speaker: '陈默', text: '' }],
+  characters,
+  caps,
+  seconds: 5,
+})
+check('空文本行不算说话人', r.ok && r.character === '陈默', r.ok ? '' : r.reason)
 
 const prompt = lib.nativeAudioPrompt('陈默', dialogue, true)
 check('提示词含逐字台词', prompt.includes('陈默说：“你来了。”'))

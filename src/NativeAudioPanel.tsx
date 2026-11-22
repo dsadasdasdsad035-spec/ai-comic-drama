@@ -3,6 +3,7 @@ import {
   nativeAudioFingerprint,
   nativeAudioRef,
   nativeAudioStale,
+  speakingNames,
   type AudioRefCapabilities,
 } from './nativeAudio'
 import type { CharacterSheet } from './characters'
@@ -43,8 +44,12 @@ export default function NativeAudioPanel({
     characters,
     caps,
     seconds: requestSeconds,
+    // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
+    preferredCharacter: data.audioRef?.character,
   })
   const mode = data.audioMode ?? 'off'
+  /** 无声镜不说话人都是空的，此时音色参考只能按角色卡兜底，界面要说清是谁 */
+  const silentShot = speakingNames(dialogue, data.performance).length === 0
   const refChanged = Boolean(mode === 'native' && ref.ok && data.audioRef?.url !== ref.url)
   const stale =
     refChanged ||
@@ -105,6 +110,11 @@ export default function NativeAudioPanel({
         {stale && <span className="lip-badge warn">参考或台词变了，需重生成</span>}
       </div>
       {reason && <div className="lip-hint">{reason}</div>}
+      {!reason && silentShot && ref.ok && (
+        <div className="lip-hint">
+          这一镜没有台词，音色参考取角色「{ref.character}」的样本（只约束音色，不产生对白）。
+        </div>
+      )}
       {mode === 'native' && ref.ok && (
         <div className="native-audio-ref">
           <div>

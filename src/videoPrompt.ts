@@ -229,6 +229,8 @@ export function buildShotVideoRequest(input: {
         characters: input.characters,
         caps: audioCaps,
         seconds,
+        // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
+        preferredCharacter: d.audioRef?.character,
       })
     : null
 
