@@ -1,0 +1,86 @@
+{
+  "source": {
+    "path": "input.mp4",
+    "duration": 9.6,
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "aspect_ratio": "9:16"
+  },
+  "engine": "seedance-2-5",
+  "shots": [
+    {
+      "id": "shot_001",
+      "index": 1,
+      "start": 0.0,
+      "end": 2.5,
+      "duration": 2.5,
+      "base": {
+        "label": "ai_video",
+        "label_zh": "AI 生成视频",
+        "confidence": 0.86,
+        "decided_by": "tools",
+        "evidence": ["24→30 重复帧，周期 4-6", "无传感器噪声"],
+        "probs": { "ai_video": 0.86, "cg_3d": 0.09, "live_action": 0.05 }
+      },
+      "review": {
+        "replication": {
+          "image_prompt": "Close-up, eye-level, a young woman in a red raincoat stands in a narrow alley at night",
+          "video_prompt": "The camera dollies in slowly 20 cm; she turns her head toward the lens",
+          "video_prompt_en": "Slow 20 cm dolly in as she turns her head toward the lens"
+        }
+      },
+      "assets": {
+        "sheet": "shots/shot_001.jpg",
+        "first_frame": "shots/shot_001_first.jpg",
+        "last_frame": "shots/shot_001_last.jpg"
+      }
+    },
+    {
+      "id": "shot_002",
+      "index": 2,
+      "start": 2.5,
+      "end": 6.0,
+      "duration": 3.5,
+      "base": {
+        "label": "live_action",
+        "label_zh": "实拍",
+        "confidence": 0.71,
+        "decided_by": "vlm",
+        "evidence": ["传感器噪声 σ>1", "手持抖动"],
+        "probs": { "live_action": 0.71, "ai_video": 0.2 }
+      },
+      "assets": {
+        "sheet": "shots/shot_002.jpg",
+        "first_frame": "shots/shot_002_first.jpg"
+      }
+    },
+    {
+      "id": "shot_003",
+      "index": 3,
+      "start": 6.0,
+      "end": 9.6,
+      "duration": 3.6,
+      "base": {
+        "label": "brand_new_kind",
+        "label_zh": "未知",
+        "confidence": 0.42,
+        "decided_by": "tools",
+        "evidence": []
+      },
+      "assets": {}
+    }
+  ],
+  "analysis": {
+    "vlm": {
+      "used": true,
+      "requested": true,
+      "status": "partial",
+      "model": "doubao-vision",
+      "errors": ["shot_003: video input unsupported"]
+    },
+    "ocr": { "used": false },
+    "seconds": 41.2
+  },
+  "cast": { "style": "冷青低饱和，雨夜霓虹" }
+}

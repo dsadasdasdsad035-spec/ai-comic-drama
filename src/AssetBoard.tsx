@@ -35,10 +35,11 @@ import { BoardListToolbar } from './BoardListToolbar'
 import { BOARD_LIST_PAGE_SIZE, designListMatch, useBoardListFilter } from './boardListFilter'
 import CharacterBoard, { type CharacterBoardProps } from './CharacterBoard'
 import { MATERIAL_TAB_CHARACTER_KEY } from './shell/route'
+import PromptCaseTab from './promptCases/PromptCaseTab'
 
 const LazyMaterial3dStudio = lazy(() => import('./material3d/Material3dStudio'))
 
-type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d'
+type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d' | 'prompt-cases'
 
 function readInitialMaterialTab(): MaterialTab {
   try {
@@ -70,6 +71,8 @@ type Props = {
   missing: Set<string>
   /** <img> 加载失败时补记缺失 */
   onImageMissing: (ref: string) => void
+  /** 提示词案例「应用到当前镜头」：写画面或运动提示词 */
+  onApplyPromptCase?: (caseId: string, slot: 'prompt' | 'videoPrompt') => void
   /** 侧栏「素材」徽标：设定卡条数 */
   projectAspect?: string
   onDesignCountChange?: (count: number) => void
@@ -94,6 +97,7 @@ export default function AssetBoard({
   onCanvasDesignIds,
   onPush,
   onAddAssetCard,
+  onApplyPromptCase,
   toast,
   price,
   missing,
@@ -470,12 +474,19 @@ export default function AssetBoard({
     [project?.assets],
   )
   const [studio3dCount, setStudio3dCount] = useState(0)
+  /** 提示词案例：条数来自案例 Tab 的回报（全局库，不随项目变） */
+  const [caseCount, setCaseCount] = useState(0)
+  const [caseLoading, setCaseLoading] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [reverseOpen, setReverseOpen] = useState(false)
+  /** 导入/反推成功后递增，触发案例列表重取 */
+  const [caseRefresh, setCaseRefresh] = useState(0)
   useEffect(() => {
     setStudio3dCount((project?.material3dScenes || []).length)
   }, [project?.material3dScenes])
   const shown = useMemo(
     () =>
-      tab === 'video' || tab === 'character' || tab === 'studio3d'
+      tab === 'video' || tab === 'character' || tab === 'studio3d' || tab === 'prompt-cases'
         ? []
         : designs.filter((d) => d.kind === tab),
     [designs, tab],
@@ -484,7 +495,7 @@ export default function AssetBoard({
     shown,
     designListMatch,
     BOARD_LIST_PAGE_SIZE,
-    tab === 'character' || tab === 'video' || tab === 'studio3d' ? 'scene' : tab,
+    tab === 'character' || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' ? 'scene' : tab,
   )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -518,13 +529,15 @@ export default function AssetBoard({
                 ? projectName
                   ? `场景三维 ${studio3dCount} 个`
                   : '场景三维 · 先选择项目'
+              : tab === 'prompt-cases'
+                ? `全局案例库 · ${caseCount} 条${caseLoading ? ' · 加载中' : ''}`
               : projectName
                 ? `场景 ${sceneCount} · 道具 ${propCount} · 项目级设定`
                 : '先选择项目'}
           </span>
         }
         settings={
-          lexiconOpen || tab === 'video' || tab === 'studio3d' ? null : tab === 'character' ? (
+          lexiconOpen || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' ? null : tab === 'character' ? (
             <>
               <StageModelSelect
                 stage={'character' as Stage}
@@ -598,6 +611,28 @@ export default function AssetBoard({
             >
               + 添加视频
             </button>
+          ) : tab === 'prompt-cases' ? (
+            <>
+              <button
+                type="button"
+                className="btn-ghost"
+                data-prompt-case-import-open
+                onClick={() => setImportOpen(true)}
+                title="从公开案例站导入提示词案例"
+              >
+                导入外部案例
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                data-prompt-case-reverse-open
+                disabled={!projectName}
+                onClick={() => setReverseOpen(true)}
+                title={projectName ? '把项目视频库里的片子反推成逐镜提示词' : '先在顶栏选择项目'}
+              >
+                反推我的片子
+              </button>
+            </>
           ) : (
           <>
             <button
@@ -688,6 +723,17 @@ export default function AssetBoard({
         <button className={lexiconOpen ? 'on' : ''} onClick={() => setLexiconOpen(true)}>
           镜头语言
         </button>
+        <button
+          type="button"
+          className={!lexiconOpen && tab === 'prompt-cases' ? 'on' : ''}
+          data-prompt-case-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('prompt-cases')
+          }}
+        >
+          提示词案例 <span>{caseCount}</span>
+        </button>
         <span className="asset-tabs-hint">
           {lexiconOpen
             ? '镜头语言：运镜参照与白模 · 浏览器编排请用「场景三维」Tab；成片 MP4 用创意 Blender 三维专家'
@@ -697,6 +743,8 @@ export default function AssetBoard({
               ? '参考片与平台下载统一进视频库'
               : tab === 'studio3d'
                 ? '场景三维：立板/CC0 道具/Poly Haven · 成片仍在 Blender 专家'
+              : tab === 'prompt-cases'
+                ? '全局案例库：外部导入与外片反推共用 · 可复制或应用到当前镜头'
               : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
       </div>
@@ -731,6 +779,20 @@ export default function AssetBoard({
           }}
           onAddAssetCard={onAddAssetCard}
           toast={toast}
+        />
+      ) : tab === 'prompt-cases' ? (
+        <PromptCaseTab
+          projectName={projectName}
+          assets={project?.assets || []}
+          selectedShot={characterProps.selectedShot}
+          onApplyCase={onApplyPromptCase}
+          toast={toast}
+          onCountChange={setCaseCount}
+          importOpen={importOpen}
+          onImportOpenChange={setImportOpen}
+          reverseOpen={reverseOpen}
+          onReverseOpenChange={setReverseOpen}
+          refreshKey={caseRefresh}
         />
       ) : tab === 'studio3d' ? (
         <Suspense fallback={<div className="char-empty-board">正在加载三维引擎…</div>}>

@@ -45,7 +45,7 @@ curl -s http://127.0.0.1:5299/api/publish/health | jq '{browserAvailable,ffmpegA
 
 ---
 
-## 二、三个硬阻塞
+## 二、四个硬阻塞
 
 ### 1. API 路由只在 dev server 里存在（已解决）
 
@@ -100,6 +100,34 @@ ffmpeg -filters | grep xfade
 **改法**：配置 ElevenLabs（或多角色中文 TTS）作为云端引擎，`say` 仅作 macOS 本地兜底。
 若无 key，部署后「配音」按钮应**明确禁用并提示原因**，而不是点了报错。
 **工作量**：小（半天），前提是有可用的 TTS 账号。
+
+### 4. 反推工具 `rea-video` 是可选的外部进程依赖
+
+素材页「提示词案例 → 反推我的片子」调用外部 CLI `rea-video`（Apache-2.0）拆解本项目的参考片。
+它是**可选依赖**：未安装时案例库的浏览、外部导入、复制、应用到镜头全部照常，只有反推入口显示「反推工具不可用」并给出安装命令。
+
+**依赖**：Python ≥ 3.10、`ffmpeg`、`onnxruntime`（其余由 pip 解析）。
+
+```bash
+uv tool install "rea-video[ocr] @ git+https://github.com/JuneYaooo/rea-video"
+```
+
+**默认档位零下载**：`quick` 档带 `--no-stems --no-asr --no-speakers --no-packaging --no-moments`，
+不触发任何模型下载。`full` 档首次运行会下载约 411 MB（人声分离 67 + 音效 149 + 语音识别 160 + 说话人 35）。
+
+**部署选择**：
+
+| 形态 | 做法 |
+|---|---|
+| 桌面端 | 像 Blender 一样把 Python 运行时与 `rea-video` 随包分发，`REA_VIDEO_BIN` 指向随包可执行文件 |
+| Docker | 镜像加 `python3` + `pip` 层并 `pip install`；或接受反推不可用（其余功能不受影响） |
+| 不装 | 完全可用；设置页「创意 → 提示词案例 · 反推工具」会显示 `not-installed` 与安装命令 |
+
+**排查**：`GET /api/prompt-cases/reverse/health?force=1` 返回探测结果（含实际版本与失败原因）。
+作业目录在 `SB_STATE_ROOT/.rea-jobs/`，证据帧副本落在 `SB_MEDIA_ROOT/prompt-cases/`（随媒体一起备份）。
+
+外部案例导入需要服务端能访问 `www.vflow.live`（公开索引约 5 MB，缓存 10 分钟）。
+案例封面是外链（`pbs.twimg.com`），浏览器直连；该域名在部分网络不可达时卡片显示占位，提示词文本不受影响。
 
 ---
 

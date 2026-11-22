@@ -194,6 +194,33 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT,
   updated_at TEXT
 );
+-- 提示词案例库：全局作用域，不挂 project_id。
+-- 三种来源（外部导入 / 手工录入 / 自有片反推）共用一张表：浏览、搜索、收藏、
+-- 应用、删除的行为完全相同，拆表只会让列表、分页与收藏三处重复。
+-- license 不信任客户端输入，由 source 推导（见 server/prompt-cases.mjs）。
+CREATE TABLE IF NOT EXISTS prompt_cases (
+  id          TEXT PRIMARY KEY,
+  source      TEXT NOT NULL,
+  source_id   TEXT NOT NULL,
+  title       TEXT DEFAULT '',
+  prompt      TEXT DEFAULT '',
+  shots       TEXT DEFAULT '[]',
+  model       TEXT DEFAULT '',
+  category    TEXT DEFAULT '',
+  tags        TEXT DEFAULT '[]',
+  video_url   TEXT DEFAULT '',
+  poster_url  TEXT DEFAULT '',
+  author      TEXT DEFAULT '',
+  source_url  TEXT DEFAULT '',
+  license     TEXT DEFAULT 'reference-only',
+  note        TEXT DEFAULT '',
+  favorite    INTEGER DEFAULT 0,
+  created_at  TEXT,
+  updated_at  TEXT,
+  UNIQUE(source, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_cases_created ON prompt_cases(created_at);
+CREATE INDEX IF NOT EXISTS idx_prompt_cases_source ON prompt_cases(source);
 CREATE TABLE IF NOT EXISTS skill_overrides (
   skill_id     TEXT PRIMARY KEY,
   body         TEXT NOT NULL,

@@ -48,7 +48,71 @@ export function CreativePane({ wb }: Props) {
         </button>
       </div>
 
-      <p className="st-hint" style={{ margin: 0 }}>
+      <div className="st-sec" style={{ marginTop: 18 }} data-settings-reverse-tool>
+        <h4 className="st-subhead">提示词案例 · 反推工具</h4>
+        <span className="st-hint">
+          素材页「提示词案例 → 反推我的片子」用外部 CLI <code>rea-video</code> 拆解本项目的参考片。
+          它是可选依赖：未安装时案例库的浏览、导入、复制、应用都不受影响，只是反推入口会显示不可用。
+        </span>
+        <pre className="pc-cmd" style={{ marginTop: 10 }}>
+          uv tool install "rea-video[ocr] @ git+https://github.com/JuneYaooo/rea-video"
+        </pre>
+        <span className="st-hint">需要 Python ≥ 3.10 与 ffmpeg；装在 PATH 里就不用填路径。</span>
+        <div className="st-grid" style={{ marginTop: 12 }}>
+          <label className="st-field">
+            <span>可执行文件路径</span>
+            <input
+              data-reverse-bin
+              value={wb.creative.reverseTool?.bin || ''}
+              placeholder="留空按 PATH 探测（如 /Users/you/.local/bin/rea-video）"
+              onChange={(e) => wb.setReverseTool({ bin: e.target.value })}
+            />
+            <em>只影响反推；填错时反推入口会显示具体失败原因</em>
+          </label>
+          <label className="st-field">
+            <span>默认档位</span>
+            <select
+              data-reverse-tier
+              value={wb.creative.reverseTool?.tier || 'quick'}
+              onChange={(e) => wb.setReverseTool({ tier: e.target.value === 'full' ? 'full' : 'quick' })}
+            >
+              <option value="quick">快速（零模型下载）</option>
+              <option value="full">完整（首次下载约 411 MB）</option>
+            </select>
+            <em>快速档只做切镜与逐镜制作方式判定，不触发任何模型下载</em>
+          </label>
+          <label className="st-field">
+            <span>用视觉模型复核</span>
+            <select
+              data-reverse-use-vlm
+              value={wb.creative.reverseTool?.useVlm === false ? 'off' : 'on'}
+              onChange={(e) => wb.setReverseTool({ useVlm: e.target.value === 'on' })}
+            >
+              <option value="on">开启（用「默认路由 → 视觉」的模型）</option>
+              <option value="off">关闭（只靠确定性取证）</option>
+            </select>
+            <em>开启后实拍/AI/3D 的区分明显更准；未配置视觉模型时自动降级并标注</em>
+          </label>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button type="button" className="btn" data-reverse-detect onClick={() => void wb.detectReverseTool()}>
+            {wb.reverseProbing ? '检测中…' : '检测可用性'}
+          </button>
+          {wb.reverseHealth ? (
+            <span
+              className="st-hint"
+              data-reverse-health={wb.reverseHealth.ok ? 'ok' : 'bad'}
+              style={{ alignSelf: 'center' }}
+            >
+              {wb.reverseHealth.ok
+                ? `可用${wb.reverseHealth.version ? ` · v${wb.reverseHealth.version}` : ''} · ${wb.reverseHealth.path || ''}`
+                : wb.reverseHealth.message || '不可用'}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <p className="st-hint" style={{ margin: 0, marginTop: 18 }}>
         旧版创意「能力绑定 / 分析与成本」已从界面移除；本机若曾保存过相关字段仍会随设置读写，供{' '}
         <code>/api/creative/*</code> 脚本与后续扩展使用。
       </p>

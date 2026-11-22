@@ -40,6 +40,8 @@ import {
 import { normalizeAgentHostMode, type AgentHostMode } from '../agent/agentHostMode'
 import { normalizeCreativeSettings, type CreativeSettings } from '../creative/settings'
 import { listCreativeAdapters, type AdapterInfo } from '../creative/mediaApi'
+import { getReverseHealth } from '../promptCases/api'
+import type { ReaHealth } from '../promptCases/api'
 import { findToolCapability } from '../agent/toolCapabilities'
 import { resolveStageModel, stageModelEntries, textModelEntries } from '../ModelSelect'
 import { DEFAULT_PRICING, normalizePricing, type Pricing } from '../pricing'
@@ -91,10 +93,15 @@ export function useSettingsWorkbench({
   const [agentLimits, setAgentLimits] = useState<Required<AgentLimitSettings>>(() => normalizeAgentLimits(undefined))
   const [agentHostMode, setAgentHostMode] = useState<AgentHostMode>('full_host')
   const [creative, setCreative] = useState<CreativeSettings>(() => normalizeCreativeSettings(undefined))
+  /** 只读派生：创意摄取里哪些项由 .env 兜底（服务端算，不参与保存） */
+  const [creativeFromEnv, setCreativeFromEnv] = useState<{ dtk?: boolean; ytdlp?: boolean }>({})
   const [stock, setStock] = useState<StockSettings>({ providers: {} })
   const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
   const [stockTesting, setStockTesting] = useState(false)
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
+  /** 反推工具探测结果：只在点「检测」或进页面时取一次，不轮询 */
+  const [reverseHealth, setReverseHealth] = useState<ReaHealth | null>(null)
+  const [reverseProbing, setReverseProbing] = useState(false)
   const [adapterError, setAdapterError] = useState('')
   const [lipSync, setLipSync] = useState<LipSyncSettings>(DEFAULT_LIP_SYNC)
   const [customVoices, setCustomVoices] = useState<CustomVoice[]>([])
@@ -201,6 +208,7 @@ export function useSettingsWorkbench({
         setAgentLimits(normalizeAgentLimits(s.agentLimits))
         setAgentHostMode(normalizeAgentHostMode(s.agentHostMode))
         setCreative(normalizeCreativeSettings(s.creative))
+        setCreativeFromEnv(s.creativeFromEnv || {})
         setStock({ providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } })
         setLipSync(normalizeLipSyncSettings(s.lipSync))
         setCustomVoices(Array.isArray(s.customVoices) ? s.customVoices : [])
@@ -370,6 +378,7 @@ export function useSettingsWorkbench({
       setAgentLimits(next.agentLimits)
       setAgentHostMode(next.agentHostMode)
       setCreative(next.creative as CreativeSettings)
+      setCreativeFromEnv((saved as AppSettings).creativeFromEnv || {})
       setStock(next.stock)
       setLipSync(next.lipSync)
       setCustomVoices(next.customVoices)
@@ -641,6 +650,36 @@ export function useSettingsWorkbench({
     }))
   }
 
+  /** 探测 rea-video 可用性；`force` 跳过服务端 60 秒缓存 */
+  const detectReverseTool = async (force = true) => {
+    setReverseProbing(true)
+    try {
+      const r = await getReverseHealth({ bin: creative.reverseTool?.bin || '', force })
+      setReverseHealth(r.health)
+      if (!r.health.ok && r.health.reason === 'not-installed') {
+        toast('未找到 rea-video；反推功能不可用，其它功能不受影响')
+      }
+    } catch (e) {
+      setReverseHealth({
+        ok: false,
+        path: null,
+        reason: 'probe-failed',
+        message: (e as Error).message || String(e),
+        version: '',
+      })
+    } finally {
+      setReverseProbing(false)
+    }
+  }
+
+  /** 反推工具：只改 reverseTool 子树，其它创意配置原样保留 */
+  const setReverseTool = (patch: Partial<NonNullable<CreativeSettings['reverseTool']>>) => {
+    setCreative((prev) => ({
+      ...prev,
+      reverseTool: { ...(prev.reverseTool || {}), ...patch },
+    }))
+  }
+
   const patchStock = (id: StockProviderId, patch: Partial<NonNullable<StockSettings['providers'][StockProviderId]>>) =>
     setStock((prev) => ({
       providers: {
@@ -691,6 +730,7 @@ export function useSettingsWorkbench({
     setAgentHostMode,
     creative,
     setCreative,
+    creativeFromEnv,
     stock,
     setStock,
     stockStatus,
@@ -781,6 +821,10 @@ export function useSettingsWorkbench({
     applyCatalog,
     refreshAdapters,
     setIngest,
+    setReverseTool,
+    reverseHealth,
+    reverseProbing,
+    detectReverseTool,
     patchStock,
     testStock,
     sceneResolution,

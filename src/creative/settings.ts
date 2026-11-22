@@ -23,6 +23,16 @@ export type CreativeLimits = {
   maxPaidCallsPerTurn?: number
 }
 
+/** 自有片反推（rea-video CLI）的配置 */
+export type ReverseToolSettings = {
+  /** 可执行文件路径；空表示按 PATH 探测 */
+  bin?: string
+  /** 默认档位：quick 零下载，full 含音轨/字幕/特殊时刻 */
+  tier?: 'quick' | 'full'
+  /** 是否让 rea-video 用应用里配置的视觉模型复核 */
+  useVlm?: boolean
+}
+
 /** 创意会话的配置：缺省即默认；不写回就不影响旧设置 */
 export type CreativeSettings = {
   ingest?: CreativeIngestSettings
@@ -32,7 +42,15 @@ export type CreativeSettings = {
   /** 付费调用前是否需要确认；默认 true */
   confirmCost?: boolean
   limits?: CreativeLimits
+  /** 自有片反推工具配置；缺省按 PATH 探测 + 快速档 + 用视觉模型 */
+  reverseTool?: ReverseToolSettings
 }
+
+/**
+ * 摄取配置的「来源」展示态：哪些项是 `.env` 兜底的。
+ * 与 `CreativeSettings` 分开保存，避免派生字段混进设置库。
+ */
+export type CreativeIngestFromEnv = { dtk?: boolean; ytdlp?: boolean }
 
 /** 设置页回读用的展示态：DTK Key 只给「有没有」 */
 export type CreativeSettingsView = Omit<CreativeSettings, 'ingest'> & {
@@ -48,6 +66,7 @@ export const CREATIVE_DEFAULTS = {
   analysis: { depth: 'quick' as CreativeAnalysisDepth, threshold: 0.3, minShotSeconds: 0.8, framesPerShot: 1 },
   confirmCost: true,
   limits: { maxShots: 40, maxFramesPerShot: 3, maxPaidCallsPerTurn: 8 },
+  reverseTool: { bin: '', tier: 'quick' as 'quick' | 'full', useVlm: true },
 }
 
 const CAPS: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 'view', 'video', 'videoRef', 'audio']
@@ -92,6 +111,8 @@ export function normalizeCreativeSettings(raw: unknown): CreativeSettings {
     : CREATIVE_DEFAULTS.analysis.depth
 
   const limitsRaw = o.limits && typeof o.limits === 'object' ? (o.limits as Record<string, unknown>) : {}
+  const reverseRaw =
+    o.reverseTool && typeof o.reverseTool === 'object' ? (o.reverseTool as Record<string, unknown>) : {}
 
   return {
     ingest: {
@@ -124,6 +145,11 @@ export function normalizeCreativeSettings(raw: unknown): CreativeSettings {
         num(limitsRaw.maxPaidCallsPerTurn, CREATIVE_DEFAULTS.limits.maxPaidCallsPerTurn, 1, 50),
       ),
     },
+    reverseTool: {
+      bin: str(reverseRaw.bin),
+      tier: reverseRaw.tier === 'full' ? 'full' : 'quick',
+      useVlm: bool(reverseRaw.useVlm, CREATIVE_DEFAULTS.reverseTool.useVlm),
+    },
   }
 }
 
@@ -148,7 +174,11 @@ export function applyCreativeEnvDefaults(
   const envYtdlpBin = str(env.YTDLP_BIN)
   const envYtdlpCookies = str(env.YTDLP_COOKIES_FROM_BROWSER)
 
-  const dtkFromEnv = !dtk.baseUrl && (Boolean(envDtkUrl) || Boolean(envDtkKey))
+  // 逐字段判断「这一项到底有没有用上环境值」：只按 baseUrl 判断会漏掉
+  // 「地址填在设置库、只有 Key 来自 .env」这种半配置状态。
+  const dtkUrlFromEnv = !dtk.baseUrl && Boolean(envDtkUrl)
+  const dtkKeyFromEnv = !dtk.apiKey && Boolean(envDtkKey)
+  const dtkFromEnv = dtkUrlFromEnv || dtkKeyFromEnv
   const ytdlpFromEnv = !ytdlp.bin && Boolean(envYtdlpBin)
 
   return {

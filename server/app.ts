@@ -170,6 +170,7 @@ import {
   videoFamilyFor,
   videoUrlFromTask,
 } from './apimart.mjs'
+import { getApimartFetch } from './apimart-network.mjs'
 import { handleBillingHttp, initBilling } from './billing/http.mjs'
 import { parseBearer, parseSessionCookie, sessionFromToken } from './billing/auth.mjs'
 import { billingModeInfo, proxyRemoteBilling, proxyRemoteMedia, shouldProxyRemoteBilling, shouldProxyRemoteMedia } from './remote-billing.mjs'
@@ -256,6 +257,26 @@ import {
   touchSession as touchCreativeSession,
 } from './creative.mjs'
 import { promoteReversePack, reversePackToText } from './creative-promote.mjs'
+import {
+  caseFacets as listPromptCaseFacets,
+  deleteCase as deletePromptCase,
+  getCase as getPromptCase,
+  importCasesFromSource as importPromptCases,
+  listCaseSources as listPromptCaseSources,
+  listCases as listPromptCases,
+  patchCase as patchPromptCase,
+  previewCasesFromSource as previewPromptCases,
+  saveCase as savePromptCase,
+} from './prompt-cases.mjs'
+import {
+  cancelReverseJob,
+  createReverseJob,
+  adoptReverseJob,
+  getReverseJob,
+  listReverseTiers,
+  reaHealth,
+  vlmEnvFrom,
+} from './rea-video.mjs'
 import {
   extractCover as extractCreativeCover,
   extractFrame as extractCreativeFrame,
@@ -1331,6 +1352,28 @@ type VisionPick = {
 }
 
 /** 视觉模型解析：只认 cap=vision，显式 key 找不到就报错，不静默换文本模型 */
+/**
+ * 反推面板的候选视觉模型。
+ *
+ * 只列声明了 vision 且 runnable 的模型，标出是否等于默认路由的选择。
+ * 不回传 Key、不回传渠道凭据，最多给渠道显示名。
+ */
+function listVisionModelOptions() {
+  const s = getAppSettings()
+  const usable = (m: ModelEntry) => modelHasCap(m, 'vision') && isRunnableModel(m)
+  const def = String(s.defaults.vision || '')
+  return s.models.filter(usable).map((m) => {
+    const provider = s.providers.find((p) => p.id === m.provider)
+    return {
+      key: m.key,
+      label: m.label || m.model,
+      model: m.model,
+      provider: provider?.label || provider?.kind || m.provider,
+      isDefault: m.key === def,
+    }
+  })
+}
+
 function pickVisionModel(keyOverride?: string): VisionPick {
   const s = getAppSettings()
   const key = String(keyOverride || '').trim()
@@ -1688,6 +1731,13 @@ export function mimeOf(ext: string): string {
   if (e === 'wav') return 'audio/wav'
   if (e === 'ogg' || e === 'opus') return 'audio/ogg'
   if (e === 'flac') return 'audio/flac'
+  // 拆解报告用到：html 当图片返回会让浏览器把整页当 img 处理（白屏 + 标题为空）
+  if (e === 'html' || e === 'htm') return 'text/html; charset=utf-8'
+  if (e === 'css') return 'text/css; charset=utf-8'
+  if (e === 'js' || e === 'mjs') return 'text/javascript; charset=utf-8'
+  if (e === 'json') return 'application/json; charset=utf-8'
+  if (e === 'svg') return 'image/svg+xml'
+  if (e === 'txt' || e === 'md') return 'text/plain; charset=utf-8'
   return 'image/png'
 }
 
@@ -3141,7 +3191,8 @@ export function createAppHandler({ root }: { root: string }) {
         // 直接提供生成产物：vite 的 public 索引在启动时建立，
         // 运行中新写入的文件在 watcher 更新前会被 SPA fallback 吃掉（返回 index.html）。
         // 保留子目录（导出/导入会落在 exports/imports 下），并拒绝路径穿越。
-        for (const dir of ['generated', 'videos', 'exports', 'voices', 'publish-packages']) {
+        // prompt-cases：反推案例的证据帧副本（见 server/rea-video.mjs）。
+        for (const dir of ['generated', 'videos', 'exports', 'voices', 'publish-packages', 'prompt-cases']) {
           if (url.startsWith(`/${dir}/`)) {
             const baseDir = mediaPath(root, dir)
             const rel = decodeURIComponent(url.slice(dir.length + 2).split('?')[0])
@@ -3626,6 +3677,330 @@ export function createAppHandler({ root }: { root: string }) {
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, kind: e?.kind || 'creative-media-error', message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        /**
+         * 内部 VLM 中转：给 rea-video 这类外部进程用。
+         *
+         * 为什么需要它：rea-video 用 Python requests 按普通 JSON 解析
+         * `chat/completions`，而 APIMart 即使不传 stream 也只回 SSE
+         * （`data: {...}` + `data: [DONE]`），于是它报
+         * `Expecting value: line 1 column 1`。另外子进程也拿不到 apimart 的
+         * 代理/IPv4 处理。这里用应用自己的 lite 客户端转发并按 parseChatBody
+         * 归一成普通 OpenAI JSON 响应。
+         *
+         * 鉴权：只认 studio 内部令牌（宿主插件同款），不暴露到浏览器；
+         * 密钥永不回显，模型固定从设置解析，不接受调用方指定 baseUrl。
+         */
+        // rea-video 会在 BASE_URL 后拼 /chat/completions，所以同时接受带 /v1 的写法
+        if (
+          (url === '/api/prompt-cases/vlm-proxy' || url === '/api/prompt-cases/vlm-proxy/v1/chat/completions') &&
+          req.method === 'POST'
+        ) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          // 两种传递方式都收：外部 CLI 通常只支持 Authorization: Bearer
+          const bearer = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim()
+          const token = String(req.headers?.['x-studio-internal'] || '') || bearer
+          const expected = String(process.env.SB_STUDIO_INTERNAL_TOKEN || '').trim()
+          if (!expected || token !== expected) {
+            res.statusCode = 403
+            res.end(JSON.stringify({ ok: false, message: '内部接口，需要宿主令牌' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const picked = pickVisionModel(String(body?.modelKey || '').trim())
+            if (picked.error || !picked.entry) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: `视觉模型不可用：${picked.error || ''}` }))
+              return
+            }
+            const entry = picked.entry
+            const provider = picked.provider
+            const key = providerKey(provider)
+            if (!provider || !key) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '视觉模型渠道没有 API Key' }))
+              return
+            }
+            const base = String(provider.baseUrl || '').replace(/\/+$/, '')
+            // apimart 必须走它自己的 fetch（代理 + IPv4）
+            const doFetch = provider.kind === 'apimart' ? getApimartFetch() : fetch
+            const r = await doFetch(`${base}/chat/completions`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: entry.model,
+                messages: body?.messages || [],
+                max_tokens: Number(body?.max_tokens) || 1800,
+                temperature: 0.2,
+                ...(body?.stream ? { stream: true } : {}),
+              }),
+            })
+            const raw = await r.text()
+            if (!r.ok) {
+              res.statusCode = 502
+              res.end(JSON.stringify({ ok: false, message: `${provider.label || provider.kind} ${r.status}: ${raw.slice(0, 300)}` }))
+              return
+            }
+            // SSE → 普通 JSON：rea-video 只认非流式响应
+            const parsed = parseChatBody(raw, r.headers.get('content-type') || '')
+            res.end(JSON.stringify(parsed))
+          } catch (e: any) {
+            res.statusCode = 502
+            res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 提示词案例库：全局作用域，不挂项目 ----
+        if (url === '/api/prompt-cases' || url.startsWith('/api/prompt-cases/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const rootDir = resolveRoot(root)
+          try {
+            dbPath(rootDir)
+            const tail = url.slice('/api/prompt-cases'.length).replace(/^\/+/, '')
+            const q = new URL(req.url || '', 'http://x').searchParams
+
+            if (!tail && req.method === 'GET') {
+              const list = listPromptCases(rootDir, {
+                q: q.get('q') || '',
+                source: q.get('source') || '',
+                model: q.get('model') || '',
+                category: q.get('category') || '',
+                favorite: q.get('favorite') === '1',
+                sort: q.get('sort') || '',
+                page: q.get('page') || undefined,
+                pageSize: q.get('pageSize') || undefined,
+              })
+              res.end(JSON.stringify({ ok: true, ...list, facets: listPromptCaseFacets(rootDir) }))
+              return
+            }
+
+            if (tail === 'facets' && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, facets: listPromptCaseFacets(rootDir) }))
+              return
+            }
+
+            if (tail === 'sources' && req.method === 'GET') {
+              res.end(JSON.stringify({ ok: true, sources: listPromptCaseSources() }))
+              return
+            }
+
+            // 预览只回摘要与令牌；提交只认预览签发过的 id
+            if (tail === 'import' && req.method === 'POST') {
+              const body = await readJson(req)
+              if (body?.preview) {
+                const result = await previewPromptCases(
+                  {
+                    source: body?.source,
+                    q: body?.q,
+                    model: body?.model,
+                    category: body?.category,
+                    limit: body?.limit,
+                  },
+                  {},
+                )
+                res.end(JSON.stringify({ ok: true, ...result }))
+                return
+              }
+              const result = await importPromptCases(rootDir, {
+                source: body?.source,
+                token: body?.token,
+                ids: body?.ids,
+              })
+              res.end(JSON.stringify({ ok: true, ...result }))
+              return
+            }
+
+            // ---- 自有片反推：作业化，轮询查进度 ----
+            if (tail === 'reverse/health' && req.method === 'GET') {
+              const health = await reaHealth({ bin: q.get('bin') || '', force: q.get('force') === '1' })
+              // 可选视觉模型：只回 key/label/model 与是否就是默认，不回 Key
+              const visionModels = listVisionModelOptions()
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  health,
+                  tiers: listReverseTiers(),
+                  visionModels,
+                }),
+              )
+              return
+            }
+
+            if (tail === 'reverse' && req.method === 'POST') {
+              const body = await readJson(req)
+              // 源视频必须是项目媒体里的视频：只收项目名 + 站内 URL，不接受任意本地路径
+              const project = safeProjectName(String(body?.project || ''))
+              const mediaUrl = String(body?.videoUrl || '').trim()
+              if (!project || !mediaUrl) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '需要 project 与 videoUrl' }))
+                return
+              }
+              const project2 = readProject(resolveRoot(root), project)
+              if (!project2) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `项目不存在：${project}` }))
+                return
+              }
+              const pm = parseProjectMediaUrl(mediaUrl)
+              if (!pm || pm.name !== project) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: `视频不在项目媒体里：${mediaUrl}` }))
+                return
+              }
+              let local = ''
+              try {
+                local = resolveProjectMediaPath(root, pm.name, pm.file)
+              } catch (e: any) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+                return
+              }
+              if (!fs.existsSync(local)) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: `视频文件不存在：${mediaUrl}` }))
+                return
+              }
+              const asset = (project2.assets || []).find(
+                (a: any) => String(a?.url || '').split('?')[0] === mediaUrl.split('?')[0],
+              )
+              /**
+               * 视觉模型：面板传了 vlmModelKey 就用它，否则跟「默认路由 → 视觉」。
+               * 一律经应用内的中转端点（SSE→JSON + apimart 代理），子进程只拿
+               * 内部令牌，拿不到渠道 Key。
+               */
+              const wantedKey = String(body?.vlmModelKey || '').trim()
+              const picked = pickVisionModel(wantedKey)
+              const internalToken = String(process.env.SB_STUDIO_INTERNAL_TOKEN || '').trim()
+              const selfBase = `http://127.0.0.1:${req.socket?.localPort || process.env.SB_PORT || 5273}`
+              const vlm =
+                picked.entry && picked.provider
+                  ? {
+                      ...vlmEnvFrom(picked.entry, picked.provider, {
+                        localProxy: `${selfBase}/api/prompt-cases/vlm-proxy`,
+                        internalToken,
+                      }),
+                      modelLabel: `${picked.entry.label || picked.entry.model}（${picked.provider.label || picked.provider.kind}）`,
+                    }
+                  : { env: {}, configured: false, modelLabel: '' }
+              if (body?.useVlm !== false && !vlm.configured) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '没有可用的视觉模型：先在设置里配置一个，或关闭视觉复核' }))
+                return
+              }
+              const job = await createReverseJob(root, {
+                videoPath: local,
+                videoUrl: mediaUrl,
+                durationSec: Number(body?.durationSec) || 0,
+                tier: body?.tier,
+                title: String(body?.title || asset?.title || ''),
+                useVlm: body?.useVlm !== false,
+                vlm,
+              })
+              res.end(JSON.stringify({ ok: true, job, vlmConfigured: vlm.configured }))
+              return
+            }
+
+            if (tail.startsWith('reverse/') && req.method === 'GET') {
+              const id = decodeURIComponent(tail.slice('reverse/'.length))
+              const job = getReverseJob(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `拆解作业不存在：${id || '(空)'}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+
+            if (tail.startsWith('reverse/') && req.method === 'DELETE') {
+              const id = decodeURIComponent(tail.slice('reverse/'.length))
+              const job = cancelReverseJob(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `拆解作业不存在：${id || '(空)'}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+
+            if (tail.startsWith('reverse/') && tail.endsWith('/adopt') && req.method === 'POST') {
+              const id = decodeURIComponent(tail.slice('reverse/'.length, -'/adopt'.length))
+              const job = getReverseJob(id)
+              if (!job) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `拆解作业不存在：${id || '(空)'}` }))
+                return
+              }
+              if (job.status !== 'done') {
+                res.statusCode = 400
+                res.end(JSON.stringify({ ok: false, message: '作业还没完成，不能存入案例库' }))
+                return
+              }
+              const body = await readJson(req).catch(() => ({}))
+              const adopted = adoptReverseJob(id, { title: body?.title })
+              const saved = savePromptCase(rootDir, adopted)
+              res.end(JSON.stringify({ ok: true, case: saved }))
+              return
+            }
+
+            if (!tail) {
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 GET' }))
+              return
+            }
+
+            const id = decodeURIComponent(tail.split('/')[0] || '')
+            const sub = tail.split('/')[1] || ''
+
+            if (!sub && req.method === 'GET') {
+              const one = getPromptCase(rootDir, id)
+              if (!one) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `案例不存在：${id || '(空)'}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, case: one }))
+              return
+            }
+
+            if (!sub && req.method === 'PATCH') {
+              const body = await readJson(req)
+              const patched = patchPromptCase(rootDir, id, {
+                ...(body?.note !== undefined ? { note: body.note } : {}),
+                ...(body?.favorite !== undefined ? { favorite: Boolean(body.favorite) } : {}),
+              })
+              if (!patched) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `案例不存在：${id || '(空)'}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, case: patched }))
+              return
+            }
+
+            if (!sub && req.method === 'DELETE') {
+              const removed = deletePromptCase(rootDir, id)
+              if (!removed) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `案例不存在：${id || '(空)'}` }))
+                return
+              }
+              res.end(JSON.stringify({ ok: true, removed: true }))
+              return
+            }
+
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '不支持的方法' }))
+          } catch (e: any) {
+            res.statusCode = Number(e?.status) || 400
+            res.end(JSON.stringify({ ok: false, kind: e?.kind || 'prompt-case-error', message: e?.message || String(e) }))
           }
           return
         }

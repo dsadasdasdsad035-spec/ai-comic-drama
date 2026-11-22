@@ -25,6 +25,8 @@ export const MEDIA_DIRS = [
   'publish-packages',
   'lipsync-qa',
   'imports',
+  // 反推案例的证据帧副本：随其他媒体一起备份，删案例不删作业目录
+  'prompt-cases',
 ]
 
 /** 媒体根：可写目录 */

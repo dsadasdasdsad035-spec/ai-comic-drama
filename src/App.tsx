@@ -90,6 +90,7 @@ import {
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import StudioFrame from './creative/StudioFrame'
 import { postStudioCanvasContext } from './creative/pushStudioCanvasContext'
+import { getPromptCase } from './promptCases/api'
 import { useStudioProjectSync } from './creative/useStudioProjectSync'
 import { resolveStudioMount } from './creative/keepalive'
 import { useStudioWarmup } from './creative/useStudioWarmup'
@@ -1839,6 +1840,49 @@ function Shell() {
       window.setTimeout(() => setToast(''), 2200)
     },
     [characters, selId, patch],
+  )
+
+  /**
+   * 把提示词案例写进当前选中镜头。
+   *
+   * `prompt` 写画面提示词，`videoPrompt` 写运动提示词：两者都是画布既有字段，
+   * 走同一条 patch → 自动保存链路，不新增镜像字段，也不写「手改快照」。
+   */
+  const applyPromptCase = useCallback(
+    async (caseId: string, slot: 'prompt' | 'videoPrompt') => {
+      if (!selId) {
+        setToast('先在画布选一个镜头')
+        window.setTimeout(() => setToast(''), 2200)
+        return
+      }
+      const node = nodesRef.current.find((n) => n.id === selId)
+      if (!node) return
+      try {
+        const one = await getPromptCase(caseId)
+        const firstShot = Array.isArray(one.shots) && one.shots.length ? one.shots[0] : null
+        const text =
+          slot === 'videoPrompt'
+            ? firstShot?.videoPrompt || ''
+            : one.prompt || firstShot?.keyframePrompt || ''
+        if (!text.trim()) {
+          setToast('这条案例没有可写入的提示词')
+          window.setTimeout(() => setToast(''), 2200)
+          return
+        }
+        patch(selId, slot === 'videoPrompt' ? { videoPrompt: text } : { prompt: text })
+        const multiShot = (one.shots?.length || 0) > 1 || /\d+\s*[-–~]\s*\d+\s*(秒|s)/i.test(text)
+        setToast(
+          multiShot
+            ? `已写入 ${node.data.no}：这条案例覆盖多镜，请按镜头删减`
+            : `已把案例提示词写入 ${node.data.no}${slot === 'videoPrompt' ? '（运动）' : '（画面）'}`,
+        )
+        window.setTimeout(() => setToast(''), 3000)
+      } catch (e) {
+        setToast((e as Error).message || '读取案例失败')
+        window.setTimeout(() => setToast(''), 2600)
+      }
+    },
+    [selId, patch],
   )
 
   /** 设置连线关系；首次落到转场时补默认叠化（已有配置不重置） */
@@ -4055,6 +4099,7 @@ function Shell() {
             onCanvasDesignIds={onCanvasDesignIds}
             onPush={pushDesigns}
             onAddAssetCard={addAssetCardFromStock}
+            onApplyPromptCase={(caseId, slot) => void applyPromptCase(caseId, slot)}
             price={price}
             missing={missingMedia}
             onImageMissing={markMissing}
