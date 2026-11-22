@@ -12,7 +12,12 @@ import {
   isBillingAdmin,
   grantSignupBonusOnce,
 } from './auth.mjs'
-import { getBillingSettings, patchBillingSettings, publicBillingSettings } from './settings.mjs'
+import {
+  getBillingSettings,
+  patchBillingSettings,
+  publicBillingSettings,
+  isBillingEnabled,
+} from './settings.mjs'
 import { getWalletSummary, listLedger, creditWallet } from './wallet.mjs'
 import { microFromCredits, testPackEnabled } from './constants.mjs'
 import { createPayment, verifyNotify, xunhuConfigured, queryPayment } from './xunhupay.mjs'
@@ -183,14 +188,19 @@ export async function handleBillingHttp(req, res, url, readJson, appRoot) {
     if (url === '/api/auth/me' && req.method === 'GET') {
       const raw = parseBearer(req.headers?.authorization) || parseSessionCookie(req.headers?.cookie)
       const s = sessionFromToken(raw)
+      // 计费开关随会话一起返回：前端闸门要与服务端 guard 用同一个边界判断
+      // 是否要求登录，分两次请求会出现「user 已更新但开关还是旧值」的竞态。
+      // 未登录也带该字段——它只表示部署形态，不含敏感信息。
+      const billingEnabled = isBillingEnabled()
       if (!s) {
-        json(res, 200, { ok: true, user: null })
+        json(res, 200, { ok: true, user: null, billingEnabled })
         return true
       }
       json(res, 200, {
         ok: true,
         user: { id: s.userId, email: s.email, email_verified: s.emailVerified, is_admin: isBillingAdmin(s.email) },
         wallet: getWalletSummary(s.userId),
+        billingEnabled,
       })
       return true
     }
