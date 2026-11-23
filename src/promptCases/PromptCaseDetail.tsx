@@ -1,5 +1,13 @@
-import { useState } from 'react'
-import type { PromptCase, PromptCaseShot } from './api'
+import { useMemo, useState } from 'react'
+import type { PromptCase, PromptCaseFacet, PromptCaseShot } from './api'
+import {
+  FACET_AXES,
+  FACET_SOURCE_LABEL,
+  facetKey,
+  facetValueLabel,
+  getFacetAxis,
+  groupFacetsByAxis,
+} from './taxonomy'
 
 /** 复制到剪贴板：navigator.clipboard 在非安全上下文不可用，退回隐藏 textarea */
 async function copyText(text: string): Promise<boolean> {
@@ -42,6 +50,143 @@ const KIND_TONE: Record<string, string> = {
   static_hold: 'still',
   film_footage: 'live',
   avatar: 'ai',
+}
+
+/**
+ * 分面编辑区。
+ *
+ * 来源标注不是装饰：用户需要知道哪些值是导入/推导出来的、哪些是自己改的。
+ * 删掉的自动值不会消失，而是进入「已隐藏」，可一键恢复。
+ */
+function FacetSection({
+  item,
+  suppressed,
+  onChange,
+}: {
+  item: PromptCase
+  suppressed: PromptCaseFacet[]
+  onChange?: (patch: { add?: string[]; remove?: string[]; restore?: string[] }) => void
+}) {
+  const groups = useMemo(() => groupFacetsByAxis(item.facets), [item.facets])
+  const [axisId, setAxisId] = useState(FACET_AXES[0]?.id || '')
+  const [valueId, setValueId] = useState('')
+  const axis = getFacetAxis(axisId)
+  const existing = useMemo(
+    () => new Set((item.facets || []).filter((f) => f.axis === axisId).map((f) => f.value)),
+    [item.facets, axisId],
+  )
+  const candidates = (axis?.values || []).filter((v) => !existing.has(v.id))
+
+  return (
+    <div className="pc-facets" data-prompt-case-facets>
+      <div className="pc-shots-head">
+        <b>分类分面</b>
+        <span className="board-hint">导入与自动推导的值可以改；人工修正优先</span>
+      </div>
+
+      {groups.length ? (
+        <div className="pc-facet-groups">
+          {groups.map(({ axis: groupAxis, facets }) => (
+            <div key={groupAxis.id} className="pc-facet-group" data-facet-axis={groupAxis.id}>
+              <span className="pc-facet-group-name">{groupAxis.cn}</span>
+              <div className="pc-facet-chips">
+                {facets.map((f) => {
+                  const key = facetKey(f.axis, f.value)
+                  const label = facetValueLabel(f.axis, f.value)
+                  return (
+                    <span
+                      key={key}
+                      className={`pc-facet-chip src-${f.source} ${f.unmapped ? 'unmapped' : ''}`}
+                      data-facet-source={f.source}
+                      data-facet={key}
+                      title={f.unmapped ? '来源分类在词表里没有对应值，按原文保留' : undefined}
+                    >
+                      <span>{label}</span>
+                      <em>{FACET_SOURCE_LABEL[f.source] || f.source}</em>
+                      {onChange ? (
+                        <button
+                          type="button"
+                          aria-label={`删除分面 ${label}`}
+                          onClick={() => onChange({ remove: [key] })}
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="board-hint">还没有分面。导入时会自动映射，也可以手动添加。</p>
+      )}
+
+      {onChange ? (
+        <div className="pc-facet-add">
+          <select
+            aria-label="分面轴"
+            value={axisId}
+            onChange={(e) => {
+              setAxisId(e.target.value)
+              setValueId('')
+            }}
+          >
+            {FACET_AXES.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.cn}
+              </option>
+            ))}
+          </select>
+          <select aria-label="分面值" value={valueId} onChange={(e) => setValueId(e.target.value)}>
+            <option value="">选择值…</option>
+            {candidates.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.cn}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="btn-mini primary"
+            disabled={!valueId}
+            onClick={() => {
+              if (!valueId) return
+              onChange({ add: [facetKey(axisId, valueId)] })
+              setValueId('')
+            }}
+          >
+            添加
+          </button>
+        </div>
+      ) : null}
+
+      {suppressed.length ? (
+        <div className="pc-facet-hidden" data-facet-hidden>
+          <b>已隐藏</b>
+          <span className="board-hint">这些自动值被你删过，不会再被推导写回。</span>
+          <div className="pc-facet-chips">
+            {suppressed.map((f) => {
+              const key = facetKey(f.axis, f.value)
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className="pc-facet-chip ghost"
+                  data-facet-hidden-key={key}
+                  onClick={() => onChange?.({ restore: [key] })}
+                >
+                  {facetValueLabel(f.axis, f.value)}
+                  <em>恢复</em>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function ShotRow({ shot }: { shot: PromptCaseShot }) {
@@ -133,6 +278,8 @@ export default function PromptCaseDetail({
   onToggleFavorite,
   onSaveNote,
   onDelete,
+  suppressedFacets = [],
+  onFacetChange,
 }: {
   item: PromptCase
   canApply: boolean
@@ -143,6 +290,8 @@ export default function PromptCaseDetail({
   onToggleFavorite: () => void
   onSaveNote: (note: string) => void
   onDelete: () => void
+  suppressedFacets?: PromptCaseFacet[]
+  onFacetChange?: (patch: { add?: string[]; remove?: string[]; restore?: string[] }) => void
 }) {
   const [note, setNote] = useState(item.note)
   const [editingNote, setEditingNote] = useState(false)
@@ -220,6 +369,8 @@ export default function PromptCaseDetail({
           <pre className="pc-prompt-text">{item.prompt}</pre>
         </div>
       ) : null}
+
+      <FacetSection item={item} suppressed={suppressedFacets} onChange={onFacetChange} />
 
       {item.shots?.length ? (
         <div className="pc-shots">

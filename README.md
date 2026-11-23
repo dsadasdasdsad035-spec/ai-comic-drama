@@ -87,6 +87,24 @@ brew install --cask blender    # 或自行安装到 /Applications
 - 恢复缺失图：把同名文件放进 `projects/<项目名>/assets/` 后重新打开项目（迁移按文件名命中），或在角色板重新生成。
 - `projects/*/assets/` 与 `projects/*.sqlite` 一样不提交 git，需要随项目目录一起备份。
 
+## 提示词分类体系（18 轴）
+
+素材页「提示词案例」用一套受控词表给案例打标签，落在 `case_facets` 表，支持 `GET /api/prompt-cases?facet=axis:value` 多轴筛选：**同轴多值 OR、跨轴 AND**。计数走 `GET /api/prompt-cases/facets`，算某轴时排除该轴自身条件，避免把剩余选项算成 0。
+
+词表在 `public/presets/prompt-taxonomy/v1.json`（当前 `2026-11-23.2`，18 轴 430 个值），服务端推导与前端筛选共用这一份；轴与值的完整对照表见 [`docs/prompt-taxonomy.md`](./docs/prompt-taxonomy.md)（由 JSON 生成，不要手改）。
+
+- 18 轴：题材类型 / 叙事结构 / 情绪基调 / 时代地域 / 场景环境 / 主体角色 / 动作表演 / 道具特效 / 景别 / 机位角度 / 运镜 / 镜头光学 / 构图 / 光线 / 色彩 / 剪辑节奏 / 声音音乐 / 影像风格与媒介。
+- 来源优先级：`manual`（人工）> `import`（导入/反推事实）> `derived`（文本推导）。低优先级不会覆盖高优先级；删掉的自动值写成隐藏记录，重跑推导或重新导入都不会复活，可在详情里「恢复」。
+- 旧案例回填：
+
+```bash
+node scripts/backfill-prompt-facets.mjs --dry-run   # 预演，只算不写
+node scripts/backfill-prompt-facets.mjs             # 按当前词表重推
+node scripts/backfill-prompt-facets.mjs --only-stale --limit 50
+```
+
+- 新增外部来源分类：在 JSON 的 `sourceMappings.<来源>` 里加 `"分类": ["axis:value", ...]`；未收录的分类会按原文保留并标 `unmapped=1`，不会丢数据。改完词表后重跑 `node scripts/gen-prompt-taxonomy-doc.mjs` 同步文档。
+
 ## 主题
 
 全局带右侧提供「日间 / 夜间」切换。夜间保留 Cinema Dark；日间是暖纸底的 Paper Studio，分镜图片和视频保持原色，只切换工作台界面。首次打开跟随系统 `prefers-color-scheme`，手动选择记在浏览器 `storyboard-theme`，刷新保持；主题偏好不会写入项目文件。两套主题各有自己的上沿表面 token（`--chrome-1` / `--chrome-2` / `--chrome-line`），日间用比内容更亮的暖白，避免上沿看起来是凹进去的。

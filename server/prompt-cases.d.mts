@@ -10,6 +10,18 @@ export declare const PREVIEW_MAX_ITEMS: number
 
 export type PromptCaseLicense = 'own' | 'reference-only'
 
+export type PromptCaseFacetSource = 'derived' | 'import' | 'manual'
+
+export interface PromptCaseFacet {
+  axis: string
+  value: string
+  source: PromptCaseFacetSource
+  unmapped: boolean
+  suppressed: boolean
+  taxonomyVersion: string
+  updatedAt: string
+}
+
 export interface PromptCaseRecord {
   id: string
   source: string
@@ -29,6 +41,8 @@ export interface PromptCaseRecord {
   favorite: boolean
   createdAt: string
   updatedAt: string
+  taxonomyVersion: string
+  facets: PromptCaseFacet[] | null
 }
 
 export interface PromptCaseFacets {
@@ -48,6 +62,7 @@ export interface PromptCaseListOptions {
   sort?: string
   page?: number | string
   pageSize?: number | string
+  facetGroups?: Array<{ axis: string; values: string[] }>
 }
 
 export interface PromptCaseListResult {
@@ -80,6 +95,44 @@ export declare function getCase(appRoot: string, id: string): PromptCaseRecord |
 export declare function findCaseBySource(appRoot: string, source: string, sourceId: string): PromptCaseRecord | null
 export declare function listCases(appRoot: string, options?: PromptCaseListOptions): PromptCaseListResult
 export declare function caseFacets(appRoot: string): PromptCaseFacets
+export declare function caseFacetCounts(
+  appRoot: string,
+  options?: PromptCaseListOptions,
+): Array<{ axis: string; value: string; count: number }>
+export declare function getCaseFacets(
+  appRoot: string,
+  caseId: string,
+  options?: { includeSuppressed?: boolean },
+): PromptCaseFacet[]
+export declare function setCaseFacets(
+  appRoot: string,
+  caseId: string,
+  facets: Array<{ axis: string; value: string; source?: string; unmapped?: boolean }>,
+  options?: { taxonomyVersion?: string },
+): { written: number; facets: PromptCaseFacet[] }
+export declare function applyDerivedFacets(
+  appRoot: string,
+  caseId: string,
+  derived: Array<{ axis: string; value: string; source?: string; unmapped?: boolean }>,
+  options?: { taxonomyVersion?: string },
+): PromptCaseFacet[]
+export declare function deleteCaseFacet(appRoot: string, caseId: string, axis: string, value: string): boolean
+export declare function restoreCaseFacet(appRoot: string, caseId: string, axis: string, value: string): boolean
+export declare function refreshCaseFacets(
+  appRoot: string,
+  caseId: string,
+  options?: { taxonomy?: unknown },
+): PromptCaseFacet[]
+export declare function listStaleFacetCases(
+  appRoot: string,
+  version: string,
+  options?: { limit?: number },
+): { total: number; cases: Array<{ id: string; title: string; taxonomyVersion: string }> }
+export declare function summarizeSourceFacets(
+  taxonomy: unknown,
+  source: string,
+  categories: unknown,
+): { facets: Array<{ axis: string; value: string }>; unmapped: string[] }
 export declare function patchCase(
   appRoot: string,
   id: string,
@@ -92,7 +145,10 @@ export declare function parseVflowIndex(raw: unknown): {
   models: string[]
   categories: string[]
 }
-export declare function parseVflowItem(raw: unknown): Record<string, unknown>
+export declare function parseVflowItem(
+  raw: unknown,
+  options?: { categories?: string[] },
+): Record<string, unknown>
 export declare function listCaseSources(): CaseSourceInfo[]
 export declare function previewCasesFromSource(
   input?: Record<string, unknown>,
@@ -117,4 +173,5 @@ export declare function importCasesFromSource(
   updated: number
   failed: Array<{ id: string; message: string }>
   imported: number
+  facetsWritten: number
 }>

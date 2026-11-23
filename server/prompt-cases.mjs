@@ -12,6 +12,16 @@
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { dbPath } from './db.mjs'
+import {
+  FACET_SOURCE_RANK,
+  FACET_SOURCES,
+  deriveFacets,
+  getFacetValue,
+  loadDefaultTaxonomy,
+  loadTaxonomy,
+  mapSourceCategories,
+  taxonomyVersion as taxonomyVersionOf,
+} from './prompt-taxonomy.mjs'
 
 /** 来源类别；`license` 与来源的对应关系见 LICENSE_BY_SOURCE */
 export const CASE_SOURCES = ['vflow', 'manual', 'reverse-own']
@@ -100,7 +110,251 @@ function rowToCase(row) {
     favorite: Boolean(row.favorite),
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
+    taxonomyVersion: row.taxonomy_version || '',
+    /** 分面在列表/详情读出时补齐（见 attachFacets）；单独读案例时为 null */
+    facets: null,
   }
+}
+
+// ---------------------------------------------------------------- 分面
+
+function rowToFacet(row) {
+  return {
+    axis: row.axis,
+    value: row.value,
+    source: row.source,
+    unmapped: Boolean(row.unmapped),
+    suppressed: Boolean(row.suppressed),
+    taxonomyVersion: row.taxonomy_version || '',
+    updatedAt: row.updated_at || '',
+  }
+}
+
+/**
+ * 读一条案例的分面。
+ *
+ * 默认过滤 `suppressed=1`：那是用户手工隐藏的自动值，界面不该再显示，
+ * 否则「删掉又冒出来」。
+ */
+export function getCaseFacets(appRoot, caseId, options = {}) {
+  const d = open(appRoot)
+  const includeSuppressed = Boolean(options.includeSuppressed)
+  const rows = d
+    .prepare(
+      `SELECT * FROM case_facets WHERE case_id=?${includeSuppressed ? '' : ' AND suppressed=0'} ORDER BY axis, value`,
+    )
+    .all(String(caseId))
+  return rows.map(rowToFacet)
+}
+
+/**
+ * 写入分面（UPSERT），来源只升不降。
+ *
+ * 为什么不是「后写覆盖」：一次导入带 import、一次推导带 derived、一次人工带 manual，
+ * 三者可能指向同一个 `(axis,value)`。谁更可信是确定的，按优先级合并即可；
+ * 若按写入顺序覆盖，重跑推导就会把人工修正冲掉。
+ */
+export function setCaseFacets(appRoot, caseId, facets, options = {}) {
+  const d = open(appRoot)
+  const version = String(options.taxonomyVersion || '')
+  const at = nowIso()
+  const id = String(caseId)
+  let written = 0
+  const select = d.prepare('SELECT source, suppressed FROM case_facets WHERE case_id=? AND axis=? AND value=?')
+  const insert = d.prepare(
+    `INSERT INTO case_facets (case_id,axis,value,source,unmapped,suppressed,taxonomy_version,updated_at)
+     VALUES (?,?,?,?,?,0,?,?)`,
+  )
+  const update = d.prepare(
+    `UPDATE case_facets SET source=?, unmapped=?, taxonomy_version=?, updated_at=?
+     WHERE case_id=? AND axis=? AND value=?`,
+  )
+
+  for (const f of Array.isArray(facets) ? facets : []) {
+    const axis = String(f?.axis || '').trim()
+    const value = String(f?.value || '').trim()
+    if (!axis || !value) continue
+    const source = FACET_SOURCES.includes(f?.source) ? f.source : 'derived'
+    const unmapped = f?.unmapped ? 1 : 0
+    const row = select.get(id, axis, value)
+    if (!row) {
+      insert.run(id, axis, value, source, unmapped, version, at)
+      written += 1
+      continue
+    }
+    const nextRank = FACET_SOURCE_RANK[source] || 1
+    const curRank = FACET_SOURCE_RANK[row.source] || 1
+    // 隐藏记录是人工决定，推导/导入都不碰它（恢复走 restoreCaseFacet）
+    if (row.suppressed) continue
+    // 同来源刷新版本号与未映射标记；更高来源升级；更低来源不降级
+    if (nextRank >= curRank) {
+      update.run(nextRank > curRank ? source : row.source, unmapped, version, at, id, axis, value)
+      written += 1
+    }
+  }
+  return { written, facets: getCaseFacets(appRoot, id) }
+}
+
+/**
+ * 用推导结果替换自动分面。
+ *
+ * 规则：
+ * - 已有 import/manual（未隐藏）的轴整轴跳过——事实来源比文本猜测可信；
+ * - 用户隐藏过的 `(axis,value)` 不再写回；
+ * - 旧的 derived 行若不在新结果里就删除（否则改一次词表就永远留着旧值）。
+ */
+export function applyDerivedFacets(appRoot, caseId, derived, options = {}) {
+  const d = open(appRoot)
+  const id = String(caseId)
+  const version = String(options.taxonomyVersion || '')
+  const at = nowIso()
+
+  const existing = d.prepare('SELECT * FROM case_facets WHERE case_id=?').all(id)
+  const lockedAxes = new Set(
+    existing.filter((r) => !r.suppressed && (r.source === 'import' || r.source === 'manual')).map((r) => r.axis),
+  )
+  const hidden = new Set(existing.filter((r) => r.suppressed).map((r) => `${r.axis}:${r.value}`))
+
+  const wanted = new Map()
+  for (const f of Array.isArray(derived) ? derived : []) {
+    const axis = String(f?.axis || '').trim()
+    const value = String(f?.value || '').trim()
+    if (!axis || !value) continue
+    if (lockedAxes.has(axis)) continue
+    if (hidden.has(`${axis}:${value}`)) continue
+    wanted.set(`${axis}:${value}`, {
+      axis,
+      value,
+      unmapped: f?.unmapped ? 1 : 0,
+      // 推导结果里混着两类：文本猜的（derived）与字段/来源映射的事实（import）。
+      // 把后者也降级成 derived，会让「来源标注」说谎，也会被下一次文本推导覆盖。
+      source: FACET_SOURCES.includes(f?.source) ? f.source : 'derived',
+    })
+  }
+
+  const del = d.prepare(
+    "DELETE FROM case_facets WHERE case_id=? AND axis=? AND value=? AND source='derived' AND suppressed=0",
+  )
+  for (const r of existing) {
+    if (r.source !== 'derived' || r.suppressed) continue
+    if (!wanted.has(`${r.axis}:${r.value}`)) del.run(id, r.axis, r.value)
+  }
+
+  setCaseFacets(
+    appRoot,
+    id,
+    [...wanted.values()],
+    { taxonomyVersion: version },
+  )
+  d.prepare('UPDATE prompt_cases SET taxonomy_version=?, updated_at=? WHERE id=?').run(version, at, id)
+  return getCaseFacets(appRoot, id)
+}
+
+/**
+ * 删除一个分面值。
+ *
+ * - 自动值（derived/import）→ 写隐藏记录（source=manual, suppressed=1），
+ *   推导与重新导入都不会把它加回来；
+ * - 用户手工加的值 → 直接删除行；
+ * - 已经是隐藏记录 → 返回 false（界面不该给出这个操作）。
+ */
+export function deleteCaseFacet(appRoot, caseId, axis, value) {
+  const d = open(appRoot)
+  const id = String(caseId)
+  const a = String(axis || '').trim()
+  const v = String(value || '').trim()
+  const row = d.prepare('SELECT * FROM case_facets WHERE case_id=? AND axis=? AND value=?').get(id, a, v)
+  if (!row) return false
+  if (row.suppressed) return false
+  if (row.source === 'manual') {
+    d.prepare('DELETE FROM case_facets WHERE case_id=? AND axis=? AND value=?').run(id, a, v)
+    return true
+  }
+  d.prepare(
+    'UPDATE case_facets SET source=?, suppressed=1, updated_at=? WHERE case_id=? AND axis=? AND value=?',
+  ).run('manual', nowIso(), id, a, v)
+  return true
+}
+
+/** 恢复被隐藏的分面值：保留 manual 来源，使它不再被推导结果覆盖 */
+export function restoreCaseFacet(appRoot, caseId, axis, value) {
+  const d = open(appRoot)
+  const r = d
+    .prepare(
+      'UPDATE case_facets SET suppressed=0, source=?, updated_at=? WHERE case_id=? AND axis=? AND value=? AND suppressed=1',
+    )
+    .run('manual', nowIso(), String(caseId), String(axis || '').trim(), String(value || '').trim())
+  return Number(r.changes) > 0
+}
+
+/** 把分面挂到一批案例上：列表/详情共用，避免每条案例单独查一次 */
+function attachFacets(d, cases) {
+  if (!Array.isArray(cases) || !cases.length) return cases
+  const ids = cases.map((c) => c.id).filter(Boolean)
+  if (!ids.length) return cases
+  const ph = ids.map(() => '?').join(',')
+  const rows = d
+    .prepare(
+      `SELECT * FROM case_facets WHERE case_id IN (${ph}) AND suppressed=0 ORDER BY axis, value`,
+    )
+    .all(...ids)
+  const map = new Map()
+  for (const r of rows) {
+    if (!map.has(r.case_id)) map.set(r.case_id, [])
+    map.get(r.case_id).push(rowToFacet(r))
+  }
+  for (const c of cases) c.facets = map.get(c.id) || []
+  return cases
+}
+
+/** 按当前词表重新推导一条案例并落库（导入/反推/回填共用） */
+export function refreshCaseFacets(appRoot, caseId, options = {}) {
+  const row = open(appRoot)
+    .prepare('SELECT * FROM prompt_cases WHERE id=?')
+    .get(String(caseId))
+  if (!row) return []
+  const taxonomy = options.taxonomy || loadTaxonomy(appRoot)
+  const reservedAxes = new Set(
+    open(appRoot)
+      .prepare("SELECT DISTINCT axis FROM case_facets WHERE case_id=? AND suppressed=0 AND source IN ('import','manual')")
+      .all(String(caseId))
+      .map((r) => r.axis),
+  )
+  const derived = deriveFacets(
+    taxonomy,
+    {
+      source: row.source,
+      title: row.title,
+      prompt: row.prompt,
+      tags: parseJson(row.tags, []),
+      shots: parseJson(row.shots, []),
+      category: row.category,
+    },
+    { reservedAxes },
+  )
+  // 回填脚本需要「只算不写」：词表升级后先预演，避免一次跑坏整库
+  if (options.dryRun) return derived
+  return applyDerivedFacets(appRoot, caseId, derived, { taxonomyVersion: taxonomyVersionOf(taxonomy) })
+}
+
+/** 还停留在旧词表版本的案例，供回填脚本与「版本落后」提示使用 */
+export function listStaleFacetCases(appRoot, version, options = {}) {
+  const d = open(appRoot)
+  const v = String(version || '')
+  const limit = Math.max(1, Math.min(5000, Number(options.limit) || 500))
+  const stale = d
+    .prepare(
+      "SELECT id, title, taxonomy_version FROM prompt_cases WHERE taxonomy_version IS NULL OR taxonomy_version='' OR taxonomy_version<>? ORDER BY created_at DESC LIMIT ?",
+    )
+    .all(v, limit)
+  const total = Number(
+    d
+      .prepare(
+        "SELECT COUNT(*) c FROM prompt_cases WHERE taxonomy_version IS NULL OR taxonomy_version='' OR taxonomy_version<>?",
+      )
+      .get(v)?.c,
+  ) || 0
+  return { total, cases: stale.map((r) => ({ id: r.id, title: r.title || '', taxonomyVersion: r.taxonomy_version || '' })) }
 }
 
 /**
@@ -180,6 +434,10 @@ export function saveCase(appRoot, input = {}) {
     input.createdAt ? String(input.createdAt) : at,
     at,
   )
+  // 导入/反推可以在保存时带分面；来源由调用方标注（导入为 import）
+  if (Array.isArray(input.facets) && input.facets.length) {
+    setCaseFacets(appRoot, id, input.facets, { taxonomyVersion: input.taxonomyVersion || '' })
+  }
   return getCase(appRoot, id)
 }
 
@@ -208,7 +466,9 @@ export function saveCases(appRoot, list = []) {
 
 export function getCase(appRoot, id) {
   const d = open(appRoot)
-  return rowToCase(d.prepare('SELECT * FROM prompt_cases WHERE id=?').get(String(id)))
+  const row = d.prepare('SELECT * FROM prompt_cases WHERE id=?').get(String(id))
+  if (!row) return null
+  return attachFacets(d, [rowToCase(row)])[0]
 }
 
 export function findCaseBySource(appRoot, source, sourceId) {
@@ -229,39 +489,62 @@ function queryTerms(q) {
 }
 
 /**
- * 列表查询。
+ * 把筛选条件拼成 WHERE。
  *
- * 筛选维度：关键词（标题 + 提示词正文 + 标签）、来源、模型、收藏、分类。
- * 排序默认按创建时间倒序；`sort=title` 按标题升序，便于按写法找。
+ * `facetGroups` 是每轴一组值：同轴 OR（IN），跨轴 AND（多个 EXISTS）。
+ * `excludeAxis` 供分面计数使用——算某轴候选值时不能带上该轴自己的条件，
+ * 否则用户在同一轴里多选时，其他候选值的条数会被压成 0。
  */
-export function listCases(appRoot, options = {}) {
-  const d = open(appRoot)
+function buildCaseWhere(options = {}, excludeAxis = '', alias = 'prompt_cases') {
   const where = []
   const params = []
 
-  const terms = queryTerms(options.q)
-  for (const term of terms) {
-    where.push('(lower(title) LIKE ? OR lower(prompt) LIKE ? OR lower(tags) LIKE ?)')
+  for (const term of queryTerms(options.q)) {
+    where.push(`(lower(${alias}.title) LIKE ? OR lower(${alias}.prompt) LIKE ? OR lower(${alias}.tags) LIKE ?)`)
     const like = `%${term}%`
     params.push(like, like, like)
   }
 
   const source = normalizeCaseSource(options.source)
   if (source) {
-    where.push('source=?')
+    where.push(`${alias}.source=?`)
     params.push(source)
   }
   if (options.model) {
-    where.push('model=?')
+    where.push(`${alias}.model=?`)
     params.push(String(options.model))
   }
   if (options.category) {
-    where.push('category=?')
+    where.push(`${alias}.category=?`)
     params.push(String(options.category))
   }
-  if (options.favorite) where.push('favorite=1')
+  if (options.favorite) where.push(`${alias}.favorite=1`)
 
-  const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  for (const group of Array.isArray(options.facetGroups) ? options.facetGroups : []) {
+    const axis = String(group?.axis || '').trim()
+    const values = Array.isArray(group?.values) ? group.values.filter(Boolean) : []
+    if (!axis || !values.length) continue
+    if (excludeAxis && axis === excludeAxis) continue
+    const ph = values.map(() => '?').join(',')
+    where.push(
+      `EXISTS (SELECT 1 FROM case_facets f WHERE f.case_id = ${alias}.id AND f.axis = ? AND f.value IN (${ph}) AND f.suppressed = 0)`,
+    )
+    params.push(axis, ...values)
+  }
+
+  return { clause: where.length ? `WHERE ${where.join(' AND ')}` : '', where, params }
+}
+
+/**
+ * 列表查询。
+ *
+ * 筛选维度：关键词（标题 + 提示词正文 + 标签）、来源、模型、收藏、分类、分面。
+ * 排序默认按创建时间倒序；`sort=title` 按标题升序，便于按写法找。
+ */
+export function listCases(appRoot, options = {}) {
+  const d = open(appRoot)
+  const { clause, params } = buildCaseWhere(options)
+
   const total = Number(d.prepare(`SELECT COUNT(*) c FROM prompt_cases ${clause}`).get(...params)?.c) || 0
 
   const sizeRaw = Number(options.pageSize) || PROMPT_CASE_PAGE_SIZE
@@ -276,12 +559,69 @@ export function listCases(appRoot, options = {}) {
     .all(...params, pageSize, offset)
 
   return {
-    cases: rows.map(rowToCase),
+    cases: attachFacets(d, rows.map(rowToCase)),
     total,
     page,
     pageSize,
     totalPages,
   }
+}
+
+/**
+ * 分面计数：当前筛选下每个轴值的可用条数。
+ *
+ * 算某轴时排除该轴自身的条件，其余条件全保留；未参与筛选的轴共用一个查询。
+ * 结果只含有条数的值——0 条的值由前端按词表补齐并置灰。
+ */
+export function caseFacetCounts(appRoot, options = {}) {
+  const d = open(appRoot)
+  const groups = (Array.isArray(options.facetGroups) ? options.facetGroups : []).filter(
+    (g) => g?.axis && Array.isArray(g.values) && g.values.length,
+  )
+  const selected = new Set(groups.map((g) => g.axis))
+  const out = []
+  const seen = new Set()
+  const push = (rows) => {
+    for (const r of rows) {
+      const key = `${r.axis}:${r.value}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ axis: r.axis, value: r.value, count: Number(r.n) || 0 })
+    }
+  }
+
+  // 未参与筛选的轴：全部条件同时生效（没有选中轴时这里就是全部轴的计数）
+  const all = buildCaseWhere(options, '', 'c')
+  const allClause = all.where.length ? `WHERE ${all.where.join(' AND ')} AND` : 'WHERE'
+  push(
+    d
+      .prepare(
+        `SELECT f.axis, f.value, COUNT(DISTINCT f.case_id) n
+         FROM case_facets f JOIN prompt_cases c ON c.id = f.case_id
+         ${allClause} f.suppressed = 0 AND f.unmapped = 0
+         GROUP BY f.axis, f.value`,
+      )
+      .all(...all.params)
+      .filter((r) => !selected.has(r.axis)),
+  )
+
+  // 参与筛选的轴：排除该轴自身的条件，其余全保留
+  for (const axis of selected) {
+    const w = buildCaseWhere(options, axis, 'c')
+    const clause = w.where.length ? `WHERE ${w.where.join(' AND ')} AND` : 'WHERE'
+    push(
+      d
+        .prepare(
+          `SELECT f.axis, f.value, COUNT(DISTINCT f.case_id) n
+           FROM case_facets f JOIN prompt_cases c ON c.id = f.case_id
+           ${clause} f.suppressed = 0 AND f.unmapped = 0 AND f.axis = ?
+           GROUP BY f.axis, f.value`,
+        )
+        .all(...w.params, axis),
+    )
+  }
+
+  return out
 }
 
 /** 筛选面板用的聚合：各来源条数 + 出现过的模型与分类 */
@@ -449,6 +789,7 @@ export function parseVflowIndex(raw) {
       model: Number.isInteger(modelIdx) && modelIdx >= 0 && modelIdx < models.length ? models[modelIdx] : '',
       category: cats_[0] || '',
       tags: cats_.slice(1, 5),
+      categories: cats_,
       aspect: Number.isInteger(aspectIdx) && aspectIdx >= 0 && aspectIdx < aspects.length ? aspects[aspectIdx] : '',
       durationSec: Number(row[VFLOW_COLUMNS.durationSec]) || 0,
       createdAt: ymdToIso(row[VFLOW_COLUMNS.date]),
@@ -458,27 +799,54 @@ export function parseVflowIndex(raw) {
   return { items, models, categories: cats }
 }
 
-/** 逐条 JSON → 案例输入（许可由 saveCase 按来源推导，这里不写） */
-export function parseVflowItem(raw) {
+/**
+ * 逐条 JSON → 案例输入（许可由 saveCase 按来源推导，这里不写）。
+ *
+ * 逐条 JSON 本身不带分类，分类在索引行里；导入时用 `options.categories` 把索引
+ * 上那条记录的多标签带进来。早先这里把 `category` 写死为空串，等于把来源标注的
+ * 分类整批丢掉——这正是分面体系要修的问题。
+ */
+export function parseVflowItem(raw, options = {}) {
   const doc = typeof raw === 'string' ? decodeJsonText(raw, '条目') : raw
   if (!doc || typeof doc !== 'object') throw new Error('条目结构无法识别')
   const id = String(doc.id || '').trim()
   if (!id) throw new Error('条目缺少 id')
   const prompt = String(doc.prompt || '').trim()
+  const rawCats =
+    (Array.isArray(options.categories) && options.categories) ||
+    (Array.isArray(doc.categories) && doc.categories) ||
+    (Array.isArray(doc.cat) && doc.cat) ||
+    (doc.category ? [doc.category] : [])
+  const categories = [...new Set(rawCats.map((c) => String(c ?? '').trim()).filter(Boolean))]
   return {
     source: 'vflow',
     sourceId: id,
     title: String(doc.title || '').trim(),
     prompt,
     model: String(doc.referenceModel || '').trim(),
-    category: '',
-    tags: prompt ? [] : [],
+    category: categories[0] || '',
+    tags: categories.slice(1, 9),
+    categories,
     videoUrl: String(doc.videoUrl || '').trim(),
     posterUrl: String(doc.thumbnailUrl || '').trim(),
     author: '',
     sourceUrl: String(doc.sourceUrl || doc.promptSourceUrl || '').trim(),
     createdAt: '',
   }
+}
+
+/** 把来源分类预映射成可分面，预览与导入共用 */
+export function summarizeSourceFacets(taxonomy, source, categories) {
+  const { mapped, unmapped } = mapSourceCategories(taxonomy, source, categories)
+  const seen = new Set()
+  const facets = []
+  for (const m of mapped) {
+    const key = `${m.axis}:${m.value}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    facets.push({ axis: m.axis, value: m.value })
+  }
+  return { facets, unmapped }
 }
 
 /**
@@ -566,31 +934,42 @@ export async function previewCasesFromSource(input = {}, deps = {}) {
   const model = String(input.model || '').trim()
   const category = String(input.category || '').trim()
   const limit = Math.max(1, Math.min(PREVIEW_MAX_ITEMS, Math.floor(Number(input.limit) || 24)))
+  const taxonomy = deps.taxonomy || loadDefaultTaxonomy()
 
   if (def.id !== 'vflow') throw new Error(`来源「${def.label}」还没有预览实现`)
 
   const index = await loadVflowIndex(deps)
   let items = index.items
   if (model) items = items.filter((it) => it.model === model)
-  if (category) items = items.filter((it) => it.category === category || it.tags.includes(category))
+  if (category) {
+    items = items.filter(
+      (it) => it.category === category || (it.categories || []).includes(category) || it.tags.includes(category),
+    )
+  }
   if (q) {
     const terms = q.split(/\s+/).filter(Boolean)
     items = items.filter((it) => {
-      const hay = `${it.title} ${it.author} ${it.category} ${it.tags.join(' ')}`.toLowerCase()
+      const hay = `${it.title} ${it.author} ${it.category} ${(it.categories || []).join(' ')} ${it.tags.join(' ')}`.toLowerCase()
       return terms.every((t) => hay.includes(t))
     })
   }
   const picked = items.slice(0, limit)
 
   const token = crypto.randomBytes(12).toString('hex')
-  cacheSet(previewCache, token, { source: def.id, ids: new Set(picked.map((i) => i.id)) }, PREVIEW_TTL_MS)
+  const cachedItems = new Map()
+  for (const it of picked) cachedItems.set(it.id, { categories: it.categories || [] })
+  cacheSet(previewCache, token, { source: def.id, ids: new Set(picked.map((i) => i.id)), items: cachedItems }, PREVIEW_TTL_MS)
 
   return {
     source: def.id,
     sourceLabel: def.label,
     token,
     total: items.length,
-    items: picked,
+    items: picked.map((it) => ({
+      ...it,
+      // 预览就把「会落到哪些轴值 / 哪些没映射」摊开：用户是在这一步决定导不导
+      ...summarizeSourceFacets(taxonomy, def.id, it.categories || []),
+    })),
     models: index.models,
     categories: index.categories,
     license: licenseForSource(def.id),
@@ -654,15 +1033,41 @@ export async function importCasesFromSource(appRoot, input = {}, deps = {}) {
     }
   })
 
+  const taxonomy = deps.taxonomy || loadDefaultTaxonomy()
+  const unmappedAxis = taxonomy.limits?.unmappedAxis || 'genre'
   const good = got.filter((r) => r.ok).map((r) => r.value)
   const failed = got.filter((r) => !r.ok).map((r) => ({ id: r.id, message: r.message }))
+
+  // 分类来自索引行（逐条 JSON 不带），提交时按预览缓存回填，并预映射成分面
+  for (const item of good) {
+    const categories = preview.items?.get(item.sourceId)?.categories || item.categories || []
+    item.categories = categories
+    item.category = categories[0] || ''
+    item.tags = normalizeCaseTags(categories.slice(1))
+    const { facets, unmapped } = summarizeSourceFacets(taxonomy, def.id, categories)
+    item.facets = [
+      ...facets.map((f) => ({ ...f, source: 'import' })),
+      ...unmapped.map((raw) => ({ axis: unmappedAxis, value: raw, source: 'import', unmapped: true })),
+    ]
+    item.taxonomyVersion = taxonomyVersionOf(taxonomy)
+  }
+
   const saved = saveCases(appRoot, good)
+
+  // D8：推导只跑本次写入的案例，不扫全库。导入分面已锁定对应轴，推导只补空缺。
+  let facetsWritten = 0
+  for (const item of good) {
+    const id = promptCaseId(def.id, item.sourceId)
+    facetsWritten += refreshCaseFacets(appRoot, id, { taxonomy }).length
+  }
+
   return {
     source: def.id,
     created: saved.created,
     updated: saved.updated,
     failed: [...failed, ...saved.failed.map((f) => ({ id: f.sourceId, message: f.message }))],
     imported: good.length,
+    facetsWritten,
   }
 }
 

@@ -36,6 +36,23 @@ export type PromptCaseShot = {
   assets?: { sheet?: string; firstFrame?: string; lastFrame?: string }
 }
 
+/** 分面来源：自动推导 / 导入映射 / 人工修正 */
+export type PromptCaseFacetSource = 'derived' | 'import' | 'manual'
+
+export type PromptCaseFacet = {
+  axis: string
+  value: string
+  source: PromptCaseFacetSource
+  /** true 表示来源分类没有对应词表值，按原文保留 */
+  unmapped: boolean
+  suppressed: boolean
+  taxonomyVersion: string
+  updatedAt: string
+}
+
+export type FacetCount = { axis: string; value: string; count: number }
+export type InvalidFacet = { raw: string; reason: string }
+
 export type PromptCase = {
   id: string
   source: PromptCaseSource
@@ -55,7 +72,12 @@ export type PromptCase = {
   favorite: boolean
   createdAt: string
   updatedAt: string
+  taxonomyVersion: string
+  facets: PromptCaseFacet[] | null
 }
+
+/** 详情额外返回被隐藏的自动值，供「恢复」入口使用 */
+export type PromptCaseDetail = PromptCase & { suppressedFacets?: PromptCaseFacet[] }
 
 export type PromptCaseFacets = {
   total: number
@@ -72,6 +94,9 @@ export type PromptCaseListResult = {
   pageSize: number
   totalPages: number
   facets: PromptCaseFacets
+  facetCounts: FacetCount[]
+  invalidFacets: InvalidFacet[]
+  taxonomyVersion: string
 }
 
 export type PromptCaseQuery = {
@@ -83,6 +108,8 @@ export type PromptCaseQuery = {
   sort?: 'title' | ''
   page?: number
   pageSize?: number
+  /** `axis:value`，同轴 OR、跨轴 AND */
+  facets?: string[]
 }
 
 export type PromptCaseSourceInfo = {
@@ -107,6 +134,12 @@ export type PromptCasePreviewItem = {
   posterUrl: string
   videoUrl: string
   createdAt: string
+  /** 索引行上的原始分类（多标签） */
+  categories: string[]
+  /** 预览阶段预映射到的轴值 */
+  facets: Array<{ axis: string; value: string }>
+  /** 词表里没有对应值的原始分类 */
+  unmapped: string[]
 }
 
 export type PromptCasePreview = {
@@ -188,6 +221,12 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   return o
 }
 
+function facetParams(params: URLSearchParams, facets?: string[]) {
+  for (const f of facets || []) {
+    if (f) params.append('facet', f)
+  }
+}
+
 export async function listPromptCases(query: PromptCaseQuery = {}): Promise<PromptCaseListResult> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
@@ -198,6 +237,7 @@ export async function listPromptCases(query: PromptCaseQuery = {}): Promise<Prom
   if (query.sort) params.set('sort', query.sort)
   if (query.page) params.set('page', String(query.page))
   if (query.pageSize) params.set('pageSize', String(query.pageSize))
+  facetParams(params, query.facets)
   const res = await fetch(`/api/prompt-cases?${params.toString()}`)
   const j = await readJson(res)
   return {
@@ -207,13 +247,48 @@ export async function listPromptCases(query: PromptCaseQuery = {}): Promise<Prom
     pageSize: Number(j.pageSize) || 24,
     totalPages: Number(j.totalPages) || 1,
     facets: (j.facets as PromptCaseFacets) ?? { total: 0, favorites: 0, bySource: {}, models: [], categories: [] },
+    facetCounts: Array.isArray(j.facetCounts) ? (j.facetCounts as FacetCount[]) : [],
+    invalidFacets: Array.isArray(j.invalidFacets) ? (j.invalidFacets as InvalidFacet[]) : [],
+    taxonomyVersion: String(j.taxonomyVersion || ''),
   }
 }
 
-export async function getPromptCase(id: string): Promise<PromptCase> {
+export async function listPromptCaseFacetCounts(
+  query: PromptCaseQuery = {},
+): Promise<{ counts: FacetCount[]; invalidFacets: InvalidFacet[]; taxonomyVersion: string }> {
+  const params = new URLSearchParams()
+  if (query.q) params.set('q', query.q)
+  if (query.source) params.set('source', query.source)
+  if (query.model) params.set('model', query.model)
+  if (query.category) params.set('category', query.category)
+  if (query.favorite) params.set('favorite', '1')
+  facetParams(params, query.facets)
+  const res = await fetch(`/api/prompt-cases/facets?${params.toString()}`)
+  const j = await readJson(res)
+  return {
+    counts: Array.isArray(j.counts) ? (j.counts as FacetCount[]) : [],
+    invalidFacets: Array.isArray(j.invalidFacets) ? (j.invalidFacets as InvalidFacet[]) : [],
+    taxonomyVersion: String(j.taxonomyVersion || ''),
+  }
+}
+
+export async function patchPromptCaseFacets(
+  id: string,
+  patch: { add?: string[]; remove?: string[]; restore?: string[] },
+): Promise<PromptCaseDetail> {
+  const res = await fetch(`/api/prompt-cases/${encodeURIComponent(id)}/facets`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const j = await readJson(res)
+  return j.case as PromptCaseDetail
+}
+
+export async function getPromptCase(id: string): Promise<PromptCaseDetail> {
   const res = await fetch(`/api/prompt-cases/${encodeURIComponent(id)}`)
   const j = await readJson(res)
-  return j.case as PromptCase
+  return j.case as PromptCaseDetail
 }
 
 export async function patchPromptCase(
@@ -259,7 +334,13 @@ export async function importPromptCases(input: {
   source: string
   token: string
   ids: string[]
-}): Promise<{ created: number; updated: number; imported: number; failed: Array<{ id: string; message: string }> }> {
+}): Promise<{
+  created: number
+  updated: number
+  imported: number
+  facetsWritten: number
+  failed: Array<{ id: string; message: string }>
+}> {
   const res = await fetch('/api/prompt-cases/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -270,6 +351,7 @@ export async function importPromptCases(input: {
     created: Number(j.created) || 0,
     updated: Number(j.updated) || 0,
     imported: Number(j.imported) || 0,
+    facetsWritten: Number(j.facetsWritten) || 0,
     failed: Array.isArray(j.failed) ? (j.failed as Array<{ id: string; message: string }>) : [],
   }
 }

@@ -5,9 +5,11 @@
  *   --unit     存储层：CRUD、许可强制、UPSERT 保收藏、分页
  *   --import   外部来源：vflow fixture 预览与提交、失败路径
  *   --reverse  反推作业：mock 子进程走作业生命周期
+ *   --apply    应用到镜头：只改目标字段并标记手改
+ *   --facets   分面：推导、同轴 OR/跨轴 AND、计数、人工优先、隐藏/恢复、未映射
  *   无参数全跑
  *
- * 跑法：node verify-prompt-cases.mjs [--unit|--import|--reverse]
+ * 跑法：node verify-prompt-cases.mjs [--unit|--import|--reverse|--apply|--facets]
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -114,9 +116,79 @@ async function runUnit() {
   const byFav = lib.listCases(root, { favorite: true })
   check('按收藏筛选', byFav.total === 1)
 
+  // ---- 分面
+  const fa = lib.saveCase(root, {
+    source: 'manual',
+    sourceId: 'facet-a',
+    title: '雨夜巷口',
+    prompt: '中景，女子回眸，霓虹',
+    facets: [
+      { axis: 'genre', value: 'cyberpunk', source: 'import' },
+      { axis: 'environment', value: 'alley', source: 'derived' },
+    ],
+  })
+  check('保存时写入分面', fa.facets.length === 2, String(fa.facets?.length))
+  check(
+    '同 (case,axis,value) 重复写入只留一行',
+    lib.setCaseFacets(root, fa.id, [
+      { axis: 'genre', value: 'cyberpunk', source: 'import' },
+      { axis: 'genre', value: 'cyberpunk', source: 'derived' },
+    ]).written === 1 && lib.getCaseFacets(root, fa.id).filter((f) => f.axis === 'genre').length === 1,
+  )
+  lib.setCaseFacets(root, fa.id, [{ axis: 'genre', value: 'cyberpunk', source: 'manual' }])
+  lib.setCaseFacets(root, fa.id, [{ axis: 'genre', value: 'cyberpunk', source: 'derived' }])
+  check(
+    '来源只升不降（manual 不被 derived 覆盖）',
+    lib.getCaseFacets(root, fa.id).find((f) => f.axis === 'genre')?.source === 'manual',
+  )
+
+  const fb = lib.saveCase(root, { source: 'manual', sourceId: 'facet-b', title: '天台', prompt: '全景 推镜' })
+  lib.applyDerivedFacets(root, fb.id, [
+    { axis: 'genre', value: 'cyberpunk' },
+    { axis: 'environment', value: 'rooftop' },
+  ], { taxonomyVersion: 'v-test' })
+  check('推导写入分面并带版本', lib.getCaseFacets(root, fb.id).every((f) => f.taxonomyVersion === 'v-test'))
+  check('推导结果可筛选', lib.listCases(root, { facetGroups: [{ axis: 'environment', values: ['rooftop'] }] }).total === 1)
+
+  lib.deleteCaseFacet(root, fb.id, 'environment', 'rooftop')
+  check('删除自动值后默认不返回', !lib.getCaseFacets(root, fb.id).some((f) => f.value === 'rooftop'))
+  check(
+    '删除自动值留下隐藏记录',
+    lib.getCaseFacets(root, fb.id, { includeSuppressed: true }).some((f) => f.value === 'rooftop' && f.suppressed),
+  )
+  lib.applyDerivedFacets(root, fb.id, [
+    { axis: 'genre', value: 'cyberpunk' },
+    { axis: 'environment', value: 'rooftop' },
+  ], { taxonomyVersion: 'v-test2' })
+  check('重新推导不会复活已删自动值', !lib.getCaseFacets(root, fb.id).some((f) => f.value === 'rooftop'))
+  check('恢复被隐藏的值', lib.restoreCaseFacet(root, fb.id, 'environment', 'rooftop') &&
+    lib.getCaseFacets(root, fb.id).some((f) => f.value === 'rooftop' && f.source === 'manual'))
+  check('重复恢复返回 false', lib.restoreCaseFacet(root, fb.id, 'environment', 'rooftop') === false)
+
+  // 同轴 OR、跨轴 AND
+  const orCount = lib.listCases(root, { facetGroups: [{ axis: 'genre', values: ['cyberpunk', 'action'] }] }).total
+  const single = lib.listCases(root, { facetGroups: [{ axis: 'genre', values: ['cyberpunk'] }] }).total
+  const cross = lib.listCases(root, {
+    facetGroups: [
+      { axis: 'genre', values: ['cyberpunk'] },
+      { axis: 'environment', values: ['rooftop'] },
+    ],
+  }).total
+  check('同轴多值为 OR', orCount >= single, `${orCount} vs ${single}`)
+  check('跨轴为 AND', cross <= single, `${cross} vs ${single}`)
+
+  const counts = lib.caseFacetCounts(root, { facetGroups: [{ axis: 'genre', values: ['cyberpunk'] }] })
+  const envCount = counts.find((c) => c.axis === 'environment' && c.value === 'rooftop')?.count
+  check('分面计数带其他轴条件', envCount === 1, String(envCount))
+  const genreCount = counts.find((c) => c.axis === 'genre' && c.value === 'action')
+  check('分面计数不看本轴条件（0 值不返回）', genreCount === undefined)
+
+  const stale = lib.listStaleFacetCases(root, 'v-test')
+  check('旧版本案例可枚举', stale.total >= 1, String(stale.total))
+
   const facets = lib.caseFacets(root)
-  check('聚合总数', facets.total === 33, String(facets.total))
-  check('聚合按来源', facets.bySource.manual === 31, JSON.stringify(facets.bySource))
+  check('聚合总数', facets.total === 35, String(facets.total))
+  check('聚合按来源', facets.bySource.manual === 33, JSON.stringify(facets.bySource))
 
   // 删除
   check('删除存在案例', lib.deleteCase(root, saved.id) === true)
@@ -169,6 +241,19 @@ async function runImport() {
   const onlySeedance = await lib.previewCasesFromSource({ source: 'vflow', model: 'seedance-2-5', limit: 20 }, deps)
   check('按模型过滤生效', onlySeedance.items.length > 0 && onlySeedance.items.every((i) => i.model === 'seedance-2-5'), `${onlySeedance.items.length} 条`)
 
+  // 分类保真：逐条 JSON 不带分类，靠索引行回填
+  const parsedIndex = lib.parseVflowIndex(indexJson)
+  const multiCat = parsedIndex.items.find((i) => (i.categories || []).length >= 2)
+  const single = lib.parseVflowItem(itemJson(multiCat.id), { categories: multiCat.categories })
+  check('逐条解析保留索引分类', single.categories.length >= 2 && Boolean(single.category), JSON.stringify(single.categories))
+  check('预览条目带分类与分面摘要', preview.items.every((i) => Array.isArray(i.categories) && Array.isArray(i.facets)))
+  check('预览分面摘要非空', preview.items.some((i) => i.facets.length > 0))
+  const catPreview = await lib.previewCasesFromSource(
+    { source: 'vflow', category: multiCat.categories[0], limit: 20 },
+    deps,
+  )
+  check('按分类过滤预览', catPreview.items.length > 0 && catPreview.items.length <= preview.total, `${catPreview.items.length}`)
+
   // 关键词过滤
   const kw = await lib.previewCasesFromSource({ source: 'vflow', q: 'claymation', limit: 20 }, deps)
   check('关键词过滤生效', kw.items.length >= 1)
@@ -178,10 +263,19 @@ async function runImport() {
   const imported = await lib.importCasesFromSource(root, { source: 'vflow', token: preview.token, ids }, deps)
   check('导入新增数', imported.created === 3, JSON.stringify({ created: imported.created }))
   check('导入后入库', lib.listCases(root, { source: 'vflow' }).total === 3)
+  check('导入写入分面', imported.facetsWritten > 0, String(imported.facetsWritten))
+  const facetRowCount = () =>
+    lib
+      .listCases(root, { source: 'vflow', pageSize: 96 })
+      .cases.reduce((n, c) => n + (c.facets?.length || 0), 0)
+  const rowsAfterFirst = facetRowCount()
+  check('导入案例详情带分面与来源', rowsAfterFirst > 0 &&
+    lib.listCases(root, { source: 'vflow' }).cases.every((c) => c.facets.every((f) => f.source)))
 
   // 幂等
   const again = await lib.importCasesFromSource(root, { source: 'vflow', token: preview.token, ids }, deps)
   check('重复导入全部为更新', again.created === 0 && again.updated === 3, JSON.stringify(again))
+  check('重复导入分面行数不增长', facetRowCount() === rowsAfterFirst, `${facetRowCount()} vs ${rowsAfterFirst}`)
 
   // 收藏与备注在重导后保留
   const first = lib.listCases(root, { source: 'vflow' }).cases[0]
@@ -406,6 +500,21 @@ async function runReverse() {
   check('证据取 base.evidence', parsedDoc.shots[0].evidence.length === 2)
   check('全局风格可读', parsedDoc.globalStyle.includes('冷青'))
   check('视觉状态透出', parsedDoc.vlmStatus === 'partial')
+
+  // 反推入库 → 逐镜制作方式落到 style-medium
+  const adoptable = ids.find((id) => rea.getReverseJob(id)?.status === 'done')
+  const adopted = rea.adoptReverseJob(adoptable, { title: '反推分面' })
+  const adoptedCase = lib.saveCase(root, adopted)
+  const adoptedFacets = lib.refreshCaseFacets(root, adoptedCase.id)
+  check(
+    '反推逐镜制作方式写入风格轴',
+    adoptedFacets.some((f) => f.axis === 'style-medium' && f.value === 'ai-generated' && f.source === 'import'),
+    JSON.stringify(adoptedFacets.filter((f) => f.axis === 'style-medium')),
+  )
+  check(
+    '未知制作方式不写入词表外值',
+    !adoptedFacets.some((f) => f.axis === 'style-medium' && f.value === 'brand_new_kind'),
+  )
 }
 
 // ---------------------------------------------------------------- apply
@@ -468,6 +577,94 @@ async function runApply() {
   check('外部案例许可为仅参考', one.license === 'reference-only', one.license)
 }
 
+// ---------------------------------------------------------------- facets
+
+async function runFacets() {
+  console.log('\n=== 分面 ===')
+  const root = freshRoot('facets')
+  const lib = await loadLib()
+  const { openDatabase } = await import('./server/db.mjs')
+
+  const facetsOf = (id) => lib.getCase(root, id).facets || []
+  const has = (list, axis, value) => list.some((f) => f.axis === axis && f.value === value)
+  const totalFor = (groups) => lib.listCases(root, { facetGroups: groups }).total
+  const countOf = (list, axis, value) => list.find((c) => c.axis === axis && c.value === value)?.count
+
+  const a = lib.saveCase(root, {
+    source: 'manual',
+    sourceId: 'facet-a',
+    title: '雨夜巷口',
+    prompt: 'A woman turns in a rainy alley, medium shot, slow push in, neon light',
+    category: 'cinematic realistic',
+  })
+  const b = lib.saveCase(root, {
+    source: 'manual',
+    sourceId: 'facet-b',
+    title: '定格黏土',
+    prompt: 'stop motion clay puppet in a bright kitchen, wide shot, static camera',
+    category: 'claymation',
+  })
+  const c = lib.saveCase(root, {
+    source: 'manual',
+    sourceId: 'facet-c',
+    title: '霓虹梦核',
+    prompt: 'a dragon flies over mountains, aerial shot',
+    category: 'neon-dreamcore',
+  })
+  for (const item of [a, b, c]) lib.refreshCaseFacets(root, item.id)
+
+  const fa = facetsOf(a.id)
+  check('文本推导景别', has(fa, 'shot-size', 'medium'), JSON.stringify(fa.map((f) => `${f.axis}:${f.value}`)))
+  check('文本推导运镜', has(fa, 'camera-move', 'push-in'))
+  check('文本推导环境', has(fa, 'environment', 'alley'))
+  check('分类映射到风格且来源为 import', fa.some((f) => f.axis === 'style-medium' && f.source === 'import'))
+
+  // 同轴 OR、跨轴 AND
+  check('单值筛选命中 1 条', totalFor([{ axis: 'shot-size', values: ['medium'] }]) === 1)
+  check('同轴两值 OR 命中 2 条', totalFor([{ axis: 'shot-size', values: ['medium', 'wide'] }]) === 2)
+  check('跨轴 AND 命中 1 条', totalFor([{ axis: 'shot-size', values: ['medium'] }, { axis: 'environment', values: ['alley'] }]) === 1)
+  check('跨轴互斥为空', totalFor([{ axis: 'shot-size', values: ['medium'] }, { axis: 'environment', values: ['kitchen'] }]) === 0)
+
+  // 计数：算某轴时排除该轴自身条件，其余轴保留
+  const allCounts = lib.caseFacetCounts(root, {})
+  check('计数含景别', countOf(allCounts, 'shot-size', 'medium') === 1, JSON.stringify(countOf(allCounts, 'shot-size', 'medium')))
+  const filteredCounts = lib.caseFacetCounts(root, { facetGroups: [{ axis: 'shot-size', values: ['medium'] }] })
+  check('计数排除自身轴', countOf(filteredCounts, 'shot-size', 'wide') === 1 && countOf(filteredCounts, 'shot-size', 'medium') === 1)
+  check('计数保留其他轴条件', countOf(filteredCounts, 'environment', 'alley') === 1 && countOf(filteredCounts, 'environment', 'kitchen') == null)
+
+  // 人工值优先：同轴不再写推导值
+  lib.setCaseFacets(root, a.id, [{ axis: 'shot-size', value: 'close-up', source: 'manual' }])
+  lib.refreshCaseFacets(root, a.id)
+  const fa2 = facetsOf(a.id)
+  check('人工分面保留', has(fa2, 'shot-size', 'close-up'))
+  check('推导值不覆盖人工轴', !has(fa2, 'shot-size', 'medium'))
+  check('人工值可筛选', totalFor([{ axis: 'shot-size', values: ['close-up'] }]) === 1)
+
+  // 删除自动值 → 隐藏；重推导不复活；恢复后回到列表
+  check('定格案例有风格分面', has(facetsOf(b.id), 'style-medium', 'stop-motion-puppet'))
+  lib.deleteCaseFacet(root, b.id, 'style-medium', 'stop-motion-puppet')
+  check('删除后默认不返回', !has(facetsOf(b.id), 'style-medium', 'stop-motion-puppet'))
+  lib.refreshCaseFacets(root, b.id)
+  check('重推导不复活被删值', !has(facetsOf(b.id), 'style-medium', 'stop-motion-puppet'))
+  lib.restoreCaseFacet(root, b.id, 'style-medium', 'stop-motion-puppet')
+  check('恢复后可再筛出', totalFor([{ axis: 'style-medium', values: ['stop-motion-puppet'] }]) === 1)
+
+  // 未映射分类：原文保留、可筛出、不计入计数、不拖累同条其他分面
+  const fc = facetsOf(c.id)
+  const unmapped = fc.find((f) => f.value === 'neon-dreamcore')
+  check('未映射按原文保留', Boolean(unmapped) && unmapped.unmapped === true && unmapped.axis === 'genre')
+  check('未映射可筛出', totalFor([{ axis: 'genre', values: ['neon-dreamcore'] }]) === 1)
+  check('未映射不计入计数', !lib.caseFacetCounts(root, {}).some((x) => x.value === 'neon-dreamcore'))
+  check('未映射不影响同条其他分面', has(fc, 'camera-move', 'aerial'))
+
+  // 幂等：重复推导不增长行数
+  const d = openDatabase(root)
+  const rows = () => Number(d.prepare('SELECT COUNT(*) c FROM case_facets').get()?.c) || 0
+  const before = rows()
+  lib.refreshCaseFacets(root, c.id)
+  check('重复推导行数不变', rows() === before, `${before} → ${rows()}`)
+}
+
 // ---------------------------------------------------------------- main
 
 
@@ -478,7 +675,7 @@ if (!mode) {
   // 同进程里换 root 不会换库，必须隔离。
   const { spawnSync } = await import('node:child_process')
   let failed = 0
-  for (const m of ['--unit', '--import', '--reverse', '--apply']) {
+  for (const m of ['--unit', '--import', '--reverse', '--apply', '--facets']) {
     const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), m], { stdio: 'inherit' })
     if (r.status !== 0) failed += 1
   }
@@ -490,6 +687,7 @@ if (mode === '--unit') await runUnit()
 if (mode === '--import') await runImport()
 if (mode === '--reverse') await runReverse()
 if (mode === '--apply') await runApply()
+if (mode === '--facets') await runFacets()
 
 console.log(`\n${bad === 0 ? '全部通过' : `${bad} 项失败`}`)
 process.exit(bad === 0 ? 0 : 1)

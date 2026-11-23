@@ -258,16 +258,28 @@ import {
 } from './creative.mjs'
 import { promoteReversePack, reversePackToText } from './creative-promote.mjs'
 import {
+  caseFacetCounts as countPromptCaseFacets,
   caseFacets as listPromptCaseFacets,
   deleteCase as deletePromptCase,
+  deleteCaseFacet as deletePromptCaseFacet,
   getCase as getPromptCase,
+  getCaseFacets as getPromptCaseFacets,
   importCasesFromSource as importPromptCases,
   listCaseSources as listPromptCaseSources,
   listCases as listPromptCases,
   patchCase as patchPromptCase,
   previewCasesFromSource as previewPromptCases,
+  refreshCaseFacets as refreshPromptCaseFacets,
+  restoreCaseFacet as restorePromptCaseFacet,
   saveCase as savePromptCase,
+  setCaseFacets as setPromptCaseFacets,
 } from './prompt-cases.mjs'
+import {
+  groupFacetPairs,
+  listTaxonomy as listFacetTaxonomy,
+  loadTaxonomy as loadFacetTaxonomy,
+  validateFacetPairs,
+} from './prompt-taxonomy.mjs'
 import {
   cancelReverseJob,
   createReverseJob,
@@ -3816,23 +3828,86 @@ export function createAppHandler({ root }: { root: string }) {
             const tail = url.slice('/api/prompt-cases'.length).replace(/^\/+/, '')
             const q = new URL(req.url || '', 'http://x').searchParams
 
+            /** 分面参数在 URL 上重复出现：`facet=genre:a&facet=genre:b` */
+            const facetQuery = () => {
+              const taxonomy = loadFacetTaxonomy(rootDir)
+              const parsed = validateFacetPairs(taxonomy, q.getAll('facet'))
+              return {
+                taxonomy,
+                groups: groupFacetPairs(parsed.valid),
+                invalidFacets: parsed.invalid,
+              }
+            }
+            const caseQuery = (extra: Record<string, unknown> = {}) => ({
+              q: q.get('q') || '',
+              source: q.get('source') || '',
+              model: q.get('model') || '',
+              category: q.get('category') || '',
+              favorite: q.get('favorite') === '1',
+              sort: q.get('sort') || '',
+              page: q.get('page') || undefined,
+              pageSize: q.get('pageSize') || undefined,
+              ...extra,
+            })
+            const facetState = (caseId: string) => {
+              const all = getPromptCaseFacets(rootDir, caseId, { includeSuppressed: true })
+              return {
+                facets: all.filter((f: any) => !f.suppressed),
+                suppressedFacets: all.filter((f: any) => f.suppressed),
+              }
+            }
+
             if (!tail && req.method === 'GET') {
-              const list = listPromptCases(rootDir, {
-                q: q.get('q') || '',
-                source: q.get('source') || '',
-                model: q.get('model') || '',
-                category: q.get('category') || '',
-                favorite: q.get('favorite') === '1',
-                sort: q.get('sort') || '',
-                page: q.get('page') || undefined,
-                pageSize: q.get('pageSize') || undefined,
-              })
-              res.end(JSON.stringify({ ok: true, ...list, facets: listPromptCaseFacets(rootDir) }))
+              const { taxonomy, groups, invalidFacets } = facetQuery()
+              // 非法轴/值不降级成「忽略该条件」：那会让用户以为筛选生效了，其实是全库
+              if (invalidFacets.length) {
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    cases: [],
+                    total: 0,
+                    page: 1,
+                    pageSize: 24,
+                    totalPages: 1,
+                    invalidFacets,
+                    facets: listPromptCaseFacets(rootDir),
+                    facetCounts: [],
+                    taxonomyVersion: taxonomy.version,
+                  }),
+                )
+                return
+              }
+              const query = caseQuery({ facetGroups: groups })
+              const list = listPromptCases(rootDir, query)
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  ...list,
+                  facets: listPromptCaseFacets(rootDir),
+                  facetCounts: countPromptCaseFacets(rootDir, query),
+                  taxonomyVersion: taxonomy.version,
+                }),
+              )
               return
             }
 
             if (tail === 'facets' && req.method === 'GET') {
-              res.end(JSON.stringify({ ok: true, facets: listPromptCaseFacets(rootDir) }))
+              const { taxonomy, groups, invalidFacets } = facetQuery()
+              if (invalidFacets.length) {
+                res.end(JSON.stringify({ ok: true, counts: [], invalidFacets, taxonomyVersion: taxonomy.version, taxonomy: listFacetTaxonomy(taxonomy) }))
+                return
+              }
+              const counts = countPromptCaseFacets(rootDir, caseQuery({ facetGroups: groups }))
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  facets: listPromptCaseFacets(rootDir),
+                  counts,
+                  invalidFacets: [],
+                  taxonomyVersion: taxonomy.version,
+                  taxonomy: listFacetTaxonomy(taxonomy),
+                }),
+              )
               return
             }
 
@@ -4006,7 +4081,9 @@ export function createAppHandler({ root }: { root: string }) {
               const body = await readJson(req).catch(() => ({}))
               const adopted = adoptReverseJob(id, { title: body?.title })
               const saved = savePromptCase(rootDir, adopted)
-              res.end(JSON.stringify({ ok: true, case: saved }))
+              // 逐镜制作方式落到 style-medium，详情页才能按「怎么做的」筛
+              const facets = refreshPromptCaseFacets(rootDir, saved.id)
+              res.end(JSON.stringify({ ok: true, case: { ...saved, facets } }))
               return
             }
 
@@ -4026,7 +4103,51 @@ export function createAppHandler({ root }: { root: string }) {
                 res.end(JSON.stringify({ ok: false, message: `案例不存在：${id || '(空)'}` }))
                 return
               }
-              res.end(JSON.stringify({ ok: true, case: one }))
+              res.end(JSON.stringify({ ok: true, case: { ...one, ...facetState(id) } }))
+              return
+            }
+
+            if (sub === 'facets' && req.method === 'PATCH') {
+              const one = getPromptCase(rootDir, id)
+              if (!one) {
+                res.statusCode = 404
+                res.end(JSON.stringify({ ok: false, message: `案例不存在：${id || '(空)'}` }))
+                return
+              }
+              const body = await readJson(req)
+              const taxonomy = loadFacetTaxonomy(rootDir)
+              const toPairs = (raw: unknown) =>
+                (Array.isArray(raw) ? raw : []).map((x: any) =>
+                  typeof x === 'string' ? x : `${x?.axis || ''}:${x?.value || ''}`,
+                )
+              const add = validateFacetPairs(taxonomy, toPairs(body?.add))
+              const remove = validateFacetPairs(taxonomy, toPairs(body?.remove))
+              const restore = validateFacetPairs(taxonomy, toPairs(body?.restore))
+              const invalidFacets = [...add.invalid, ...remove.invalid, ...restore.invalid]
+              if (invalidFacets.length) {
+                res.statusCode = 400
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    kind: 'invalid-facet',
+                    message: '分面参数不合法',
+                    invalidFacets,
+                  }),
+                )
+                return
+              }
+              if (add.valid.length) {
+                setPromptCaseFacets(
+                  rootDir,
+                  id,
+                  add.valid.map((p) => ({ axis: p.axis, value: p.value, source: 'manual' })),
+                  { taxonomyVersion: taxonomy.version },
+                )
+              }
+              for (const p of remove.valid) deletePromptCaseFacet(rootDir, id, p.axis, p.value)
+              for (const p of restore.valid) restorePromptCaseFacet(rootDir, id, p.axis, p.value)
+              const updated = getPromptCase(rootDir, id)
+              res.end(JSON.stringify({ ok: true, case: { ...updated, ...facetState(id) } }))
               return
             }
 

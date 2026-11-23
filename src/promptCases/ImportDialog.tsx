@@ -28,6 +28,9 @@ export default function ImportDialog({
   const [source, setSource] = useState('vflow')
   const [q, setQ] = useState('')
   const [model, setModel] = useState('')
+  const [category, setCategory] = useState('')
+  const [categories, setCategories] = useState<string[]>([])
+  const [unmappedOnly, setUnmappedOnly] = useState(false)
   const [limit, setLimit] = useState(24)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
@@ -62,7 +65,12 @@ export default function ImportDialog({
 
   const enabledSources = useMemo(() => sources.filter((s) => s.enabled), [sources])
   const disabledSources = useMemo(() => sources.filter((s) => !s.enabled), [sources])
-  const allPicked = Boolean(preview?.items.length) && picked.size === preview?.items.length
+  // 「仅看未映射」只影响展示，不改变勾选集合：用户可以先把未映射的处理掉，再回来全选
+  const visibleItems = useMemo(
+    () => (preview?.items || []).filter((it) => !unmappedOnly || (it.unmapped?.length || 0) > 0),
+    [preview, unmappedOnly],
+  )
+  const allPicked = Boolean(visibleItems.length) && visibleItems.every((i) => picked.has(i.id))
 
   if (!open) return null
 
@@ -71,8 +79,9 @@ export default function ImportDialog({
     setError('')
     setResult('')
     try {
-      const p = await previewPromptCases({ source, q: q.trim(), model, limit })
+      const p = await previewPromptCases({ source, q: q.trim(), model, category, limit })
       setPreview(p)
+      setCategories(p.categories || [])
       setPicked(new Set(p.items.map((i) => i.id)))
     } catch (e) {
       setPreview(null)
@@ -89,7 +98,9 @@ export default function ImportDialog({
     try {
       const r = await importPromptCases({ source: preview.source, token: preview.token, ids: [...picked] })
       setResult(
-        `新增 ${r.created} 条，更新 ${r.updated} 条${r.failed.length ? `，${r.failed.length} 条失败` : ''}`,
+        `新增 ${r.created} 条，更新 ${r.updated} 条，写入 ${r.facetsWritten} 个分面${
+          r.failed.length ? `，${r.failed.length} 条失败` : ''
+        }`,
       )
       onImported()
       toast(`已导入 ${r.created} 条案例`)
@@ -138,6 +149,8 @@ export default function ImportDialog({
                 onChange={(e) => {
                   setSource(e.target.value)
                   setPreview(null)
+                  setCategories([])
+                  setCategory('')
                   setResult('')
                 }}
                 disabled={Boolean(busy)}
@@ -162,6 +175,25 @@ export default function ImportDialog({
                   if (e.key === 'Enter') void runPreview()
                 }}
               />
+            </label>
+            <label className="pc-field">
+              <span>分类</span>
+              <select
+                data-prompt-case-import-category
+                value={category}
+                onChange={(e) => {
+                  setCategory(e.target.value)
+                  setResult('')
+                }}
+                disabled={Boolean(busy)}
+              >
+                <option value="">全部分类</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="pc-field">
               <span>条数</span>
@@ -207,7 +239,7 @@ export default function ImportDialog({
                   type="button"
                   className="btn-mini ghost"
                   onClick={() =>
-                    setPicked(allPicked ? new Set() : new Set(preview.items.map((i) => i.id)))
+                    setPicked(allPicked ? new Set() : new Set(visibleItems.map((i) => i.id)))
                   }
                 >
                   {allPicked ? '全不选' : '全选'}
@@ -244,11 +276,20 @@ export default function ImportDialog({
                     </select>
                   </label>
                 ) : null}
+                <label className="pc-field pc-check">
+                  <input
+                    type="checkbox"
+                    data-prompt-case-import-unmapped-only
+                    checked={unmappedOnly}
+                    onChange={(e) => setUnmappedOnly(e.target.checked)}
+                  />
+                  <span>仅看未映射</span>
+                </label>
                 <span className="board-hint">改筛选后需重新预览</span>
               </div>
 
               <ul className="pc-import-list" data-prompt-case-import-list>
-                {preview.items.map((it: PromptCasePreviewItem) => (
+                {visibleItems.map((it: PromptCasePreviewItem) => (
                   <li key={it.id} className={picked.has(it.id) ? 'on' : ''}>
                     <label>
                       <input
@@ -263,6 +304,22 @@ export default function ImportDialog({
                         <em>
                           {[it.model, it.category, it.author].filter(Boolean).join(' · ') || '—'}
                         </em>
+                        <span className="pc-import-facets">
+                          {(it.facets || []).slice(0, 5).map((f) => (
+                            <span key={`${f.axis}:${f.value}`} className="pc-facet-tag">
+                              {f.value}
+                            </span>
+                          ))}
+                          {it.unmapped?.length ? (
+                            <span
+                              className="pc-facet-tag unmapped"
+                              data-import-unmapped
+                              title={it.unmapped.join('、')}
+                            >
+                              未映射 {it.unmapped.length}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
                     </label>
                   </li>

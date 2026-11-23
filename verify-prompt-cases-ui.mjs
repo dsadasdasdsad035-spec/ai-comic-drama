@@ -12,6 +12,8 @@ import { chromium } from 'playwright-core'
 const APP = (process.argv[2] || process.env.APP_URL || 'http://127.0.0.1:5398').replace(/\/+$/, '')
 /** 项目名：冒烟脚本会传自己的临时项目（如 smoke），单独跑默认 demo */
 const PROJECT = process.argv[3] || process.env.PCL_PROJECT || 'demo'
+/** 无网环境用：跳过导入弹窗与选镜应用，直接验证库内既有案例的分面界面 */
+const SKIP_IMPORT = process.env.PCL_UI_SKIP_IMPORT === '1'
 
 let bad = 0
 const check = (name, cond, extra = '') => {
@@ -39,7 +41,10 @@ try {
   const gridCount = await page.locator('[data-prompt-case-card]').count()
   check('空库显示空态', emptyVisible === 1 || gridCount > 0, `empty=${emptyVisible} cards=${gridCount}`)
 
-  // 导入弹窗
+  // 导入弹窗（无网验收时跳过；分面界面改用预置案例）
+  if (SKIP_IMPORT) {
+    console.log('  · PCL_UI_SKIP_IMPORT=1：跳过导入弹窗，使用库内既有案例')
+  } else {
   await page.click('[data-prompt-case-import-open]')
   await page.waitForSelector('[data-prompt-case-import-backdrop]', { timeout: 10_000 })
   check('导入弹窗打开', true)
@@ -61,6 +66,7 @@ try {
   await page.keyboard.press('Escape').catch(() => {})
   await page.locator('.mp-close').first().click().catch(() => {})
   await page.waitForTimeout(900)
+  }
 
   // 卡片与详情
   const cards = await page.locator('[data-prompt-case-card]').count()
@@ -83,9 +89,61 @@ try {
     await page.waitForTimeout(700)
     const favAfter = await page.locator('.pc-detail-actions button').first().innerText()
     check('收藏状态可切换', favBefore !== favAfter, `${favBefore} -> ${favAfter}`)
+
+    // 卡片徽标：最多 3 个，其余折成 +N
+    const badgeBox = page.locator('[data-prompt-case-card]').first().locator('[data-prompt-case-badges]')
+    const plainBadges = await badgeBox.locator('.pc-facet-tag:not(.more)').count()
+    const moreBadge = await badgeBox.locator('[data-facet-more]').count()
+    check('卡片分面徽标不超过 3 个', plainBadges <= 3, `${plainBadges} 个`)
+    check('超出部分折叠为 +N', moreBadge === 0 || plainBadges === 3, `more=${moreBadge}`)
+
+    // 详情分面编辑：来源标注、删除自动值转「已隐藏」、可恢复
+    check('详情展示分面区', (await page.locator('[data-prompt-case-facets]').count()) === 1)
+    const autoChip = page
+      .locator('[data-prompt-case-facets] [data-facet][data-facet-source="import"], [data-prompt-case-facets] [data-facet][data-facet-source="derived"]')
+      .first()
+    if (await autoChip.count()) {
+      const src = await autoChip.getAttribute('data-facet-source')
+      check('详情分面标注来源', src === 'import' || src === 'derived', src || '')
+      await autoChip.locator('button').click()
+      await page.waitForTimeout(900)
+      check('删除自动值后进入已隐藏', (await page.locator('[data-facet-hidden]').count()) === 1)
+      const hiddenChip = page.locator('[data-facet-hidden-key]').first()
+      if (await hiddenChip.count()) {
+        await hiddenChip.click()
+        await page.waitForTimeout(900)
+        check('恢复后不再显示已隐藏', (await page.locator('[data-facet-hidden]').count()) === 0)
+      }
+    } else {
+      console.log('  · 详情没有自动分面可删，跳过隐藏/恢复步骤')
+    }
+  }
+
+  // 分面栏与 chip：点选一个轴值后列表收窄，取消后恢复
+  check('桌面分面栏存在', (await page.locator('[data-facet-col] [data-facet-rail]').count()) === 1)
+  const railValues = page.locator('[data-facet-col] [data-facet-value]:not([disabled])')
+  const railCount = await railValues.count()
+  if (railCount > 0) {
+    const firstValue = railValues.first()
+    const key = await firstValue.getAttribute('data-facet-value')
+    const cardsBefore = await page.locator('[data-prompt-case-card]').count()
+    await firstValue.click()
+    await page.waitForTimeout(1000)
+    const chips = await page.locator(`[data-facet-chip="${key}"]`).count()
+    const cardsAfter = await page.locator('[data-prompt-case-card]').count()
+    check('点选分面后出现 chip', chips === 1, key || '')
+    check('筛选后列表收窄或为空', cardsAfter <= cardsBefore, `${cardsBefore} -> ${cardsAfter}`)
+    await page.locator(`[data-facet-chip="${key}"]`).click()
+    await page.waitForTimeout(1000)
+    check('取消 chip 后恢复列表', (await page.locator('[data-prompt-case-card]').count()) >= cardsAfter)
+  } else {
+    console.log('  · 分面栏没有带计数的值，跳过点选（导入条目分类可能全部未映射）')
   }
 
   // 选中镜头后应用：先到画布点一镜，再回素材页应用
+  if (SKIP_IMPORT) {
+    console.log('  · PCL_UI_SKIP_IMPORT=1：跳过选镜应用（预置案例不含画布镜头）')
+  } else {
   await page.goto(`${APP}/#/p/${encodeURIComponent(PROJECT)}/board`, { waitUntil: 'domcontentloaded' })
   {
     await page
@@ -134,6 +192,117 @@ try {
       check('应用后写入项目镜头', Boolean(bodyAfter) && bodyAfter !== bodyBefore, `${bodyBefore.length} -> ${bodyAfter.length} 字符`)
     }
   }
+  }
+
+  // 分页：翻页 / 回顶部 / 切筛选不残留旧页码 / 搜空不误报空库
+  const pagerEl = page.locator('[data-board-list-pager]')
+  const hasPager = (await pagerEl.count()) > 0
+  const pagerText = async () =>
+    (await pagerEl.count()) ? (await pagerEl.innerText()).replace(/\s+/g, ' ').trim() : '(无分页条)'
+  const firstCardTitle = async () =>
+    ((await page.locator('[data-prompt-case-card] .pc-card-title').first().textContent().catch(() => '')) || '').trim()
+  /** 列表真正滚动的祖先（.pc-grid 自身不滚），找不到就退回 window */
+  const scrollerTop = () =>
+    page.evaluate(() => {
+      let el = document.querySelector('[data-prompt-case-grid]')?.parentElement || null
+      while (el) {
+        const st = getComputedStyle(el)
+        if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4) return Math.round(el.scrollTop)
+        el = el.parentElement
+      }
+      return Math.round(window.scrollY)
+    })
+  const scrollToBottom = () =>
+    page.evaluate(() => {
+      let el = document.querySelector('[data-prompt-case-grid]')?.parentElement || null
+      while (el) {
+        const st = getComputedStyle(el)
+        if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4) {
+          el.scrollTop = el.scrollHeight
+          return
+        }
+        el = el.parentElement
+      }
+      window.scrollTo(0, document.body.scrollHeight)
+    })
+
+  if (!hasPager) {
+    console.log('  · 案例不足一页，跳过分页断言（冒烟会预置 13 条第二页数据）')
+  } else {
+    const page1Title = await firstCardTitle()
+    await scrollToBottom()
+    await page.waitForTimeout(300)
+    const scrolledBefore = await scrollerTop()
+    await page.locator('[data-board-list-pager] button', { hasText: '下一页' }).click()
+    await page.waitForTimeout(1200)
+    const page2Pager = await pagerText()
+    const page2Title = await firstCardTitle()
+    check('翻页后分页条指向第 2 页', /第 2 \//.test(page2Pager), page2Pager)
+    check('翻页后换成第 2 页内容', page2Title !== page1Title, `${page1Title} → ${page2Title}`)
+    check('翻页后回到列表顶部', (await scrollerTop()) === 0, `之前 ${scrolledBefore}`)
+
+    // 切筛选时若还带着 page=2，请求回来晚于 page=1 就会把列表覆盖回第二页
+    const listReqs = []
+    const capture = (r) => {
+      if (/\/api\/prompt-cases\?/.test(r.url())) listReqs.push(r.url())
+    }
+    page.on('request', capture)
+    const facetValue = page.locator('[data-facet-col] [data-facet-value]:not([disabled])').first()
+    if (await facetValue.count()) {
+      await facetValue.click()
+      await page.waitForTimeout(1600)
+      const stale = listReqs.filter((u) => /[?&]page=2(&|$)/.test(u))
+      check('切筛选不再发旧页码请求', stale.length === 0, listReqs.map((u) => new URL(u).search).join(' | '))
+      const afterPager = await pagerText()
+      check('切筛选后回到第 1 页', afterPager === '(无分页条)' || /第 1 \//.test(afterPager), afterPager)
+      // 清掉刚加的分面，别把后面的用例带偏
+      await page.locator('[data-facet-chip]').first().click().catch(() => {})
+      await page.waitForTimeout(900)
+    } else {
+      console.log('  · 没有可分面值，跳过旧页码断言')
+    }
+    page.off('request', capture)
+
+    // 仅用搜索把结果搜空：不该说「案例库还是空的」
+    const searchBox = page.locator('.board-list-toolbar input.stock-search')
+    if ((await searchBox.count()) > 0) {
+      await searchBox.fill('zzz-no-such-case-zzz')
+      await page.waitForTimeout(1400)
+      const emptyNode = page.locator('[data-prompt-case-empty]').first()
+      const emptyText = (await emptyNode.innerText().catch(() => '')).replace(/\s+/g, ' ')
+      check('搜不到时不误报空库', Boolean(emptyText) && !emptyText.includes('案例库还是空的'), emptyText.slice(0, 40))
+      check('搜不到时提示没有匹配', emptyText.includes('没有匹配'), emptyText.slice(0, 40))
+      await searchBox.fill('')
+      await page.waitForTimeout(1200)
+    }
+  }
+
+  // 移动端抽屉：与桌面侧栏共用同一份计数，窄屏下可打开并完成一次筛选
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(600)
+  const drawerToggle = page.locator('[data-facet-drawer-open]')
+  check('窄屏显示分类筛选入口', await drawerToggle.isVisible())
+  if (await drawerToggle.isVisible()) {
+    await drawerToggle.click()
+    await page.waitForSelector('[data-facet-drawer]', { timeout: 5_000 })
+    check('移动端抽屉打开', true)
+    const drawerValues = page.locator('[data-facet-drawer] [data-facet-value]:not([disabled])')
+    if (await drawerValues.count()) {
+      const key = await drawerValues.first().getAttribute('data-facet-value')
+      await drawerValues.first().click()
+      await page.waitForTimeout(900)
+      check('抽屉内可完成筛选', (await page.locator(`[data-facet-chip="${key}"]`).count()) === 1, key || '')
+    } else {
+      console.log('  · 抽屉内没有带计数的值，仅验证开合')
+    }
+    await page.locator('[data-facet-drawer] .pc-facet-drawer-head button').click()
+    await page.waitForTimeout(400)
+    check('抽屉可关闭', (await page.locator('[data-facet-drawer]').count()) === 0)
+    await page.locator('[data-facet-chip]').first().click().catch(() => {})
+    await page.waitForTimeout(500)
+  }
+  await page.setViewportSize({ width: 1440, height: 960 })
+  await page.waitForTimeout(400)
 
   // 反推面板
   await page.click('[data-prompt-case-reverse-open]')

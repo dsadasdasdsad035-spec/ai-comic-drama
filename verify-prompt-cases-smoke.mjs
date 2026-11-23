@@ -274,6 +274,8 @@ try {
     title: '冒烟案例',
     prompt: 'A rainy alley, slow dolly in',
     model: 'seedance-2-5',
+    // 预置一个自动分面：删除它应写隐藏记录（人工加的值才是直接删）
+    facets: [{ axis: 'lighting', value: 'neon', source: 'derived' }],
   })
   check('手工案例可写入', seeded?.id === 'manual:smoke-case')
   check('手工案例许可为仅参考', seeded?.license === 'reference-only', seeded?.license)
@@ -287,6 +289,75 @@ try {
     body: JSON.stringify({ favorite: true, note: '冒烟备注' }),
   })
   check('收藏与备注可写', fav.case?.favorite === true && fav.case?.note === '冒烟备注')
+
+  // ---------------- 分面：写 / 筛 / 计数 / 非法值 ----------------
+  console.log('\n=== 分面：写 / 筛 / 计数 / 非法值 ===')
+  const caseUrl = `${server.base}/api/prompt-cases/${encodeURIComponent(seeded.id)}`
+  const facetAdd = await json(`${caseUrl}/facets`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add: ['genre:cyberpunk'] }),
+  })
+  check('分面可新增', facetAdd.ok === true && facetAdd.case?.facets?.length >= 2, JSON.stringify(facetAdd.case?.facets?.map((f) => `${f.axis}:${f.value}`)))
+
+  const facetFiltered = await json(`${server.base}/api/prompt-cases?facet=genre:cyberpunk&facet=lighting:neon`)
+  check('分面筛选生效', facetFiltered.total === 1, String(facetFiltered.total))
+  check('列表带分面计数', Array.isArray(facetFiltered.facetCounts) && facetFiltered.facetCounts.length > 0)
+  check('列表案例带分面', (facetFiltered.cases?.[0]?.facets || []).length >= 2)
+
+  const facetCounts = await json(`${server.base}/api/prompt-cases/facets?facet=genre:cyberpunk`)
+  check('计数接口可读', facetCounts.ok === true && Array.isArray(facetCounts.counts), `${facetCounts.counts?.length}`)
+  check(
+    '计数不含被选中轴自身条件',
+    (facetCounts.counts || []).some((c) => c.axis === 'lighting' && c.value === 'neon'),
+    JSON.stringify(facetCounts.counts),
+  )
+  check('计数接口返回词表', facetCounts.taxonomy?.axes?.length === 18, String(facetCounts.taxonomy?.axes?.length))
+
+  const badFacet = await json(`${server.base}/api/prompt-cases?facet=genre:不存在的值`)
+  check('非法分面值返回空结果', badFacet.total === 0)
+  check('非法分面值带说明', (badFacet.invalidFacets || []).length === 1, JSON.stringify(badFacet.invalidFacets))
+
+  const badPatch = await json(`${caseUrl}/facets`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ add: ['genre:不存在的值'] }),
+  })
+  check('非法分面写入返回 400', badPatch.status === 400, String(badPatch.status))
+
+  const detailFacets = await json(caseUrl)
+  check('详情带分面来源标注', (detailFacets.case?.facets || []).every((f) => f.source), JSON.stringify(detailFacets.case?.facets))
+
+  await json(`${caseUrl}/facets`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ remove: ['lighting:neon'] }),
+  })
+  const hidden = await json(caseUrl)
+  check('删除后进入隐藏列表', (hidden.case?.suppressedFacets || []).some((f) => f.value === 'neon'))
+  check('隐藏值不在默认分面里', !(hidden.case?.facets || []).some((f) => f.value === 'neon'))
+
+  await json(`${caseUrl}/facets`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ restore: ['lighting:neon'] }),
+  })
+  const restored = await json(caseUrl)
+  check('隐藏值可恢复', (restored.case?.facets || []).some((f) => f.value === 'neon' && f.source === 'manual'))
+
+  // ---------------- 分页数据：给浏览器层准备 >1 页 ----------------
+  // 浏览器层要断言翻页、页码回正、切筛选不残留旧页码，这些都需要第二页存在。
+  for (let i = 1; i <= 13; i++) {
+    saveCase(TMP, {
+      source: 'manual',
+      sourceId: `smoke-page-${i}`,
+      title: `分页样例 ${String(i).padStart(2, '0')}`,
+      prompt: `pagination fixture ${i}`,
+      facets: [{ axis: 'environment', value: 'alley', source: 'manual' }],
+    })
+  }
+  const paged = await json(`${server.base}/api/prompt-cases?pageSize=12`)
+  check('分页样例可写入', paged.total === 14 && paged.totalPages === 2, `total=${paged.total} pages=${paged.totalPages}`)
 
   // ---------------- 网络层：vflow 真实索引 ----------------
   console.log('\n=== 网络层：vflow 真实索引 ===')
@@ -305,7 +376,9 @@ try {
     } else {
       check('vflow 预览成功', Array.isArray(preview.items) && preview.items.length > 0, `${preview.items?.length} 条 / 命中 ${preview.total}`)
       check('预览带令牌', typeof preview.token === 'string' && preview.token.length > 10)
-      check('预览不落库', (await json(`${server.base}/api/prompt-cases`)).total === 1, `当前 ${(await json(`${server.base}/api/prompt-cases`)).total} 条`)
+      // 用前后总数对比，而不是写死 1：分页样例会先入库，硬编码会让这条断言失真
+      const afterPreview = (await json(`${server.base}/api/prompt-cases?pageSize=1`)).total
+      check('预览不落库', afterPreview === paged.total, `${paged.total} → ${afterPreview}`)
 
       // 真导入 3 条
       const ids = (preview.items || []).slice(0, 3).map((i) => i.id)

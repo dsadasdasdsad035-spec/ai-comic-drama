@@ -217,10 +217,30 @@ CREATE TABLE IF NOT EXISTS prompt_cases (
   favorite    INTEGER DEFAULT 0,
   created_at  TEXT,
   updated_at  TEXT,
+  -- 分面最近一次自动推导所用的词表版本；空串表示还没推导过
+  taxonomy_version TEXT DEFAULT '',
   UNIQUE(source, source_id)
 );
 CREATE INDEX IF NOT EXISTS idx_prompt_cases_created ON prompt_cases(created_at);
 CREATE INDEX IF NOT EXISTS idx_prompt_cases_source ON prompt_cases(source);
+-- 案例分面：一条案例在每个轴上可有多个受控值。
+-- 用归一表而不是 JSON 列：按值筛选要 EXISTS、按值计数要 GROUP BY，
+-- JSON 列在 SQLite 里这两件事都会退化成全表扫描。
+-- source 记录可信度（manual > import > derived）；suppressed=1 表示用户手工隐藏的自动值，
+-- 查询一律过滤它，推导时也跳过，这样删掉的自动值不会自己回来。
+CREATE TABLE IF NOT EXISTS case_facets (
+  case_id          TEXT NOT NULL,
+  axis             TEXT NOT NULL,
+  value            TEXT NOT NULL,
+  source           TEXT NOT NULL DEFAULT 'derived',
+  unmapped         INTEGER DEFAULT 0,
+  suppressed       INTEGER DEFAULT 0,
+  taxonomy_version TEXT DEFAULT '',
+  updated_at       TEXT,
+  PRIMARY KEY (case_id, axis, value)
+);
+CREATE INDEX IF NOT EXISTS idx_case_facets_axis_value ON case_facets(axis, value);
+CREATE INDEX IF NOT EXISTS idx_case_facets_case ON case_facets(case_id);
 CREATE TABLE IF NOT EXISTS skill_overrides (
   skill_id     TEXT PRIMARY KEY,
   body         TEXT NOT NULL,
