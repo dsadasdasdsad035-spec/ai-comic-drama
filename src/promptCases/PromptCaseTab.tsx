@@ -402,7 +402,9 @@ export default function PromptCaseTab({
         </div>
       ) : null}
 
-      {total > 0 ? (
+      {/* 用库内总数判断是否显示搜索框，不能用当前结果数：搜到 0 条时若把搜索框也撤掉，
+          用户就再没有地方改回关键词，只能绕到「清空筛选」。 */}
+      {facets.total > 0 ? (
         <BoardListToolbar
           query={query}
           onQueryChange={setQuery}

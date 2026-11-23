@@ -52,28 +52,25 @@ export default function FacetFilterRail({
 
   const openCount = axes.filter((a) => overrides[a.axis.id] ?? a.hasData).length
 
-  if (!selected.length && !counts.length) {
-    return (
-      <aside className={`pc-facet-rail ${className}`} data-facet-rail aria-label="分类筛选">
-        <div className="pc-facet-head">
-          <strong>分类筛选</strong>
-        </div>
-        <p className="pc-facet-empty">还没有可用的分类数据。导入或回填案例后，这里会按 18 个轴列出筛选条件。</p>
-      </aside>
-    )
-  }
-
   return (
     <aside className={`pc-facet-rail ${className}`} data-facet-rail aria-label="分类筛选">
       <div className="pc-facet-head">
         <strong>分类筛选</strong>
-        <span className="pc-facet-count">{openCount} 轴有数据</span>
+        <span className="pc-facet-count">
+          {openCount} / {FACET_AXES.length} 轴有数据
+        </span>
         {selected.length ? (
           <button type="button" className="btn-mini ghost" onClick={onClear} data-facet-clear>
             清空分面
           </button>
         ) : null}
       </div>
+
+      {/* 词表本身永远可看：库空时也要能确认「有哪 18 轴、每轴有哪些值」，
+          只是计数全为 0、值置灰。以前这里整块吞掉，等于空库看不到分类体系。 */}
+      {!counts.length ? (
+        <p className="pc-facet-empty">案例库里还没有分面数据。下面是 18 轴词表，导入或回填后各值会显示条数。</p>
+      ) : null}
 
       {axes.map(({ axis, values, hasData }) => {
         const open = overrides[axis.id] ?? hasData
