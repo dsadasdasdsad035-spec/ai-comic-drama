@@ -226,7 +226,12 @@ await check('9.2 新建窄口专家后，preset 只放行它声明的工具与�
     await new Promise((r) => setTimeout(r, 250))
   }
   assert.match(text, /expert-narrow/, '窄口专家没有进宿主 preset')
-  const block = text.slice(text.indexOf('expertId: expert-narrow'))
+  // 切块要双向收口：只给起点会把后面内置专家（如 expert-blender）的工具一并扫进来，
+  // 断言就永远失败。以「下一个 expertId」为界。
+  const marker = 'expertId: expert-narrow'
+  const rest = text.slice(text.indexOf(marker) + marker.length)
+  const next = rest.search(/expertId: /)
+  const block = next >= 0 ? rest.slice(0, next) : rest
   const toolIds = [...block.matchAll(/^ {16}- (\w+)$/gm)].map((m) => m[1])
   // 系统保底项只有「列专家」；list_installed_skills 不再强制注入，
   // 所以可见集 = list_experts + 专家自己声明的子集

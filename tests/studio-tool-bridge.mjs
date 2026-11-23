@@ -23,21 +23,29 @@ import {
 } from '../server/studio-tool-bridge.mjs'
 import { readProjectRevision } from '../server/studio-project-sync.mjs'
 import { resolveExpertSkillAllowlist } from '../server/dsh-experts.mjs'
+import { expandStudioToolCatalog } from '../server/studio-tool-aliases.mjs'
 import { z as zod } from 'zod'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 
 // 工具数从代码算，不手写：新增平台工具时这里不需要跟着改数字。
-// 合并规则与桥一致（平台工具 + Pi 原生工具按名字去重）。
+// 合并与展开规则与桥一致（平台工具 + Pi 原生工具按名字去重，再展开别名条目）。
 const toolsBundle = await import(pathToFileURL(path.join(ROOT, 'server-build', 'studio-tools.mjs')).href)
-const EXPECTED_TOOL_COUNT = toolsBundle.mergeBuiltinWithSkillTools(
-  toolsBundle.createBuiltinPlatformTools({ projectName: '', epNo: 1 }),
-  [...toolsBundle.createPiNativeToolSet().byName.values()],
+const EXPECTED_TOOL_COUNT = expandStudioToolCatalog(
+  catalogFromTools(
+    toolsBundle.mergeBuiltinWithSkillTools(
+      toolsBundle.createBuiltinPlatformTools({ projectName: '', epNo: 1 }),
+      [...toolsBundle.createPiNativeToolSet().byName.values()],
+    ),
+  ),
 ).length
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-tools-'))
 const PROJECT = 'tool-bridge-fixture'
 const TOKEN = 'test-internal-token'
+// 本进程直接读库做交叉校验（readProjectRevision）时，`resolveRoot` 只认这个变量；
+// 不设的话它会回落到 `<TMP>/projects`，读到另一个空库。
+process.env.SB_PROJECTS_DIR = TMP
 
 let bad = 0
 async function check(name, fn) {
@@ -497,12 +505,6 @@ await check('画布素材卡进入 read_asset_inventory', async () => {
   assert.ok(JSON.stringify(r.body.details).includes('仅画布素材'), 'inventory 应含画布素材卡')
 })
 
-server.kill('SIGTERM')
-await new Promise((resolve) => {
-  server.on('exit', resolve)
-  setTimeout(resolve, 5000)
-})
-
 /**
  * 产物重建 → 模块重载。
  *
@@ -516,6 +518,10 @@ await check('产物重建后自动重载模块，不重启应用也生效', asyn
   const bundleDir = path.join(bundleRoot, 'server-build')
   fs.mkdirSync(bundleDir, { recursive: true })
   const bundle = path.join(bundleDir, 'studio-tools.mjs')
+  // mtime 必须严格递增：两次写入之间没有真实延时（catalog 不走网络），
+  // 只取 Date.now() 会算出同一毫秒、生成相同的 `?v=`，ESM 缓存随即命中旧模块，
+  // 用例就变成「单独跑通过、全套跑失败」。用计数器把它们彻底拉开。
+  let stampStep = 0
   const writeBundle = (tag) => {
     fs.writeFileSync(
       bundle,
@@ -529,8 +535,8 @@ export function modelFacingResult(_name, result) { return { ok: true, text: resu
 `,
       'utf8',
     )
-    // 显式推后 mtime：同一毫秒内写完两次会得到相同的时间戳，用例就成了碰运气
-    const future = new Date(Date.now() + 5000)
+    stampStep += 1
+    const future = new Date(Date.now() + stampStep * 5000)
     fs.utimesSync(bundle, future, future)
   }
   writeBundle('v1')
@@ -617,7 +623,7 @@ await check('写工具成功后 revision 探针升高', async () => {
           no: 1,
           title: '第一集（改）',
           targetSeconds: 90,
-          scenes: [{ no: 1, place: '街口', time: '夜', plot: '雨更大了' }],
+          scenes: [{ no: 1, slug: 'street-corner', place: '街口', time: '夜', beats: '雨更大了' }],
         },
       ],
     },
@@ -627,7 +633,8 @@ await check('写工具成功后 revision 探针升高', async () => {
   assert.equal(sub.body.ok, true, sub.body.error || JSON.stringify(sub.body).slice(0, 300))
   const after = (await get(`/api/studio/project-revision?name=${encodeURIComponent(PROJECT)}`)).body.revision
   assert.ok(after > before, `revision 未升高：${before} -> ${after}`)
-  assert.equal(after, readProjectRevision(ROOT, PROJECT))
+  // 夹具库根是 TMP，不是仓库根：用 ROOT 会读到用户真实项目库
+  assert.equal(after, readProjectRevision(TMP, PROJECT))
 })
 
 await check('参数校验失败不抬高 revision', async () => {
@@ -645,8 +652,10 @@ await check('参数校验失败不抬高 revision', async () => {
 
 await check('桥接 onProjectWrite 在写工具成功时被调用', async () => {
   const writes = []
+  // root 必须是仓库根：桥接从 `<root>/server-build/studio-tools.mjs` 加载产物，
+  // 传 TMP 会去临时目录找一个不存在的 bundle。
   const bridge = new StudioToolBridge({
-    root: TMP,
+    root: ROOT,
     baseUrl: base,
     internalToken: TOKEN,
     onProjectWrite: (n) => writes.push(n),
@@ -655,7 +664,7 @@ await check('桥接 onProjectWrite 在写工具成功时被调用', async () => 
   await bridge.invoke(
     'submit_episodes',
     {
-      episodes: [{ no: 1, title: '桥回调测', scenes: [{ no: 1, place: 'a', plot: 'b' }] }],
+      episodes: [{ no: 1, title: '桥回调测', scenes: [{ no: 1, slug: 'a', place: 'a', time: '日', beats: 'b' }] }],
     },
     { projectName: PROJECT, epNo: 1 },
   )
@@ -674,6 +683,13 @@ await check('项目上下文变化后工具表重建且声明重新推导', asyn
   assert.notEqual(bridge.toolsGeneration, generation, '上下文变化必须重建工具表')
   assert.equal(bridge.catalogBuilds, builds + 1, '工具表重建后声明缓存必须失效')
   fs.rmSync(other, { recursive: true, force: true })
+})
+
+// 服务要留到最后一个用例：后面的执行、revision、onProjectWrite 都打真实接口。
+server.kill('SIGTERM')
+await new Promise((resolve) => {
+  server.on('exit', resolve)
+  setTimeout(resolve, 5000)
 })
 
 if (bad) {

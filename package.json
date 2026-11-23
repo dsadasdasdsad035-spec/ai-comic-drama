@@ -23,7 +23,7 @@
     "desktop:dmg": "npm run desktop:prep && CSC_IDENTITY_AUTO_DISCOVERY=false SKIP_NOTARIZE=1 electron-builder --config desktop/electron-builder.yml --mac dmg",
     "verify:billing": "node verify-billing-all.mjs",
     "verify:billing:e2e": "node verify-billing-e2e-smoke.mjs",
-    "postinstall": "node scripts/ensure-dsh-blender-bundle.mjs",
+    "postinstall": "node scripts/ensure-dsh-peers.mjs && node scripts/ensure-dsh-blender-bundle.mjs",
     "sync:cc0-props": "node scripts/sync-cc0-props-manifest.mjs",
     "sync:m3d-characters": "node scripts/sync-m3d-character-props.mjs",
     "validate:itch-props": "node scripts/validate-itch-props-manifest.mjs",

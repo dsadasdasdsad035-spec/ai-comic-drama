@@ -32,9 +32,12 @@ async function check(name, fn) {
 
 await check('创意视图只渲染 StudioFrame', async () => {
   const start = APP.indexOf(") : view === 'creative' ? (")
-  const end = APP.indexOf(") : view === 'account' ? (")
-  assert.ok(start > 0 && end > start, '找不到创意分支')
-  const branch = APP.slice(start, end)
+  assert.ok(start > 0, '找不到创意分支')
+  // 结束标记不能钉死某个具体分支：`account` 视图删掉后这条断言就整体失效了。
+  // 取创意分支之后的下一个 `) : view === ` 三元分支作为边界。
+  const nextBranch = APP.slice(start + 1).search(/\) : view === '/)
+  assert.ok(nextBranch > 0, '找不到创意分支的结束位置')
+  const branch = APP.slice(start, start + 1 + nextBranch)
   // 只认组件本身：props 会随上下文增删（例如 projectName），不影响这条断言
   assert.match(branch, /<StudioFrame\b[^>]*\/>/)
   for (const forbidden of ['CreativeStudio', 'CapabilityTray', 'CreativeCards', 'CreativeComposerBar', 'CreativeArtifacts']) {
