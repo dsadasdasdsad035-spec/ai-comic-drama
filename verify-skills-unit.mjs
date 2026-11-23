@@ -43,6 +43,7 @@ const TESTS = [
   'tests/skill-package-files.ts',
   'tests/creative-host-skills.ts',
   'tests/skill-package-fidelity.ts',
+  'tests/prompt-case-tools.ts',
 ]
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-unit-'))
 let failed = 0

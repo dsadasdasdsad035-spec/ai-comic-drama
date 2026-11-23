@@ -72,9 +72,16 @@ try {
   const cards = await page.locator('[data-prompt-case-card]').count()
   check('导入后出现卡片', cards > 0, `${cards} 张`)
   if (cards > 0) {
+    const cardsBeforeDetail = cards
     await page.locator('[data-prompt-case-card]').first().click()
     await page.waitForSelector('[data-prompt-case-detail]', { timeout: 10_000 })
     check('详情打开', true)
+    // 覆盖式抽屉：列表不得因为打开详情而重排或减少
+    check(
+      '打开详情不改变列表卡片数',
+      (await page.locator('[data-prompt-case-card]').count()) === cardsBeforeDetail,
+      `${cardsBeforeDetail} 张`,
+    )
     const detailText = await page.locator('[data-prompt-case-detail]').innerText()
     check('详情显示提示词全文', detailText.includes('提示词全文') || detailText.length > 200)
     check('详情标注许可口径', /仅参考|自有/.test(detailText), detailText.slice(0, 40))
@@ -117,6 +124,11 @@ try {
     } else {
       console.log('  · 详情没有自动分面可删，跳过隐藏/恢复步骤')
     }
+
+    // Esc 关闭：抽屉必须可键盘退出，关闭后回到画廊
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(400)
+    check('Esc 可关闭详情', (await page.locator('[data-prompt-case-detail]').count()) === 0)
   }
 
   // 分面栏与 chip：点选一个轴值后列表收窄，取消后恢复

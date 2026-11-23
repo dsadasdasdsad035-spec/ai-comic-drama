@@ -4,7 +4,12 @@
  * 只渲染词表里存在的轴与值；计数来自当前筛选下的 `/api/prompt-cases`，
  * 因此「0」表示「在当前条件下没有案例」，不是「词表没有这个值」。
  *
+ * 行式布局：每个值一行「标签 | 占比条 | 条数」。占比条按**本轴最大值**归一化，
+ * 而不是按全局最大值——目的是回答「这个值在这一轴里常见吗」，
+ * 用一个绝对尺度会让冷门轴整排都是碎条，读不出相对关系。
+ *
  * 默认只展开有条数的轴：18 轴全铺开会让筛选栏比结果列表还长，反而更难用。
+ * 轴头另给「全部收起 / 全部展开」，用来一键收拢或总览。
  */
 import { useMemo, useState } from 'react'
 import type { FacetCount } from './api'
@@ -45,34 +50,57 @@ export default function FacetFilterRail({
           return { ...v, key, count: countMap.get(key) || 0, active: selectedSet.has(key) }
         })
         const hasData = values.some((v) => v.count > 0 || v.active)
-        return { axis, values, hasData }
+        // 本轴最大值：占比条的分母。全为 0 时用 1 避免除零。
+        const max = values.reduce((m, v) => Math.max(m, v.count), 0) || 1
+        return { axis, values, hasData, max }
       }),
     [countMap, selectedSet],
   )
 
   const openCount = axes.filter((a) => overrides[a.axis.id] ?? a.hasData).length
 
+  /** 全部展开 = 每个轴都显式置 true；全部收起 = 每个轴都置 false */
+  const setAllOpen = (open: boolean) => {
+    const next: Record<string, boolean> = {}
+    for (const a of axes) next[a.axis.id] = open
+    setOverrides(next)
+  }
+
   return (
     <aside className={`pc-facet-rail ${className}`} data-facet-rail aria-label="分类筛选">
       <div className="pc-facet-head">
-        <strong>分类筛选</strong>
-        <span className="pc-facet-count">
-          {openCount} / {FACET_AXES.length} 轴有数据
-        </span>
-        {selected.length ? (
-          <button type="button" className="btn-mini ghost" onClick={onClear} data-facet-clear>
-            清空分面
+        <div className="pc-facet-head-line">
+          <strong>分类筛选</strong>
+          <span className="pc-facet-count">
+            {openCount} / {FACET_AXES.length} 轴
+          </span>
+        </div>
+        <div className="pc-facet-head-actions">
+          <button
+            type="button"
+            className="btn-mini ghost"
+            onClick={() => setAllOpen(openCount < FACET_AXES.length)}
+            data-facet-expand-all
+          >
+            {openCount < FACET_AXES.length ? '全部展开' : '全部收起'}
           </button>
-        ) : null}
+          {selected.length ? (
+            <button type="button" className="btn-mini ghost" onClick={onClear} data-facet-clear>
+              清空分面
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {/* 词表本身永远可看：库空时也要能确认「有哪 18 轴、每轴有哪些值」，
           只是计数全为 0、值置灰。以前这里整块吞掉，等于空库看不到分类体系。 */}
       {!counts.length ? (
-        <p className="pc-facet-empty">案例库里还没有分面数据。下面是 18 轴词表，导入或回填后各值会显示条数。</p>
+        <p className="pc-facet-empty">
+          案例库里还没有分面数据。下面是 18 轴词表，导入或回填后各值会显示条数。
+        </p>
       ) : null}
 
-      {axes.map(({ axis, values, hasData }) => {
+      {axes.map(({ axis, values, hasData, max }) => {
         const open = overrides[axis.id] ?? hasData
         const all = showAll[axis.id]
         // 已选值即使排在 Top 6 之外也必须显示，否则用户看不到怎么取消
@@ -88,9 +116,9 @@ export default function FacetFilterRail({
               aria-expanded={open}
               onClick={() => setOverrides((cur) => ({ ...cur, [axis.id]: !open }))}
             >
-              <span>{axis.cn}</span>
+              <span className="pc-facet-axis-name">{axis.cn}</span>
               <span className="pc-facet-axis-meta">
-                {hasData ? `${values.filter((v) => v.count > 0).length} 个值` : '暂无'}
+                {hasData ? `${values.filter((v) => v.count > 0).length} 值` : '暂无'}
               </span>
             </button>
             {open ? (
@@ -108,7 +136,13 @@ export default function FacetFilterRail({
                       data-facet-value={`${axis.id}:${v.id}`}
                       onClick={() => onToggle(axis.id, v.id)}
                     >
-                      <span>{v.cn}</span>
+                      <span className="pc-facet-label">{v.cn}</span>
+                      <span className="pc-facet-bar" aria-hidden>
+                        <span
+                          className="pc-facet-bar-fill"
+                          style={{ width: `${Math.round((v.count / max) * 100)}%` }}
+                        />
+                      </span>
                       <span className="n">{v.count}</span>
                     </button>
                   )

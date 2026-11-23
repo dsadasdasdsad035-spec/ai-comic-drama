@@ -44,7 +44,6 @@ export default function PromptCaseTab({
   onImportOpenChange,
   reverseOpen,
   onReverseOpenChange,
-  refreshKey,
 }: {
   projectName: string
   assets: ProjectAsset[]
@@ -56,7 +55,6 @@ export default function PromptCaseTab({
   onImportOpenChange: (open: boolean) => void
   reverseOpen: boolean
   onReverseOpenChange: (open: boolean) => void
-  refreshKey: number
 }) {
   const [cases, setCases] = useState<PromptCase[]>([])
   const [facets, setFacets] = useState<PromptCaseFacets>(EMPTY_FACETS)
@@ -153,7 +151,7 @@ export default function PromptCaseTab({
     }
     // onCountChange 是父组件的 setState，稳定；不放进依赖避免重复取
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQ, source, model, favorite, page, refreshKey, localRefresh, facetKeyStr, setPage])
+  }, [debouncedQ, source, model, favorite, page, localRefresh, facetKeyStr, setPage])
 
   useEffect(() => {
     void load()
@@ -420,15 +418,16 @@ export default function PromptCaseTab({
       ) : null}
 
       {error ? <p className="board-hint pc-import-error">{error}</p> : null}
-      {loading && !cases.length ? <div className="char-empty-board">正在读取案例库…</div> : null}
 
-      <div className={`pc-layout ${selected ? 'with-detail' : ''}`}>
+      {/* 详情不再占列：列表列数与选中状态无关，任何时候都不重排 */}
+      <div className="pc-layout">
         <div className="pc-facet-col" data-facet-col>
           {rail}
         </div>
         <PromptCaseGrid
           cases={cases}
           selectedId={selectedId}
+          loading={loading}
           onSelect={(c) => setSelectedId((cur) => (cur === c.id ? '' : c.id))}
           onImport={() => onImportOpenChange(true)}
           onReverse={() => onReverseOpenChange(true)}
@@ -437,23 +436,25 @@ export default function PromptCaseTab({
           onClearFilters={clearFilters}
           scrollKey={`${filterKey}\u0001${page}`}
         />
-        {selected ? (
-          <PromptCaseDetail
-            key={selected.id}
-            item={selected}
-            canApply={Boolean(selectedShot)}
-            applyHint={selectedShot ? `当前镜头 ${selectedShot.no}` : '先到画布选一个镜头，再回到这里应用'}
-            busy={busy === 'delete'}
-            suppressedFacets={suppressedFacets}
-            onCopy={(text, label) => void onCopy(text, label)}
-            onApply={onApply}
-            onToggleFavorite={() => void onToggleFavorite()}
-            onSaveNote={(note) => void onSaveNote(note)}
-            onDelete={() => void onDelete()}
-            onFacetChange={(patch) => void onFacetChange(patch)}
-          />
-        ) : null}
       </div>
+
+      {selected ? (
+        <PromptCaseDetail
+          key={selected.id}
+          item={selected}
+          canApply={Boolean(selectedShot)}
+          applyHint={selectedShot ? `当前镜头 ${selectedShot.no}` : '先到画布选一个镜头，再回到这里应用'}
+          busy={busy === 'delete'}
+          suppressedFacets={suppressedFacets}
+          onCopy={(text, label) => void onCopy(text, label)}
+          onApply={onApply}
+          onToggleFavorite={() => void onToggleFavorite()}
+          onSaveNote={(note) => void onSaveNote(note)}
+          onDelete={() => void onDelete()}
+          onClose={() => setSelectedId('')}
+          onFacetChange={(patch) => void onFacetChange(patch)}
+        />
+      ) : null}
 
       {drawerOpen ? (
         <div className="pc-facet-drawer" role="dialog" aria-label="分类筛选">

@@ -625,6 +625,34 @@ export function caseFacetCounts(appRoot, options = {}) {
   return out
 }
 
+/**
+ * 按轴的骨架计数：每个轴有多少个受控值被用过、覆盖了多少条案例。
+ *
+ * 为什么单独一条 SQL：`caseFacetCounts` 是按「轴 + 值」分组的条数，把同一轴各值的
+ * `count` 相加得到的不是案例数 —— 一条案例在同一轴上可以有多个值（同轴 OR 的语义），
+ * 相加会把它重复统计。案例覆盖数必须用 `COUNT(DISTINCT case_id)` 单独算。
+ *
+ * 只计受控值（`unmapped=0`）：本函数服务于「词表里哪些值真的被用过」，
+ * 未映射的原始分类不在词表里，混进来会让调用方以为词表有这个词。
+ */
+export function caseFacetSkeleton(appRoot) {
+  const d = open(appRoot)
+  const rows = d
+    .prepare(
+      `SELECT axis, COUNT(DISTINCT case_id) AS cases, COUNT(*) AS values_used
+       FROM case_facets
+       WHERE suppressed = 0 AND unmapped = 0
+       GROUP BY axis
+       ORDER BY axis`,
+    )
+    .all()
+  return rows.map((r) => ({
+    axis: String(r.axis || ''),
+    cases: Number(r.cases) || 0,
+    values: Number(r.values_used) || 0,
+  }))
+}
+
 /** 筛选面板用的聚合：各来源条数 + 出现过的模型与分类 */
 export function caseFacets(appRoot) {
   const d = open(appRoot)

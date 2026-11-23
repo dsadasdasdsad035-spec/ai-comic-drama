@@ -12,7 +12,7 @@ import {
   builtinPlatformToolNames,
   createBuiltinPlatformTools,
 } from '../src/agent/builtinPlatformTools'
-import { DEFAULT_EXPERT_PLATFORM_TOOLS, HOST_NATIVE_TOOLS } from '../src/creative/expertToolGroups'
+import { DEFAULT_EXPERT_PLATFORM_TOOLS, BLENDER_HOST_TOOLS, HOST_NATIVE_TOOLS } from '../src/creative/expertToolGroups'
 
 let bad = 0
 function check(name: string, fn: () => void | Promise<void>) {
@@ -45,7 +45,7 @@ function readManifests(): Array<{ id: string; toolIds: string[] }> {
 
 const declared = new Set(builtinPlatformToolNames())
 const registered = new Set(createBuiltinPlatformTools({ projectName: '', epNo: 1 }).map((t) => t.name))
-const hostNative = new Set(HOST_NATIVE_TOOLS)
+const hostNative = new Set([...HOST_NATIVE_TOOLS, ...BLENDER_HOST_TOOLS])
 const manifests = readManifests()
 
 async function main() {
@@ -90,14 +90,21 @@ async function main() {
   })
 
   /**
-   * 新增平台工具后必须给每套专家勾上。
-   * 名单以 DEFAULT_EXPERT_PLATFORM_TOOLS 为准；`list_experts` 由运行时无条件注入，不写进 manifest。
+   * 专家的工具集必须落在已知工具全集里：默认平台集 ∪ Blender 宿主工具 ∪ 宿主原生工具。
+   *
+   * 为什么不是「每套专家都勾满默认集」：专家是有分工的。Blender 三维专家只做几何与渲染，
+   * 不写剧本、不提交分镜，强行勾满只会给它一堆用不到的能力。要求「不许漏挂」的对象
+   * 是**全能专家**（见下一条），那才是「新增工具后漏勾」会真的丢功能的地方。
    */
-  await check('每套内置专家都勾满平台工具（新增工具不许漏勾）', () => {
+  await check('每套内置专家只勾选已知工具', () => {
+    const universe = new Set<string>([
+      ...DEFAULT_EXPERT_PLATFORM_TOOLS,
+      ...BLENDER_HOST_TOOLS,
+      ...HOST_NATIVE_TOOLS,
+    ])
     for (const m of manifests) {
-      const have = new Set(m.toolIds)
-      const missing = DEFAULT_EXPERT_PLATFORM_TOOLS.filter((n) => !have.has(n))
-      assert.deepEqual(missing, [], `专家「${m.id}」漏勾：${missing.join('、')}`)
+      const unknown = m.toolIds.filter((n) => !universe.has(n))
+      assert.deepEqual(unknown, [], `专家「${m.id}」勾了未知工具：${unknown.join('、')}`)
     }
   })
 

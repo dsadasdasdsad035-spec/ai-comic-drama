@@ -259,6 +259,7 @@ import {
 import { promoteReversePack, reversePackToText } from './creative-promote.mjs'
 import {
   caseFacetCounts as countPromptCaseFacets,
+  caseFacetSkeleton as getPromptCaseFacetSkeleton,
   caseFacets as listPromptCaseFacets,
   deleteCase as deletePromptCase,
   deleteCaseFacet as deletePromptCaseFacet,
@@ -3903,6 +3904,9 @@ export function createAppHandler({ root }: { root: string }) {
                   ok: true,
                   facets: listPromptCaseFacets(rootDir),
                   counts,
+                  // 按轴骨架：案例覆盖数必须 COUNT(DISTINCT case_id)，不能把 counts 里
+                  // 同轴各值的条数相加（一条案例在同一轴可以有多值，相加会重复统计）
+                  axisCases: getPromptCaseFacetSkeleton(rootDir),
                   invalidFacets: [],
                   taxonomyVersion: taxonomy.version,
                   taxonomy: listFacetTaxonomy(taxonomy),

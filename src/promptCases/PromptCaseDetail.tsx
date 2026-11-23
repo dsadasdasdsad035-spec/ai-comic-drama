@@ -8,6 +8,7 @@ import {
   getFacetAxis,
   groupFacetsByAxis,
 } from './taxonomy'
+import { useOverlayChrome } from './useOverlayChrome'
 
 /** 复制到剪贴板：navigator.clipboard 在非安全上下文不可用，退回隐藏 textarea */
 async function copyText(text: string): Promise<boolean> {
@@ -278,6 +279,7 @@ export default function PromptCaseDetail({
   onToggleFavorite,
   onSaveNote,
   onDelete,
+  onClose,
   suppressedFacets = [],
   onFacetChange,
 }: {
@@ -290,15 +292,18 @@ export default function PromptCaseDetail({
   onToggleFavorite: () => void
   onSaveNote: (note: string) => void
   onDelete: () => void
+  /** 关闭抽屉：Esc / 点遮罩 / 点关闭按钮共用 */
+  onClose: () => void
   suppressedFacets?: PromptCaseFacet[]
   onFacetChange?: (patch: { add?: string[]; remove?: string[]; restore?: string[] }) => void
 }) {
   const [note, setNote] = useState(item.note)
   const [editingNote, setEditingNote] = useState(false)
+  const { containerRef } = useOverlayChrome({ open: true, onClose })
 
   const sourceLabel =
     item.source === 'vflow' ? 'vflow（外部导入）' : item.source === 'reverse-own' ? '我的片子反推' : '手工录入'
-  const licenseLabel = item.license === 'own' ? '自有' : '仅参考（不得当作自有内容发布）'
+  const licenseLabel = item.license === 'own' ? '自有' : '仅参考'
 
   const excerptPrompt = () => {
     if (item.prompt) return item.prompt
@@ -306,162 +311,205 @@ export default function PromptCaseDetail({
     return first?.keyframePrompt || ''
   }
 
+  /**
+   * 覆盖式抽屉，而不是列表里的一列。
+   *
+   * 详情列曾固定占 460px，点一张卡就会把画廊从 3 列压成 1 列；且在 1100–1179px
+   * 区间三列规则不生效，详情被塞进 236px 的侧栏列变成窄条。改成固定定位后，
+   * 列表列数在打开/关闭详情时完全不变——这是本组件的核心约束。
+   */
   return (
-    <section className="pc-detail" data-prompt-case-detail={item.id}>
-      <header className="pc-detail-head">
-        <div className="pc-detail-title">
-          <h2>{item.title || '(未命名案例)'}</h2>
-          <div className="pc-detail-meta">
-            <span className="pc-tag">{sourceLabel}</span>
-            {item.model ? <span className="pc-tag ghost">{item.model}</span> : null}
-            {item.category ? <span className="pc-tag ghost">{item.category}</span> : null}
-            <span className={`pc-tag ${item.license === 'own' ? 'ok' : 'warn'}`}>{licenseLabel}</span>
+    <div className="pc-detail-layer" data-prompt-case-detail-layer>
+      <button
+        type="button"
+        className="pc-detail-scrim"
+        aria-label="关闭案例详情"
+        onClick={onClose}
+      />
+      <section
+        className="pc-detail"
+        ref={containerRef}
+        data-prompt-case-detail={item.id}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pc-detail-title"
+      >
+        <header className="pc-detail-head">
+          <div className="pc-detail-title">
+            <h2 id="pc-detail-title">{item.title || '(未命名案例)'}</h2>
+            <div className="pc-detail-meta">
+              <span className="pc-tag">{sourceLabel}</span>
+              {item.model ? <span className="pc-tag ghost">{item.model}</span> : null}
+              {item.category ? <span className="pc-tag ghost">{item.category}</span> : null}
+              <span className={`pc-tag ${item.license === 'own' ? 'ok' : 'warn'}`} title="外部案例仅作参考，不得当作自有内容发布">
+                {licenseLabel}
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="pc-detail-actions">
-          <button
-            type="button"
-            className={item.favorite ? 'btn primary' : 'btn'}
-            onClick={onToggleFavorite}
-            title="收藏这条案例"
-          >
-            {item.favorite ? '★ 已收藏' : '☆ 收藏'}
-          </button>
-          <button type="button" className="btn-mini danger" onClick={onDelete} title="从案例库删除">
-            删除
-          </button>
-        </div>
-      </header>
-
-      <div className="pc-detail-media">
-        {item.videoUrl ? (
-          <video src={item.videoUrl} poster={item.posterUrl || undefined} controls preload="metadata" />
-        ) : item.posterUrl ? (
-          <img src={item.posterUrl} alt="" />
-        ) : (
-          <div className="pc-detail-ph">无预览</div>
-        )}
-      </div>
-
-      <div className="pc-detail-links">
-        {item.sourceUrl ? (
-          <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="btn-mini ghost">
-            查看原文 ↗
-          </a>
-        ) : null}
-        {item.author ? <span className="board-hint">作者 {item.author}</span> : null}
-        {item.videoUrl ? (
-          <a href={item.videoUrl} target="_blank" rel="noreferrer" className="btn-mini ghost">
-            原始视频 ↗
-          </a>
-        ) : null}
-      </div>
-
-      {item.prompt ? (
-        <div className="pc-prompt-block">
-          <div className="pc-prompt-head">
-            <b>提示词全文</b>
-            <span className="spacer" />
-            <button type="button" className="btn-mini" onClick={() => onCopy(item.prompt, '提示词')}>
-              复制
+          <div className="pc-detail-actions">
+            <button
+              type="button"
+              className={item.favorite ? 'btn-mini primary' : 'btn-mini'}
+              onClick={onToggleFavorite}
+              title="收藏这条案例"
+            >
+              {item.favorite ? '★ 已收藏' : '☆ 收藏'}
+            </button>
+            <button type="button" className="btn-mini danger" onClick={onDelete} title="从案例库删除">
+              删除
+            </button>
+            <button
+              type="button"
+              className="pc-detail-close"
+              onClick={onClose}
+              aria-label="关闭详情"
+              title="关闭（Esc）"
+            >
+              ×
             </button>
           </div>
-          <pre className="pc-prompt-text">{item.prompt}</pre>
-        </div>
-      ) : null}
+        </header>
 
-      <FacetSection item={item} suppressed={suppressedFacets} onChange={onFacetChange} />
-
-      {item.shots?.length ? (
-        <div className="pc-shots">
-          <div className="pc-shots-head">
-            <b>逐镜拆解</b>
-            <span className="board-hint">{item.shots.length} 镜 · 点开看依据与两段提示词</span>
+        <div className="pc-detail-scroll">
+          <div className="pc-detail-media">
+            {item.videoUrl ? (
+              <video src={item.videoUrl} poster={item.posterUrl || undefined} controls preload="metadata" />
+            ) : item.posterUrl ? (
+              <img src={item.posterUrl} alt="" />
+            ) : (
+              <div className="pc-detail-ph">
+                <span className="pc-detail-ph-mark" aria-hidden>
+                  ▶
+                </span>
+                <span>这条案例没有封面或原片</span>
+              </div>
+            )}
           </div>
-          <ol className="pc-shot-list">
-            {item.shots.map((s) => (
-              <ShotRow key={s.index} shot={s} />
-            ))}
-          </ol>
-        </div>
-      ) : null}
 
-      <div className="pc-apply">
-        <div className="pc-apply-head">
-          <b>应用到当前镜头</b>
-          {!canApply ? <span className="board-hint">{applyHint}</span> : null}
-        </div>
-        <div className="pc-apply-actions">
-          <button
-            type="button"
-            className="btn primary"
-            disabled={!canApply || busy || !excerptPrompt()}
-            onClick={() => onApply('prompt')}
-            title="写入选中镜头的画面提示词"
-          >
-            画面提示词
-          </button>
-          <button
-            type="button"
-            className="btn"
-            disabled={!canApply || busy || !excerptPrompt()}
-            onClick={() => onApply('videoPrompt')}
-            title="写入选中镜头的出片正文"
-          >
-            出片正文
-          </button>
-        </div>
-        <p className="board-hint">
-          外部案例多为整片级描述，写入后可能需要按镜头删减；反推案例可按镜逐条复制。
-        </p>
-      </div>
+          <div className="pc-detail-links">
+            {item.sourceUrl ? (
+              <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="btn-mini ghost">
+                查看原文 ↗
+              </a>
+            ) : null}
+            {item.author ? <span className="board-hint">作者 {item.author}</span> : null}
+            {item.videoUrl ? (
+              <a href={item.videoUrl} target="_blank" rel="noreferrer" className="btn-mini ghost">
+                原始视频 ↗
+              </a>
+            ) : null}
+          </div>
 
-      <div className="pc-note">
-        <div className="pc-prompt-head">
-          <b>我的备注</b>
-          <span className="spacer" />
-          {editingNote ? (
-            <>
-              <button
-                type="button"
-                className="btn-mini primary"
-                onClick={() => {
-                  onSaveNote(note)
-                  setEditingNote(false)
-                }}
-              >
-                保存
-              </button>
-              <button
-                type="button"
-                className="btn-mini ghost"
-                onClick={() => {
-                  setNote(item.note)
-                  setEditingNote(false)
-                }}
-              >
-                取消
-              </button>
-            </>
-          ) : (
-            <button type="button" className="btn-mini ghost" onClick={() => setEditingNote(true)}>
-              编辑
+          {item.prompt ? (
+            <div className="pc-block pc-prompt-block">
+              <div className="pc-prompt-head">
+                <b>提示词全文</b>
+                <span className="spacer" />
+                <button type="button" className="btn-mini ghost" onClick={() => onCopy(item.prompt, '提示词')}>
+                  复制
+                </button>
+              </div>
+              <pre className="pc-prompt-text">{item.prompt}</pre>
+            </div>
+          ) : null}
+
+          <div className="pc-block">
+            <FacetSection item={item} suppressed={suppressedFacets} onChange={onFacetChange} />
+          </div>
+
+          {item.shots?.length ? (
+            <div className="pc-block pc-shots">
+              <div className="pc-shots-head">
+                <b>逐镜拆解</b>
+                <span className="board-hint">{item.shots.length} 镜 · 点开看依据与两段提示词</span>
+              </div>
+              <ol className="pc-shot-list">
+                {item.shots.map((s) => (
+                  <ShotRow key={s.index} shot={s} />
+                ))}
+              </ol>
+            </div>
+          ) : null}
+
+          <div className="pc-block pc-note">
+            <div className="pc-prompt-head">
+              <b>我的备注</b>
+              <span className="spacer" />
+              {editingNote ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-mini primary"
+                    onClick={() => {
+                      onSaveNote(note)
+                      setEditingNote(false)
+                    }}
+                  >
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-mini ghost"
+                    onClick={() => {
+                      setNote(item.note)
+                      setEditingNote(false)
+                    }}
+                  >
+                    取消
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn-mini ghost" onClick={() => setEditingNote(true)}>
+                  编辑
+                </button>
+              )}
+            </div>
+            {editingNote ? (
+              <textarea
+                className="pc-note-input"
+                rows={3}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="这条写法好在哪里、准备套到哪一镜"
+              />
+            ) : (
+              <p className={item.note ? 'pc-note-text' : 'board-hint'}>{item.note || '还没有备注'}</p>
+            )}
+          </div>
+        </div>
+
+        {/* 吸底：应用动作是详情里唯一「改别人数据」的操作，必须随时可达 */}
+        <footer className="pc-apply">
+          <div className="pc-apply-head">
+            <b>应用到当前镜头</b>
+            {!canApply ? <span className="board-hint">{applyHint}</span> : null}
+          </div>
+          <div className="pc-apply-actions">
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!canApply || busy || !excerptPrompt()}
+              onClick={() => onApply('prompt')}
+              title="写入选中镜头的画面提示词"
+            >
+              画面提示词
             </button>
-          )}
-        </div>
-        {editingNote ? (
-          <textarea
-            className="pc-note-input"
-            rows={3}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="这条写法好在哪里、准备套到哪一镜"
-          />
-        ) : (
-          <p className={item.note ? 'pc-note-text' : 'board-hint'}>{item.note || '还没有备注'}</p>
-        )}
-      </div>
-    </section>
+            <button
+              type="button"
+              className="btn"
+              disabled={!canApply || busy || !excerptPrompt()}
+              onClick={() => onApply('videoPrompt')}
+              title="写入选中镜头的出片正文"
+            >
+              出片正文
+            </button>
+          </div>
+          <p className="board-hint">
+            外部案例多为整片级描述，写入后可能需要按镜头删减；反推案例可按镜逐条复制。
+          </p>
+        </footer>
+      </section>
+    </div>
   )
 }
 

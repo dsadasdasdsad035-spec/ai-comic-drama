@@ -2522,7 +2522,10 @@ body.si-resizing {
 .asset-tabs > button.on {
   border-color: var(--accent);
   background: var(--accent-dim);
-  color: var(--accent-ink);
+  /* accent-dim 是半透明底而不是实心 accent 底：这里必须用 --accent 字色。
+     --accent-ink 的语义是「实心 accent 上的墨色」，用在这里夜间会得到
+     近黑字压深蓝底（约 1.3:1）。 */
+  color: var(--accent);
 }
 
 .asset-tabs > button span {
@@ -5917,6 +5920,40 @@ body.si-resizing {
 .btn-mini:hover {
   border-color: var(--accent);
   color: var(--text);
+}
+
+/* btn-mini 的语义变体。
+   这两个类在代码里被大量使用（primary 8 处、ghost 45 处），但此前从未定义，
+   于是「收藏」「保存备注」「添加分面」这些主动作与普通次要按钮长得一模一样。
+   补在这里而不是各处改写 class：调用点的语义本来就是对的，缺的是样式。 */
+.btn-mini.ghost {
+  /* 基础 .btn-mini 已是透明底，这里只是把边框也收掉，让「次要动作」更轻 */
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.btn-mini.ghost:hover {
+  border-color: var(--line-2);
+  color: var(--text);
+}
+
+.btn-mini.primary {
+  /* 实心 accent 底 → 文字必须是 --accent-ink（这是它唯一的正确用法） */
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn-mini.primary:hover {
+  filter: brightness(1.1);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-mini.primary:disabled {
+  opacity: 0.45;
+  filter: none;
 }
 
 .sb-hook {
@@ -18597,36 +18634,77 @@ button.crumb:hover {
   font-weight: 600;
 }
 
+/**
+ * 分镜 tab 的 Markdown 预览。
+ *
+ * 为什么不套书页：分镜是镜头表格（镜号/时长/景别/运镜/画面/台词），
+ * 书页版心约 62ch，表格塞进去每行都要横滑——表格要「宽」、书页要「窄」。
+ * 但配色必须与书页一致（同一套 `--page-*`），否则两个 tab 切来切去会闪。
+ */
 .script-md-preview {
+  --page-paper: #fbf8f1;
+  --page-ink: #23201b;
+  --page-rule: #ded5c7;
+
   flex: 1;
   min-height: 0;
-  max-width: 72ch;
+  /* 不设 max-width：分镜是宽表，限宽会把它挤成窄条。
+     书页那边才需要 62ch 的版心约束。 */
   padding: 16px 18px 24px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--page-ink) 14%, transparent);
   border-radius: var(--r-lg);
-  background: var(--panel);
+  background: var(--page-paper);
+  color: var(--page-ink);
   overflow: auto;
+  box-shadow: 0 18px 32px -24px rgba(0, 0, 0, 0.55);
 }
 
 .script-md-preview .chat-md {
   font-size: var(--fs-sm);
   line-height: 1.65;
+  color: var(--page-ink);
 }
 
 .script-md-preview .chat-md h1 {
   font-size: 1.15rem;
   margin: 0 0 0.75em;
+  color: var(--page-ink);
 }
 
 .script-md-preview .chat-md h2 {
   font-size: 1rem;
   margin: 1.25em 0 0.5em;
-  color: var(--accent);
+  color: color-mix(in srgb, var(--page-ink) 55%, #0e7490);
 }
 
 .script-md-preview .chat-md p {
   margin: 0.5em 0;
   overflow-wrap: anywhere;
+}
+
+/* 表格在纸张底上要有可见的框线，不能沿用聊天域的半透明白 */
+.script-md-preview .chat-md table {
+  border-color: color-mix(in srgb, var(--page-ink) 14%, transparent);
+}
+
+.script-md-preview .chat-md th,
+.script-md-preview .chat-md td {
+  border: 1px solid color-mix(in srgb, var(--page-ink) 14%, transparent);
+  padding: 4px 7px;
+}
+
+.script-md-preview .chat-md thead th {
+  background: color-mix(in srgb, var(--page-ink) 6%, transparent);
+  color: var(--page-ink);
+}
+
+.script-md-preview .chat-md tbody td {
+  color: var(--page-ink);
+}
+
+.script-md-preview .chat-md blockquote {
+  border-left-color: color-mix(in srgb, var(--page-ink) 22%, transparent);
+  color: color-mix(in srgb, var(--page-ink) 70%, transparent);
 }
 
 .script-hub-detail-foot {
@@ -20476,7 +20554,8 @@ button.crumb:hover {
 .pc-source-tabs > button.on {
   border-color: var(--accent);
   background: var(--accent-dim);
-  color: var(--accent-ink);
+  /* 同上：半透明底用 --accent 字色，--accent-ink 只给实心 accent 底 */
+  color: var(--accent);
 }
 
 .pc-filter-right {
@@ -20498,25 +20577,14 @@ button.crumb:hover {
 .pc-layout {
   display: grid;
   grid-template-columns: 236px minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--sp-4);
   align-items: start;
 }
 
-@media (min-width: 1180px) {
-  .pc-layout.with-detail {
-    grid-template-columns: 220px minmax(0, 1fr) 460px;
-  }
-  .pc-detail {
-    position: sticky;
-    top: 12px;
-    max-height: calc(100vh - 120px);
-    overflow: auto;
-  }
-}
-
+/* 窄屏收成单列，侧栏换成抽屉入口。
+   这里不再有 `with-detail` 分支：详情是覆盖层，跟本布局无关。 */
 @media (max-width: 1099px) {
-  .pc-layout,
-  .pc-layout.with-detail {
+  .pc-layout {
     grid-template-columns: minmax(0, 1fr);
   }
   .pc-facet-col {
@@ -20549,11 +20617,22 @@ button.crumb:hover {
 
 .pc-facet-head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding-bottom: 6px;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-bottom: var(--sp-2);
   border-bottom: 1px solid var(--line);
+}
+
+.pc-facet-head-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.pc-facet-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
 }
 
 .pc-facet-count {
@@ -20562,7 +20641,7 @@ button.crumb:hover {
 }
 
 .pc-facet-empty {
-  margin: 4px 0;
+  margin: var(--sp-1) 0;
   color: var(--muted);
   font-size: var(--fs-sm);
   line-height: 1.6;
@@ -20577,7 +20656,7 @@ button.crumb:hover {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 7px 2px;
+  padding: var(--sp-2) 2px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -20590,53 +20669,108 @@ button.crumb:hover {
   color: var(--accent);
 }
 
+.pc-facet-axis-name {
+  font-weight: 600;
+}
+
 .pc-facet-axis-meta {
   color: var(--muted);
   font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .pc-facet-values {
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  padding: 0 0 8px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 0 var(--sp-2);
 }
 
+/**
+ * 行式值：标签 | 占比条 | 条数。
+ *
+ * 旧的胶囊布局把「值」和「条数」挤在同一行里，必须靠点开才知道谁多谁少；
+ * 行式 + 条能让整轴分布一眼可见，代价是每行高一点（用紧凑 padding 抵回来）。
+ */
 .pc-facet-value {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 28px;
   align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-full);
-  background: var(--panel-2);
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 4px 6px 4px 8px;
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
   color: var(--text);
   font-size: var(--fs-xs);
+  text-align: left;
   cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.pc-facet-value:hover:not(.off) {
+  background: var(--panel-2);
+}
+
+.pc-facet-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pc-facet-bar {
+  display: block;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+  overflow: hidden;
+}
+
+.pc-facet-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--line-2);
+  transition: background-color var(--dur-fast) var(--ease);
 }
 
 .pc-facet-value .n {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
+/* 选中：左侧强调条 + accent 文字；不再整行填 accent-dim（会和条打架） */
 .pc-facet-value.on {
-  border-color: var(--accent);
+  border-left-color: var(--accent);
   background: var(--accent-dim);
-  color: var(--accent-ink);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .pc-facet-value.on .n {
   color: inherit;
-  opacity: 0.75;
+}
+
+.pc-facet-value.on .pc-facet-bar-fill {
+  background: var(--accent);
 }
 
 .pc-facet-value.off {
-  opacity: 0.42;
+  opacity: 0.38;
   cursor: not-allowed;
 }
 
+.pc-facet-value.off .pc-facet-bar {
+  background: color-mix(in srgb, var(--line) 40%, transparent);
+}
+
 .pc-facet-more {
+  align-self: flex-start;
   padding: 3px 8px;
   border: 0;
   background: transparent;
@@ -20655,7 +20789,7 @@ button.crumb:hover {
 .pc-selected-facets .pc-facet-chip.on {
   border-color: var(--accent);
   background: var(--accent-dim);
-  color: var(--accent-ink);
+  color: var(--accent);
 }
 
 /* ---------- 分面 chip / 徽标 ---------- */
@@ -20866,56 +21000,112 @@ button.crumb:hover {
   margin-top: 3px;
 }
 
+/* 勾选行（导入弹窗多选 / 反推视觉复核）。
+   只在这里定义一次：此前两处重复定义、后者覆盖前者，改一处会静默失效。
+   用 flex-start 而不是 center，因为标签可能折成两行。 */
 .pc-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
   color: var(--muted);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
 
 .pc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
-  gap: 14px;
+  /* 画廊优先：单卡更宽、封面更大。1600px 视口下是 3 列（原先 4 列），
+     换来约 38% 的封面面积增幅——案例的本质是看画面，不是扫标题。 */
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: var(--sp-4);
 }
 
 .pc-empty {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
   align-items: center;
+}
+
+.pc-empty-art {
+  font-size: 22px;
+  color: var(--line-2);
+  line-height: 1;
 }
 
 .pc-empty-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+/* 加载态：与空态互斥，只在首屏/换筛选时出现 */
+.pc-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 56px var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.pc-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sb-spin 0.8s linear infinite;
 }
 
 .pc-card {
   display: flex;
   flex-direction: column;
-  text-align: left;
-  padding: 0;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--panel);
   overflow: hidden;
-  cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-base) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
-.pc-card:hover,
+/* hover 位移 + 常驻阴影，与 hub-card 同一套动效语言（不触发 layout） */
+.pc-card:hover {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-card);
+  transform: translateY(-2px);
+}
+
 .pc-card.on {
   border-color: var(--accent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-card);
+}
+
+.pc-card-hit {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pc-card-hit:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .pc-card-thumb {
   position: relative;
   aspect-ratio: 16 / 9;
-  background: var(--bg-2);
+  background: var(--media-bg);
   overflow: hidden;
 }
 
@@ -20924,21 +21114,53 @@ button.crumb:hover {
   height: 100%;
   object-fit: cover;
   display: block;
+  /* 稍慢的缩放：扫列表时画面有轻微呼吸感，但不影响布局 */
+  transition: transform var(--dur-slow) var(--ease);
+}
+
+.pc-card:hover .pc-card-thumb img {
+  transform: scale(1.03);
 }
 
 .pc-card-ph {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   height: 100%;
   color: var(--muted);
-  font-size: var(--fs-sm);
-  opacity: 0.6;
+  /* 细斜纹底：让「暂无封面」看起来是有意的占位，而不是渲染失败留下的空洞 */
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--line) 45%, transparent) 6px 7px
+  );
+}
+
+.pc-card-ph-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.pc-card-ph-text {
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 
 .pc-card-badge,
 .pc-card-fav {
   position: absolute;
-  top: 8px;
+  top: var(--sp-2);
   padding: 2px 8px;
   border-radius: var(--r-full);
   font-size: var(--fs-2xs);
@@ -20949,24 +21171,41 @@ button.crumb:hover {
 }
 
 .pc-card-badge {
-  left: 8px;
+  left: var(--sp-2);
 }
 
 .pc-card-fav {
-  right: 8px;
-  color: var(--warn, #b45309);
+  right: var(--sp-2);
+  color: var(--warn);
+}
+
+/* 原片角标：表达「这条有视频」，但不自动播放 */
+.pc-card-play {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  backdrop-filter: blur(4px);
 }
 
 .pc-card-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 11px 12px;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
 }
 
 .pc-card-title {
   margin: 0;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
   font-weight: 600;
   line-height: 1.35;
   display: -webkit-box;
@@ -20978,7 +21217,7 @@ button.crumb:hover {
 .pc-card-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .pc-tag {
@@ -21002,38 +21241,120 @@ button.crumb:hover {
 }
 
 .pc-tag.warn {
-  border-color: var(--warn, #b45309);
-  color: var(--warn, #b45309);
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
-.pc-card-preview {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--fs-2xs);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/* ---------- 详情（覆盖式右侧抽屉） ---------- */
+
+/**
+ * 为什么是覆盖层而不是列表里的一列：
+ * 详情列曾固定占 460px，点开一张卡就把画廊从 3 列压成 1 列；1100–1179px 区间
+ * 三列规则不生效，详情还会被塞进 236px 的侧栏列变成窄条。改成 fixed 后，
+ * 打开/关闭详情完全不参与列表布局。
+ */
+.pc-detail-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  justify-content: flex-end;
 }
 
-/* ---------- 详情 ---------- */
+.pc-detail-scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  /* 遮罩必须压得动暗色主题的底：#070b11 上叠 50% 黑几乎看不出变化，
+     而「画廊还在旁边」正是抽屉存在的理由，必须一眼可辨。 */
+  background: rgba(0, 0, 0, 0.68);
+  cursor: default;
+  animation: pc-fade-in var(--dur-base) var(--ease);
+}
 
 .pc-detail {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  width: min(520px, 100vw);
+  /* height 而非 max-height：内容短时面板也要撑满，
+     否则吸底动作条会悬在半空，看起来像个没做完的浮层 */
+  height: 100%;
+  max-height: 100%;
+  border-left: 1px solid var(--line);
   background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  animation: pc-slide-in var(--dur-base) var(--ease);
+}
+
+@keyframes pc-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes pc-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 面板自身是滚动体，头部与吸底动作条不随内容滚走。
+   flex:1 是必需的：少了它，内容短时滚动区只占内容高度，吸底条会被顶到中间。 */
+.pc-detail-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .pc-detail-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.pc-detail-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pc-detail-close:hover {
+  border-color: var(--line-2);
+  color: var(--text);
+}
+
+/* 内容分块：统一的标题行 + 上分隔线，让四个区块有清晰层级而不是等权堆叠 */
+.pc-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line);
 }
 
 .pc-detail-title h2 {
@@ -21046,20 +21367,23 @@ button.crumb:hover {
 .pc-detail-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--sp-1);
 }
 
 .pc-detail-actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: var(--sp-1);
   flex-shrink: 0;
 }
 
 .pc-detail-media {
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--bg-2);
+  /* 媒体底用 media-bg：黑夜主题下视频的上下黑边与面板底同色，看不出边界 */
+  background: var(--media-bg);
   aspect-ratio: 16 / 9;
+  flex: 0 0 auto;
 }
 
 .pc-detail-media img,
@@ -21070,19 +21394,42 @@ button.crumb:hover {
   display: block;
 }
 
+/* 详情里的「无预览」与卡片占位同一套视觉：斜纹 + 图标 + 说明，
+   否则 16:9 的一大块空白看起来像加载失败 */
 .pc-detail-ph {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
   height: 100%;
   color: var(--muted);
   font-size: var(--fs-sm);
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in srgb, var(--line) 45%, transparent) 6px 7px
+  );
+}
+
+.pc-detail-ph-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-2);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1;
 }
 
 .pc-detail-links {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .pc-prompt-block,
@@ -21205,7 +21552,7 @@ button.crumb:hover {
 }
 .pc-kind.ai {
   border-color: var(--accent);
-  color: var(--accent-ink);
+  color: var(--accent);
 }
 .pc-kind.cg {
   border-color: var(--info, #2563eb);
@@ -21233,7 +21580,7 @@ button.crumb:hover {
 }
 
 .pc-shot-toggle {
-  color: var(--accent-ink);
+  color: var(--accent);
 }
 
 .pc-shot-body {
@@ -21280,25 +21627,27 @@ button.crumb:hover {
 
 /* ---------- 应用 ---------- */
 
+/* 吸底动作条：详情里唯一会改别人数据的操作，必须随时可达 */
 .pc-apply {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border: 1px dashed var(--line);
-  border-radius: var(--r-md);
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+  flex: 0 0 auto;
 }
 
 .pc-apply-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--sp-2);
   font-size: var(--fs-sm);
 }
 
 .pc-apply-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 /* ---------- 导入弹窗 ---------- */
@@ -21315,15 +21664,15 @@ button.crumb:hover {
 .pc-reverse-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   overflow: auto;
 }
 
 .pc-import-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--sp-2);
 }
 
 .pc-field {
@@ -21353,7 +21702,7 @@ button.crumb:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .pc-import-error {
@@ -21366,8 +21715,9 @@ button.crumb:hover {
 
 .pc-import-filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .pc-import-list {
@@ -21465,14 +21815,14 @@ button.crumb:hover {
 .pc-reverse-tiers {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 8px;
+  gap: var(--sp-2);
 }
 
 .pc-tier {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--panel-2);
@@ -21502,15 +21852,6 @@ button.crumb:hover {
   color: var(--ok, #15803d);
 }
 
-.pc-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  font-size: var(--fs-xs);
-  line-height: 1.5;
-  color: var(--muted);
-}
-
 .pc-reverse-progress {
   display: flex;
   flex-direction: column;
@@ -21537,7 +21878,7 @@ button.crumb:hover {
 .pc-status.running,
 .pc-status.queued {
   border-color: var(--accent);
-  color: var(--accent-ink);
+  color: var(--accent);
 }
 
 .pc-status.done {
@@ -21584,7 +21925,7 @@ button.crumb:hover {
 .pc-shot-route {
   margin: 0;
   font-size: var(--fs-xs);
-  color: var(--accent-ink);
+  color: var(--accent);
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
@@ -21593,4 +21934,896 @@ button.crumb:hover {
   font-size: var(--fs-2xs);
   color: var(--muted);
   line-height: 1.5;
+}
+
+/* ==========================================================================
+   剧本阅读器：书页模式
+   ==========================================================================
+
+   背景：书架（`.script-book`）早就是拟物的，点进详情却掉回一个 12px 的灰框。
+   这里补齐书页这一侧，让「从书架上抽出一本书翻开」是连续的。
+
+   变量前缀是 `--page-*` 而不是复用书架的 `--reader-*`：
+   书架那套 token 属于叶片与书脊，由全局日夜主题切换；书页纸色由**纸张主题**
+   决定（四套），两者同名会互相覆盖。`--page-*` 由 readerPrefs.ts 的
+   `readerCssVars()` 按主题注入。
+
+   不做 3D 卷曲与双页对开：前者在长文本上每帧重排，后者把版心宽度减半。
+   ========================================================================== */
+
+/* 详情阶段由书页自己滚动，外层不再滚。
+   原来用 `max-height: calc(100vh - 190px)` 猜可用高度，窄屏头部堆叠后
+   头部+页签占到 260px，书页就会溢出到视口外。改成 flex 链后高度由容器算，
+   不再依赖任何 vh 估算。 */
+.script-hub-stage[data-script-phase='detail'] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.script-hub-stage[data-script-phase='detail'] .script-hub-detail {
+  flex: 1;
+  min-height: 0;
+}
+
+.script-reader {
+  position: relative;
+  /* 主题值由 readerCssVars() 覆盖；这里是兜底（书页白） */
+  --page-paper: #fbf8f1;
+  --page-ink: #23201b;
+  --page-ink-soft: #5b5548;
+  --page-rule: #ded5c7;
+  --page-grain: 0.04;
+  --reader-fs: 17px;
+  --reader-lh: 2;
+  --reader-indent: 2em;
+
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: stretch;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+}
+
+/* 书桌：书页下面的一层暗色台面 */
+.script-reader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ---------- 场次目录 ---------- */
+
+.script-reader-toc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+/* 窄屏目录入口：宽屏目录常驻，不需要它 */
+.script-reader-toc-open {
+  display: none;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-full);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.script-reader-toc-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.script-reader-toc-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+/* 「关闭」只对窄屏浮层有意义；宽屏目录常驻，关掉它反而没有重新打开的入口 */
+.script-reader-toc-headline .reader-type-btn {
+  display: none;
+}
+
+.script-reader-toc-head {
+  margin: 0;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.script-reader-toc-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.script-reader-toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.script-reader-toc-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 0 var(--sp-2);
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.script-reader-toc-item:hover {
+  background: var(--panel-2);
+}
+
+/* 当前项：左侧强调条 + accent 字，与素材页分面选中态同一套语言 */
+.script-reader-toc-item.is-current {
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.script-reader-toc-no {
+  grid-row: 1 / span 2;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+}
+
+.script-reader-toc-item.is-current .script-reader-toc-no {
+  color: inherit;
+}
+
+.script-reader-toc-place {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.script-reader-toc-time {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.script-reader-toc-item.is-current .script-reader-toc-time {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.script-reader-facts {
+  margin-top: auto;
+  padding-top: var(--sp-2);
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.script-reader-facts p {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.script-reader-facts span {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 书页与拟物 ---------- */
+
+.script-reader-pagewrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 书脊：左侧窄竖条，与书架的 .script-book-spine 呼应 */
+.script-reader-spine {
+  flex: none;
+  width: 16px;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--page-ink) 22%, var(--page-paper)),
+    color-mix(in srgb, var(--page-ink) 10%, var(--page-paper)) 60%,
+    color-mix(in srgb, var(--page-ink) 16%, var(--page-paper))
+  );
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--page-ink) 14%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.script-reader-spine-no {
+  writing-mode: vertical-rl;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.14em;
+  color: var(--page-ink-soft);
+  opacity: 0.62;
+}
+
+.script-reader-page {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 26px 40px 20px;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 14%, transparent);
+  border-left: none;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  background: var(--page-paper);
+  color: var(--page-ink);
+  box-shadow:
+    0 22px 38px -26px rgba(0, 0, 0, 0.62),
+    0 2px 0 0 color-mix(in srgb, var(--page-ink) 5%, transparent);
+  scroll-behavior: smooth;
+}
+
+/* 叠页：右/下沿两层错位的伪元素，表达「这是书不是一张纸」 */
+.script-reader-pagewrap::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  left: 13px;
+  height: 6px;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 12%, transparent);
+  border-top: 0;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: color-mix(in srgb, var(--page-paper) 88%, var(--page-ink));
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* 纸张纹理 + 页边暗角：一层斜纹叠一层径向渐变，不引入任何图片资产 */
+.script-reader-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background-image:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 5px,
+      color-mix(in srgb, var(--page-ink) calc(var(--page-grain) * 100%), transparent) 5px 6px
+    ),
+    radial-gradient(
+      120% 80% at 50% 0%,
+      transparent 55%,
+      color-mix(in srgb, var(--page-ink) 5%, transparent) 100%
+    );
+  opacity: 0.9;
+}
+
+.script-reader-page > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 书签：页外右沿，显示当前场次号 */
+.script-reader-bookmark {
+  position: absolute;
+  top: 14px;
+  right: -1px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-height: 46px;
+  padding: 6px 0;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 16%, transparent);
+  border-right: 0;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+  background: color-mix(in srgb, var(--page-ink) 9%, var(--page-paper));
+  color: var(--page-ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+
+.script-reader-bookmark:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--page-paper));
+  color: var(--accent);
+}
+
+.script-reader-bookmark-no {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.08em;
+}
+
+.script-reader-running {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 0 34px var(--sp-2) 0;
+  margin-bottom: var(--sp-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--page-ink) 13%, transparent);
+  background: var(--page-paper);
+  color: var(--page-ink-soft);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.06em;
+}
+
+.script-reader-running-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-reader-body {
+  max-width: 62ch;
+  margin: 0 auto;
+}
+
+.script-reader-running-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  /* 横向铺满书页：只给 62ch 宽会漏出左侧正文。
+     用负边距抵消书页左右下 padding，让底色真正盖满整行。 */
+  margin: var(--sp-5) calc(-1 * 40px) -20px;
+  padding: var(--sp-2) 40px;
+  border-top: 1px solid color-mix(in srgb, var(--page-ink) 13%, transparent);
+  background: var(--page-paper);
+  color: var(--page-ink-soft);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 正文排版（.reader-md） ---------- */
+
+.reader-md {
+  font-size: var(--reader-fs);
+  line-height: var(--reader-lh);
+  color: var(--page-ink);
+  text-align: var(--reader-align-text, justify);
+  font-family: var(--font-sans);
+  hyphens: auto;
+}
+
+.script-reader[data-reader-family='serif'] .reader-md {
+  font-family: 'Songti SC', 'SimSun', 'Noto Serif CJK SC', 'Source Han Serif SC', var(--font-sans), serif;
+}
+
+.script-reader[data-reader-family='sans'] .reader-md {
+  font-family: var(--font-sans);
+}
+
+.script-reader[data-reader-theme='terminal'] .reader-md {
+  font-family: var(--font-mono);
+}
+
+.script-reader[data-reader-align='left'] {
+  --reader-align-text: left;
+}
+
+.reader-md > *:first-child {
+  margin-top: 0;
+}
+
+.reader-md h1,
+.reader-md h2,
+.reader-md h3,
+.reader-md h4 {
+  color: var(--page-ink);
+  line-height: 1.35;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.reader-md h1 {
+  margin: 0 0 0.9em;
+  padding-bottom: 0.4em;
+  border-bottom: 2px solid color-mix(in srgb, var(--page-ink) 18%, transparent);
+  font-size: 1.5em;
+}
+
+.reader-md h2 {
+  margin: 2em 0 0.7em;
+  padding-left: 0.6em;
+  border-left: 3px solid color-mix(in srgb, var(--page-ink) 34%, transparent);
+  font-size: 1.2em;
+  scroll-margin-top: 12px;
+}
+
+.reader-md h3 {
+  margin: 1.6em 0 0.5em;
+  font-size: 1.06em;
+}
+
+.reader-md p {
+  margin: 0.85em 0;
+  text-indent: var(--reader-indent);
+  overflow-wrap: anywhere;
+}
+
+/* 以下段落不要首行缩进：它们是结构化块而不是行文 */
+.reader-md li > p,
+.reader-md blockquote p,
+.reader-md td p,
+.reader-md th p,
+.reader-md .reader-md-plain {
+  text-indent: 0;
+}
+
+.reader-md .reader-md-plain {
+  text-align: left;
+}
+
+.reader-md ul,
+.reader-md ol {
+  margin: 0.85em 0;
+  padding-left: 1.6em;
+}
+
+.reader-md li {
+  margin: 0.3em 0;
+}
+
+.reader-md li::marker {
+  color: var(--page-ink-soft);
+}
+
+.reader-md blockquote {
+  margin: 1.2em 0;
+  padding: 0.7em 1em;
+  border-left: 3px solid color-mix(in srgb, var(--page-ink) 22%, transparent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: color-mix(in srgb, var(--page-ink) 4%, transparent);
+  color: var(--page-ink-soft);
+  font-style: normal;
+}
+
+.reader-md blockquote > *:first-child {
+  margin-top: 0;
+}
+
+.reader-md blockquote > *:last-child {
+  margin-bottom: 0;
+}
+
+.reader-md hr {
+  margin: 2em 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--page-ink) 16%, transparent);
+}
+
+.reader-md a {
+  color: color-mix(in srgb, var(--page-ink) 30%, #0e7490);
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.reader-md strong {
+  font-weight: 700;
+}
+
+.reader-md code {
+  padding: 0.1em 0.34em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--page-ink) 7%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+.reader-md pre {
+  margin: 1.1em 0;
+  padding: 0.85em 1em;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 12%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--page-ink) 5%, transparent);
+  overflow-x: auto;
+  font-size: 0.86em;
+  line-height: 1.6;
+}
+
+.reader-md pre code {
+  padding: 0;
+  background: none;
+  color: inherit;
+}
+
+/* 表格：宽表在版心内横向滚动，不改版心宽度 */
+.reader-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 1.2em 0;
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: 0.88em;
+  line-height: 1.55;
+}
+
+.reader-md th,
+.reader-md td {
+  padding: 0.45em 0.7em;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 14%, transparent);
+  text-align: left;
+  vertical-align: top;
+}
+
+.reader-md thead th {
+  background: color-mix(in srgb, var(--page-ink) 6%, transparent);
+  font-weight: 650;
+}
+
+.reader-md tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--page-ink) 2.5%, transparent);
+}
+
+/* 图片：不撑破版心，可点击放大 */
+.reader-md img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.2em auto;
+  border-radius: var(--r-sm);
+  cursor: zoom-in;
+}
+
+.reader-md input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+
+.reader-md del {
+  opacity: 0.7;
+}
+
+/* 图表：宽图在书页内滚动 */
+.reader-md .md-diagram {
+  margin: 1.3em 0;
+  padding: 0.6em;
+  border: 1px solid color-mix(in srgb, var(--page-ink) 12%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--page-ink) 2.5%, transparent);
+  overflow-x: auto;
+  cursor: zoom-in;
+}
+
+.reader-md .md-diagram svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
+.reader-md .md-diagram-skeleton {
+  display: grid;
+  place-items: center;
+  min-height: 90px;
+  color: var(--page-ink-soft);
+  font-size: 0.8em;
+  letter-spacing: 0.04em;
+}
+
+.reader-md .md-diagram-fallback {
+  margin: 1.3em 0;
+}
+
+.reader-md .md-diagram-fallback-note {
+  margin: 0.4em 0 0;
+  color: var(--page-ink-soft);
+  font-size: 0.8em;
+  line-height: 1.6;
+}
+
+/* ---------- 排版菜单 ---------- */
+
+.script-reader-tools {
+  position: absolute;
+  right: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: 3;
+}
+
+.reader-type {
+  position: relative;
+}
+
+.reader-type-trigger {
+  min-width: 40px;
+  font-family: var(--font-sans);
+  letter-spacing: 0.02em;
+}
+
+.reader-type-trigger.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.reader-type-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+}
+
+.reader-type-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.reader-type-label {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.reader-type-seg {
+  display: flex;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-2);
+}
+
+.reader-type-seg-wide {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.reader-type-btn {
+  flex: 1;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.reader-type-btn:hover {
+  color: var(--text);
+}
+
+.reader-type-btn.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1099px) {
+  .script-reader {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 目录改为可折叠的浮层：窄屏没有空间常驻 */
+  .script-reader-toc {
+    display: none;
+    position: absolute;
+    z-index: 5;
+    top: 0;
+    left: 0;
+    width: min(280px, 82vw);
+    max-height: 70vh;
+    box-shadow: var(--shadow-pop);
+  }
+
+  .script-reader-toc.is-open {
+    display: flex;
+  }
+
+  .script-reader-toc-open {
+    display: inline-flex;
+  }
+
+  .script-reader-toc-headline .reader-type-btn {
+    display: inline-flex;
+  }
+
+  .script-reader-page {
+    padding: 20px 22px 14px;
+  }
+
+  .script-reader-body {
+    max-width: none;
+  }
+
+  .script-reader-running-foot {
+    margin-left: -22px;
+    margin-right: -22px;
+    margin-bottom: -14px;
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+}
+
+@media (max-width: 560px) {
+  .script-reader-page {
+    padding: 16px 16px 12px;
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+  }
+
+  .script-reader-running-foot {
+    margin-left: -16px;
+    margin-right: -16px;
+    margin-bottom: -12px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .script-reader-spine {
+    width: 12px;
+  }
+
+  .script-reader-bookmark {
+    width: 24px;
+    min-height: 38px;
+  }
+
+  .script-reader-tools {
+    right: var(--sp-2);
+    bottom: var(--sp-2);
+  }
+
+  .reader-type-panel {
+    width: min(268px, 88vw);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .script-reader-page {
+    scroll-behavior: auto;
+  }
+}
+
+/* 图表放大层：与 mp-backdrop 同一套遮罩语义，但不复用其表单布局 */
+.md-diagram-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+  cursor: zoom-out;
+}
+
+.md-diagram-zoom-body {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  padding: 16px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.md-diagram-zoom-body svg {
+  display: block;
+  max-width: none;
+  height: auto;
+}
+
+/* 图片放大层：图按容器缩放（不是 1:1），关闭回到原阅读位置 */
+.md-diagram-zoom .reader-md-zoom-img {
+  max-width: min(92vw, 1280px);
+  max-height: 88vh;
+  width: auto;
+  height: auto;
+  margin: 0;
+  border-radius: var(--r-md);
+  cursor: zoom-out;
+  object-fit: contain;
+}
+
+/* ==========================================================================
+   View Transitions：抽出书翻开
+   ==========================================================================
+
+   只给书页一个 view-transition-name，书架与按钮不动。
+   不支持该 API 的内核会直接切换（见 App.tsx 的 openScriptEpisode）。
+   ========================================================================== */
+
+.script-reader-page {
+  view-transition-name: script-page;
+}
+
+::view-transition-old(script-page) {
+  animation: script-page-out var(--dur-base) var(--ease);
+}
+
+::view-transition-new(script-page) {
+  animation: script-page-in var(--dur-base) var(--ease);
+}
+
+@keyframes script-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(18px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes script-page-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(script-page),
+  ::view-transition-new(script-page) {
+    animation: none;
+  }
 }

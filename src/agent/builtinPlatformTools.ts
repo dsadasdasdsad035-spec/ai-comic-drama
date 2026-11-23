@@ -35,6 +35,7 @@ import { createStageToolSet, createPiNativeToolSet, type StageToolSet } from './
 import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
 import { readCharacters, type ProjectChar } from '../charMap'
 import { createMaterialTools } from './materialTools'
+import { createPromptCaseTools } from './promptCaseTools'
 import { defineTool, type ToolDef } from './tool'
 import { collectShotReferences, limitReferences } from '../shotReferences'
 import {
@@ -1064,6 +1065,8 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   byName.set('generate_clip', createGenerateClipTool(input))
   byName.set('generate_voice', createGenerateVoiceTool(input))
   byName.set('generate_narration', createGenerateNarrationTool(input))
+  // 案例库是全局作用域，与 list_projects 同层：不碰项目快照，未选项目也能查
+  for (const t of createPromptCaseTools()) byName.set(t.name, t)
   for (const t of createMaterialTools({
     projectName: () => input.projectName,
     epNo: () => resolveEpNo(input),
@@ -1113,6 +1116,9 @@ const PLATFORM_READ_TOOL_NAMES = [
   'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
+  'list_prompt_cases',
+  'get_prompt_case',
+  'read_prompt_case_facets',
   'read_skill',
   'read_skill_text',
   'read_skill_file',

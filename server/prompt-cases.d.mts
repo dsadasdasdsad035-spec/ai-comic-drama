@@ -99,6 +99,10 @@ export declare function caseFacetCounts(
   appRoot: string,
   options?: PromptCaseListOptions,
 ): Array<{ axis: string; value: string; count: number }>
+/** 按轴骨架：cases 是 COUNT(DISTINCT case_id)，不能由 count 相加得到 */
+export declare function caseFacetSkeleton(
+  appRoot: string,
+): Array<{ axis: string; cases: number; values: number }>
 export declare function getCaseFacets(
   appRoot: string,
   caseId: string,

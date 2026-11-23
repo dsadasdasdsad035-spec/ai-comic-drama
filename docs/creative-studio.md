@@ -100,11 +100,11 @@ sha256 前 12 位）。宿主插件 `creative-tools` 在每次 `tools/pre-execut
 
 ```bash
 # 宿主侧的自动化验收（Node 24，无需渠道 Key）
-node tests/studio-flow-smoke.mjs      # 拉起宿主 / 42 个工具注册 / 技能可读 / 压缩已开
+node tests/studio-flow-smoke.mjs      # 拉起宿主 / 工具数量与清单一致 / 技能可读 / 压缩已开
 node tests/studio-shell.mjs           # 外壳：入口、主题桥、错误态与重试
 node tests/legacy-storage.mjs         # 旧会话只读：写入一律 410
 node verify-skills-unit.mjs           # 技能与工具单元测试总入口
-node verify-creative-builtin-tools.mjs  # 逐项 invoke 42 个平台工具（无确认通道时必须 fail-closed）
+node verify-creative-builtin-tools.mjs  # 逐项 invoke 全部平台工具（无确认通道时必须 fail-closed）
 ```
 
 模型回合（真正生成回复、出图出片）需要渠道 Key 与计费，只能手测。

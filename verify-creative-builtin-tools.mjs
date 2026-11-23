@@ -298,6 +298,12 @@ const toolSpecs = {
 
   // 包内文件读取：验收包只有 SKILL.md，读它必须成功（路径越界另有单测）
   read_skill_file: { args: { id: FIXTURE_SKILL, path: 'SKILL.md' }, expect: 'ok' },
+
+  // ---- 提示词案例库：全局作用域，未选项目也必须能用 ----
+  // 列表与词表在空库下也必须 ok（空列表 + 可读提示），所以固定参数即可；
+  // 单条钻取的 id 必须来自列表返回的行（见下方动态规格）。
+  list_prompt_cases: { args: { pageSize: 3 }, expect: 'ok' },
+  read_prompt_case_facets: { args: {}, expect: 'ok' },
 }
 
 let lexiconKey = ''
@@ -334,6 +340,20 @@ try {
 toolSpecs.read_asset_detail = assetDetailArgs
   ? { args: assetDetailArgs, expect: 'ok' }
   : { expect: 'skip', skip: 'read_asset_inventory 没有返回任何可钻取的条目' }
+
+// get_prompt_case 的 id 必须来自列表返回的行，不能写死；案例库为空时整条跳过
+let promptCaseArgs = null
+try {
+  const list = byName.get('list_prompt_cases')
+  const r = list ? await list.invoke({ pageSize: 1 }) : null
+  const first = Array.isArray(r?.cases) ? r.cases[0] : null
+  if (first?.id) promptCaseArgs = { id: String(first.id) }
+} catch {
+  /* 下面按规格缺失处理 */
+}
+toolSpecs.get_prompt_case = promptCaseArgs
+  ? { args: promptCaseArgs, expect: 'ok' }
+  : { expect: 'skip', skip: '提示词案例库为空（先导入或反推一条再验）' }
 
 const results = []
 

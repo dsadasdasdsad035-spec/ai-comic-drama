@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   READER_LEADINGS,
   READER_SIZES,
+  READER_THEMES,
   type ReaderAlign,
   type ReaderFamily,
   type ReaderPrefs,
+  type ReaderTheme,
 } from './readerPrefs'
 
 type Props = {
@@ -54,6 +56,26 @@ export default function ReaderTypeMenu({ prefs, onChange }: Props) {
 
       {open ? (
         <div className="reader-type-panel" role="dialog" aria-label="排版设置" data-reader-type-panel>
+          {/* 纸张排在最前：它是整套观感的入口，字号行距是微调 */}
+          <div className="reader-type-row">
+            <span className="reader-type-label">纸张</span>
+            <div className="reader-type-seg reader-type-seg-wide" role="group" aria-label="纸张主题">
+              {READER_THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`reader-type-btn${prefs.theme === t.id ? ' on' : ''}`}
+                  data-reader-theme-btn={t.id}
+                  aria-pressed={prefs.theme === t.id}
+                  title={t.hint}
+                  onClick={() => patch({ theme: t.id as ReaderTheme })}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="reader-type-row">
             <span className="reader-type-label">字号</span>
             <div className="reader-type-seg" role="group" aria-label="字号">

@@ -11,7 +11,7 @@ import {
   platformToolNameDiff,
 } from '../src/agent/builtinPlatformTools'
 import { bindSkillTools, bindSkillToolsDetailed, createPiNativeToolSet } from '../src/agent/stageTools'
-import { DEFAULT_EXPERT_PLATFORM_TOOLS } from '../src/creative/expertToolGroups'
+import { DEFAULT_EXPERT_PLATFORM_TOOLS, HOST_NATIVE_TOOLS } from '../src/creative/expertToolGroups'
 import type { Skill } from '../src/skills/types'
 
 let bad = 0
@@ -78,9 +78,18 @@ async function main() {
 
   await check('默认专家白名单是平台清单的子集', () => {
     const declared = new Set(builtinPlatformToolNames())
-    const ghost = DEFAULT_EXPERT_PLATFORM_TOOLS.filter((n) => !declared.has(n))
+    /**
+     * 宿主原生工具（`bash`）不走平台工具桥注册，但可以出现在专家白名单里
+     * ——`platformToolNameDiff` 本来就把它排除在 `expertNotDeclared` 之外。
+     * 这里若不过滤，会让「白名单允许宿主工具」这条正确设计被判成幽灵工具。
+     */
+    const hostNative = new Set<string>(HOST_NATIVE_TOOLS)
+    const ghost = DEFAULT_EXPERT_PLATFORM_TOOLS.filter(
+      (n) => !declared.has(n) && !hostNative.has(n),
+    )
     assert.deepEqual(ghost, [], `白名单里出现未注册名字：${ghost.join('、')}`)
     for (const name of DEFAULT_EXPERT_PLATFORM_TOOLS) {
+      if (hostNative.has(name)) continue
       assert.ok(registered.includes(name), `默认专家工具 ${name} 应真实注册`)
     }
   })

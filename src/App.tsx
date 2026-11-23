@@ -1039,9 +1039,23 @@ function Shell() {
     changeView('script', { scriptPhase: 'list' })
   }, [changeView])
 
+  /**
+   * 打开分集剧本。
+   *
+   * 用 View Transitions 做「抽出书翻开」的过渡：书页从右侧滑入。
+   * `startViewTransition` 不存在时（旧内核、或被系统禁用）直接切换，
+   * 不 polyfill——过渡是锦上添花，不能成为打开剧本的前置条件。
+   */
   const openScriptEpisode = useCallback(
     (no: number) => {
-      changeView('script', { scriptEpNo: no, scriptPhase: 'detail' })
+      const apply = () => changeView('script', { scriptEpNo: no, scriptPhase: 'detail' })
+      const start = (
+        document as Document & {
+          startViewTransition?: (cb: () => void) => { finished: Promise<void> }
+        }
+      ).startViewTransition
+      if (typeof start === 'function') start.call(document, apply)
+      else apply()
     },
     [changeView],
   )
@@ -4192,8 +4206,7 @@ function Shell() {
         ) : view === 'script' ? (
           scriptPhase === 'detail' && scriptDetailEpNo != null ? (
             <ScriptEpisodeDetail
-              epNo={scriptDetailEpNo}
-              episodes={episodes}
+              epNo={scriptDetailEpNo}              episodes={episodes}
               shots={projectShots}
               projectName={currentSummary.title || projectName}
               projectStyle={projectStyle}

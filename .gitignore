@@ -127,3 +127,6 @@ server/dsh-plugins/creative-tools/studio-tool-aliases.mjs
 # Blender Bridge 运行时 profile（见 SB_STATE_ROOT）
 .blender-profile/
 
+
+# 视觉验收截图产物（改版/验收时临时生成，不入库）
+out/

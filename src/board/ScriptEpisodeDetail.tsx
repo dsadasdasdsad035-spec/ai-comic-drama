@@ -6,6 +6,7 @@ import { buildScriptEpisodeMarkdown } from '../intake/scriptExportMarkdown'
 import { episodeMarkdown, type RefIndex } from '../storyboardMarkdown'
 import { episodeScriptUi } from './episodeScriptUi'
 import { findEpisode } from './episodeOps'
+import ScriptBookReader, { readerScenesOf } from './ScriptBookReader'
 
 type Tab = 'script' | 'shots'
 
@@ -60,6 +61,13 @@ export default function ScriptEpisodeDetail({
       ).text,
     [projectName, projectStyle, projectAspect, logline, episodes, shots, epNo, refIndex],
   )
+
+  /**
+   * 场次目录来自结构化数据而不是从 Markdown 反解：
+   * `buildScriptEpisodeMarkdown` 的 h2 与 `episode.scenes` 一一对应，
+   * 反解标题只能靠字符串匹配，结构里本来就有场号/地点/时间。
+   */
+  const scenes = useMemo(() => readerScenesOf(episode), [episode])
 
   const copyMd = async () => {
     const text = tab === 'script' ? scriptMd : shotsMd
@@ -121,9 +129,23 @@ export default function ScriptEpisodeDetail({
       </div>
 
       <h2 className="sr-only">Markdown 预览</h2>
-      <div className="script-md-preview" data-script-md-preview={tab}>
-        <ChatText text={tab === 'script' ? scriptMd : shotsMd} />
-      </div>
+      {/*
+        剧本 tab 走书页；分镜 tab 是镜头表格，不套书页——表格要「宽」、书页要「窄」，
+        塞进去每行都得横滑。两者共用同一套纸张配色（见 .script-md-preview 的样式）。
+      */}
+      {tab === 'script' ? (
+        <ScriptBookReader
+          epNo={epNo}
+          title={episode?.title?.trim() || ''}
+          scenes={scenes}
+          markdown={scriptMd}
+          previewAttr="script"
+        />
+      ) : (
+        <div className="script-md-preview" data-script-md-preview="shots">
+          <ChatText text={shotsMd} />
+        </div>
+      )}
 
       <footer className="script-hub-detail-foot">
         {script.hasScript ? (

@@ -42,6 +42,9 @@ const READ = new Set([
   'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
+  'list_prompt_cases',
+  'get_prompt_case',
+  'read_prompt_case_facets',
   'list_projects',
 ])
 
@@ -123,6 +126,9 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'read_asset_detail',
   'list_camera_lexicon',
   'get_camera_lexicon',
+  'list_prompt_cases',
+  'get_prompt_case',
+  'read_prompt_case_facets',
   'read_skill',
   'read_skill_text',
   'read_skill_file',

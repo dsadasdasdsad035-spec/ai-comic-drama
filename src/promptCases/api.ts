@@ -253,9 +253,18 @@ export async function listPromptCases(query: PromptCaseQuery = {}): Promise<Prom
   }
 }
 
+/** 按轴的骨架计数：覆盖案例数与用到的受控值个数（不是各值条数之和） */
+export type FacetAxisCases = { axis: string; cases: number; values: number }
+
 export async function listPromptCaseFacetCounts(
   query: PromptCaseQuery = {},
-): Promise<{ counts: FacetCount[]; invalidFacets: InvalidFacet[]; taxonomyVersion: string }> {
+): Promise<{
+  counts: FacetCount[]
+  invalidFacets: InvalidFacet[]
+  taxonomyVersion: string
+  /** 旧服务端没有该字段；缺省时调用方按 counts 自行聚合值个数 */
+  axisCases: FacetAxisCases[]
+}> {
   const params = new URLSearchParams()
   if (query.q) params.set('q', query.q)
   if (query.source) params.set('source', query.source)
@@ -269,6 +278,7 @@ export async function listPromptCaseFacetCounts(
     counts: Array.isArray(j.counts) ? (j.counts as FacetCount[]) : [],
     invalidFacets: Array.isArray(j.invalidFacets) ? (j.invalidFacets as InvalidFacet[]) : [],
     taxonomyVersion: String(j.taxonomyVersion || ''),
+    axisCases: Array.isArray(j.axisCases) ? (j.axisCases as FacetAxisCases[]) : [],
   }
 }
 

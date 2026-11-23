@@ -474,13 +474,16 @@ export default function AssetBoard({
     [project?.assets],
   )
   const [studio3dCount, setStudio3dCount] = useState(0)
-  /** 提示词案例：条数来自案例 Tab 的回报（全局库，不随项目变） */
-  const [caseCount, setCaseCount] = useState(0)
-  const [caseLoading, setCaseLoading] = useState(false)
+  /**
+   * 提示词案例：条数来自案例 Tab 的回报（全局库，不随项目变）。
+   *
+   * `null` 表示「还没读过」——Tab 是条件渲染，没打开过就不会取数。
+   * 之前初始值是 0，于是徽标在打开 Tab 之前恒显示 0，而库里其实有货；
+   * 未知就该显示未知，不能显示一个错的数字。
+   */
+  const [caseCount, setCaseCount] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [reverseOpen, setReverseOpen] = useState(false)
-  /** 导入/反推成功后递增，触发案例列表重取 */
-  const [caseRefresh, setCaseRefresh] = useState(0)
   useEffect(() => {
     setStudio3dCount((project?.material3dScenes || []).length)
   }, [project?.material3dScenes])
@@ -530,7 +533,9 @@ export default function AssetBoard({
                   ? `场景三维 ${studio3dCount} 个`
                   : '场景三维 · 先选择项目'
               : tab === 'prompt-cases'
-                ? `全局案例库 · ${caseCount} 条${caseLoading ? ' · 加载中' : ''}`
+                ? caseCount === null
+                  ? '全局案例库'
+                  : `全局案例库 · ${caseCount} 条`
               : projectName
                 ? `场景 ${sceneCount} · 道具 ${propCount} · 项目级设定`
                 : '先选择项目'}
@@ -732,7 +737,7 @@ export default function AssetBoard({
             setTab('prompt-cases')
           }}
         >
-          提示词案例 <span>{caseCount}</span>
+          提示词案例{caseCount === null ? null : <span>{caseCount}</span>}
         </button>
         <span className="asset-tabs-hint">
           {lexiconOpen
@@ -792,7 +797,6 @@ export default function AssetBoard({
           onImportOpenChange={setImportOpen}
           reverseOpen={reverseOpen}
           onReverseOpenChange={setReverseOpen}
-          refreshKey={caseRefresh}
         />
       ) : tab === 'studio3d' ? (
         <Suspense fallback={<div className="char-empty-board">正在加载三维引擎…</div>}>

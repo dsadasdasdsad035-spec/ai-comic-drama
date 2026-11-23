@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import type { ProjectEpisode } from '../api'
 import { formatEpisodeLabel } from '../shotRows'
 import { MarkdownBody } from '../chat-ui/ChatText'
+import ZoomLayer from '../chat-ui/ZoomLayer'
 import type { Components } from 'react-markdown'
 import ReaderTypeMenu from './ReaderTypeMenu'
 import {
@@ -41,6 +42,39 @@ export type ReaderScene = {
   place: string
   time: string
   space: string
+}
+
+/**
+ * 正文图片可点击放大。
+ *
+ * 复制 `src` 而不是直接放大原元素：原元素在书页里受 `max-width: 100%` 约束，
+ * 直接改样式会撑破版心，而版心宽度是书页的核心约束。
+ */
+const ZoomImage: NonNullable<Components['img']> = ({ node: _node, src, alt, ...rest }) => {
+  const [zoom, setZoom] = useState(false)
+  if (!src) return null
+  return (
+    <>
+      <img
+        {...rest}
+        src={src}
+        alt={alt || ''}
+        loading="lazy"
+        onClick={() => setZoom(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setZoom(true)
+        }}
+        tabIndex={0}
+        role="button"
+        aria-label={alt ? `放大图片：${alt}` : '放大图片'}
+      />
+      {zoom ? (
+        <ZoomLayer label={alt || '图片大图'} onClose={() => setZoom(false)}>
+          <img className="reader-md-zoom-img" src={src} alt={alt || ''} />
+        </ZoomLayer>
+      ) : null}
+    </>
+  )
 }
 
 type Props = {
@@ -95,22 +129,66 @@ export default function ScriptBookReader({
     writeReaderPrefs(next)
   }, [])
 
-  // 渲染后按顺序给场次标题赋 id，供目录跳转
+  /**
+   * 给场次标题赋锚点。
+   *
+   * 优先用场次号匹配标题文本（`## EP001-SC003 内 · 地点 · 时间` 这类格式里含场次标签），
+   * 匹配不到再按顺序索引兜底。
+   *
+   * 为什么不能只按顺序：`buildScriptEpisodeMarkdown` 的 h2 与 `episode.scenes`
+   * 一一对应，但用户可能在 beats 里写自己的 `## 小标题`，一旦多出 h2，
+   * 顺序索引就会把后面的场次全部错位一位。
+   */
   useEffect(() => {
     const body = bodyRef.current
     if (!body) return
-    const headings = body.querySelectorAll('h2')
-    headings.forEach((h, i) => {
-      h.id = `script-scene-${i + 1}`
-    })
-  }, [markdown, prefs.size, prefs.leading])
+    const headings = [...body.querySelectorAll('h2')]
+    // 先按标题里出现的场次标签匹配；标签形态来自 sceneTag / slug
+    const claimed = new Set<number>()
+    for (const sc of scenes) {
+      const tag = String(sc.no).padStart(3, '0')
+      const hit = headings.findIndex((h, i) => {
+        if (claimed.has(i)) return false
+        const text = h.textContent || ''
+        // 匹配 SC003 / SC003 结尾 / 场次号出现在开头段
+        return new RegExp(`SC0*${sc.no}\\b`).test(text) || new RegExp(`^\\s*${sc.no}\\s*[.、]`).test(text)
+      })
+      const idx = hit >= 0 ? hit : -1
+      if (idx >= 0) {
+        claimed.add(idx)
+        headings[idx].id = `script-scene-${tag}`
+        headings[idx].dataset.readerScene = String(sc.no)
+      }
+    }
+    // 未匹配到的场次按顺序补（保留旧行为的兜底）
+    let cursor = 0
+    for (const sc of scenes) {
+      const already = headings.findIndex((h) => h.dataset.readerScene === String(sc.no))
+      if (already >= 0) continue
+      while (cursor < headings.length && claimed.has(cursor)) cursor += 1
+      if (cursor >= headings.length) break
+      const tag = String(sc.no).padStart(3, '0')
+      headings[cursor].id = `script-scene-${tag}`
+      headings[cursor].dataset.readerScene = String(sc.no)
+      claimed.add(cursor)
+      cursor += 1
+    }
+    // 不属于任何场次的 h2（用户自定义小标题）不赋值，目录也不会指向它
+  }, [markdown, prefs.size, prefs.leading, scenes])
 
   const scrollToScene = useCallback((sceneNo: number) => {
     const body = bodyRef.current
     if (!body) return
+    const tagged = body.querySelector<HTMLElement>(`h2[data-reader-scene="${sceneNo}"]`)
+    if (tagged) {
+      tagged.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      setTocOpen(false)
+      return
+    }
+    // 兜底：结构里有场次但正文没渲染出对应标题（例如 beats 为空）
+    const headings = body.querySelectorAll('h2')
     const idx = scenes.findIndex((s) => s.no === sceneNo)
-    const target = body.querySelectorAll('h2')[idx < 0 ? 0 : idx]
-    target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    headings[idx < 0 ? 0 : idx]?.scrollIntoView({ block: 'start', behavior: 'smooth' })
     setTocOpen(false)
   }, [scenes])
 
@@ -121,18 +199,27 @@ export default function ScriptBookReader({
     if (!page || !body) return
     let raf = 0
     const measure = () => {
-      const headings = [...body.querySelectorAll('h2')]
+      const headings = [...body.querySelectorAll('h2[data-reader-scene]')]
       const band = page.getBoundingClientRect().top + page.clientHeight / 3
-      let idx = 0
-      headings.forEach((h, i) => {
-        if (h.getBoundingClientRect().top <= band) idx = i
-      })
-      const nextSceneNo = scenes[idx]?.no ?? scenes[0]?.no ?? 1
-      setCurrent(nextSceneNo)
+      let sceneNo = scenes[0]?.no ?? 1
+      for (const h of headings) {
+        if (h.getBoundingClientRect().top <= band) {
+          sceneNo = Number((h as HTMLElement).dataset.readerScene) || sceneNo
+        }
+      }
+      // 触底时直接认定最后一场：最后一段的标题可能永远进不了判定带
+      // （内容短、或它就在页尾），否则「读到最后一场」永远不会被点亮。
+      const atBottom = page.scrollTop + page.clientHeight >= page.scrollHeight - 4
+      if (atBottom) {
+        const last = headings[headings.length - 1] as HTMLElement | undefined
+        const lastNo = Number(last?.dataset.readerScene)
+        if (Number.isFinite(lastNo) && lastNo > 0) sceneNo = lastNo
+      }
+      setCurrent(sceneNo)
       const total = page.scrollHeight - page.clientHeight
       const p = total > 0 ? Math.min(100, Math.max(0, Math.round((page.scrollTop / total) * 100))) : 100
       setPercent(p)
-      onProgressChange?.(nextSceneNo, p)
+      onProgressChange?.(sceneNo, p)
     }
     const onScroll = () => {
       cancelAnimationFrame(raf)
@@ -153,20 +240,33 @@ export default function ScriptBookReader({
       data-reader-family={prefs.family}
       data-reader-align={prefs.align}
       data-reader-indent={prefs.indent ? 'on' : 'off'}
+      data-reader-theme={prefs.theme}
       style={vars}
     >
+      {/* 窄屏目录入口：单独一个按钮，不能放进目录面板里——
+          面板在被隐藏时，里面的按钮也一起消失，用户就没有打开的路径了。 */}
+      <button
+        type="button"
+        className="script-reader-toc-open"
+        data-reader-toc-open
+        aria-expanded={tocOpen}
+        onClick={() => setTocOpen((v) => !v)}
+      >
+        场次目录 · {scenes.length} 场
+      </button>
       <nav className={`script-reader-toc${tocOpen ? ' is-open' : ''}`} aria-label="场次目录">
-        <button
-          type="button"
-          className="script-reader-toc-toggle"
-          data-reader-toc-toggle
-          aria-expanded={tocOpen}
-          onClick={() => setTocOpen((v) => !v)}
-        >
-          场次目录 · {scenes.length} 场
-        </button>
         <div className="script-reader-toc-body">
-          <p className="script-reader-toc-head">场次目录</p>
+          <div className="script-reader-toc-headline">
+            <p className="script-reader-toc-head">场次目录</p>
+            <button
+              type="button"
+              className="reader-type-btn"
+              aria-label="关闭场次目录"
+              onClick={() => setTocOpen(false)}
+            >
+              关闭
+            </button>
+          </div>
           {scenes.length === 0 ? (
             <p className="script-reader-toc-empty">本集尚未填写场次</p>
           ) : (
@@ -206,7 +306,23 @@ export default function ScriptBookReader({
       </nav>
 
       <div className="script-reader-pagewrap">
+        {/* 书脊：一条窄竖条表达「这是一本合着的书翻开了」，纯装饰 */}
+        <div className="script-reader-spine" aria-hidden>
+          <span className="script-reader-spine-no">{formatEpisodeLabel(epNo)}</span>
+        </div>
         <div className="script-reader-page" ref={pageRef} data-script-reader-page>
+          {/* 书签：当前场次号，点击收起/展开目录。不遮挡正文——绝对定位在页外右沿 */}
+          <button
+            type="button"
+            className="script-reader-bookmark"
+            data-reader-bookmark
+            aria-label={tocOpen ? '收起场次目录' : '展开场次目录'}
+            aria-expanded={tocOpen}
+            onClick={() => setTocOpen((v) => !v)}
+            title="场次目录（书签）"
+          >
+            <span className="script-reader-bookmark-no">{String(current).padStart(2, '0')}</span>
+          </button>
           <header className="script-reader-running">
             <span className="script-reader-running-no">
               {formatEpisodeLabel(epNo)} · 第 {epNo} 集
@@ -218,7 +334,7 @@ export default function ScriptBookReader({
             {/* 题记不在这里渲染：hook 已由 buildScriptEpisodeMarkdown 写成引用块，
                 再单独渲染一次会重复。 */}
             <div className="reader-md" data-script-md-preview={previewAttr} data-reader-md>
-              <MarkdownBody text={markdown} components={{ p: PlainParagraph }} />
+              <MarkdownBody text={markdown} components={{ p: PlainParagraph, img: ZoomImage }} />
             </div>
           </div>
           <footer className="script-reader-running-foot">
