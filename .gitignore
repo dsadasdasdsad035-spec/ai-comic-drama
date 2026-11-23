@@ -90,7 +90,7 @@ dsh/
 public/publish-packages/
 
 # 部署：本机数据目录、DTK 源码与运行期密钥
-data/
+/data/
 .dtk/
 deploy/proxy/.htpasswd
 # 部署目标与 SSH 凭据（deploy.sh 加载，含明文密码）
