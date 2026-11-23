@@ -126,6 +126,21 @@ await check('profile 里登记了工具桥 bundle，且不含内部令牌', asyn
   assert.ok(!raw.includes(TOKEN), '内部令牌不该落到配置文件里')
 })
 
+await check('Blender bundle 能从 profile 目录按包名解析', async () => {
+  // 只在 package.json 里写 file: 依赖是不够的：没有一步会跑 pnpm install，
+  // 宿主启动时按包名从 profile 目录解析，解析不到就整层 Blender 工具静默消失。
+  const manifest = JSON.parse(fs.readFileSync(path.join(profileDir(dshHome), 'package.json'), 'utf8'))
+  const blenderSrc = path.join(ROOT, 'node_modules', 'dsh-blender-plugin')
+  if (!fs.existsSync(path.join(blenderSrc, 'lib', 'index.js'))) {
+    console.log('   （跳过：本机未安装 dsh-blender-plugin）')
+    return
+  }
+  assert.ok(manifest.dsh.profile.bundles.includes('dsh-blender-plugin'), 'bundle 未登记')
+  const link = path.join(profileDir(dshHome), 'node_modules', 'dsh-blender-plugin')
+  assert.equal(fs.readlinkSync(link), blenderSrc, '应从 profile 目录链到应用内的同一份包')
+  assert.ok(fs.existsSync(path.join(link, 'lib', 'index.js')), '链过去后入口不可读')
+})
+
 let started = false
 try {
   started = await host.start()

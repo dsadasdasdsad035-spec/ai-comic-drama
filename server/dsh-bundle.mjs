@@ -105,6 +105,37 @@ function syncSharedModulesIntoPlugin(root, log) {
 }
 
 /**
+ * 把上游 Blender bundle 链进 profile 的 node_modules。
+ *
+ * 为什么是软链而不是像工具桥那样逐文件复制：
+ * 1. 这个包 11MB，`lib/` 里还有二进制与大量子模块，文件清单无法穷举，
+ *    漏一个就是「插件加载失败但只打一行 warn」；
+ * 2. 它的 peer 依赖（`@deepseek-ai/dsh-tools` 等）只装在应用根 node_modules，
+ *    profile 目录下没有。软链让 Node 按 realpath 从应用根解析，peer 才能找到；
+ *    复制一份反而会让 peer 解析失败。
+ *
+ * 为什么必须落在这里：宿主按**包名**从 profile 目录解析 bundle 层。只在 profile 的
+ * `package.json` 里写 `file:` 依赖是不够的 —— 没有任何一步会替我们跑 pnpm install，
+ * 于是每次启动都 `ERR_MODULE_NOT_FOUND`，整层 Blender 工具静默消失。
+ *
+ * @returns 是否有变化
+ */
+function linkBlenderBundle(source, dest, log) {
+  let prevTarget = null
+  try {
+    prevTarget = fs.readlinkSync(dest)
+  } catch {
+    /* 不存在或不是链接 */
+  }
+  if (prevTarget === source) return false
+  fs.rmSync(dest, { recursive: true, force: true })
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  fs.symlinkSync(source, dest, process.platform === 'win32' ? 'junction' : 'dir')
+  log(`[studio-bundle] 已链接 ${BLENDER_PLUGIN_BUNDLE} → ${source}`)
+  return true
+}
+
+/**
  * 把插件源码复制进 profile 的 node_modules（内容相同则跳过）。
  *
  * 清单里的文件缺失时就**抛错**而不是跳过。这里曾静默 continue，
@@ -202,6 +233,7 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
   if (fs.existsSync(blenderEntry)) {
     manifest.dependencies[BLENDER_PLUGIN_BUNDLE] = `file:${blenderPkg}`
     if (!bundles.includes(BLENDER_PLUGIN_BUNDLE)) bundles.push(BLENDER_PLUGIN_BUNDLE)
+    if (linkBlenderBundle(blenderPkg, path.join(target, 'node_modules', BLENDER_PLUGIN_BUNDLE), log)) changed = true
   } else {
     log(
       `[studio-bundle] 未找到 ${BLENDER_PLUGIN_BUNDLE}，跳过 Blender bundle（npm install dsh-blender-plugin@3.1.0-alpha.1 --legacy-peer-deps）`,
