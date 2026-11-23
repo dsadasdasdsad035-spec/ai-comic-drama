@@ -12,6 +12,7 @@
 import crypto from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { dbPath } from './db.mjs'
+import { getExternalFetch, resolveSystemHttpsProxy } from './apimart-network.mjs'
 import {
   FACET_SOURCE_RANK,
   FACET_SOURCES,
@@ -905,6 +906,38 @@ function requireEnabledSource(sourceId) {
 const VFLOW_INDEX_URL = 'https://www.vflow.live/data/daily159-successor-20261111/index-all.json'
 const VFLOW_ITEM_URL = (id) => `https://www.vflow.live/data/prompt-sources/v1/${encodeURIComponent(id)}.json`
 
+/**
+ * 出网失败时说人话。
+ *
+ * 原生 `fetch` 失败只抛「fetch failed」，用户无从判断是断网、被墙还是代理没配；
+ * 这里补上主机、底层原因与「当前是否走了代理」，界面直接展示 message 就够用。
+ */
+function outboundError(err, url) {
+  let host = url
+  try {
+    host = new URL(url).hostname
+  } catch {
+    /* 非标准 URL，原样展示 */
+  }
+  const proxy = resolveSystemHttpsProxy()
+  const cause = err?.cause?.code || err?.cause?.message || ''
+  const reason = cause || String(err?.message || err)
+  const route = proxy ? `已按系统代理 ${proxy} 请求` : '未使用代理（直连）'
+  return new Error(
+    `连不上外部来源 ${host}：${reason}。${route}；请检查网络与代理设置后重试。`,
+  )
+}
+
+/** 统一走「会认系统代理」的 fetch；测试仍可用 deps.fetchImpl 注入 */
+async function outboundFetch(url, init, deps = {}, timeoutMs) {
+  const fetchImpl = deps.fetchImpl || getExternalFetch()
+  try {
+    return await fetchImpl(url, init)
+  } catch (e) {
+    throw outboundError(e, url)
+  }
+}
+
 /** 拉索引（带缓存）。测试用 deps.fetchImpl 换成读本地 fixture。 */
 async function loadVflowIndex(deps = {}) {
   const url = deps.indexUrl || VFLOW_INDEX_URL
@@ -913,10 +946,13 @@ async function loadVflowIndex(deps = {}) {
   if (deps.indexJson) {
     return cacheSet(indexCache, url, parseVflowIndex(deps.indexJson), INDEX_TTL_MS)
   }
-  const fetchImpl = deps.fetchImpl || fetch
   const { assertPublicUrl } = await import('./ingest.mjs')
   await assertPublicUrl(url)
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(deps.indexTimeoutMs || INDEX_TIMEOUT_MS) })
+  const res = await outboundFetch(
+    url,
+    { signal: AbortSignal.timeout(deps.indexTimeoutMs || INDEX_TIMEOUT_MS) },
+    deps,
+  )
   if (!res.ok) throw new Error(`索引请求失败：HTTP ${res.status}`)
   const text = await readCapped(res, INDEX_MAX_BYTES, '索引')
   return cacheSet(indexCache, url, parseVflowIndex(text), INDEX_TTL_MS)
@@ -982,10 +1018,13 @@ async function fetchVflowItem(id, deps = {}) {
   if (deps.itemJson && typeof deps.itemJson === 'function') {
     return parseVflowItem(deps.itemJson(id))
   }
-  const fetchImpl = deps.fetchImpl || fetch
   const { assertPublicUrl } = await import('./ingest.mjs')
   await assertPublicUrl(url)
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(deps.itemTimeoutMs || ITEM_TIMEOUT_MS) })
+  const res = await outboundFetch(
+    url,
+    { signal: AbortSignal.timeout(deps.itemTimeoutMs || ITEM_TIMEOUT_MS) },
+    deps,
+  )
   if (!res.ok) throw new Error(`条目请求失败：HTTP ${res.status}`)
   const text = await readCapped(res, ITEM_MAX_BYTES, '条目')
   return parseVflowItem(text)

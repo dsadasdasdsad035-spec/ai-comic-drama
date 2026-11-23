@@ -1,6 +1,9 @@
 /**
- * APIMart 出网：环境变量代理 + macOS 系统代理（Clash/Surge 等）。
- * Node/Electron 子进程不会自动用系统代理，导致浏览器能上 APIMart、服务端 fetch failed。
+ * 服务端出网：环境变量代理 + macOS 系统代理（Clash/Surge 等）。
+ *
+ * Node/Electron 的 `fetch` 默认**完全不认** `HTTPS_PROXY` 与系统代理设置，
+ * 所以浏览器能打开的站点、服务端却统一 `fetch failed`。凡是服务端主动访问
+ * 外部站点的地方，都要用这里返回的 fetch，而不是全局 `fetch`。
  */
 import { execFileSync } from 'node:child_process'
 import dns from 'node:dns'
@@ -8,7 +11,8 @@ import { Agent, fetch as undiciFetch, ProxyAgent } from 'undici'
 
 const APIMART_HOST_RE = /apimart\.ai/i
 
-export function resolveApimartHttpsProxy() {
+/** 解析可用代理：显式环境变量优先，其次 macOS 系统设置；没有则返回空串 */
+export function resolveSystemHttpsProxy() {
   const fromEnv = String(
     process.env.SB_HTTPS_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || '',
   ).trim()
@@ -29,6 +33,9 @@ export function resolveApimartHttpsProxy() {
   }
   return ''
 }
+
+/** 兼容旧名：APIMart 与其它外部站点用的是同一套代理解析 */
+export const resolveApimartHttpsProxy = resolveSystemHttpsProxy
 
 /** 部分 DNS 会给 apimart.ai 错误的 AAAA；直连时强制 IPv4 */
 const apimartIpv4Agent = new Agent({
@@ -51,10 +58,34 @@ const apimartIpv4Agent = new Agent({
  * @param {string} [overrideProxy] 设置页或单次调用可覆盖
  */
 export function getApimartFetch(overrideProxy = '') {
-  const proxy = String(overrideProxy || resolveApimartHttpsProxy()).trim()
+  const proxy = String(overrideProxy || resolveSystemHttpsProxy()).trim()
   if (proxy) {
     const dispatcher = new ProxyAgent(proxy)
     return (url, init) => undiciFetch(url, { ...init, dispatcher })
   }
   return (url, init) => undiciFetch(url, { ...init, dispatcher: apimartIpv4Agent })
+}
+
+/**
+ * 通用外部出网（提示词案例导入等）：有代理就走代理，没有就走直连。
+ *
+ * 直连用 `autoSelectFamily`（RFC 8305 Happy Eyeballs）同时尝试 A/AAAA：
+ * 这类机器常出现「域名有 AAAA 但没有可用 v6」，只解析 AAAA 会整体超时。
+ */
+const externalDirectAgent = new Agent({
+  connect: { autoSelectFamily: true, timeout: 45_000 },
+  headersTimeout: 60_000,
+  bodyTimeout: 120_000,
+})
+
+/**
+ * @param {string} [overrideProxy] 设置页或单次调用可覆盖
+ */
+export function getExternalFetch(overrideProxy = '') {
+  const proxy = String(overrideProxy || resolveSystemHttpsProxy()).trim()
+  if (proxy) {
+    const dispatcher = new ProxyAgent(proxy)
+    return (url, init) => undiciFetch(url, { ...init, dispatcher })
+  }
+  return (url, init) => undiciFetch(url, { ...init, dispatcher: externalDirectAgent })
 }
