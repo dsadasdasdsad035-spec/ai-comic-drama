@@ -40,8 +40,32 @@ let running = 0
 
 // ---------------------------------------------------------------- 环境
 
+/**
+ * 运行时有两套可能的位置，按优先级探测：
+ *
+ * 1. **随包环境**（`BUNDLE_WHITEBOX=1` 构建的安装包）：<appRoot>/whitebox-runtime/
+ *    由 desktop/scripts/bundle-whitebox.mjs 预装，解释器 / venv / 源码 / 权重全在里面。
+ *    appRoot 打包后是 Contents/Resources/app（只读），但推理只需要读。
+ * 2. **state 根环境**（默认构建）：<state-root>/.whitebox/，用户自己跑 install.sh。
+ *
+ * 优先随包：那是开箱即用的那份；没有才回退，让默认构建与用户自装仍然可用。
+ * 两者子目录结构完全相同，所以下面的路径拼接不需要分支。
+ */
+function bundledRuntimePath(appRoot) {
+  return path.join(path.resolve(appRoot), 'whitebox-runtime')
+}
+
+function usesBundledRuntime(appRoot) {
+  return fs.existsSync(path.join(bundledRuntimePath(appRoot), 'venv', 'bin', 'python'))
+}
+
 function whiteboxRoot(appRoot) {
-  return statePath(appRoot, '.whitebox')
+  return usesBundledRuntime(appRoot) ? bundledRuntimePath(appRoot) : statePath(appRoot, '.whitebox')
+}
+
+/** 这份环境是不是随安装包来的（供 UI 区分「无需安装」与「需要安装」） */
+export function isBundledRuntime(appRoot) {
+  return usesBundledRuntime(appRoot)
 }
 
 export function venvPython(appRoot) {
@@ -95,9 +119,13 @@ export async function whiteboxHealth(appRoot, { refresh = false } = {}) {
         message: `体检脚本缺失：${script}`,
       }
     } else {
-      // 必须传状态根：环境装在 <state-root>/.whitebox 下，而 appRoot 在桌面端
-      // 是只读的应用目录，两者不是一回事（见 paths.mjs 的模块注释）。
-      const result = await runOnce(bin, [script, '--state-root', resolveStateRoot(appRoot)], {
+      // 环境根有两种来源（见 whiteboxRoot）：随包时直接给 --runtime-root，
+      // 自装时给 --state-root 让它自己拼 .whitebox。不能一律用 appRoot——
+      // 桌面端的 appRoot 是只读应用目录，状态在 Application Support 下。
+      const rootArgs = usesBundledRuntime(appRoot)
+        ? ['--runtime-root', bundledRuntimePath(appRoot)]
+        : ['--state-root', resolveStateRoot(appRoot)]
+      const result = await runOnce(bin, [script, ...rootArgs], {
         timeoutMs: 90_000,
       })
       let parsed = null
@@ -398,7 +426,9 @@ async function startJob(job) {
         '--out', npz,
         '--fps', String(job.fps),
         '--max-frames', String(job.maxFrames),
-        '--state-root', resolveStateRoot(appRoot),
+        ...(usesBundledRuntime(appRoot)
+          ? ['--runtime-root', bundledRuntimePath(appRoot)]
+          : ['--state-root', resolveStateRoot(appRoot)]),
       ],
       (event) => {
         if (event.type === 'phase') {

@@ -45,13 +45,61 @@ bash whitebox/install.sh
 bash "<仓库>/whitebox/install.sh" --state-root "$HOME/Library/Application Support/storyboard-canvas/state"
 ```
 
-### 打包分发的情况
+### 打包分发：两种构建方式
 
-`.app` 只带 `whitebox/` 的**脚本**（约 100KB，见 `desktop/electron-builder.yml` 的 extraResources），不带 2GB 推理环境。原因：torch + open3d + 权重太大，且与机器架构强绑定。
+桌面端有两条打包路径，区别只在**带不带那 2GB 推理环境**。
 
-所以打包产物的用户首次使用时：
+| 构建方式 | 命令 | dmg 体积 | 用户首次使用 |
+|---|---|---|---|
+| 默认 | `npm run desktop:dist` | 约 1GB | 要自己在终端装环境（约 2GB、10 分钟） |
+| 自带环境 | `npm run desktop:dist:bundled` | 约 3GB | **打开即用**，无需安装 |
 
-1. 打开「素材 → 视频转白模」，面板会报缺什么，并给出**带 `--state-root` 的完整安装命令**（路径已解析成用户自己机器的绝对路径）。
+自带的实现：`desktop/scripts/bundle-whitebox.mjs` 预先装好一套可搬迁的环境到
+`desktop/bin/whitebox/`（约 2.1GB），打包时作为 `app/whitebox-runtime/` 塞进
+`Contents/Resources`。服务端 `server/whitebox.mjs` 的 `whiteboxRoot()` 会优先
+探测这个位置，找到就用它；找不到才回退到用户 state 根里的 `.whitebox/`。
+
+自带环境里有什么：
+
+| 组件 | 体积 | 说明 |
+|---|---|---|
+| `python/` | 约 50MB | python-build-standalone 3.12.16（aarch64），解压即用，不依赖系统 Python |
+| `venv/` | 约 1.5GB | 预装 torch 2.13 / open3d / DA3 依赖，`--copies` 建法（不软链到构建机） |
+| `vendor/` | 约 47MB | DA3 源码，锁定 commit，已删 `.git` |
+| `models/da3-base/` | 约 516MB | DA3-BASE 权重 |
+
+自己构建这一份：
+
+```bash
+npm run desktop:whitebox:bundle    # 约 10–20 分钟，需要网络
+npm run desktop:whitebox:verify    # 只自检，不重建
+```
+
+构建脚本会做三件容易出错的事，都是实机踩过的：
+
+1. **用 `--copies` 建 venv**。默认的 venv 把 `bin/python` 做成软链接指向构建机的
+   解释器，搬进 .app 后直接 `bad interpreter`。
+2. **重写 `pyvenv.cfg`** 的 `home` / `executable` 指向随包解释器。
+3. **删掉 DA3 的 `.git`**：几十 MB 元数据运行时无用，还会让签名扫描变慢。
+
+构建完脚本会跑一次真导入自检（`import torch, open3d` + `from depth_anything_3.api import ...`），
+不通过就报错退出——不会产出「文件都在但跑不起来」的包。
+
+#### 自带环境的限制
+
+- **只支持 Apple Silicon**。随包解释器是 aarch64，Intel Mac 跑不了。做双架构要双份
+  环境（约 4.2GB），当前不做。
+- **首次启动不下载任何东西**，但要额外占约 2.1GB 磁盘。
+- **签名慢**：`python/` 与 `venv/` 里有约 370 个 Mach-O（`.so` / `.dylib`），
+  `sign-nested.mjs` 会逐个 codesign，比默认构建多花 2–8 分钟。
+- 如果随包环境损坏（比如构建时网络中断），体检会明确说「这是构建问题，
+  请联系打包方用 BUNDLE_WHITEBOX=1 重新构建」——不会误导用户去跑 install.sh。
+
+### 默认构建（不带环境）的用户要做什么
+
+`.app` 只带 `whitebox/` 的脚本（约 100KB），用户首次使用时：
+
+1. 打开「素材 → 视频转白模」，面板报缺什么，并给出**带 `--state-root` 的完整安装命令**（路径已解析成用户自己机器的绝对路径）。
 2. 复制那行命令到终端执行，装到自己的 state 根。
 3. 回到面板点「重新检测」。
 
@@ -59,8 +107,6 @@ bash "<仓库>/whitebox/install.sh" --state-root "$HOME/Library/Application Supp
 
 - **系统自带 Python 不够**。macOS 的 `/usr/bin/python3` 是 3.9，低于我们的下限。用户需要自己装 3.10–3.12（`brew install python@3.12` 或 python.org 安装包）。`install.sh` 在找不到合格解释器时会打印这两条路径。
 - **需要网络**：装依赖走 PyPI，克隆 DA3 源码走 GitHub，下权重走 HuggingFace。后两者在受限网络里需要代理（脚本会自动读系统代理）。
-
-如果要把这个能力做成「安装包自带、开箱即用」，需要另外的方案（随包附带 python-build-standalone + 预装 wheels，或改成远程推理服务）。那是独立的一笔工作量，不在当前实现范围。
 
 装完还要下权重：
 

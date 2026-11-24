@@ -48,6 +48,14 @@ def whitebox_root(state_root: Path) -> Path:
     return state_root / ".whitebox"
 
 
+def resolve_runtime_root(state_root: Path | None, runtime_root: Path | None) -> Path:
+    """环境根：随安装包时直接给 --runtime-root，用户自装时是 <state-root>/.whitebox。"""
+    if runtime_root is not None:
+        return Path(runtime_root).expanduser().resolve()
+    root = Path(state_root).expanduser().resolve() if state_root else HERE.parent
+    return whitebox_root(root)
+
+
 def plan_frame_indices(total: int, src_fps: float, fps: float, max_frames: int) -> list[int]:
     """决定要读哪几帧。
 
@@ -146,7 +154,8 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="输出 npz 路径")
     ap.add_argument("--fps", type=float, default=2.0)
     ap.add_argument("--max-frames", type=int, default=HARD_MAX_FRAMES)
-    ap.add_argument("--state-root", default=str(HERE.parent))
+    ap.add_argument("--state-root", default=None, help="用户自装时的状态根")
+    ap.add_argument("--runtime-root", default=None, help="直接指定环境根（随安装包时用）")
     ap.add_argument("--device", default="", help="mps / cpu，留空自动")
     args = ap.parse_args()
 
@@ -160,19 +169,19 @@ def main() -> int:
     if max_frames != int(args.max_frames or HARD_MAX_FRAMES):
         log(f"max-frames 被限制为 {max_frames}（硬上限 {HARD_MAX_FRAMES}）")
 
-    state_root = Path(args.state_root).expanduser().resolve()
-    wb = whitebox_root(state_root)
+    state_root = Path(args.state_root).expanduser().resolve() if args.state_root else None
+    wb = resolve_runtime_root(state_root, args.runtime_root)
     vendor_src = wb / "vendor" / "depth-anything-3" / "src"
     model_dir = wb / "models" / "da3-base"
 
     if not (vendor_src / "depth_anything_3").is_dir():
         raise SystemExit(
-            f"DA3 源码缺失：{vendor_src}\n先跑 bash whitebox/install.sh --state-root {state_root}"
+            f"DA3 源码缺失：{vendor_src}\n先跑 bash whitebox/install.sh --state-root {state_root or '<state-root>'}"
         )
     if not (model_dir / "model.safetensors").is_file():
         raise SystemExit(
             f"权重缺失：{model_dir / 'model.safetensors'}\n"
-            f"先跑 python whitebox/fetch_weights.py --state-root {state_root}"
+            f"先跑 python whitebox/fetch_weights.py --state-root {state_root or '<state-root>'}"
         )
     sys.path.insert(0, str(vendor_src))
 

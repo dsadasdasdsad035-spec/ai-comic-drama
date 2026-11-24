@@ -31,8 +31,35 @@ def whitebox_root(state_root: Path) -> Path:
     return state_root / ".whitebox"
 
 
-def install_hint(state_root: Path) -> str:
+def describe_root(state_root: Path | None, runtime_root: Path | None) -> tuple[Path, Path]:
+    """解析出（状态根, 环境根）。
+
+    为什么需要两种：
+    - 用户自装：环境在 <state-root>/.whitebox/
+    - 随安装包：环境在 <appRoot>/whitebox-runtime/，没有 .whitebox 这一层
+
+    服务端已经知道自己是哪一种（server/whitebox.mjs 的 whiteboxRoot），
+    所以直接用 --runtime-root 把环境根传进来，不再让它猜。
+    """
+    if runtime_root is not None:
+        return (state_root or runtime_root), runtime_root
+    root = state_root or HERE.parent
+    return root, whitebox_root(root)
+
+
+def install_hint(state_root: Path, runtime_root: Path | None = None) -> str:
+    """给出可复制的修复命令。
+
+    随包环境的缺失是**构建问题**，不是用户能装的——这时不能让他去跑
+    install.sh（装了也没用，服务端优先读随包那份）。所以单独给一句说明。
+    """
     repo = HERE.parent
+    if runtime_root is not None:
+        return (
+            f"随安装包的推理环境不完整（{runtime_root}）。这是构建问题，"
+            "请联系打包方用 BUNDLE_WHITEBOX=1 重新构建；或在终端手工装到 state 根"
+            "后改用默认构建。"
+        )
     return f"bash {repo}/whitebox/install.sh --state-root {state_root}"
 
 
@@ -172,12 +199,16 @@ def check_weights(model_dir: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--state-root", default=str(HERE.parent))
+    ap.add_argument("--state-root", default=None, help="用户自装时的状态根（环境在 <state-root>/.whitebox）")
+    ap.add_argument("--runtime-root", default=None, help="直接指定环境根（随安装包时用）")
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
 
-    state_root = Path(args.state_root).expanduser().resolve()
-    wb = whitebox_root(state_root)
+    runtime_root = Path(args.runtime_root).expanduser().resolve() if args.runtime_root else None
+    state_root, wb = describe_root(
+        Path(args.state_root).expanduser().resolve() if args.state_root else None,
+        runtime_root,
+    )
     vendor_src = wb / "vendor" / "depth-anything-3" / "src"
     model_dir = wb / "models" / "da3-base"
     venv_python = wb / "venv" / "bin" / "python"
@@ -216,7 +247,7 @@ def main() -> int:
         "venvExists": venv_python.is_file(),
         "checks": checks,
         "missing": missing,
-        "installHint": "" if ok else install_hint(state_root),
+        "installHint": "" if ok else install_hint(state_root, runtime_root),
         "platform": {
             "system": platform.system(),
             "release": platform.release(),

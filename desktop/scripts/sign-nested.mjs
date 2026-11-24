@@ -173,7 +173,15 @@ if (fs.existsSync(contents)) {
     if (p.startsWith(blenderApp + path.sep) || p === blenderApp) return false
     return !seen.has(path.resolve(p))
   })
-  if (extra.length) log(`应用包内另有 ${extra.length} 个 Mach-O（Frameworks/helper/随包二进制等）`)
+  if (extra.length) {
+    log(`应用包内另有 ${extra.length} 个 Mach-O（Frameworks/helper/随包二进制等）`)
+    // 带白模环境的构建会多出约 370 个 .so/.dylib（torch/open3d/cv2 的扩展模块），
+    // 逐个 codesign 要几分钟。给出预估，避免打包时看着没动静以为卡死。
+    const runtimeCount = extra.filter((p) => p.includes(`${path.sep}whitebox-runtime${path.sep}`)).length
+    if (runtimeCount > 0) {
+      log(`  其中 ${runtimeCount} 个来自随包白模环境（签名较慢，预计 2–8 分钟）`)
+    }
+  }
   targets.push(...extra)
 }
 
