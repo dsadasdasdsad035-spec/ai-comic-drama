@@ -202,8 +202,15 @@ export function isSupportedVideoModel(model) {
 export function videoFamilyFor(model) {
   const id = String(model || '').trim().toLowerCase()
   if (!id) return ''
-  if (id === 'seedance-2.5' || id === 'seedance-2-5' || id === 'seedance-2_5') return 'seedance-2.5'
-  if (id === 'kling-v3' || id === 'kling-3' || id === 'kling-3.0') return 'kling-v3'
+  // 用正则而不是精确相等：目录里同族常有 `seedance-2.5-pro`、`seedance2.5` 这类
+  // 后缀/无分隔变体。精确匹配会把它们全甩进 generic，而 generic 不带
+  // omni_reference_task_type，带参考视频时会被上游判成「视频编辑」。
+  // 容忍 `kling-v3` 的 v 前缀；只把已知的质量/规格后缀算作同族，
+  // 其余（如 `kling-v3-omni`）保持 generic——那是不同能力，不能按同族发参数。
+  if (/^seedance[-_ ]?v?2[.\-_ ]?5(?:$|[.\-_ ](?:pro|hd|fast|turbo|standard)$)/.test(id)) {
+    return 'seedance-2.5'
+  }
+  if (/^kling[-_ ]?v?3(?:$|[.\-_ ](?:pro|standard)$)/.test(id)) return 'kling-v3'
   // 其余视频模型走通用 schema 适配：APIMart 的 /videos/generations 对全部视频模型
   // 暴露同一组 prompt/duration/resolution/aspect_ratio/image_urls/video_urls 字段。
   return 'generic'
@@ -665,6 +672,16 @@ export function buildVideoPayload({
 
   if (family === 'generic') {
     if (generateAudio) throw new ApimartError('当前视频族未接入原生音频参考', { kind: 'unsupported' })
+    // Seedance 2.x 的名字没被 videoFamilyFor 识别、掉进 generic 兜底时，带参考视频
+    // 会被上游按提示词判成「视频编辑」，要求 ratio=adaptive + duration=-1，整单报
+    // 参数无效。这里显式拒绝并说明该怎么改，而不是发一个注定失败的请求。
+    // 其他族（veo / kling-omni 等）的通用 schema 本来就用 video_urls，照常放行。
+    if (vids.length && /seedance[-_ ]?2/i.test(String(model))) {
+      throw new ApimartError(
+        `模型「${model}」带参考视频需要 omni_reference_task_type，当前按通用 schema 提交会被判成视频编辑。请改用 Seedance 2.5`,
+        { kind: 'unsupported' },
+      )
+    }
     const duration = clampDuration(seconds, 1, 30, model)
     let res = String(resolution || '720p')
     // Omni-Flash-Ext 的 resolution 只接受 360p/720p/1080p/4k；480p 取最接近的 720p

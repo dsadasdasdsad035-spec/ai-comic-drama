@@ -7566,6 +7566,17 @@ export function createAppHandler({ root }: { root: string }) {
                     // POST /uploads/videos 实测可用，返回保留 3 天的签名地址。
                     const mp4 = await ensureMp4Video(v.local)
                     try {
+                      // 参考视频时长：Seedance 2.5 的参考任务边界是 2–30 秒。
+                      // 不校验的话会先花一次上传配额再被上游拒绝，用户还看不到原因
+                      // （上游只回「参数无效」）。注意上游那句「4 到 30 秒」是**被判成
+                      // 视频编辑时**的要求，声明 omni_reference_task_type 后不适用。
+                      const dur = await probeDuration(mp4.file).catch(() => 0)
+                      if (dur > 0 && (dur < 2 || dur > 30)) {
+                        throw new ApimartError(
+                          `参考视频需 2-30 秒，当前 ${dur.toFixed(1)} 秒：${r}`,
+                          { kind: 'bad-request' },
+                        )
+                      }
                       const up = await uploadApimartVideo({
                         baseUrl: base,
                         apiKey: runKey,

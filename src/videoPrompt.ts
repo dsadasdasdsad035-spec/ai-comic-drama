@@ -78,6 +78,11 @@ export type VideoModelInput = {
   audioOut?: boolean
   supportsVideoRef?: boolean
   /**
+   * 视频参考的生成任务类型。Seedance 2.5 必须为 `reference`，否则上游会按提示词
+   * 把任务判成「视频编辑」并要求 ratio=adaptive + duration=-1。1.x 无此字段。
+   */
+  videoRefTaskType?: 'reference'
+  /**
    * 能力细节。转场出片预览要据此判断尾帧、纯文本与音频输出，
    * 缺这段会让 Agent 读到的提交模式与实际出片不一致。
    */
@@ -263,6 +268,8 @@ export function buildShotVideoRequest(input: {
   })
   const videos = videoCollection.refs
   const primaryVideo = videos[0]
+  /** 模型条目是否显式声明了视频参考的生成任务类型（2.5 必需，1.x 无此字段） */
+  const taskTypeDeclared = input.model?.videoRefTaskType === 'reference'
   const omittedVideos = videos.slice(1).map((r) => ({
     label: r.label,
     reason: '首期只使用第一条视频素材',
@@ -389,6 +396,19 @@ export function buildShotVideoRequest(input: {
       code: 'video-ref-unsupported',
       level: 'warn',
       message: '当前出片模型不支持视频参考，提交后会失败',
+    })
+  }
+  /**
+   * 2.x 带参考视频但模型条目没声明生成任务类型：上游会按提示词判断任务类型，
+   * 一旦被判成「视频编辑」就会要求 ratio=adaptive + duration=-1，整单参数无效。
+   * 1.x 没有这个字段，不在提示范围内。
+   */
+  if (primaryVideo && input.model && input.model.supportsVideoRef && !taskTypeDeclared) {
+    warnings.push({
+      code: 'video-ref-task-type-missing',
+      level: 'warn',
+      message:
+        '当前模型没有声明视频参考的任务类型：若被上游判成「视频编辑」，会要求 ratio=adaptive、duration=-1 并报参数无效。建议在设置页给该条目选「参考」（2.5 需要）',
     })
   }
   if (expressionNote === 'no-speaker') {

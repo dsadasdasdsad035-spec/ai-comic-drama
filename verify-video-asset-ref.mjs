@@ -132,6 +132,28 @@ check('旧 3D 开关不影响提示词', !/@视频1/.test(oldToggle.prompt), old
 const unsupported = build(baseShot, { key: 'v', model: 'seedance-1-0-pro', supportsVideoRef: false })
 check('模型不支持视频参考给警告', unsupported.warnings.some((x) => x.code === 'video-ref-unsupported'), JSON.stringify(unsupported.warnings))
 
+/**
+ * 2.x 带参考视频但没声明任务类型时，上游会按提示词判成「视频编辑」，
+ * 要求 ratio=adaptive + duration=-1 并整单报参数无效。面板要先给警告。
+ */
+const noTaskType = build(baseShot, { key: 'v', model: 'doubao-seedance-2-0-260128', supportsVideoRef: true })
+check(
+  '未声明视频参考任务类型给警告',
+  noTaskType.warnings.some((x) => x.code === 'video-ref-task-type-missing'),
+  noTaskType.warnings.map((x) => x.code).join(','),
+)
+const hasTaskType = build(baseShot, {
+  key: 'v',
+  model: 'doubao-seedance-2-5-260628',
+  supportsVideoRef: true,
+  videoRefTaskType: 'reference',
+})
+check(
+  '已声明任务类型不警告',
+  !hasTaskType.warnings.some((x) => x.code === 'video-ref-task-type-missing'),
+  hasTaskType.warnings.map((x) => x.code).join(','),
+)
+
 const native = build({ ...baseShot, audioMode: 'native' })
 check(
   '原生音频可与视频素材并存',

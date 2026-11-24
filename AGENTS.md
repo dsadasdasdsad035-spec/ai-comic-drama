@@ -78,6 +78,38 @@
 
 方舟分支（`server/video.mjs:155`）早就有这条，**APIMart 分支（`server/apimart.mjs`）2026-11-24 才补上**。判定依据用模型家族（`family === 'seedance-2.5'`）而不是模型条目字段 `videoRefTaskType`——preset 迁移只补缺失条目、不更新已有条目，靠字段会漏。
 
+#### 「视频编辑模式」那 5 个参数的适用范围
+
+上游报错里出现的这张表**只在被判成「视频编辑」时才生效**，不是 Seedance 2.5 的常规要求：
+
+| 参数 | 视频编辑模式 | 本仓库做法 |
+| --- | --- | --- |
+| 参考视频 | 必须提供 | 用户连线视频素材即提供 |
+| `ratio` | `adaptive` | **不跟随**，仍用显式比例（16:9 等） |
+| `duration` | `-1` | **不跟随**，仍用具体秒数（4–30） |
+| 视频时长 | 4–30 秒 | 一致（`clampDuration(seconds, 4, 30)`） |
+| 任务类型 | `edit` | **显式声明 `reference` 来绕开这个模式** |
+
+正确解法是**别让它被判成 edit**，而不是去满足 edit 的参数。已实测：声明 `reference` 后 `duration: 5` + `size: "16:9"` 正常出片。
+
+#### 各条路径的覆盖情况（2026-11-24 核查）
+
+| 路径 | 带参考视频时 | 状态 |
+| --- | --- | --- |
+| APIMart `seedance-2.5` | 自动注入 `reference` | ✅ |
+| 方舟 `ark-video-2-5`（preset 有 `videoRefTaskType`） | 注入 `reference` | ✅ |
+| 方舟 `ark-video-2-0` | **不传**（规格明确设计：仅 2.5 需要） | ⚠️ 面板给 `video-ref-task-type-missing` 警告 |
+| APIMart generic 族（veo / kling-omni 等） | 通用 schema 的 `video_urls`，上游不会走 edit 判定 | ✅ 放行 |
+| APIMart generic 里有 seedance 2.x 名字 | 本地拒绝并提示改用 2.5 | ✅ 防呆 |
+
+用户自建的 seedance 2.x 条目若没在设置页选「任务类型 = 参考」，靠条目字段会漏——所以 `src/videoPrompt.ts` 在「supportsVideoRef 但没有 videoRefTaskType」时给出警告，提示去设置页补选。
+
+#### 本轮核查又修掉的三处（2026-11-24 第二轮）
+
+1. **`videoFamilyFor` 精确匹配漏变体**：原来只认 `seedance-2.5` / `seedance-2-5` / `seedance-2_5`，`seedance-2.5-pro`、`seedance2.5` 这类会掉进 generic（不带任务类型 → 被判 edit）。改成正则，只把已知规格后缀（pro/hd/fast/turbo/standard）算同族，`kling-v3-omni` 这类**不同能力**的仍走 generic。
+2. **参考视频时长没校验**：`POST /uploads/videos` 之前不看时长，1 秒的视频也会先上传再被上游拒（浪费一次配额，且用户只看到「参数无效」）。现在上传前用 `probeDuration` 校验 **2–30 秒**（2 秒含边界合法），超范围直接本地报错。注意上游那句「4 到 30 秒」是被判 edit 时的要求，声明 `reference` 后不适用。
+3. **APIMart 分支的任务类型判定依据**：用模型家族而不是条目字段（preset 迁移不更新已有条目）。
+
 其他参考视频约束：
 - 单段 2–30 秒
 - 方舟：上传 Files API 后换公网 URL；APIMart：`POST /v1/uploads/videos`（保留 3 天，配额 2000 次/72h）

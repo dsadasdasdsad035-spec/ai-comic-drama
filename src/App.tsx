@@ -1763,6 +1763,7 @@ function Shell() {
       providerKind: provider?.kind,
       audioOut: entry.features?.audioOut,
       supportsVideoRef: entry.supportsVideoRef,
+      videoRefTaskType: entry.videoRefTaskType,
       features: entry.features,
     }
   }, [modelPick.video, appSettings])

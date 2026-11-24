@@ -21,6 +21,16 @@ const kindOf = (fn) => {
 check('Seedance 别名', videoFamilyFor('seedance-2-5') === 'seedance-2.5')
 check('Kling 族', videoFamilyFor('kling-v3') === 'kling-v3')
 check('Kling omni 走通用适配', videoFamilyFor('kling-v3-omni') === 'generic')
+/**
+ * 目录里同族常有后缀/无分隔变体。精确匹配会把它们甩进 generic，而 generic 不带
+ * omni_reference_task_type，带参考视频时会被上游判成「视频编辑」。
+ */
+for (const id of ['seedance-2.5-pro', 'seedance-2.5.hd', 'seedance2.5', 'SEEDANCE-2.5']) {
+  check(`Seedance 变体归族：${id}`, videoFamilyFor(id) === 'seedance-2.5', videoFamilyFor(id))
+}
+// 不能把相邻版本误判进来
+check('seedance-2.0 不归 2.5', videoFamilyFor('seedance-2.0') === 'generic', videoFamilyFor('seedance-2.0'))
+check('seedance-20 不归 2.5', videoFamilyFor('seedance-20') === 'generic', videoFamilyFor('seedance-20'))
 
 const sd = buildVideoPayload({
   family: 'seedance-2.5',
@@ -152,6 +162,27 @@ check('通用视频首帧字段', generic.first_frame_image === 'https://cdn/fir
 check('通用视频尾帧字段', generic.last_frame_image === 'https://cdn/last.png')
 check('通用视频参考图字段', generic.image_urls?.[0] === 'https://cdn/ref.png')
 check('通用视频参考视频字段', generic.video_urls?.[0] === 'https://cdn/ref.mp4')
+/**
+ * Seedance 2.x 若因名字没被识别而掉进 generic 兜底，带参考视频会被上游判成
+ * 「视频编辑」（要求 ratio=adaptive + duration=-1）。这种组合必须本地拒绝并
+ * 说明改法，而不是发一个注定失败的请求。其他族的通用 schema 照常放行。
+ */
+check(
+  'seedance 2.x 掉进 generic 带视频被拒绝',
+  kindOf(() =>
+    buildVideoPayload({
+      family: 'generic',
+      model: 'seedance-2-0-260128',
+      prompt: 'x',
+      seconds: 5,
+      referenceVideos: ['https://cdn/ref.mp4'],
+    }),
+  ) === 'unsupported',
+)
+check(
+  'seedance 2.x 无视频仍可走 generic',
+  buildVideoPayload({ family: 'generic', model: 'seedance-2-0-260128', prompt: 'x', seconds: 5 }).duration === 5,
+)
 check('通用视频比例/分辨率', generic.aspect_ratio === '9:16' && generic.resolution === '720p')
 check(
   'Omni-Flash-Ext 480p 映射 720p',
