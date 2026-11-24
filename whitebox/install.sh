@@ -119,6 +119,11 @@ fi
 
 # 只装 DA3 runtime 真正 import 到的包。它的 pyproject 还列了 pre-commit 这类开发
 # 依赖与 xformers——前者与运行时无关，后者 mac 上没有 wheel。
+#
+# 装完 pip 会打印几条 "depth-anything-3 requires fastapi/pre-commit/xformers/opencv-python
+# which is not installed"。那是 DA3 的 pyproject 声明与我们实际路径的差异，不是故障：
+# fastapi 只服务 `da3 backend`、pre-commit 是开发工具、xformers 有 try/except 兜底、
+# opencv 我们用 headless 版（同一个 cv2 模块）。这些提示可以忽略。
 echo "→ 安装 DA3 runtime 依赖…"
 install_step "runtime deps" \
   einops huggingface_hub imageio omegaconf safetensors pillow \

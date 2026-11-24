@@ -37,10 +37,18 @@ import CharacterBoard, { type CharacterBoardProps } from './CharacterBoard'
 import { MATERIAL_TAB_CHARACTER_KEY } from './shell/route'
 import PromptCaseTab from './promptCases/PromptCaseTab'
 import PromptGuideTab from './promptGuides/PromptGuideTab'
+import WhiteboxTab from './whitebox/WhiteboxTab'
 
 const LazyMaterial3dStudio = lazy(() => import('./material3d/Material3dStudio'))
 
-type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d' | 'prompt-cases' | 'prompt-guide'
+type MaterialTab =
+  | DesignKind
+  | 'video'
+  | 'character'
+  | 'studio3d'
+  | 'prompt-cases'
+  | 'prompt-guide'
+  | 'whitebox'
 
 function readInitialMaterialTab(): MaterialTab {
   try {
@@ -82,7 +90,18 @@ type Props = {
   'embedded' | 'settings' | 'stagePick' | 'onPickStage' | 'projectName' | 'price' | 'toast' | 'missing' | 'onImageMissing'
 >
 
-const KIND_LABEL: Record<DesignKind, string> = { scene: '场景', prop: '道具' }
+/** 非设定类 tab（video / studio3d / prompt-cases / prompt-guide / whitebox）不走设定卡列表，
+ *  但列表工具栏与空态文案在这里共用一份索引。给个兜底文案，避免索引越界。 */
+const KIND_LABEL: Record<DesignKind | 'whitebox', string> = {
+  scene: '场景',
+  prop: '道具',
+  whitebox: '白模',
+}
+
+/** 设定卡列表只对 scene/prop 有意义；其它 tab 落到这里时用中性文案 */
+function kindLabel(tab: MaterialTab): string {
+  return tab === 'scene' || tab === 'prop' || tab === 'whitebox' ? KIND_LABEL[tab] : '素材'
+}
 
 /**
  * 素材设定板：先拆场景/关键道具，生成可复用设定图，再按单卡或批量发布到画布。
@@ -493,7 +512,7 @@ export default function AssetBoard({
   const shown = useMemo(
     () =>
       tab === 'video' || tab === 'character' || tab === 'studio3d' ||
-      tab === 'prompt-cases' || tab === 'prompt-guide'
+      tab === 'prompt-cases' || tab === 'prompt-guide' || tab === 'whitebox'
         ? []
         : designs.filter((d) => d.kind === tab),
     [designs, tab],
@@ -503,7 +522,7 @@ export default function AssetBoard({
     designListMatch,
     BOARD_LIST_PAGE_SIZE,
     tab === 'character' || tab === 'video' || tab === 'studio3d' ||
-    tab === 'prompt-cases' || tab === 'prompt-guide' ? 'scene' : tab,
+    tab === 'prompt-cases' || tab === 'prompt-guide' || tab === 'whitebox' ? 'scene' : tab,
   )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -551,7 +570,7 @@ export default function AssetBoard({
           </span>
         }
         settings={
-          lexiconOpen || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' || tab === 'prompt-guide' ? null : tab === 'character' ? (
+          lexiconOpen || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' || tab === 'prompt-guide' || tab === 'whitebox' ? null : tab === 'character' ? (
             <>
               <StageModelSelect
                 stage={'character' as Stage}
@@ -764,6 +783,18 @@ export default function AssetBoard({
         >
           写作指南{guideCount === null ? null : <span>{guideCount}</span>}
         </button>
+        <button
+          type="button"
+          className={!lexiconOpen && tab === 'whitebox' ? 'on' : ''}
+          data-asset-whitebox-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('whitebox')
+          }}
+          title="用 Depth Anything 3 把视频重建为白模 GLB"
+        >
+          视频转白模
+        </button>
         <span className="asset-tabs-hint">
           {lexiconOpen
             ? '镜头语言：运镜参照与白模 · 浏览器编排请用「场景三维」Tab；成片 MP4 用创意 Blender 三维专家'
@@ -777,6 +808,9 @@ export default function AssetBoard({
                 ? '全局案例库：外部导入与外片反推共用 · 可复制或应用到当前镜头'
               : tab === 'prompt-guide'
                 ? '写作指南：按 18 轴读方法论与正反示范 · 外部博客快照，仅作参考'
+              : tab === 'whitebox'
+                ? '视频转白模：DA3 估深度与位姿 · 产物可进「场景三维」摆机位'
+
               : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
       </div>
@@ -827,6 +861,16 @@ export default function AssetBoard({
         />
       ) : tab === 'prompt-guide' ? (
         <PromptGuideTab onCountChange={setGuideCount} />
+      ) : tab === 'whitebox' ? (
+        <WhiteboxTab
+          projectName={projectName}
+          assets={project?.assets || []}
+          toast={toast}
+          onOpenStudio3d={() => {
+            setLexiconOpen(false)
+            setTab('studio3d')
+          }}
+        />
       ) : tab === 'studio3d' ? (
         <Suspense fallback={<div className="char-empty-board">正在加载三维引擎…</div>}>
           <LazyMaterial3dStudio
@@ -843,8 +887,8 @@ export default function AssetBoard({
         <BoardListToolbar
           query={designList.query}
           onQueryChange={designList.setQuery}
-          placeholder={`搜索${KIND_LABEL[tab]}名称、中文说明、promptEn、镜号…`}
-          ariaLabel={`搜索${KIND_LABEL[tab]}设定`}
+          placeholder={`搜索${kindLabel(tab)}名称、中文说明、promptEn、镜号…`}
+          ariaLabel={`搜索${kindLabel(tab)}设定`}
           filteredCount={designList.filteredCount}
           totalCount={designList.totalCount}
           page={designList.page}
@@ -863,18 +907,18 @@ export default function AssetBoard({
             {tipOpen ? (
               <>
                 <span>
-                  还没有{KIND_LABEL[tab]}设定。场景图只放空镜、道具图不带手和人物，避免参考图污染镜头。
+                  还没有{kindLabel(tab)}设定。场景图只放空镜、道具图不带手和人物，避免参考图污染镜头。
                 </span>
                 <button className="btn-mini ghost" onClick={() => setTipOpen(false)}>
                   知道了
                 </button>
               </>
             ) : (
-              `还没有${KIND_LABEL[tab]}设定，点右上角「+ ${tab === 'scene' ? '场景' : '道具'}卡」或打开工作台 Pi 助手。`
+              `还没有${kindLabel(tab)}设定，点右上角「+ ${tab === 'scene' ? '场景' : '道具'}卡」或打开工作台 Pi 助手。`
             )}
           </div>
         ) : designList.filteredCount === 0 ? (
-          <div className="char-empty-board">没有匹配的{KIND_LABEL[tab]}，换个关键词试试。</div>
+          <div className="char-empty-board">没有匹配的{kindLabel(tab)}，换个关键词试试。</div>
         ) : (
           designList.slice.map((d) => (
             <DesignCard

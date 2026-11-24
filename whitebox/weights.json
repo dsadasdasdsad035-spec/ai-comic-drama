@@ -1,0 +1,27 @@
+{
+  "schema": "whitebox_weights_v1",
+  "note": "DA3-BASE 权重清单。字节数与 sha256 与 HuggingFace 的 blob 名一致（内容寻址），可用于校验。",
+  "models": {
+    "da3-base": {
+      "repo_id": "depth-anything/DA3-BASE",
+      "revision": "main",
+      "files": [
+        {
+          "name": "config.json",
+          "url": "https://huggingface.co/depth-anything/DA3-BASE/resolve/main/config.json",
+          "bytes": 1205,
+          "sha256": ""
+        },
+        {
+          "name": "model.safetensors",
+          "url": "https://huggingface.co/depth-anything/DA3-BASE/resolve/main/model.safetensors",
+          "bytes": 541518028,
+          "sha256": "e01067dc1659613083d9145a9a2547ccdbe6ccbbf83c4fe7b3e8a4e2bdae78b5"
+        }
+      ],
+      "license": "Apache-2.0",
+      "license_note": "DA3-BASE 与 DA3-SMALL 为 Apache-2.0，可商用。DA3-GIANT / DA3-LARGE / DA3NESTED-* 为 CC BY-NC 4.0（禁止商业使用），本项目不使用。"
+    }
+  },
+  "default": "da3-base"
+}

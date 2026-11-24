@@ -223,6 +223,16 @@ import {
   submitRenderJob,
 } from './blender.mjs'
 // @ts-ignore 宿主导块 .mjs
+import {
+  cancelWhiteboxJob,
+  cleanupStaleWhiteboxJobs,
+  getWhiteboxJob,
+  listWhiteboxJobs,
+  shutdownWhiteboxJobs,
+  submitWhiteboxJob,
+  whiteboxHealth,
+} from './whitebox.mjs'
+// @ts-ignore 宿主导块 .mjs
 import { ingestShot3dReference } from './shot3d-ingest.mjs'
 import {
   ensureAgentJob,
@@ -3124,6 +3134,11 @@ export function runServerStartupTasks(root: string) {
     /* 清理失败不阻塞启动 */
   }
   try {
+    cleanupStaleWhiteboxJobs(root)
+  } catch {
+    /* 清理失败不阻塞启动 */
+  }
+  try {
     sweepStaleDrafts(root)
   } catch {
     /* 清理失败不阻塞启动 */
@@ -3139,6 +3154,7 @@ export function runServerStartupTasks(root: string) {
 /** 退出前释放渲染作业与草稿 */
 export function runServerShutdownTasks() {
   shutdownRenderJobs()
+  shutdownWhiteboxJobs()
   discardAllDrafts()
 }
 
@@ -6302,6 +6318,70 @@ export function createAppHandler({ root }: { root: string }) {
           } catch (e: any) {
             res.statusCode = 400
             res.end(JSON.stringify({ ok: false, message: e?.message || String(e) }))
+          }
+          return
+        }
+
+        // ---- 视频转白模：体检 / 提交 / 进度 / 取消 ----
+        //
+        // 环境不合格时提交返回 code='env-missing' 并附体检明细，
+        // 前端据此展示缺什么、怎么装。绝不返回占位产物（见 spec）。
+        if (url.startsWith('/api/whitebox/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          const action = url.slice('/api/whitebox/'.length)
+          try {
+            if (action === 'health') {
+              const refresh = new URL(req.url || '', 'http://x').searchParams.get('refresh') === '1'
+              res.end(JSON.stringify(await whiteboxHealth(root, { refresh })))
+              return
+            }
+            if (action === 'jobs') {
+              if (req.method !== 'POST') {
+                res.statusCode = 405
+                res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+                return
+              }
+              const body = await readJson(req)
+              const job = await submitWhiteboxJob(body, root)
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            if (action === 'progress') {
+              const id = new URL(req.url || '', 'http://x').searchParams.get('id') || ''
+              const job = getWhiteboxJob(id)
+              if (!job) throw new Error('作业不存在或已清理')
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            if (action === 'list') {
+              res.end(JSON.stringify({ ok: true, jobs: listWhiteboxJobs() }))
+              return
+            }
+            if (action === 'cancel') {
+              if (req.method !== 'POST') {
+                res.statusCode = 405
+                res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+                return
+              }
+              const body = await readJson(req)
+              const job = cancelWhiteboxJob(String(body.id || ''))
+              if (!job) throw new Error('作业不存在')
+              res.end(JSON.stringify({ ok: true, job }))
+              return
+            }
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的白模接口' }))
+          } catch (e: any) {
+            const code = e?.code === 'env-missing' ? 409 : 400
+            res.statusCode = code
+            res.end(
+              JSON.stringify({
+                ok: false,
+                code: e?.code || 'error',
+                message: e?.message || String(e),
+                ...(e?.health ? { health: e.health } : {}),
+              }),
+            )
           }
           return
         }

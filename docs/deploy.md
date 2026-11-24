@@ -83,10 +83,13 @@ DTK 是**独立的 compose 项目**（`-p dtk`），不用 `docker compose down`
 | 能力 | 状态 | 原因 |
 | --- | --- | --- |
 | 3D/白模工作台（Blender） | 不可用 | 镜像不装 Blender（体积与 GPU 依赖）；需要时挂载宿主 Blender 或改镜像 |
+| 视频转白模（DA3） | 不可用 | 镜像不装 Python 推理环境（torch + 516MB 权重 + open3d，约 2GB）。启用需在镜像内跑 `bash whitebox/install.sh` 并挂载权重，或让 `<state-root>/.whitebox` 指向宿主目录 |
 | macOS `say` 配音 | 不可用 | Linux 无此命令；用 MiniMax / 火山 / ElevenLabs / APIMart 任一 |
 | yt-dlp 读浏览器 cookies | 不可用 | 容器里没有浏览器；抖音交给 DTK，B 站不需要 cookies |
 
-这三项在界面上会显示明确的不可用原因，不会静默失败。
+这几项在界面上会显示明确的不可用原因，不会静默失败。视频转白模的体检会逐项报告缺什么（python / torch / device / source / weights），并给出可复制的安装命令。
+
+> 在容器里启用视频转白模的注意事项：DA3 是 PyTorch 模型，需要 NVIDIA runtime 与 `nvidia-container-toolkit` 才能用 GPU；纯 CPU 容器能跑但慢一个数量级。它与 Blender 互不依赖——启用它不需要装 Blender。详见 `docs/video-whitebox.md`。
 
 ## 端口与访问
 
