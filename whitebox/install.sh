@@ -64,8 +64,17 @@ if [ -z "$PYTHON" ]; then
 
 为什么不是 3.13：DA3 依赖 numpy<2，而 numpy 1.26.4 没有 cp313 的 macOS wheel，
 装 3.13 会退化成源码编译并失败。
+为什么系统自带的 /usr/bin/python3 不行：macOS 上是 3.9，低于下限。
 
+装一个 3.12（任选其一）：
+
+  # 有 Homebrew
   brew install python@3.12
+
+  # 没有 Homebrew：官方安装包
+  # https://www.python.org/downloads/macos/
+
+装好后重跑本脚本。
 EOF
   exit 1
 fi

@@ -44,6 +44,16 @@ extraResources:
   # 技能与 Blender 宿主脚本：server/skills.mjs 与 server/blender.mjs 按 appRoot 相对读取
   - from: skills
     to: app/skills
+  # 视频转白模的 Python 边车脚本：server/whitebox.mjs 按 appRoot 相对 spawn
+  # whitebox/{da3_infer,mesh_whitebox,doctor,fetch_weights}.py 与 weights.json。
+  # 这里只带脚本（约 100KB），不带推理环境——venv + torch + open3d + 权重约 2GB，
+  # 由使用者在自己的 state 根里装（白模面板会给出 install.sh 的完整路径）。
+  - from: whitebox
+    to: app/whitebox
+    filter:
+      - '**/*'
+      - '!__pycache__'
+      - '!**/*.pyc'
   # 平台内置创意专家：server/experts.mjs 按 process.cwd()（即本目录）读取 experts/<id>/
   - from: experts
     to: app/experts

@@ -26,7 +26,41 @@ bash whitebox/install.sh
 3. 分批装依赖：torch → open3d → DA3 运行时依赖。
 4. 克隆 DA3 源码到 `<state-root>/.whitebox/vendor/depth-anything-3`，**锁定 commit**。
 
-`<state-root>` 默认是仓库根；桌面端用 `SB_STATE_ROOT` 指向用户数据目录（应用目录只读）。
+### 装在哪：`--state-root` 决定一切
+
+脚本把**所有运行时内容**（venv、DA3 源码、权重）写进 `<state-root>/.whitebox/`，脚本自己从哪个目录被调用无关紧要——可以放在只读的应用包里。
+
+`<state-root>` 的默认值与你的启动方式有关：
+
+| 启动方式 | state 根 | 说明 |
+|---|---|---|
+| `desktop:dev` / 打包后的 .app | `~/Library/Application Support/storyboard-canvas/state` | Electron 用 `app.getPath('userData')` 推导，见 `desktop/main/data-roots.mjs` |
+| `npm run dev` / `npm start` | 仓库根 | 未注入 `SB_STATE_ROOT` 时的回退 |
+
+**dev 与桌面端不是同一个位置。** 在仓库根装完，再开 `desktop:dev` 会看到体检全红（`venv 不存在：…/state/.whitebox/venv/bin/python`）。要么按上表给对 `--state-root`，要么把已有的 `.whitebox` 整体移过去（venv 搬家可用，`install.sh` 已改用 `python -m pip` 所以不依赖 shebang 绝对路径）。
+
+桌面端的准确命令（面板上的「安装」提示会直接给出这一行，路径带空格要引号）：
+
+```bash
+bash "<仓库>/whitebox/install.sh" --state-root "$HOME/Library/Application Support/storyboard-canvas/state"
+```
+
+### 打包分发的情况
+
+`.app` 只带 `whitebox/` 的**脚本**（约 100KB，见 `desktop/electron-builder.yml` 的 extraResources），不带 2GB 推理环境。原因：torch + open3d + 权重太大，且与机器架构强绑定。
+
+所以打包产物的用户首次使用时：
+
+1. 打开「素材 → 视频转白模」，面板会报缺什么，并给出**带 `--state-root` 的完整安装命令**（路径已解析成用户自己机器的绝对路径）。
+2. 复制那行命令到终端执行，装到自己的 state 根。
+3. 回到面板点「重新检测」。
+
+需要注意的前提：
+
+- **系统自带 Python 不够**。macOS 的 `/usr/bin/python3` 是 3.9，低于我们的下限。用户需要自己装 3.10–3.12（`brew install python@3.12` 或 python.org 安装包）。`install.sh` 在找不到合格解释器时会打印这两条路径。
+- **需要网络**：装依赖走 PyPI，克隆 DA3 源码走 GitHub，下权重走 HuggingFace。后两者在受限网络里需要代理（脚本会自动读系统代理）。
+
+如果要把这个能力做成「安装包自带、开箱即用」，需要另外的方案（随包附带 python-build-standalone + 预装 wheels，或改成远程推理服务）。那是独立的一笔工作量，不在当前实现范围。
 
 装完还要下权重：
 

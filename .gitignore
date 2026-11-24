@@ -79,6 +79,9 @@ projects/**/assets/
 # 由 whitebox/install.sh 与 whitebox/fetch_weights.py 生成，绝不入库
 .whitebox/
 .whitebox-jobs/
+# Python 字节码缓存（whitebox/*.py 本地跑过就会生成）
+__pycache__/
+*.pyc
 
 # Agent 场景草稿的临时目录（会话结束/启动时清理）
 .scene-drafts/
