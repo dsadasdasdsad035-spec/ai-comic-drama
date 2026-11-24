@@ -177,13 +177,30 @@ def load_images(paths: list[Path], max_frames: int) -> list:
         log(f"图片数超过上限，等间隔抽到 {len(picked)} 张")
 
     frames = []
+    sizes = []
     skipped = []
     for path in picked:
         img = cv2.imread(str(path))
         if img is None:
             skipped.append(path.name)
             continue
+        sizes.append((img.shape[1], img.shape[0]))
         frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+    # 尺寸不一致时给明确警告。
+    #
+    # DA3 内部会按**最小尺寸**统一所有图（实测混入一张 600×900 竖图，
+    # 整批被压到 336×280），横图的细节就白丢了。这不是错误——能跑通——
+    # 但用户不知道该把图片弄成同一尺寸，只会觉得「效果怎么这么糊」。
+    if len(set(sizes)) > 1:
+        smallest = min(sizes, key=lambda wh: wh[0] * wh[1])
+        largest = max(sizes, key=lambda wh: wh[0] * wh[1])
+        log(
+            f"⚠ 图片尺寸不一致（{len(set(sizes))} 种）：从 {largest[0]}×{largest[1]} 到 "
+            f"{smallest[0]}×{smallest[1]}。DA3 会按最小尺寸统一，大图细节会损失。"
+            "建议先统一成同一分辨率再转换。"
+        )
+
     if skipped:
         log(f"跳过 {len(skipped)} 张无法读取的图片：{', '.join(skipped[:3])}{'…' if len(skipped) > 3 else ''}")
     return frames
@@ -345,13 +362,25 @@ def main() -> int:
 
     emit({"type": "phase", "phase": "saving"})
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # 不把原始 frames 写进 npz。
+    #
+    # 两个原因：
+    # 1. 下游（mesh_whitebox.py）只读 depth/conf/extrinsics/intrinsics，
+    #    这个字段从没被消费过，纯占体积——12 帧 1024×576 就是 21MB，
+    #    而作业成功后整个目录会被删掉，调试价值也留不住。
+    # 2. **图片模式下各张尺寸可以不同**（用户从不同来源挑的图），
+    #    np.stack 会在 numpy/core/shape_base.py 抛
+    #    "all input arrays must have the same shape"，把整个转换弄挂。
+    #    视频模式不会触发，因为同一条视频所有帧同尺寸。
+    #
+    # 需要看原图时去项目媒体目录取，那里本来就有。
     np.savez_compressed(
         out,
         depth=depth,
         conf=conf,
         extrinsics=extrinsics if extrinsics is not None else np.array([]),
         intrinsics=intrinsics,
-        images=np.stack(frames),
     )
 
     elapsed = time.time() - started

@@ -446,6 +446,66 @@ console.log('{}')
           }
         }
 
+        // 混合尺寸回归：各张分辨率不同时必须能跑完，不能崩在 np.stack。
+        //
+        // 这是实测踩到的崩溃：npz 里曾把原始 frames 一起存（images=np.stack(frames)），
+        // 而图片模式下各张尺寸可以不同 → "all input arrays must have the same shape"。
+        // 视频模式不会触发（同一条视频所有帧同尺寸），所以只有图片模式能暴露。
+        const mixedUrls = []
+        for (let i = 0; i < 4; i++) {
+          const name = `smoke-mixed-${i}.jpg`
+          const dest = path.join(PROJECTS, PROJ, 'assets', name)
+          // 每张给不同分辨率：宽高都变，避免碰巧同尺寸
+          const w = 320 + i * 80
+          const h = 240 + i * 60
+          try {
+            execFileSync('ffmpeg', [
+              '-y', '-v', 'error',
+              '-ss', String(i * 2),
+              '-i', fixture,
+              '-frames:v', '1',
+              '-vf', `scale=${w}:${h}`,
+              dest,
+            ])
+            mixedUrls.push(`/project-assets/${encodeURIComponent(PROJ)}/${name}`)
+          } catch {
+            break
+          }
+        }
+        check('生成混合尺寸图片', mixedUrls.length >= 4, `${mixedUrls.length} 张`)
+
+        if (mixedUrls.length >= 4) {
+          const mRes = await fetch(`${app}/api/whitebox/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectName: PROJ, imageUrls: mixedUrls, maxFrames: 96 }),
+          })
+          const mJson = await mRes.json()
+          check('混合尺寸可提交', mJson.ok === true, JSON.stringify(mJson).slice(0, 160))
+          if (mJson.ok) {
+            let mJob = null
+            const md = Date.now() + 5 * 60 * 1000
+            while (Date.now() < md) {
+              await new Promise((r) => setTimeout(r, 1200))
+              const pr = await fetch(`${app}/api/whitebox/progress?id=${encodeURIComponent(mJson.job.id)}`)
+              const pj = await pr.json()
+              if (!pj.ok) break
+              mJob = pj.job
+              if (['done', 'failed', 'cancelled'].includes(mJob.status)) break
+            }
+            check(
+              '混合尺寸作业不崩',
+              mJob?.status === 'done',
+              mJob?.error || String(mJob?.status),
+            )
+            check(
+              '混合尺寸产出网格',
+              Number(mJob?.stats?.triangles) > 1000,
+              String(mJob?.stats?.triangles),
+            )
+          }
+        }
+
         // 少于 4 张必须被拒
         const tooFew = await fetch(`${app}/api/whitebox/jobs`, {
           method: 'POST',
