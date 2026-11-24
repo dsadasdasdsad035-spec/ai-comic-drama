@@ -36,6 +36,10 @@ export type WhiteboxJobSnapshot = {
   error: string | null
   errorCode: string | null
   sourceLabel: string
+  /** 输入来源：video = 一段视频抽帧；images = 用户挑的多张图 */
+  sourceType: 'video' | 'images'
+  /** 图片模式下的图片张数，视频模式为 0 */
+  imageCount: number
   glbUrl: string
   assetTitle: string
   stats: WhiteboxJobStats | null

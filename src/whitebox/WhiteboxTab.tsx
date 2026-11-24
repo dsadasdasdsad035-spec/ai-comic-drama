@@ -71,7 +71,10 @@ function checkValueText(value: unknown): string {
 export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d }: Props) {
   const [health, setHealth] = useState<WhiteboxHealth | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
+  const [sourceType, setSourceType] = useState<'video' | 'images'>('video')
   const [videoUrl, setVideoUrl] = useState('')
+  /** 图片模式的选中项（站内 URL），按选择顺序保存——顺序影响相邻帧重叠 */
+  const [imageUrls, setImageUrls] = useState<string[]>([])
   // 帧间隔是决定重建质量的关键：间隔越大，相邻帧重叠越少，位姿越容易崩。
   // 默认 0.5 秒（42 秒视频 → 84 帧，覆盖全片且画面重叠充足）。
   const [frameInterval, setFrameInterval] = useState(0.5)
@@ -81,6 +84,15 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const pollRef = useRef<number | null>(null)
+
+  const images = useMemo(
+    () =>
+      (assets || []).filter((a) => {
+        const u = String(a.url || '').toLowerCase().split('?')[0]
+        return String(a.kind) === 'image' || /\.(png|jpe?g|webp)$/.test(u)
+      }),
+    [assets],
+  )
 
   const videos = useMemo(
     () =>
@@ -144,20 +156,20 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
 
   const busy = job?.status === 'queued' || job?.status === 'running'
   const ready = Boolean(health?.ok)
-  const canSubmit = Boolean(projectName && videoUrl && ready && !busy && !submitting)
+  const inputReady =
+    sourceType === 'images' ? imageUrls.length >= 4 : Boolean(videoUrl)
+  const canSubmit = Boolean(projectName && inputReady && ready && !busy && !submitting)
 
   const submit = async () => {
     if (!canSubmit) return
     setError('')
     setSubmitting(true)
     try {
-      const created = await submitWhiteboxJob({
-        projectName,
-        videoUrl,
-        interval: frameInterval,
-        maxFrames,
-        targetSize,
-      })
+      const created = await submitWhiteboxJob(
+        sourceType === 'images'
+          ? { projectName, imageUrls, maxFrames, targetSize }
+          : { projectName, videoUrl, interval: frameInterval, maxFrames, targetSize },
+      )
       setJob(created)
       startPoll(created.id)
     } catch (e) {
@@ -256,44 +268,136 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
 
       {/* ---- 输入 ---- */}
       <section className="wb-section">
-        <h4>来源视频</h4>
-        {videos.length === 0 ? (
-          <p className="board-hint">
-            当前项目还没有视频素材。先到「视频」分类上传或导入一条，再回来转换。
-          </p>
-        ) : (
-          <select
-            className="wb-select"
-            data-whitebox-video
-            value={videoUrl}
+        <h4>输入素材</h4>
+        <div className="wb-mode" role="tablist" aria-label="输入类型">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceType === 'video'}
+            className={sourceType === 'video' ? 'on' : ''}
+            data-whitebox-mode="video"
             disabled={busy}
-            onChange={(e) => setVideoUrl(e.target.value)}
+            onClick={() => setSourceType('video')}
           >
-            <option value="">选择一条视频…</option>
-            {videos.map((v) => (
-              <option key={v.url} value={v.url}>
-                {v.title || v.url}
-              </option>
-            ))}
-          </select>
+            一段视频
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceType === 'images'}
+            className={sourceType === 'images' ? 'on' : ''}
+            data-whitebox-mode="images"
+            disabled={busy}
+            onClick={() => setSourceType('images')}
+          >
+            多张图片
+          </button>
+        </div>
+
+        {sourceType === 'video' ? (
+          <>
+            {videos.length === 0 ? (
+              <p className="board-hint">
+                当前项目还没有视频素材。先到「视频」分类上传或导入一条，再回来转换。
+              </p>
+            ) : (
+              <select
+                className="wb-select"
+                data-whitebox-video
+                value={videoUrl}
+                disabled={busy}
+                onChange={(e) => setVideoUrl(e.target.value)}
+              >
+                <option value="">选择一条视频…</option>
+                {videos.map((v) => (
+                  <option key={v.url} value={v.url}>
+                    {v.title || v.url}
+                  </option>
+                ))}
+              </select>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="wb-caveat wb-caveat-inline">
+              图片可以自己挑——视频抽帧会抽到字幕帧、黑帧、特写帧，图片不会。
+              建议 <strong>8–16 张</strong>：相邻两张转身不超过约 60°（保证有重叠），
+              并且要<strong>走动</strong>而不是原地转圈（平移才产生视差）。
+              实测同一房间：随机 8 张出 12,744 面，精挑 8 张出 73,528 面。
+            </p>
+            {images.length === 0 ? (
+              <p className="board-hint">
+                当前项目还没有图片素材。先到「场景/道具」或上传图片，再回来选。
+              </p>
+            ) : (
+              <>
+                <div className="wb-pick" data-whitebox-images>
+                  {images.map((img) => {
+                    const picked = imageUrls.includes(img.url)
+                    const order = imageUrls.indexOf(img.url)
+                    return (
+                      <button
+                        key={img.url}
+                        type="button"
+                        className={picked ? 'wb-pick-item on' : 'wb-pick-item'}
+                        data-whitebox-image={img.url}
+                        data-picked={picked ? '1' : '0'}
+                        disabled={busy}
+                        title={img.title || img.url}
+                        onClick={() =>
+                          setImageUrls((prev) =>
+                            prev.includes(img.url)
+                              ? prev.filter((u) => u !== img.url)
+                              : [...prev, img.url],
+                          )
+                        }
+                      >
+                        <img src={img.url} alt="" loading="lazy" />
+                        {picked ? <span className="wb-pick-order">{order + 1}</span> : null}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="wb-field-hint" data-whitebox-image-count>
+                  已选 {imageUrls.length} 张
+                  {imageUrls.length > 0 && imageUrls.length < 4
+                    ? '（至少 4 张才能估出位姿，建议 8 张以上）'
+                    : ''}
+                  {imageUrls.length > 0 ? (
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={busy}
+                      onClick={() => setImageUrls([])}
+                    >
+                      清空
+                    </button>
+                  ) : null}
+                </p>
+              </>
+            )}
+          </>
         )}
 
         <div className="wb-grid">
-          <label>
-            抽帧间隔（秒）
-            <input
-              type="number"
-              min={0.1}
-              max={3}
-              step={0.1}
-              value={frameInterval}
-              disabled={busy}
-              onChange={(e) => setFrameInterval(Number(e.target.value) || 0.5)}
-            />
-            <span className="wb-field-hint">
-              越小越密。间隔过大时相邻帧不重叠，位姿会崩、重建塌成薄板
-            </span>
-          </label>
+          {/* 间隔只对视频有意义：图片模式下用户已经挑好了帧 */}
+          {sourceType === 'video' ? (
+            <label>
+              抽帧间隔（秒）
+              <input
+                type="number"
+                min={0.1}
+                max={3}
+                step={0.1}
+                value={frameInterval}
+                disabled={busy}
+                onChange={(e) => setFrameInterval(Number(e.target.value) || 0.5)}
+              />
+              <span className="wb-field-hint">
+                越小越密。间隔过大时相邻帧不重叠，位姿会崩、重建塌成薄板
+              </span>
+            </label>
+          ) : null}
           <label>
             最大帧数
             <input

@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { createCheck as createCheckRaw, makeProjectsDir, seed, startApp } from './verify-harness.mjs'
 import { readProject, writeProject } from './server/db.mjs'
 
@@ -212,7 +213,6 @@ try {
 
 // 直接跑 doctor.py：不依赖服务在跑，第一段要能独立判断
 {
-  const { execFileSync } = await import('node:child_process')
   const doctor = path.join(process.cwd(), 'whitebox', 'doctor.py')
   if (!fs.existsSync(doctor)) {
     check('doctor.py 存在', false, doctor)
@@ -376,6 +376,93 @@ console.log('{}')
           check('素材卡 url 以 /project-assets/ 开头', String(card?.url || '').startsWith('/project-assets/'))
           check('素材卡 note 说明估算尺度', /估算尺度|稠密重建/.test(String(card?.note || '')), String(card?.note || ''))
         }
+      }
+    }
+
+    // ---- 图片模式 ----
+    //
+    // 图片路线是「视频」之外的第二条入口：用户自己挑图，避开视频抽帧会抽到的
+    // 字幕帧/黑帧/特写帧。实测同一房间随机 8 张出 12,744 面、精挑 8 张出
+    // 73,528 面，所以这里断言：能提交、能完成、面数达到可用量级。
+    if (envReady && fixture) {
+      const imgDir = path.join(PROJECTS, PROJ, 'assets')
+      const imgUrls = []
+      // 从 fixture 视频里抽 8 张当图片素材
+      for (let i = 0; i < 8; i++) {
+        const name = `smoke-img-${i}.jpg`
+        const dest = path.join(imgDir, name)
+        try {
+          execFileSync('ffmpeg', [
+            '-y', '-v', 'error',
+            '-ss', String(i * 3),
+            '-i', fixture,
+            '-frames:v', '1',
+            '-q:v', '2',
+            dest,
+          ])
+          imgUrls.push(`/project-assets/${encodeURIComponent(PROJ)}/${name}`)
+        } catch {
+          break
+        }
+      }
+      check('抽出图片素材', imgUrls.length >= 4, `${imgUrls.length} 张`)
+
+      if (imgUrls.length >= 4) {
+        const imgRes = await fetch(`${app}/api/whitebox/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectName: PROJ, imageUrls: imgUrls, maxFrames: 96, targetSize: 6 }),
+        })
+        const imgJson = await imgRes.json()
+        check('图片模式提交成功', imgJson.ok === true, JSON.stringify(imgJson).slice(0, 160))
+
+        if (imgJson.ok) {
+          let imgJob = null
+          const dl = Date.now() + 5 * 60 * 1000
+          while (Date.now() < dl) {
+            await new Promise((r) => setTimeout(r, 1200))
+            const pr = await fetch(`${app}/api/whitebox/progress?id=${encodeURIComponent(imgJson.job.id)}`)
+            const pj = await pr.json()
+            if (!pj.ok) break
+            imgJob = pj.job
+            if (['done', 'failed', 'cancelled'].includes(imgJob.status)) break
+          }
+          check('图片模式作业完成', imgJob?.status === 'done', imgJob?.error || String(imgJob?.status))
+          check('作业标记为 images 来源', imgJob?.sourceType === 'images', String(imgJob?.sourceType))
+          check('图片数被记录', Number(imgJob?.imageCount) >= 4, String(imgJob?.imageCount))
+          check(
+            '图片模式重建面数 > 10000',
+            Number(imgJob?.stats?.triangles) > 10000,
+            String(imgJob?.stats?.triangles),
+          )
+          if (imgJob?.glbUrl) {
+            const imgGlb = path.join(PROJECTS, PROJ, 'assets', path.basename(imgJob.glbUrl))
+            check('图片模式产物落盘', fs.existsSync(imgGlb))
+            if (fs.existsSync(imgGlb)) {
+              const { magic, json } = readGlbJson(imgGlb)
+              const attrs = json.meshes?.[0]?.primitives?.[0]?.attributes || {}
+              check('图片模式产物 glTF 合法', magic === 0x46546c67 && 'NORMAL' in attrs)
+            }
+          }
+        }
+
+        // 少于 4 张必须被拒
+        const tooFew = await fetch(`${app}/api/whitebox/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectName: PROJ, imageUrls: imgUrls.slice(0, 2) }),
+        })
+        const fewJson = await tooFew.json()
+        check('少于 4 张被拒绝', fewJson.ok !== true, JSON.stringify(fewJson).slice(0, 140))
+
+        // 视频与图片同时给必须被拒
+        const both = await fetch(`${app}/api/whitebox/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectName: PROJ, videoUrl, imageUrls: imgUrls }),
+        })
+        const bothJson = await both.json()
+        check('视频与图片互斥', bothJson.ok !== true, JSON.stringify(bothJson).slice(0, 140))
       }
     }
 

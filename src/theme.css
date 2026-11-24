@@ -23498,6 +23498,10 @@ button.crumb:hover {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .wb-actions {
@@ -23593,4 +23597,101 @@ button.crumb:hover {
   font-weight: 600;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- 视频转白模：输入模式切换与图片多选 ---- */
+.wb-mode {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.wb-mode > button {
+  font-size: 12.5px;
+  padding: 6px 16px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  border: 0;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.wb-mode > button + button {
+  border-left: 1px solid var(--line-2);
+}
+
+.wb-mode > button.on {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.wb-mode > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wb-caveat-inline {
+  margin-bottom: 12px;
+}
+
+/* 图片选择网格：缩略图 + 选中序号。序号很重要——顺序决定相邻帧重叠，
+   用户按房间巡游顺序点选，序号能让他确认自己点对了。 */
+.wb-pick {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.wb-pick-item {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.wb-pick-item:hover:not(:disabled) {
+  border-color: var(--line-2);
+}
+
+.wb-pick-item.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.wb-pick-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wb-pick-item > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.wb-pick-order {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
 }

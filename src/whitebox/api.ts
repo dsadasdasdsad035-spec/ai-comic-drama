@@ -43,6 +43,9 @@ export type WhiteboxJob = {
   error: string | null
   errorCode: string | null
   sourceLabel: string
+  /** video = 一段视频抽帧；images = 用户挑的多张图 */
+  sourceType?: 'video' | 'images'
+  imageCount?: number
   glbUrl: string
   assetTitle: string
   stats: WhiteboxStats | null
@@ -55,7 +58,10 @@ export type WhiteboxJob = {
 
 export type WhiteboxSubmitInput = {
   projectName: string
-  videoUrl: string
+  /** 视频模式：一段视频的站内 URL（与 imageUrls 二选一） */
+  videoUrl?: string
+  /** 图片模式：一组图片的站内 URL，建议 8–16 张（与 videoUrl 二选一） */
+  imageUrls?: string[]
   /** 抽帧间隔（秒），默认 0.5。决定相邻帧重叠度，比帧数更关键 */
   interval?: number
   maxFrames?: number
@@ -139,7 +145,7 @@ export function whiteboxErrorText(code: string | null, message: string | null): 
     case 'env-missing':
       return `推理环境未就绪：${message || '缺少依赖'}`
     case 'frames-too-few':
-      return `视频过短：${message || '抽出的帧数不足 4 帧，建议减小抽帧间隔'}`
+      return `素材不足：${message || '可用的帧或图片少于 4 张'}`
     case 'inference-failed':
       return `推理失败：${message || '未知原因'}`
     case 'mesh-failed':

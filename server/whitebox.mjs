@@ -226,25 +226,73 @@ function normalizeInput(input) {
 }
 
 /**
- * 解析视频来源：项目已有素材（零网络）或上传后的素材。
- * 只接受站内路径，拒绝外部 URL——下载是素材摄取环节的事，不是这里。
+ * 把站内媒体 URL 解析成磁盘文件。只接受项目媒体路径，拒绝外部 URL——
+ * 下载是素材摄取环节的事，不是这里。
  */
-function resolveVideoSource(appRoot, projectName, input) {
-  const raw = String(input?.videoUrl || '').split('?')[0]
-  if (!raw) throw new Error('缺少视频来源')
+function resolveMediaFile(appRoot, projectName, rawUrl, kindLabel) {
+  const raw = String(rawUrl || '').split('?')[0]
+  if (!raw) throw new Error(`缺少${kindLabel}来源`)
 
   const pm = parseProjectMediaUrl(raw)
   if (pm) {
-    if (pm.name !== projectName) throw new Error('视频不属于当前项目')
+    if (pm.name !== projectName) throw new Error(`${kindLabel}不属于当前项目`)
     const file = resolveProjectMediaPath(appRoot, pm.name, pm.file)
-    if (!fs.existsSync(file)) throw new Error(`视频文件不存在：${raw}`)
-    return { file, url: raw, label: path.basename(pm.file, path.extname(pm.file)) }
+    if (!fs.existsSync(file)) throw new Error(`${kindLabel}文件不存在：${raw}`)
+    return file
   }
 
   if (/^(https?:|data:|blob:)/i.test(raw)) {
-    throw new Error('不支持直接提交外部链接。请先把视频导入素材库，再选它转换成白模。')
+    throw new Error(`不支持直接提交外部链接。请先把${kindLabel}导入素材库，再选它转换成白模。`)
   }
-  throw new Error(`无法识别的视频地址：${raw}`)
+  throw new Error(`无法识别的${kindLabel}地址：${raw}`)
+}
+
+/**
+ * 解析输入来源。两种模式二选一：
+ *
+ * - `video`：一段视频，服务端按间隔抽帧。适合随手拍的巡游镜头。
+ * - `images`：一组图片（8–16 张）。优势是**可选择**——视频抽帧会抽到字幕帧、
+ *   黑帧、特写帧，图片由用户自己挑。实测同一素材：随机 8 张出 12,744 面，
+ *   精挑 8 张出 73,528 面。
+ *
+ * 两者下游完全一致（都是「一串带位姿的 RGB」→ TSDF），所以只在这里分流。
+ */
+function resolveInput(appRoot, projectName, input) {
+  const rawImages = Array.isArray(input?.imageUrls) ? input.imageUrls : []
+  const hasVideo = Boolean(String(input?.videoUrl || '').trim())
+
+  if (hasVideo && rawImages.length) {
+    throw new Error('视频与图片只能选一种作为输入')
+  }
+
+  if (rawImages.length) {
+    const files = rawImages.map((u) => resolveMediaFile(appRoot, projectName, u, '图片'))
+    if (files.length < MIN_FRAMES) {
+      throw new Error(
+        `只选了 ${files.length} 张图，至少需要 ${MIN_FRAMES} 张。` +
+          '单张没有视差，只会得到一层深度壳；建议 8–16 张覆盖房间各方向。',
+      )
+    }
+    const first = String(rawImages[0] || '').split('?')[0]
+    const pm = parseProjectMediaUrl(first)
+    return {
+      sourceType: 'images',
+      files,
+      urls: rawImages,
+      label: pm ? `${files.length} 张图片` : `${files.length} 张图片`,
+    }
+  }
+
+  if (!hasVideo) throw new Error('缺少输入：需要一段视频或一组图片')
+
+  const file = resolveMediaFile(appRoot, projectName, input.videoUrl, '视频')
+  const pm = parseProjectMediaUrl(String(input.videoUrl).split('?')[0])
+  return {
+    sourceType: 'video',
+    files: [file],
+    urls: [String(input.videoUrl).split('?')[0]],
+    label: pm ? path.basename(pm.file, path.extname(pm.file)) : '视频',
+  }
 }
 
 // ---------------------------------------------------------------- 作业
@@ -258,6 +306,8 @@ function snapshot(job) {
     error: job.error,
     errorCode: job.errorCode,
     sourceLabel: job.sourceLabel,
+    sourceType: job.sourceType,
+    imageCount: job.sourceType === 'images' ? job.imageFiles.length : 0,
     glbUrl: job.glbUrl,
     assetTitle: job.assetTitle,
     stats: job.stats,
@@ -431,9 +481,11 @@ async function startJob(job) {
       py,
       [
         path.join(repo, 'whitebox', 'da3_infer.py'),
-        '--video', job.videoFile,
+        // 图片模式没有「间隔」概念：用户已经挑好了帧，直接全用
+        ...(job.sourceType === 'images'
+          ? ['--images', ...job.imageFiles]
+          : ['--video', job.videoFile, '--interval', String(job.interval)]),
         '--out', npz,
-        '--interval', String(job.interval),
         '--max-frames', String(job.maxFrames),
         ...(usesBundledRuntime(appRoot)
           ? ['--runtime-root', bundledRuntimePath(appRoot)]
@@ -550,7 +602,7 @@ export async function submitWhiteboxJob(input, appRoot) {
   if (!project) throw new Error(`项目不存在：${projectName}`)
 
   const settings = normalizeInput(input)
-  const source = resolveVideoSource(appRoot, projectName, input)
+  const source = resolveInput(appRoot, projectName, input)
 
   // 环境前置校验：不满足就别建作业，直接给出可操作的错误
   const health = await whiteboxHealth(appRoot)
@@ -576,8 +628,11 @@ export async function submitWhiteboxJob(input, appRoot) {
     appRoot,
     projectName,
     dir,
-    videoFile: source.file,
-    videoUrl: source.url,
+    sourceType: source.sourceType,
+    // 视频模式用 videoFile；图片模式用 imageFiles（数组）
+    videoFile: source.files[0],
+    imageFiles: source.files,
+    videoUrl: source.urls[0],
     sourceLabel: source.label,
     interval: settings.interval,
     maxFrames: settings.maxFrames,

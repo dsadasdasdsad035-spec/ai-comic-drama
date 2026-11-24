@@ -162,6 +162,33 @@ def sample_frames(video: Path, interval: float, max_frames: int) -> tuple[list, 
     return frames, actual_fps
 
 
+def load_images(paths: list[Path], max_frames: int) -> list:
+    """读取用户挑的图片，统一成 DA3 能吃的 RGB 数组列表。
+
+    只做两件事：转 RGB、超过上限时等间隔抽取。不做裁剪或增强——
+    图片是用户自己选的，动它反而可能破坏相邻图的重叠关系。
+    """
+    import cv2
+
+    picked = paths[:max_frames]
+    if len(paths) > max_frames:
+        idx = [round(i * (len(paths) - 1) / (max_frames - 1)) for i in range(max_frames)]
+        picked = [paths[i] for i in idx]
+        log(f"图片数超过上限，等间隔抽到 {len(picked)} 张")
+
+    frames = []
+    skipped = []
+    for path in picked:
+        img = cv2.imread(str(path))
+        if img is None:
+            skipped.append(path.name)
+            continue
+        frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    if skipped:
+        log(f"跳过 {len(skipped)} 张无法读取的图片：{', '.join(skipped[:3])}{'…' if len(skipped) > 3 else ''}")
+    return frames
+
+
 def pad_extrinsics(extrinsics):
     """(N,3,4) 补成 (N,4,4)。
 
@@ -186,7 +213,20 @@ def pad_extrinsics(extrinsics):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--video", required=True)
+    # 输入二选一：一段视频，或一组图片。
+    #
+    # 图片路线的优势是**可选择**：视频抽帧是自动的，会抽到字幕帧、黑帧、特写
+    # 帧；图片由用户自己挑，每张都干净。实测同一条房间素材：
+    #   1 张  → 无位姿基线，只有一层深度壳，出带状薄片
+    #   8 张  → 基线 2.7，能重建出有体积的房间
+    # 关键要求：相邻两张要有足够重叠（转身不超过约 60°），且最好走动而非原地转。
+    ap.add_argument("--video", default=None, help="输入视频（与 --images 二选一）")
+    ap.add_argument(
+        "--images",
+        nargs="+",
+        default=None,
+        help="输入图片路径列表（与 --video 二选一）。8–16 张，覆盖房间各方向",
+    )
     ap.add_argument("--out", required=True, help="输出 npz 路径")
     ap.add_argument(
         "--interval",
@@ -202,12 +242,27 @@ def main() -> int:
     ap.add_argument("--device", default="", help="mps / cpu，留空自动")
     args = ap.parse_args()
 
-    video = Path(args.video).expanduser().resolve()
     out = Path(args.out).expanduser().resolve()
-    if not video.is_file():
+    has_video = bool(args.video)
+    has_images = bool(args.images)
+    if has_video == has_images:
+        raise SystemExit("必须且只能指定一种输入：--video 或 --images")
+    video = Path(args.video).expanduser().resolve() if has_video else None
+    if video is not None and not video.is_file():
         raise SystemExit(f"视频不存在：{video}")
+    image_paths = []
+    if has_images:
+        image_paths = [Path(x).expanduser().resolve() for x in args.images]
+        missing = [str(p) for p in image_paths if not p.is_file()]
+        if missing:
+            raise SystemExit(f"图片不存在：{missing[0]}" + (f" 等 {len(missing)} 个" if len(missing) > 1 else ""))
+        if len(image_paths) < MIN_FRAMES:
+            raise SystemExit(
+                f"只给了 {len(image_paths)} 张图，至少需要 {MIN_FRAMES} 张。"
+                "单张或多两张无法估出位姿，只会得到一层深度壳。建议 8–16 张，覆盖房间各方向。"
+            )
 
-    # 硬上限：规格要求 max_frames 不得超过 12
+    # 硬上限保护（见 HARD_MAX_FRAMES 的说明）
     max_frames = max(MIN_FRAMES, min(int(args.max_frames or HARD_MAX_FRAMES), HARD_MAX_FRAMES))
     if max_frames != int(args.max_frames or HARD_MAX_FRAMES):
         log(f"max-frames 被限制为 {max_frames}（硬上限 {HARD_MAX_FRAMES}）")
@@ -230,20 +285,35 @@ def main() -> int:
 
     started = time.time()
     emit({"type": "phase", "phase": "sampling"})
-    interval = args.interval
-    if args.fps is not None and args.fps > 0:
-        # 旧参数换算：fps=2 → interval=0.5
-        interval = 1.0 / args.fps
-        log(f"--fps {args.fps} 已换算为间隔 {interval:.2f}s（建议直接用 --interval）")
-    log(f"抽帧策略：间隔 {interval:.2f}s，上限 {max_frames} 帧")
-    frames, actual_fps = sample_frames(video, interval, max_frames)
-    if len(frames) < MIN_FRAMES:
-        emit({
-            "type": "error",
-            "code": "frames-too-few",
-            "message": f"只抽出 {len(frames)} 帧，至少需要 {MIN_FRAMES} 帧。视频过短或帧率过低，建议提高抽帧帧率。",
-        })
-        return 2
+
+    if image_paths:
+        # 图片模式：不抽帧，直接读并统一尺寸。
+        # 不做裁剪/缩放以外的处理——DA3 自己会按 process_res 归一。
+        frames = load_images(image_paths, max_frames)
+        actual_fps = 0.0
+        log(f"图片来源：{len(frames)} 张（上限 {max_frames}）")
+        if len(frames) < MIN_FRAMES:
+            emit({
+                "type": "error",
+                "code": "frames-too-few",
+                "message": f"只有 {len(frames)} 张可用图片，至少需要 {MIN_FRAMES} 张。",
+            })
+            return 2
+    else:
+        interval = args.interval
+        if args.fps is not None and args.fps > 0:
+            # 旧参数换算：fps=2 → interval=0.5
+            interval = 1.0 / args.fps
+            log(f"--fps {args.fps} 已换算为间隔 {interval:.2f}s（建议直接用 --interval）")
+        log(f"抽帧策略：间隔 {interval:.2f}s，上限 {max_frames} 帧")
+        frames, actual_fps = sample_frames(video, interval, max_frames)
+        if len(frames) < MIN_FRAMES:
+            emit({
+                "type": "error",
+                "code": "frames-too-few",
+                "message": f"只抽出 {len(frames)} 帧，至少需要 {MIN_FRAMES} 帧。视频过短或帧率过低，建议减小抽帧间隔。",
+            })
+            return 2
 
     emit({"type": "phase", "phase": "inference"})
     try:
@@ -292,7 +362,9 @@ def main() -> int:
         "height": int(depth.shape[1]),
         "width": int(depth.shape[2]),
         "device": str(device),
-        "fps": actual_fps,
+        # 图片来源没有帧率概念，给 null 而不是 0，免得前端显示「0 fps」
+        "sourceType": "images" if image_paths else "video",
+        "fps": actual_fps if not image_paths else None,
         "is_metric": bool(pred.is_metric) if isinstance(pred.is_metric, (bool, int)) else None,
         "seconds": round(elapsed, 2),
     }
