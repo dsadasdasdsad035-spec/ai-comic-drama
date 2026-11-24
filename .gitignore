@@ -130,3 +130,7 @@ server/dsh-plugins/creative-tools/studio-tool-aliases.mjs
 
 # 视觉验收截图产物（改版/验收时临时生成，不入库）
 out/
+
+# IDE 模块文件（IDE 自动生成，与本项目无关）
+*.iml
+.idea/
