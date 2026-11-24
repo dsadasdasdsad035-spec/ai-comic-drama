@@ -89,13 +89,24 @@ PIP="$VENV/bin/pip"
 CONSTRAINTS="$WB/constraints.txt"
 echo 'numpy==1.26.4' > "$CONSTRAINTS"
 
+# 新 venv 自带的是 pip 25.0.x，不认识 --resume-retries（25.2 才加）。
+# 先升级一次；升级失败也不致命——下面的 install_step 会按实际能力决定用不用它。
+"$PIP" install --quiet --upgrade pip >/dev/null 2>&1 || echo "  （pip 升级失败，将跳过断点续传选项）"
+
+# 探测 --resume-retries 是否可用：大包下载中断后能续传很重要
+# （实测 torch 的 111MB 直连断过两次），但不能因为它让整个安装失败。
+RESUME_FLAG=()
+if "$PIP" install --help 2>/dev/null | grep -q -- '--resume-retries'; then
+  RESUME_FLAG=(--resume-retries 30)
+fi
+
 # ---------------------------------------------------------------- 依赖
 #
 # 分批装的理由不是洁癖：torch 有 111MB（实测本机直连断过两次），
 # 和其余几十个小包混在一个命令里失败时没法判断到底是谁断的。
 install_step() {
   local label="$1"; shift
-  if "$PIP" install --quiet --constraint "$CONSTRAINTS" --timeout 180 --retries 10 --resume-retries 30 "$@"; then
+  if "$PIP" install --quiet --constraint "$CONSTRAINTS" --timeout 180 --retries 10 "${RESUME_FLAG[@]}" "$@"; then
     echo "  ✓ $label"
   else
     echo "  ✗ $label 失败。可重跑本脚本续装（已下载的会复用）。" >&2
