@@ -83,7 +83,13 @@ if [ ! -x "$VENV/bin/python" ]; then
 else
   echo "→ venv 已存在，复用：$VENV"
 fi
-PIP="$VENV/bin/pip"
+# 用 `python -m pip` 而不是 bin/pip。
+#
+# 理由：venv 里的 bin/pip 是带绝对路径 shebang 的脚本，环境目录一旦被移动
+# （桌面端要放到 ~/Library/Application Support/.../state，或用户手工搬家），
+# 它就变成 "bad interpreter" 而失效，但 `python -m pip` 不受影响。
+# 实机踩过：安装好的环境整体移到 state 根后，bin/pip 直接不可执行。
+PIP=("$VENV/bin/python" -m pip)
 
 # 钉住 numpy：任何一步把它升到 2.x 都会让 DA3 与 open3d 的组合崩掉。
 CONSTRAINTS="$WB/constraints.txt"
@@ -91,12 +97,12 @@ echo 'numpy==1.26.4' > "$CONSTRAINTS"
 
 # 新 venv 自带的是 pip 25.0.x，不认识 --resume-retries（25.2 才加）。
 # 先升级一次；升级失败也不致命——下面的 install_step 会按实际能力决定用不用它。
-"$PIP" install --quiet --upgrade pip >/dev/null 2>&1 || echo "  （pip 升级失败，将跳过断点续传选项）"
+"${PIP[@]}" install --quiet --upgrade pip >/dev/null 2>&1 || echo "  （pip 升级失败，将跳过断点续传选项）"
 
 # 探测 --resume-retries 是否可用：大包下载中断后能续传很重要
 # （实测 torch 的 111MB 直连断过两次），但不能因为它让整个安装失败。
 RESUME_FLAG=()
-if "$PIP" install --help 2>/dev/null | grep -q -- '--resume-retries'; then
+if "${PIP[@]}" install --help 2>/dev/null | grep -q -- '--resume-retries'; then
   RESUME_FLAG=(--resume-retries 30)
 fi
 
@@ -106,7 +112,7 @@ fi
 # 和其余几十个小包混在一个命令里失败时没法判断到底是谁断的。
 install_step() {
   local label="$1"; shift
-  if "$PIP" install --quiet --constraint "$CONSTRAINTS" --timeout 180 --retries 10 "${RESUME_FLAG[@]}" "$@"; then
+  if "${PIP[@]}" install --quiet --constraint "$CONSTRAINTS" --timeout 180 --retries 10 "${RESUME_FLAG[@]}" "$@"; then
     echo "  ✓ $label"
   else
     echo "  ✗ $label 失败。可重跑本脚本续装（已下载的会复用）。" >&2
