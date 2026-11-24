@@ -312,6 +312,8 @@ export default function PromptCaseTab({
   const sourceOptions = [
     { id: '', label: `全部 ${facets.total}` },
     { id: 'vflow', label: `vflow ${facets.bySource.vflow || 0}` },
+    { id: 'apiko', label: `apiko ${facets.bySource.apiko || 0}` },
+    { id: 'higgsfield', label: `higgsfield ${facets.bySource.higgsfield || 0}` },
     { id: 'reverse-own', label: `我的反推 ${facets.bySource['reverse-own'] || 0}` },
     { id: 'manual', label: `手工 ${facets.bySource.manual || 0}` },
   ]

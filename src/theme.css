@@ -2500,6 +2500,9 @@ body.si-resizing {
 .asset-tabs {
   display: flex;
   align-items: center;
+  /* 必须换行：Tab 已经到 8 个 + 末尾说明条，390px 下不换行会把每个按钮
+     压成竖排单字（英文说明条把剩余空间吃光）。换行后按钮保持横排。 */
+  flex-wrap: wrap;
   gap: 8px;
   max-width: 1320px;
   margin-left: auto;
@@ -2516,6 +2519,9 @@ body.si-resizing {
   background: var(--panel-2);
   color: var(--muted);
   font-size: var(--fs-sm);
+  /* 不参与收缩：让它们保持自然宽度，靠容器换行而不是压窄 */
+  flex: 0 0 auto;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -3188,6 +3194,16 @@ body.si-resizing {
   margin-left: auto;
   color: var(--muted);
   font-size: var(--fs-xs);
+}
+
+/* 窄屏把说明条压到下一行并取消右推：它是一条长文案，留在按钮同行会
+   把按钮挤成竖排单字。 */
+@media (max-width: 899px) {
+  .asset-tabs-hint {
+    flex: 1 1 100%;
+    margin-left: 0;
+    padding-left: 2px;
+  }
 }
 
 .m3d-studio-hero {
@@ -22826,4 +22842,454 @@ button.crumb:hover {
   ::view-transition-new(script-page) {
     animation: none;
   }
+}
+
+/* ==========================================================================
+   提示词写作指南（素材页第 8 个 Tab）
+   ==========================================================================
+
+   与案例库的分工：案例是具体成品（一条视频 + 一段提示词），指南是方法论
+   （为什么这样写、错在哪）。所以两边不共用列表——案例按时间浏览，指南按 18 轴。
+
+   前缀用 `guide-` 而不是 `pc-`：案例库那套带抽屉与分面编辑，语义不同，混用会
+   让两边样式互相牵制。也不用 `pg-`，避免与书页的 `--page-*` 视觉混淆。
+
+   颜色一律复用既有 token（没有新造颜色变量）：`html[data-theme='day']` 只覆盖
+   调色板变量，新造的颜色不会跟随日间主题。
+   ========================================================================== */
+
+.guide-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.guide-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 56px var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.guide-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sb-spin 0.8s linear infinite;
+}
+
+.guide-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.guide-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.guide-banner p {
+  margin: 0;
+  /* 来源标题是长英文，必须允许断行，否则在窄屏把 banner 撑破 */
+  overflow-wrap: anywhere;
+}
+
+.guide-banner code,
+.asset-tabs-hint code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-2);
+  font-family: var(--font-mono);
+  font-size: 0.94em;
+}
+
+/* 明确标出许可口径：内容来自外部站点，不能当本项目产物 */
+.guide-license {
+  padding: 1px 7px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-full);
+  color: var(--warn);
+  font-size: var(--fs-2xs);
+}
+
+.guide-layout {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 1279px) {
+  .guide-layout {
+    grid-template-columns: 172px minmax(0, 1fr);
+  }
+  /* 窄一档时详情下沉到列表下方，横排会挤成三窄条 */
+  .guide-reader {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 899px) {
+  .guide-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .guide-rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+  }
+  .guide-reader {
+    grid-column: auto;
+  }
+}
+
+/* ---------- 左：轴列表 ---------- */
+
+.guide-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  position: sticky;
+  top: var(--sp-3);
+}
+
+.guide-rail-head {
+  margin: 0 0 var(--sp-2);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.guide-axis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.guide-axis:hover {
+  background: var(--panel-2);
+}
+
+.guide-axis.on {
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.guide-axis-cn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guide-axis-n {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.guide-axis.on .guide-axis-n {
+  color: inherit;
+}
+
+/* ---------- 中：指南列表 ---------- */
+
+.guide-main {
+  display: contents;
+}
+
+.guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.guide-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-base) var(--ease);
+}
+
+.guide-card:hover {
+  border-color: var(--accent-line);
+}
+
+.guide-card.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.guide-card-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.guide-card-facets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.guide-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+}
+
+/* 类型徽标：配方 / 变体 / 对照，三种的教学价值不同，颜色区分 */
+.guide-kind {
+  align-self: flex-start;
+  padding: 0 6px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+}
+
+.guide-kind.k-recipe {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent);
+}
+
+.guide-kind.k-variant {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  color: var(--ok);
+}
+
+.guide-kind.k-contrast {
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--line));
+  color: var(--warn);
+}
+
+/* ---------- 右：指南正文 ---------- */
+
+.guide-reader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+@media (min-width: 1280px) {
+  .guide-reader {
+    position: sticky;
+    top: var(--sp-3);
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+  }
+}
+
+.guide-reader-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.guide-reader-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.guide-reader-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+.guide-reader-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  color: var(--text-2);
+}
+
+.guide-lead {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.65;
+}
+
+.guide-sec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.guide-sec > h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.guide-sec > p {
+  margin: 0;
+}
+
+.guide-sec-hint {
+  margin-left: var(--sp-2);
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 400;
+  color: var(--warn);
+}
+
+/* 参数组合：dt/dd 两列，像一张规格表 */
+.guide-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+}
+
+.guide-settings > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: 2px 0;
+}
+
+.guide-settings dt {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  text-transform: capitalize;
+}
+
+.guide-settings dd {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+/* 提示词正文：等宽、可滚动、不换行撑破容器 */
+.guide-pre {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  max-height: 340px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* 反面示范：左侧警告条 + 压暗，和「推荐写法」形成对照 */
+.guide-pre.is-bad {
+  border-left: 3px solid var(--warn);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--warn) 5%, var(--bg-2));
+}
+
+.guide-pre.is-good {
+  border-left: 3px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 4%, var(--bg-2));
+}
+
+.guide-segments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding-left: 1.4em;
+  font-size: var(--fs-xs);
+  line-height: 1.65;
+}
+
+.guide-segments li > b {
+  display: block;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.guide-segments li > span {
+  display: block;
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+
+.guide-why {
+  padding-left: var(--sp-2);
+  border-left: 2px solid var(--line-2);
+  color: var(--muted);
 }

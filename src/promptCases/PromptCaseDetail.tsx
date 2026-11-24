@@ -302,7 +302,15 @@ export default function PromptCaseDetail({
   const { containerRef } = useOverlayChrome({ open: true, onClose })
 
   const sourceLabel =
-    item.source === 'vflow' ? 'vflow（外部导入）' : item.source === 'reverse-own' ? '我的片子反推' : '手工录入'
+    item.source === 'vflow'
+      ? 'vflow（外部导入）'
+      : item.source === 'apiko'
+        ? 'apiko（外部导入）'
+        : item.source === 'higgsfield'
+          ? 'higgsfield（外部导入）'
+          : item.source === 'reverse-own'
+          ? '我的片子反推'
+          : '手工录入'
   const licenseLabel = item.license === 'own' ? '自有' : '仅参考'
 
   const excerptPrompt = () => {

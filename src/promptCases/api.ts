@@ -1,5 +1,5 @@
 /** 案例来源：外部导入 / 手工录入 / 自有片反推 */
-export type PromptCaseSource = 'vflow' | 'manual' | 'reverse-own'
+export type PromptCaseSource = 'vflow' | 'apiko' | 'higgsfield' | 'manual' | 'reverse-own'
 
 /** 许可口径：服务端按来源强制，前端只读 */
 export type PromptCaseLicense = 'own' | 'reference-only'

@@ -29,7 +29,15 @@ function CaseCard({
   const [broken, setBroken] = useState(false)
   useEffect(() => setBroken(false), [item.posterUrl])
   const sourceLabel =
-    item.source === 'vflow' ? 'vflow' : item.source === 'reverse-own' ? '我的反推' : '手工'
+    item.source === 'vflow'
+      ? 'vflow'
+      : item.source === 'apiko'
+        ? 'apiko'
+        : item.source === 'higgsfield'
+          ? 'higgsfield'
+          : item.source === 'reverse-own'
+          ? '我的反推'
+          : '手工'
   const shotCount = item.shots?.length || 0
   const allFacets = Array.isArray(item.facets) ? item.facets : []
   const badges = cardFacets(allFacets)

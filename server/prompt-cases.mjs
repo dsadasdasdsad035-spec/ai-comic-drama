@@ -25,7 +25,7 @@ import {
 } from './prompt-taxonomy.mjs'
 
 /** 来源类别；`license` 与来源的对应关系见 LICENSE_BY_SOURCE */
-export const CASE_SOURCES = ['vflow', 'manual', 'reverse-own']
+export const CASE_SOURCES = ['vflow', 'apiko', 'higgsfield', 'manual', 'reverse-own']
 
 /**
  * 来源 → 许可口径。外部来源一律只能作为参考；只有自有片反推才算自有。
@@ -33,6 +33,10 @@ export const CASE_SOURCES = ['vflow', 'manual', 'reverse-own']
  */
 export const LICENSE_BY_SOURCE = {
   vflow: 'reference-only',
+  // apiko 是成品提示词清单（每条一段长英文），同样是外部内容，只能作参考
+  apiko: 'reference-only',
+  // higgsfield 博客的实操拆解：内容同样是外部作者写的，只能作参考
+  higgsfield: 'reference-only',
   manual: 'reference-only',
   'reverse-own': 'own',
 }
@@ -901,15 +905,20 @@ export const CASE_SOURCE_REGISTRY = {
   apiko: {
     id: 'apiko',
     label: 'apiko',
+    // 不开放界面「预览→导入」：apiko 的页面按模型分页、每页 90-140 条，
+    // 万级抓取用 scripts/sync-case-sources.mjs 一次性同步（带断点续传），
+    // 不适合让用户在弹窗里逐条勾选。
     enabled: false,
-    reason: '页面纯客户端渲染，没有可用的索引或接口。',
-    note: '',
+    reason: '批量同步请用 scripts/sync-case-sources.mjs --source apiko（11 个模型页约 1,200 条）。',
+    note: '页面服务端渲染，可直接解析；媒体走 site 内图片外链。',
   },
   higgsfield: {
     id: 'higgsfield',
     label: 'higgsfield',
     enabled: false,
-    reason: '只有项目页，没有批量索引。',
+    // /blog/ 是服务端渲染且 robots 允许，但内容是方法论而非成品案例，
+    // 已归入「写作指南」那套快照（scripts/fetch-prompt-guides.mjs）。
+    reason: '博客内容是写作方法论，已归入「写作指南」；作品页 /flow/、/library/ 被 robots 挡。',
     note: '',
   },
 }

@@ -36,10 +36,11 @@ import { BOARD_LIST_PAGE_SIZE, designListMatch, useBoardListFilter } from './boa
 import CharacterBoard, { type CharacterBoardProps } from './CharacterBoard'
 import { MATERIAL_TAB_CHARACTER_KEY } from './shell/route'
 import PromptCaseTab from './promptCases/PromptCaseTab'
+import PromptGuideTab from './promptGuides/PromptGuideTab'
 
 const LazyMaterial3dStudio = lazy(() => import('./material3d/Material3dStudio'))
 
-type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d' | 'prompt-cases'
+type MaterialTab = DesignKind | 'video' | 'character' | 'studio3d' | 'prompt-cases' | 'prompt-guide'
 
 function readInitialMaterialTab(): MaterialTab {
   try {
@@ -482,6 +483,8 @@ export default function AssetBoard({
    * 未知就该显示未知，不能显示一个错的数字。
    */
   const [caseCount, setCaseCount] = useState<number | null>(null)
+  /** 写作指南条数：同样 null 表示还没读过 */
+  const [guideCount, setGuideCount] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [reverseOpen, setReverseOpen] = useState(false)
   useEffect(() => {
@@ -489,7 +492,8 @@ export default function AssetBoard({
   }, [project?.material3dScenes])
   const shown = useMemo(
     () =>
-      tab === 'video' || tab === 'character' || tab === 'studio3d' || tab === 'prompt-cases'
+      tab === 'video' || tab === 'character' || tab === 'studio3d' ||
+      tab === 'prompt-cases' || tab === 'prompt-guide'
         ? []
         : designs.filter((d) => d.kind === tab),
     [designs, tab],
@@ -498,7 +502,8 @@ export default function AssetBoard({
     shown,
     designListMatch,
     BOARD_LIST_PAGE_SIZE,
-    tab === 'character' || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' ? 'scene' : tab,
+    tab === 'character' || tab === 'video' || tab === 'studio3d' ||
+    tab === 'prompt-cases' || tab === 'prompt-guide' ? 'scene' : tab,
   )
   const sceneCount = designs.filter((d) => d.kind === 'scene').length
   const propCount = designs.filter((d) => d.kind === 'prop').length
@@ -536,13 +541,17 @@ export default function AssetBoard({
                 ? caseCount === null
                   ? '全局案例库'
                   : `全局案例库 · ${caseCount} 条`
+              : tab === 'prompt-guide'
+                ? guideCount === null
+                  ? '写作指南 · 按 18 轴'
+                  : `写作指南 · ${guideCount} 篇`
               : projectName
                 ? `场景 ${sceneCount} · 道具 ${propCount} · 项目级设定`
                 : '先选择项目'}
           </span>
         }
         settings={
-          lexiconOpen || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' ? null : tab === 'character' ? (
+          lexiconOpen || tab === 'video' || tab === 'studio3d' || tab === 'prompt-cases' || tab === 'prompt-guide' ? null : tab === 'character' ? (
             <>
               <StageModelSelect
                 stage={'character' as Stage}
@@ -638,6 +647,10 @@ export default function AssetBoard({
                 反推我的片子
               </button>
             </>
+          ) : tab === 'prompt-guide' ? (
+            <span className="board-hint">
+              内容是打包快照，更新请运行 <code>node scripts/fetch-prompt-guides.mjs</code>
+            </span>
           ) : (
           <>
             <button
@@ -739,6 +752,18 @@ export default function AssetBoard({
         >
           提示词案例{caseCount === null ? null : <span>{caseCount}</span>}
         </button>
+        <button
+          type="button"
+          className={!lexiconOpen && tab === 'prompt-guide' ? 'on' : ''}
+          data-prompt-guide-tab
+          onClick={() => {
+            setLexiconOpen(false)
+            setTab('prompt-guide')
+          }}
+          title="按 18 轴浏览提示词写作指南（外部博客快照）"
+        >
+          写作指南{guideCount === null ? null : <span>{guideCount}</span>}
+        </button>
         <span className="asset-tabs-hint">
           {lexiconOpen
             ? '镜头语言：运镜参照与白模 · 浏览器编排请用「场景三维」Tab；成片 MP4 用创意 Blender 三维专家'
@@ -750,6 +775,8 @@ export default function AssetBoard({
                 ? '场景三维：立板/CC0 道具/Poly Haven · 成片仍在 Blender 专家'
               : tab === 'prompt-cases'
                 ? '全局案例库：外部导入与外片反推共用 · 可复制或应用到当前镜头'
+              : tab === 'prompt-guide'
+                ? '写作指南：按 18 轴读方法论与正反示范 · 外部博客快照，仅作参考'
               : `${withImage} 张有图 · ${designs.filter((d) => onCanvasDesignIds.has(d.id)).length} 张已在画布`}
         </span>
       </div>
@@ -798,6 +825,8 @@ export default function AssetBoard({
           reverseOpen={reverseOpen}
           onReverseOpenChange={setReverseOpen}
         />
+      ) : tab === 'prompt-guide' ? (
+        <PromptGuideTab onCountChange={setGuideCount} />
       ) : tab === 'studio3d' ? (
         <Suspense fallback={<div className="char-empty-board">正在加载三维引擎…</div>}>
           <LazyMaterial3dStudio
