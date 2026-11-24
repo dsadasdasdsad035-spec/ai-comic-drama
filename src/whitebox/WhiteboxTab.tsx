@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectAsset } from '../api'
+import { ACCEPT_ATTR, MAX_IMAGE_BYTES, mb, pickImageFile, uploadImageFile } from '../mediaUpload'
 import {
   PHASE_LABEL,
   cancelWhiteboxJob,
@@ -75,6 +76,17 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
   const [videoUrl, setVideoUrl] = useState('')
   /** 图片模式的选中项（站内 URL），按选择顺序保存——顺序影响相邻帧重叠 */
   const [imageUrls, setImageUrls] = useState<string[]>([])
+  /** 正在上传的图片数（>0 时禁用提交，避免半途提交） */
+  const [uploading, setUploading] = useState(0)
+  /**
+   * 本次会话上传的图片。
+   *
+   * 为什么要单独记：/api/save-image 只把文件落进项目媒体目录，**不登记素材卡**
+   * （见 server/media.mjs 的 saveProjectImage），而素材网格读的是 project.assets。
+   * 不自己记一份，用户刚上传的图不会出现在网格里，等于白传。
+   */
+  const [uploadedUrls, setUploadedUrls] = useState<string[]>([])
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   // 帧间隔是决定重建质量的关键：间隔越大，相邻帧重叠越少，位姿越容易崩。
   // 默认 0.5 秒（42 秒视频 → 84 帧，覆盖全片且画面重叠充足）。
   const [frameInterval, setFrameInterval] = useState(0.5)
@@ -85,14 +97,18 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
   const [error, setError] = useState('')
   const pollRef = useRef<number | null>(null)
 
-  const images = useMemo(
-    () =>
-      (assets || []).filter((a) => {
-        const u = String(a.url || '').toLowerCase().split('?')[0]
-        return String(a.kind) === 'image' || /\.(png|jpe?g|webp)$/.test(u)
-      }),
-    [assets],
-  )
+  const images = useMemo(() => {
+    const fromAssets = (assets || []).filter((a) => {
+      const u = String(a.url || '').toLowerCase().split('?')[0]
+      return String(a.kind) === 'image' || /\.(png|jpe?g|webp)$/.test(u)
+    })
+    // 把刚上传但还没登记成素材卡的图补到最前面（最新传的更容易认）
+    const known = new Set(fromAssets.map((a) => a.url))
+    const extra: ProjectAsset[] = uploadedUrls
+      .filter((u) => !known.has(u))
+      .map((u) => ({ kind: 'image', title: u.split('/').pop() || '刚上传', url: u }))
+    return [...extra, ...fromAssets]
+  }, [assets, uploadedUrls])
 
   const videos = useMemo(
     () =>
@@ -154,11 +170,57 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
     [stopPoll],
   )
 
+  /**
+   * 上传图片并直接选入转换列表。
+   *
+   * 复用 src/mediaUpload.ts 的校验（类型白名单 / 30MB / 空 MIME 按扩展名兜底），
+   * 不在这里重写一遍——那套规则已经被 verify-media-upload.mjs 覆盖，重复实现会漂移。
+   *
+   * 多选：逐个上传、逐个追加。单张失败不影响其它张，最后汇总报错。
+   */
+  const handleUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    setError('')
+    const list = Array.from(files)
+    // 先全量校验，避免传了一半才发现有不合规的
+    for (const file of list) {
+      const check = pickImageFile(file)
+      if (!check.ok) {
+        setError(`${file.name}：${check.reason}`)
+        return
+      }
+    }
+
+    setUploading(list.length)
+    const added: string[] = []
+    const failed: string[] = []
+    for (const file of list) {
+      try {
+        const url = await uploadImageFile(file, { project: projectName, prefix: 'whitebox' })
+        if (url) added.push(url)
+      } catch (e) {
+        failed.push(`${file.name}：${(e as Error).message}`)
+      } finally {
+        setUploading((n) => Math.max(0, n - 1))
+      }
+    }
+    if (added.length) {
+      // 追加到已选列表末尾：上传顺序就是用户摆放的顺序，也就是相邻关系
+      setUploadedUrls((prev) => [...added.filter((u) => !prev.includes(u)), ...prev])
+      setImageUrls((prev) => [...prev, ...added.filter((u) => !prev.includes(u))])
+      toast(`已上传 ${added.length} 张图片`)
+    }
+    if (failed.length) {
+      setError(`${failed.length} 张上传失败：${failed.slice(0, 2).join('；')}`)
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const busy = job?.status === 'queued' || job?.status === 'running'
   const ready = Boolean(health?.ok)
   const inputReady =
     sourceType === 'images' ? imageUrls.length >= 4 : Boolean(videoUrl)
-  const canSubmit = Boolean(projectName && inputReady && ready && !busy && !submitting)
+  const canSubmit = Boolean(projectName && inputReady && ready && !busy && !submitting && uploading === 0)
 
   const submit = async () => {
     if (!canSubmit) return
@@ -325,9 +387,35 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
               并且要<strong>走动</strong>而不是原地转圈（平移才产生视差）。
               实测同一房间：随机 8 张出 12,744 面，精挑 8 张出 73,528 面。
             </p>
+            {/* 上传入口放在素材网格上方：没有图片素材时也要能上传，
+                所以不能只在「有素材」分支里提供。 */}
+            <div className="wb-upload">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_ATTR}
+                multiple
+                hidden
+                data-whitebox-upload-input
+                onChange={(e) => void handleUpload(e.target.files)}
+              />
+              <button
+                type="button"
+                className="btn"
+                data-whitebox-upload
+                disabled={busy || uploading > 0 || !projectName}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploading > 0 ? `上传中…（剩 ${uploading} 张）` : '+ 上传图片'}
+              </button>
+              <span className="wb-field-hint">
+                可多选 · 支持 PNG / JPEG / WebP · 单张 ≤ {mb(MAX_IMAGE_BYTES)}
+              </span>
+            </div>
+
             {images.length === 0 ? (
               <p className="board-hint">
-                当前项目还没有图片素材。先到「场景/道具」或上传图片，再回来选。
+                还没有图片素材。点上面的「+ 上传图片」一次选多张，或到「场景/道具」生成后再回来选。
               </p>
             ) : (
               <>

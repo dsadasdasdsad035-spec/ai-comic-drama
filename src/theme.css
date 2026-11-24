@@ -23695,3 +23695,12 @@ button.crumb:hover {
   line-height: 17px;
   text-align: center;
 }
+
+/* 图片上传入口：按钮 + 提示文字同行 */
+.wb-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
