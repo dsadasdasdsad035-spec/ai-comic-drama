@@ -86,6 +86,36 @@ node scripts/sync-case-sources.mjs --source vflow --limit 200   # 试跑
 
 实测结果（截至本次全量）：轴覆盖从 147/430 提升到 262/430，**18 轴全部点亮**。
 
+## 补齐 18 轴：别名扩容
+
+数据源挖尽后仍会有空格子。根因不是案例不够，而是**措辞不重叠**：
+词表的别名是中文（`江户时代`、`冷战时期`），语料是英文（`Edo period`、
+`Cold War`）；作者也不会写 `in medias res narrative structure` 这种学术短语。
+
+做法是给受控值补**语料里真实出现的英文写法**，然后按新词表版本回填分面
+（`node scripts/backfill-prompt-facets.mjs --only-stale`，幂等，旧 derived 会被删掉）。
+
+两轮扩容后值覆盖从 400/430 涨到 **423/430（98%）**。判断标准是「上下文里
+该词确实在描述这个轴」，不是字符串命中：
+
+| 加了 | 没加 | 原因 |
+|---|---|---|
+| `Edo period` / `Cold War` / `Middle Eastern` | `reflection`(2,127 次) | 多半是 `reflective tile` 之类的材质描述，不是倒影构图 |
+| `vignette`(59 次) | `food`(1,072 次) / `explosion`(753 次) | 太泛，会把「厨房场景」也算成食物道具 |
+| `manga panel` / `comic panel` | `framed by`(25 次) | 多是「建筑框住人物」，不是框中框构图 |
+| `worm's eye` / `tilt-shift` | `patterned`(81 次) | 多是衣服花纹，不是重复图案构图 |
+
+**仍空的 7 个值是正确结果**，不该硬补：
+
+- `style-medium` 的 `code-render` / `still-motion` / `static-hold` / `film-footage`
+  是**制作方式**，只能由反推案例（`reverse-own`）的 `kindMappings` 产生。
+  当前反推案例数为 0，所以这 4 个空着是事实，不是缺数据。
+- `narrative:hero-journey`、`narrative:frame-narrative`、`composition:high-horizon`
+  在 14,344 条语料里出现 0 次（`high horizon` 仅 1 次且不是构图描述）。
+  作者不这么写，补别名就是造假。
+
+`verify-case-sync.mjs` 里有一条 `值覆盖 >= 95%` 的兜底断言：词表加值而没人补数据时它会红。
+
 ## flatkey（已登记，未启用）
 
 - `prompt` 正文确实在 Next.js flight 数据里，服务端可解析；

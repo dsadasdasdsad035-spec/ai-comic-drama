@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-23.2",
+  "version": "2026-11-24.2",
   "note": "提示词案例的 18 轴受控词表。轴 id 发布后不再改名；改值只能靠新增 id + 把旧名放进 aliases。",
   "limits": {
     "perAxis": 6,
@@ -68,12 +68,12 @@
       "order": 2,
       "values": [
         { "id": "linear", "cn": "线性叙事", "en": "linear", "token": "linear narrative", "aliases": ["顺叙"] },
-        { "id": "non-linear", "cn": "非线性叙事", "en": "non-linear", "token": "non-linear narrative", "aliases": ["非线性"] },
+        { "id": "non-linear", "cn": "非线性叙事", "en": "non-linear", "token": "non-linear narrative", "aliases": ["非线性", "non-linear", "nonlinear", "fragmented timeline"] },
         { "id": "flashback", "cn": "闪回", "en": "flashback", "token": "flashback", "aliases": ["回忆"] },
-        { "id": "flash-forward", "cn": "闪前", "en": "flash forward", "token": "flash forward", "aliases": ["预叙"] },
-        { "id": "in-medias-res", "cn": "中途开场", "en": "in medias res", "token": "in medias res", "aliases": ["开场即高潮"] },
+        { "id": "flash-forward", "cn": "闪前", "en": "flash forward", "token": "flash forward", "aliases": ["预叙", "flash forward", "flash-forward"] },
+        { "id": "in-medias-res", "cn": "中途开场", "en": "in medias res", "token": "in medias res", "aliases": ["开场即高潮", "in medias res", "starts mid-action", "mid-action opening"] },
         { "id": "circular", "cn": "环形结构", "en": "circular", "token": "circular structure", "aliases": ["首尾呼应"] },
-        { "id": "episodic", "cn": "段落式", "en": "episodic", "token": "episodic structure", "aliases": ["章节式"] },
+        { "id": "episodic", "cn": "段落式", "en": "episodic", "token": "episodic structure", "aliases": ["章节式", "vignette", "vignettes", "chapter by chapter"] },
         { "id": "three-act", "cn": "三幕式", "en": "three act", "token": "three-act structure", "aliases": ["三幕"] },
         { "id": "hero-journey", "cn": "英雄之旅", "en": "hero's journey", "token": "hero's journey", "aliases": ["英雄历程"] },
         { "id": "twist-ending", "cn": "反转结局", "en": "twist ending", "token": "twist ending", "aliases": ["结局反转"] },
@@ -84,7 +84,7 @@
         { "id": "ensemble", "cn": "群像叙事", "en": "ensemble", "token": "ensemble narrative", "aliases": ["多线并进"] },
         { "id": "frame-narrative", "cn": "框架叙事", "en": "frame narrative", "token": "frame narrative", "aliases": ["故事中的故事"] },
         { "id": "dream-logic", "cn": "梦境逻辑", "en": "dream logic", "token": "dream logic", "aliases": ["超逻辑"] },
-        { "id": "mockumentary-narrative", "cn": "伪纪录叙事", "en": "mockumentary narrative", "token": "mockumentary narrative", "aliases": ["伪纪录体"] },
+        { "id": "mockumentary-narrative", "cn": "伪纪录叙事", "en": "mockumentary narrative", "token": "mockumentary narrative", "aliases": ["伪纪录体", "mockumentary"] },
         { "id": "loop", "cn": "时间循环", "en": "time loop", "token": "time loop", "aliases": ["循环结构"] }
       ]
     },
@@ -138,21 +138,21 @@
         { "id": "renaissance", "cn": "文艺复兴", "en": "renaissance", "token": "renaissance", "aliases": ["文艺复兴时期"] },
         { "id": "wild-west", "cn": "西部拓荒", "en": "wild west", "token": "wild west", "aliases": ["拓荒时代"] },
         { "id": "world-war-ii", "cn": "二战", "en": "world war II", "token": "world war II", "aliases": ["二次大战"] },
-        { "id": "cold-war", "cn": "冷战", "en": "cold war", "token": "cold war", "aliases": ["冷战时期"] },
+        { "id": "cold-war", "cn": "冷战", "en": "cold war", "token": "cold war", "aliases": ["冷战时期", "Cold War", "Soviet era", "USSR"] },
         { "id": "post-war", "cn": "战后", "en": "post-war", "token": "post-war", "aliases": ["战后年代"] },
         { "id": "cyber-future", "cn": "赛博未来", "en": "cyber future", "token": "cyberpunk future", "aliases": ["赛博都市"] },
         { "id": "dystopian", "cn": "反乌托邦", "en": "dystopian", "token": "dystopian", "aliases": ["反乌托邦未来"] },
         { "id": "space-age", "cn": "太空时代", "en": "space age", "token": "space age", "aliases": ["星际时代"] },
         { "id": "feudal-japan", "cn": "日本战国", "en": "feudal Japan", "token": "feudal Japan", "aliases": ["战国日本"] },
-        { "id": "edo-japan", "cn": "江户", "en": "edo period", "token": "edo period Japan", "aliases": ["江户时代"] },
+        { "id": "edo-japan", "cn": "江户", "en": "edo period", "token": "edo period Japan", "aliases": ["江户时代", "Edo period", "Edo-era", "Edo Japan"] },
         { "id": "noir-1940s", "cn": "四十年代黑色", "en": "1940s noir", "token": "1940s film noir", "aliases": ["四十年代"] },
         { "id": "seventies", "cn": "七十年代", "en": "1970s", "token": "1970s", "aliases": ["七十年代复古"] },
         { "id": "nineties", "cn": "九十年代", "en": "1990s", "token": "1990s", "aliases": ["九十年代复古"] },
         { "id": "y2k", "cn": "千禧年", "en": "Y2K", "token": "Y2K aesthetic", "aliases": ["千禧风"] },
-        { "id": "future-2100", "cn": "二十二世纪", "en": "22nd century", "token": "22nd century", "aliases": ["未来世纪"] },
-        { "id": "mythic", "cn": "神话时代", "en": "mythic age", "token": "mythic age", "aliases": ["上古神话"] },
+        { "id": "future-2100", "cn": "二十二世纪", "en": "22nd century", "token": "22nd century", "aliases": ["未来世纪", "22nd century", "distant future"] },
+        { "id": "mythic", "cn": "神话时代", "en": "mythic age", "token": "mythic age", "aliases": ["上古神话", "mythic age", "mythological", "ancient myth", "mythic"] },
         { "id": "timeless", "cn": "无年代", "en": "timeless", "token": "timeless setting", "aliases": ["超时代"] },
-        { "id": "near-east", "cn": "中东", "en": "middle east", "token": "middle eastern setting", "aliases": ["中东地域"] }
+        { "id": "near-east", "cn": "中东", "en": "middle east", "token": "middle eastern setting", "aliases": ["中东地域", "Middle Eastern", "Middle East", "Arabian", "desert kingdom"] }
       ]
     },
     {
@@ -249,7 +249,7 @@
         { "id": "throw", "cn": "投掷", "en": "throwing", "token": "throwing", "aliases": ["抛出"] },
         { "id": "draw-weapon", "cn": "拔械", "en": "drawing a weapon", "token": "drawing a weapon", "aliases": ["拔刀", "拔枪"] },
         { "id": "reload", "cn": "换弹", "en": "reloading", "token": "reloading", "aliases": ["上膛"] },
-        { "id": "explosion-reaction", "cn": "爆炸反应", "en": "explosion reaction", "token": "reacting to an explosion", "aliases": ["冲击波反应"] },
+        { "id": "explosion-reaction", "cn": "爆炸反应", "en": "explosion reaction", "token": "reacting to an explosion", "aliases": ["冲击波反应", "explosion reaction", "blast wave", "reacting to an explosion"] },
         { "id": "cry", "cn": "哭泣", "en": "crying", "token": "crying", "aliases": ["落泪"] },
         { "id": "laugh", "cn": "大笑", "en": "laughing", "token": "laughing", "aliases": ["笑"] },
         { "id": "sleep", "cn": "入睡", "en": "sleeping", "token": "sleeping", "aliases": ["睡着"] },
@@ -288,7 +288,7 @@
         { "id": "screen", "cn": "屏幕", "en": "screen", "token": "a glowing screen", "aliases": ["显示器"] },
         { "id": "book", "cn": "书", "en": "book", "token": "a book", "aliases": ["书本", "翻书"] },
         { "id": "letter", "cn": "信", "en": "letter", "token": "a letter", "aliases": ["信件", "信封"] },
-        { "id": "food-prop", "cn": "食物道具", "en": "food prop", "token": "food on a table", "aliases": ["餐食"] },
+        { "id": "food-prop", "cn": "食物道具", "en": "food prop", "token": "food on a table", "aliases": ["餐食", "food cart", "plate of food", "meal on the table"] },
         { "id": "money", "cn": "钞票", "en": "cash", "token": "stacks of cash", "aliases": ["现金"] },
         { "id": "mask", "cn": "面具", "en": "mask", "token": "a mask", "aliases": ["面罩"] },
         { "id": "umbrella", "cn": "伞", "en": "umbrella", "token": "an umbrella", "aliases": ["雨伞", "伞下"] }
@@ -323,7 +323,7 @@
         { "id": "low-angle", "cn": "仰拍", "en": "low angle", "token": "low angle", "aliases": ["低角度"] },
         { "id": "high-angle", "cn": "俯拍", "en": "high angle", "token": "high angle", "aliases": ["高角度"] },
         { "id": "birds-eye", "cn": "鸟瞰", "en": "bird's eye view", "token": "bird's eye view", "aliases": ["上帝视角"] },
-        { "id": "worms-eye", "cn": "虫视", "en": "worm's eye view", "token": "worm's eye view", "aliases": ["贴地仰视"] },
+        { "id": "worms-eye", "cn": "虫视", "en": "worm's eye view", "token": "worm's eye view", "aliases": ["贴地仰视", "worm's eye", "worm eye view", "ground level looking up"] },
         { "id": "dutch-angle", "cn": "斜角", "en": "dutch angle", "token": "dutch angle", "aliases": ["倾斜构图", "荷兰角"] },
         { "id": "hip-level", "cn": "腰高机位", "en": "hip level", "token": "hip level camera", "aliases": ["腰平视"] },
         { "id": "shoulder-level", "cn": "肩高机位", "en": "shoulder level", "token": "shoulder level camera", "aliases": ["肩平视"] },
@@ -337,7 +337,7 @@
         { "id": "front-on", "cn": "正面", "en": "front on", "token": "front on", "aliases": ["正面机位"] },
         { "id": "reflection-angle", "cn": "镜像视角", "en": "mirror angle", "token": "shot through a mirror", "aliases": ["镜中视角"] },
         { "id": "reverse-angle", "cn": "反打", "en": "reverse angle", "token": "reverse angle", "aliases": ["反打镜", "正反打"] },
-        { "id": "insert-angle", "cn": "插入机位", "en": "insert angle", "token": "insert camera angle", "aliases": ["细节机位"] }
+        { "id": "insert-angle", "cn": "插入机位", "en": "insert angle", "token": "insert camera angle", "aliases": ["细节机位", "insert shot", "insert camera", "cutaway"] }
       ]
     },
     {
@@ -378,7 +378,7 @@
         { "id": "macro", "cn": "微距", "en": "macro", "token": "macro lens", "aliases": ["微距镜头"] },
         { "id": "fisheye", "cn": "鱼眼", "en": "fisheye", "token": "fisheye lens", "aliases": ["鱼眼镜头"] },
         { "id": "anamorphic", "cn": "变形宽银幕", "en": "anamorphic", "token": "anamorphic lens", "aliases": ["宽银幕", "anamorphic flare"] },
-        { "id": "tilt-shift", "cn": "移轴", "en": "tilt shift", "token": "tilt-shift lens", "aliases": ["移轴镜头"] },
+        { "id": "tilt-shift", "cn": "移轴", "en": "tilt shift", "token": "tilt-shift lens", "aliases": ["移轴镜头", "tilt-shift", "tilt shift", "miniature effect"] },
         { "id": "shallow-dof", "cn": "浅景深", "en": "shallow depth of field", "token": "shallow depth of field", "aliases": ["大光圈虚化", "浅景深构图"] },
         { "id": "deep-focus", "cn": "深焦", "en": "deep focus", "token": "deep focus", "aliases": ["全景深"] },
         { "id": "soft-focus", "cn": "柔焦", "en": "soft focus", "token": "soft focus", "aliases": ["柔化"] },
@@ -401,17 +401,17 @@
         { "id": "symmetry", "cn": "对称", "en": "symmetry", "token": "symmetrical composition", "aliases": ["对称构图"] },
         { "id": "golden-ratio", "cn": "黄金分割", "en": "golden ratio", "token": "golden ratio composition", "aliases": ["黄金比例"] },
         { "id": "leading-lines", "cn": "引导线", "en": "leading lines", "token": "leading lines", "aliases": ["线条引导"] },
-        { "id": "frame-in-frame", "cn": "框中框", "en": "frame in frame", "token": "frame within a frame", "aliases": ["框中构图"] },
+        { "id": "frame-in-frame", "cn": "框中框", "en": "frame in frame", "token": "frame within a frame", "aliases": ["框中构图", "frame within a frame", "window frame", "doorway frame"] },
         { "id": "negative-space", "cn": "留白", "en": "negative space", "token": "generous negative space", "aliases": ["空白构图"] },
         { "id": "foreground-occlusion", "cn": "前景遮挡", "en": "foreground occlusion", "token": "foreground occlusion", "aliases": ["前景虚挡"] },
         { "id": "low-horizon", "cn": "低地平线", "en": "low horizon", "token": "low horizon line", "aliases": ["地平线压低"] },
-        { "id": "high-horizon", "cn": "高地平线", "en": "high horizon", "token": "high horizon line", "aliases": ["地平线抬高"] },
+        { "id": "high-horizon", "cn": "高地平线", "en": "high horizon", "token": "high horizon line", "aliases": ["地平线抬高", "high horizon"] },
         { "id": "centered", "cn": "居中构图", "en": "centered", "token": "centered composition", "aliases": ["中心构图"] },
         { "id": "diagonal", "cn": "对角构图", "en": "diagonal", "token": "diagonal composition", "aliases": ["对角线"] },
         { "id": "layered-depth", "cn": "层次纵深", "en": "layered depth", "token": "layered depth with foreground midground background", "aliases": ["前中后景"] },
-        { "id": "pattern", "cn": "重复图案", "en": "pattern repetition", "token": "repeating pattern", "aliases": ["图案重复"] },
+        { "id": "pattern", "cn": "重复图案", "en": "pattern repetition", "token": "repeating pattern", "aliases": ["图案重复", "geometric pattern", "repeating pattern", "patterned"] },
         { "id": "silhouette-comp", "cn": "剪影构图", "en": "silhouette composition", "token": "silhouette composition", "aliases": ["逆光剪影"] },
-        { "id": "reflection-comp", "cn": "镜像构图", "en": "reflection composition", "token": "reflection composition", "aliases": ["倒影构图"] },
+        { "id": "reflection-comp", "cn": "镜像构图", "en": "reflection composition", "token": "reflection composition", "aliases": ["倒影构图", "mirror reflection", "reflected in", "mirrored composition"] },
         { "id": "triangulation", "cn": "三角构图", "en": "triangular composition", "token": "triangular composition", "aliases": ["三角形构图"] }
       ]
     },
@@ -477,7 +477,7 @@
         { "id": "red-accent", "cn": "红色点缀", "en": "red accent", "token": "a single red accent", "aliases": ["朱红点睛"] },
         { "id": "warm-temperature", "cn": "暖色温", "en": "warm temperature", "token": "warm color temperature", "aliases": ["偏暖"] },
         { "id": "cool-temperature", "cn": "冷色温", "en": "cool temperature", "token": "cool color temperature", "aliases": ["偏冷"] },
-        { "id": "split-tone", "cn": "分离色调", "en": "split tone", "token": "split toning", "aliases": ["分离调色"] },
+        { "id": "split-tone", "cn": "分离色调", "en": "split tone", "token": "split toning", "aliases": ["分离调色", "split-toning", "split toning", "split tone"] },
         { "id": "bleach-bypass", "cn": "漂白旁路", "en": "bleach bypass", "token": "bleach bypass grade", "aliases": ["银盐冲洗感"] },
         { "id": "technicolor", "cn": "特艺彩色", "en": "technicolor", "token": "technicolor look", "aliases": ["三色染印"] }
       ]
@@ -503,9 +503,9 @@
         { "id": "fast-motion", "cn": "快动作", "en": "fast motion", "token": "fast motion", "aliases": ["降格"] },
         { "id": "freeze-frame", "cn": "定格", "en": "freeze frame", "token": "freeze frame", "aliases": ["定格画面"] },
         { "id": "rhythmic-cut", "cn": "节奏剪辑", "en": "rhythmic cutting", "token": "rhythmic cutting to the beat", "aliases": ["卡点剪辑"] },
-        { "id": "ellipsis", "cn": "省略剪辑", "en": "elliptical editing", "token": "elliptical editing", "aliases": ["跳时剪辑"] },
+        { "id": "ellipsis", "cn": "省略剪辑", "en": "elliptical editing", "token": "elliptical editing", "aliases": ["跳时剪辑", "cut to black", "elliptical editing"] },
         { "id": "continuity", "cn": "连续性剪辑", "en": "continuity editing", "token": "continuity editing", "aliases": ["无缝剪辑"] },
-        { "id": "non-linear-edit", "cn": "非线性剪辑", "en": "non-linear editing", "token": "non-linear editing", "aliases": ["乱序剪辑"] },
+        { "id": "non-linear-edit", "cn": "非线性剪辑", "en": "non-linear editing", "token": "non-linear editing", "aliases": ["乱序剪辑", "jump back", "back and forth"] },
         { "id": "split-screen", "cn": "分屏", "en": "split screen", "token": "split screen", "aliases": ["分割画面"] }
       ]
     },
@@ -524,7 +524,7 @@
         { "id": "score", "cn": "配乐", "en": "score", "token": "orchestral score", "aliases": ["原声配乐"] },
         { "id": "soundtrack", "cn": "歌曲", "en": "soundtrack song", "token": "featured song", "aliases": ["插曲"] },
         { "id": "sound-bridge", "cn": "声音过渡", "en": "sound bridge", "token": "sound bridge", "aliases": ["声音桥"] },
-        { "id": "off-screen-sound", "cn": "画外声源", "en": "off-screen sound", "token": "off-screen sound", "aliases": ["画外音效"] },
+        { "id": "off-screen-sound", "cn": "画外声源", "en": "off-screen sound", "token": "off-screen sound", "aliases": ["画外音效", "off-screen", "offscreen"] },
         { "id": "whispered", "cn": "低语", "en": "whispered", "token": "whispered dialogue", "aliases": ["耳语"] },
         { "id": "echo-reverb", "cn": "混响", "en": "reverb", "token": "long reverb tail", "aliases": ["回响"] },
         { "id": "muffled", "cn": "闷音", "en": "muffled", "token": "muffled distant sound", "aliases": ["隔墙闷响"] },
@@ -556,7 +556,7 @@
         { "id": "cyberpunk-style", "cn": "赛博朋克视觉", "en": "cyberpunk style", "token": "cyberpunk visual style", "aliases": ["赛博视觉"] },
         { "id": "retro-vintage", "cn": "复古", "en": "retro vintage", "token": "vintage retro look", "aliases": ["复古质感"] },
         { "id": "documentary-style", "cn": "纪实风", "en": "documentary style", "token": "documentary style", "aliases": ["纪实影像"] },
-        { "id": "surreal-collage", "cn": "超现实拼贴", "en": "surreal collage", "token": "surreal collage", "aliases": ["拼贴艺术"] },
+        { "id": "surreal-collage", "cn": "超现实拼贴", "en": "surreal collage", "token": "surreal collage", "aliases": ["拼贴艺术", "collage"] },
         { "id": "storyboard", "cn": "分镜稿", "en": "storyboard", "token": "storyboard sketch", "aliases": ["分镜图"] },
         { "id": "game-cinematic", "cn": "游戏过场", "en": "game cinematic", "token": "game cinematic", "aliases": ["游戏 CG"] },
         { "id": "ugc-style", "cn": "UGC 自拍", "en": "UGC style", "token": "UGC selfie style", "aliases": ["用户自拍风"] },
@@ -568,7 +568,7 @@
         { "id": "pixel-art", "cn": "像素", "en": "pixel art", "token": "pixel art", "aliases": ["像素风"] },
         { "id": "low-poly", "cn": "低多边形", "en": "low poly", "token": "low poly 3D", "aliases": ["低模"] },
         { "id": "cel-shaded", "cn": "赛璐璐", "en": "cel shaded", "token": "cel shaded anime", "aliases": ["赛璐璐上色"] },
-        { "id": "comic-panel", "cn": "漫画分格", "en": "comic panel", "token": "comic book panel", "aliases": ["美漫分镜"] },
+        { "id": "comic-panel", "cn": "漫画分格", "en": "comic panel", "token": "comic book panel", "aliases": ["美漫分镜", "comic panel", "comic book panel", "manga panel", "panel layout"] },
         { "id": "photoreal", "cn": "照片级写实", "en": "photorealistic", "token": "photorealistic", "aliases": ["超写实"] },
         { "id": "mockumentary-style", "cn": "伪纪录片感", "en": "mockumentary style", "token": "mockumentary handheld style", "aliases": ["伪纪录风"] },
         { "id": "vhs", "cn": "录像带", "en": "VHS", "token": "VHS tape texture", "aliases": ["VHS 质感"] },
@@ -576,7 +576,7 @@
         { "id": "glitch", "cn": "故障艺术", "en": "glitch art", "token": "glitch art", "aliases": ["故障风"] },
         { "id": "vaporwave", "cn": "蒸汽波", "en": "vaporwave", "token": "vaporwave aesthetic", "aliases": ["蒸汽波风"] },
         { "id": "minimal-flat", "cn": "极简扁平", "en": "minimal flat", "token": "minimal flat design", "aliases": ["扁平插画"] },
-        { "id": "surrealist-paint", "cn": "超现实绘画", "en": "surrealist painting", "token": "surrealist painting style", "aliases": ["超现实画风"] },
+        { "id": "surrealist-paint", "cn": "超现实绘画", "en": "surrealist painting", "token": "surrealist painting style", "aliases": ["超现实画风", "surrealist", "surrealist painting"] },
         { "id": "ukiyo-e", "cn": "浮世绘", "en": "ukiyo-e", "token": "ukiyo-e woodblock print", "aliases": ["日本浮世绘"] },
         { "id": "steampunk", "cn": "蒸汽朋克", "en": "steampunk", "token": "steampunk aesthetic", "aliases": ["蒸汽朋克风"] }
       ]

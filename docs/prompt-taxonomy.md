@@ -2,7 +2,7 @@
 
 > 本文件由 `scripts/gen-prompt-taxonomy-doc.mjs` 从 `public/presets/prompt-taxonomy/v1.json` 生成，请勿手改。
 
-- 词表版本：**2026-11-23.2**
+- 词表版本：**2026-11-24.2**
 - 轴数：**18**
 - 受控值总数：**430**
 - 单轴推导上限：默认 6，题材 8
@@ -73,12 +73,12 @@
 | id | 中文 | English | token | 别名 | 其它映射 |
 | --- | --- | --- | --- | --- | --- |
 | `linear` | 线性叙事 | linear | linear narrative | 顺叙 |  |
-| `non-linear` | 非线性叙事 | non-linear | non-linear narrative | 非线性 |  |
+| `non-linear` | 非线性叙事 | non-linear | non-linear narrative | 非线性、non-linear、nonlinear、fragmented timeline |  |
 | `flashback` | 闪回 | flashback | flashback | 回忆 |  |
-| `flash-forward` | 闪前 | flash forward | flash forward | 预叙 |  |
-| `in-medias-res` | 中途开场 | in medias res | in medias res | 开场即高潮 |  |
+| `flash-forward` | 闪前 | flash forward | flash forward | 预叙、flash forward、flash-forward |  |
+| `in-medias-res` | 中途开场 | in medias res | in medias res | 开场即高潮、in medias res、starts mid-action、mid-action opening |  |
 | `circular` | 环形结构 | circular | circular structure | 首尾呼应 |  |
-| `episodic` | 段落式 | episodic | episodic structure | 章节式 |  |
+| `episodic` | 段落式 | episodic | episodic structure | 章节式、vignette、vignettes、chapter by chapter |  |
 | `three-act` | 三幕式 | three act | three-act structure | 三幕 |  |
 | `hero-journey` | 英雄之旅 | hero's journey | hero's journey | 英雄历程 |  |
 | `twist-ending` | 反转结局 | twist ending | twist ending | 结局反转 |  |
@@ -89,7 +89,7 @@
 | `ensemble` | 群像叙事 | ensemble | ensemble narrative | 多线并进 |  |
 | `frame-narrative` | 框架叙事 | frame narrative | frame narrative | 故事中的故事 |  |
 | `dream-logic` | 梦境逻辑 | dream logic | dream logic | 超逻辑 |  |
-| `mockumentary-narrative` | 伪纪录叙事 | mockumentary narrative | mockumentary narrative | 伪纪录体 |  |
+| `mockumentary-narrative` | 伪纪录叙事 | mockumentary narrative | mockumentary narrative | 伪纪录体、mockumentary |  |
 | `loop` | 时间循环 | time loop | time loop | 循环结构 |  |
 
 ### 3. 情绪基调（`tone`）
@@ -137,21 +137,21 @@
 | `renaissance` | 文艺复兴 | renaissance | renaissance | 文艺复兴时期 |  |
 | `wild-west` | 西部拓荒 | wild west | wild west | 拓荒时代 |  |
 | `world-war-ii` | 二战 | world war II | world war II | 二次大战 |  |
-| `cold-war` | 冷战 | cold war | cold war | 冷战时期 |  |
+| `cold-war` | 冷战 | cold war | cold war | 冷战时期、Cold War、Soviet era、USSR |  |
 | `post-war` | 战后 | post-war | post-war | 战后年代 |  |
 | `cyber-future` | 赛博未来 | cyber future | cyberpunk future | 赛博都市 |  |
 | `dystopian` | 反乌托邦 | dystopian | dystopian | 反乌托邦未来 |  |
 | `space-age` | 太空时代 | space age | space age | 星际时代 |  |
 | `feudal-japan` | 日本战国 | feudal Japan | feudal Japan | 战国日本 |  |
-| `edo-japan` | 江户 | edo period | edo period Japan | 江户时代 |  |
+| `edo-japan` | 江户 | edo period | edo period Japan | 江户时代、Edo period、Edo-era、Edo Japan |  |
 | `noir-1940s` | 四十年代黑色 | 1940s noir | 1940s film noir | 四十年代 |  |
 | `seventies` | 七十年代 | 1970s | 1970s | 七十年代复古 |  |
 | `nineties` | 九十年代 | 1990s | 1990s | 九十年代复古 |  |
 | `y2k` | 千禧年 | Y2K | Y2K aesthetic | 千禧风 |  |
-| `future-2100` | 二十二世纪 | 22nd century | 22nd century | 未来世纪 |  |
-| `mythic` | 神话时代 | mythic age | mythic age | 上古神话 |  |
+| `future-2100` | 二十二世纪 | 22nd century | 22nd century | 未来世纪、22nd century、distant future |  |
+| `mythic` | 神话时代 | mythic age | mythic age | 上古神话、mythic age、mythological、ancient myth、mythic |  |
 | `timeless` | 无年代 | timeless | timeless setting | 超时代 |  |
-| `near-east` | 中东 | middle east | middle eastern setting | 中东地域 |  |
+| `near-east` | 中东 | middle east | middle eastern setting | 中东地域、Middle Eastern、Middle East、Arabian、desert kingdom |  |
 
 ### 5. 场景环境（`environment`）
 
@@ -239,7 +239,7 @@
 | `throw` | 投掷 | throwing | throwing | 抛出 |  |
 | `draw-weapon` | 拔械 | drawing a weapon | drawing a weapon | 拔刀、拔枪 |  |
 | `reload` | 换弹 | reloading | reloading | 上膛 |  |
-| `explosion-reaction` | 爆炸反应 | explosion reaction | reacting to an explosion | 冲击波反应 |  |
+| `explosion-reaction` | 爆炸反应 | explosion reaction | reacting to an explosion | 冲击波反应、explosion reaction、blast wave、reacting to an explosion |  |
 | `cry` | 哭泣 | crying | crying | 落泪 |  |
 | `laugh` | 大笑 | laughing | laughing | 笑 |  |
 | `sleep` | 入睡 | sleeping | sleeping | 睡着 |  |
@@ -275,7 +275,7 @@
 | `screen` | 屏幕 | screen | a glowing screen | 显示器 |  |
 | `book` | 书 | book | a book | 书本、翻书 |  |
 | `letter` | 信 | letter | a letter | 信件、信封 |  |
-| `food-prop` | 食物道具 | food prop | food on a table | 餐食 |  |
+| `food-prop` | 食物道具 | food prop | food on a table | 餐食、food cart、plate of food、meal on the table |  |
 | `money` | 钞票 | cash | stacks of cash | 现金 |  |
 | `mask` | 面具 | mask | a mask | 面罩 |  |
 | `umbrella` | 伞 | umbrella | an umbrella | 雨伞、伞下 |  |
@@ -304,7 +304,7 @@
 | `low-angle` | 仰拍 | low angle | low angle | 低角度 |  |
 | `high-angle` | 俯拍 | high angle | high angle | 高角度 |  |
 | `birds-eye` | 鸟瞰 | bird's eye view | bird's eye view | 上帝视角 |  |
-| `worms-eye` | 虫视 | worm's eye view | worm's eye view | 贴地仰视 |  |
+| `worms-eye` | 虫视 | worm's eye view | worm's eye view | 贴地仰视、worm's eye、worm eye view、ground level looking up |  |
 | `dutch-angle` | 斜角 | dutch angle | dutch angle | 倾斜构图、荷兰角 |  |
 | `hip-level` | 腰高机位 | hip level | hip level camera | 腰平视 |  |
 | `shoulder-level` | 肩高机位 | shoulder level | shoulder level camera | 肩平视 |  |
@@ -318,7 +318,7 @@
 | `front-on` | 正面 | front on | front on | 正面机位 |  |
 | `reflection-angle` | 镜像视角 | mirror angle | shot through a mirror | 镜中视角 |  |
 | `reverse-angle` | 反打 | reverse angle | reverse angle | 反打镜、正反打 |  |
-| `insert-angle` | 插入机位 | insert angle | insert camera angle | 细节机位 |  |
+| `insert-angle` | 插入机位 | insert angle | insert camera angle | 细节机位、insert shot、insert camera、cutaway |  |
 
 ### 11. 运镜（`camera-move`）
 
@@ -353,7 +353,7 @@
 | `macro` | 微距 | macro | macro lens | 微距镜头 |  |
 | `fisheye` | 鱼眼 | fisheye | fisheye lens | 鱼眼镜头 |  |
 | `anamorphic` | 变形宽银幕 | anamorphic | anamorphic lens | 宽银幕、anamorphic flare |  |
-| `tilt-shift` | 移轴 | tilt shift | tilt-shift lens | 移轴镜头 |  |
+| `tilt-shift` | 移轴 | tilt shift | tilt-shift lens | 移轴镜头、tilt-shift、tilt shift、miniature effect |  |
 | `shallow-dof` | 浅景深 | shallow depth of field | shallow depth of field | 大光圈虚化、浅景深构图 |  |
 | `deep-focus` | 深焦 | deep focus | deep focus | 全景深 |  |
 | `soft-focus` | 柔焦 | soft focus | soft focus | 柔化 |  |
@@ -373,17 +373,17 @@
 | `symmetry` | 对称 | symmetry | symmetrical composition | 对称构图 |  |
 | `golden-ratio` | 黄金分割 | golden ratio | golden ratio composition | 黄金比例 |  |
 | `leading-lines` | 引导线 | leading lines | leading lines | 线条引导 |  |
-| `frame-in-frame` | 框中框 | frame in frame | frame within a frame | 框中构图 |  |
+| `frame-in-frame` | 框中框 | frame in frame | frame within a frame | 框中构图、frame within a frame、window frame、doorway frame |  |
 | `negative-space` | 留白 | negative space | generous negative space | 空白构图 |  |
 | `foreground-occlusion` | 前景遮挡 | foreground occlusion | foreground occlusion | 前景虚挡 |  |
 | `low-horizon` | 低地平线 | low horizon | low horizon line | 地平线压低 |  |
-| `high-horizon` | 高地平线 | high horizon | high horizon line | 地平线抬高 |  |
+| `high-horizon` | 高地平线 | high horizon | high horizon line | 地平线抬高、high horizon |  |
 | `centered` | 居中构图 | centered | centered composition | 中心构图 |  |
 | `diagonal` | 对角构图 | diagonal | diagonal composition | 对角线 |  |
 | `layered-depth` | 层次纵深 | layered depth | layered depth with foreground midground background | 前中后景 |  |
-| `pattern` | 重复图案 | pattern repetition | repeating pattern | 图案重复 |  |
+| `pattern` | 重复图案 | pattern repetition | repeating pattern | 图案重复、geometric pattern、repeating pattern、patterned |  |
 | `silhouette-comp` | 剪影构图 | silhouette composition | silhouette composition | 逆光剪影 |  |
-| `reflection-comp` | 镜像构图 | reflection composition | reflection composition | 倒影构图 |  |
+| `reflection-comp` | 镜像构图 | reflection composition | reflection composition | 倒影构图、mirror reflection、reflected in、mirrored composition |  |
 | `triangulation` | 三角构图 | triangular composition | triangular composition | 三角形构图 |  |
 
 ### 14. 光线（`lighting`）
@@ -443,7 +443,7 @@
 | `red-accent` | 红色点缀 | red accent | a single red accent | 朱红点睛 |  |
 | `warm-temperature` | 暖色温 | warm temperature | warm color temperature | 偏暖 |  |
 | `cool-temperature` | 冷色温 | cool temperature | cool color temperature | 偏冷 |  |
-| `split-tone` | 分离色调 | split tone | split toning | 分离调色 |  |
+| `split-tone` | 分离色调 | split tone | split toning | 分离调色、split-toning、split toning、split tone |  |
 | `bleach-bypass` | 漂白旁路 | bleach bypass | bleach bypass grade | 银盐冲洗感 |  |
 | `technicolor` | 特艺彩色 | technicolor | technicolor look | 三色染印 |  |
 
@@ -466,9 +466,9 @@
 | `fast-motion` | 快动作 | fast motion | fast motion | 降格 |  |
 | `freeze-frame` | 定格 | freeze frame | freeze frame | 定格画面 |  |
 | `rhythmic-cut` | 节奏剪辑 | rhythmic cutting | rhythmic cutting to the beat | 卡点剪辑 |  |
-| `ellipsis` | 省略剪辑 | elliptical editing | elliptical editing | 跳时剪辑 |  |
+| `ellipsis` | 省略剪辑 | elliptical editing | elliptical editing | 跳时剪辑、cut to black、elliptical editing |  |
 | `continuity` | 连续性剪辑 | continuity editing | continuity editing | 无缝剪辑 |  |
-| `non-linear-edit` | 非线性剪辑 | non-linear editing | non-linear editing | 乱序剪辑 |  |
+| `non-linear-edit` | 非线性剪辑 | non-linear editing | non-linear editing | 乱序剪辑、jump back、back and forth |  |
 | `split-screen` | 分屏 | split screen | split screen | 分割画面 |  |
 
 ### 17. 声音音乐（`sound`）
@@ -484,7 +484,7 @@
 | `score` | 配乐 | score | orchestral score | 原声配乐 |  |
 | `soundtrack` | 歌曲 | soundtrack song | featured song | 插曲 |  |
 | `sound-bridge` | 声音过渡 | sound bridge | sound bridge | 声音桥 |  |
-| `off-screen-sound` | 画外声源 | off-screen sound | off-screen sound | 画外音效 |  |
+| `off-screen-sound` | 画外声源 | off-screen sound | off-screen sound | 画外音效、off-screen、offscreen |  |
 | `whispered` | 低语 | whispered | whispered dialogue | 耳语 |  |
 | `echo-reverb` | 混响 | reverb | long reverb tail | 回响 |  |
 | `muffled` | 闷音 | muffled | muffled distant sound | 隔墙闷响 |  |
@@ -513,7 +513,7 @@
 | `cyberpunk-style` | 赛博朋克视觉 | cyberpunk style | cyberpunk visual style | 赛博视觉 |  |
 | `retro-vintage` | 复古 | retro vintage | vintage retro look | 复古质感 |  |
 | `documentary-style` | 纪实风 | documentary style | documentary style | 纪实影像 |  |
-| `surreal-collage` | 超现实拼贴 | surreal collage | surreal collage | 拼贴艺术 |  |
+| `surreal-collage` | 超现实拼贴 | surreal collage | surreal collage | 拼贴艺术、collage |  |
 | `storyboard` | 分镜稿 | storyboard | storyboard sketch | 分镜图 |  |
 | `game-cinematic` | 游戏过场 | game cinematic | game cinematic | 游戏 CG |  |
 | `ugc-style` | UGC 自拍 | UGC style | UGC selfie style | 用户自拍风 |  |
@@ -525,7 +525,7 @@
 | `pixel-art` | 像素 | pixel art | pixel art | 像素风 |  |
 | `low-poly` | 低多边形 | low poly | low poly 3D | 低模 |  |
 | `cel-shaded` | 赛璐璐 | cel shaded | cel shaded anime | 赛璐璐上色 |  |
-| `comic-panel` | 漫画分格 | comic panel | comic book panel | 美漫分镜 |  |
+| `comic-panel` | 漫画分格 | comic panel | comic book panel | 美漫分镜、comic panel、comic book panel、manga panel、panel layout |  |
 | `photoreal` | 照片级写实 | photorealistic | photorealistic | 超写实 |  |
 | `mockumentary-style` | 伪纪录片感 | mockumentary style | mockumentary handheld style | 伪纪录风 |  |
 | `vhs` | 录像带 | VHS | VHS tape texture | VHS 质感 |  |
@@ -533,7 +533,7 @@
 | `glitch` | 故障艺术 | glitch art | glitch art | 故障风 |  |
 | `vaporwave` | 蒸汽波 | vaporwave | vaporwave aesthetic | 蒸汽波风 |  |
 | `minimal-flat` | 极简扁平 | minimal flat | minimal flat design | 扁平插画 |  |
-| `surrealist-paint` | 超现实绘画 | surrealist painting | surrealist painting style | 超现实画风 |  |
+| `surrealist-paint` | 超现实绘画 | surrealist painting | surrealist painting style | 超现实画风、surrealist、surrealist painting |  |
 | `ukiyo-e` | 浮世绘 | ukiyo-e | ukiyo-e woodblock print | 日本浮世绘 |  |
 | `steampunk` | 蒸汽朋克 | steampunk | steampunk aesthetic | 蒸汽朋克风 |  |
 

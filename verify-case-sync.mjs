@@ -112,8 +112,17 @@ if (dir && fs.existsSync(path.join(dir, 'storyboard.sqlite'))) {
   // 18 轴覆盖度（这是「补齐」的量化指标）
   const covered = new Set(facetRows.map((r) => r.axis))
   const coveredValues = new Set(facetRows.map((r) => `${r.axis}:${r.value}`))
-  console.log(`   · 轴覆盖：${covered.size}/18 轴，${coveredValues.size}/${[...valid].length} 个值`)
-  unit('轴覆盖 >= 15', covered.size >= 15, `${covered.size}/18`)
+  const valuePct = Math.round((coveredValues.size / valid.size) * 100)
+  console.log(`   · 轴覆盖：${covered.size}/18 轴，${coveredValues.size}/${valid.size} 个值（${valuePct}%）`)
+  unit('轴覆盖 = 18', covered.size === 18, `${covered.size}/18`)
+  /**
+   * 值覆盖率兜底。
+   *
+   * 这是「补齐 18 轴」这件事的量化指标：词表加一个值而没人补数据，
+   * 筛选栏就会多一个永远灰着的格子。留 5% 余量给「语料里天然不出现的值」
+   * （现在剩 7 个：4 个制作方式靠反推案例、3 个是学术词作者不会写）。
+   */
+  unit('值覆盖 >= 95%', valuePct >= 95, `${valuePct}%`)
 
   // 索引存在性（万级数据的分页/搜索依赖）
   const idx = all("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='prompt_cases'").map((r) => r.name)
