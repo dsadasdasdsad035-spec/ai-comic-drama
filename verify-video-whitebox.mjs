@@ -35,8 +35,14 @@ const PROJECTS = makeProjectsDir('whitebox-')
 const PROJ = `wb-${Date.now()}`
 const STATE_ROOT = process.env.SB_STATE_ROOT || process.cwd()
 
-/** 仓库自带的短视频：低机位推进，有足够视差，实测 58k 面 */
-const DEFAULT_FIXTURE = path.join('openspec', 'changes', 'transition-joins', 'evidence', 'real-export-generated-9.6s.mp4')
+/**
+ * 验收用素材：42 秒卧室巡游，单镜头、相机连续移动、视差充足。
+ *
+ * 这是「理想输入」的基准——之前用转场合集当 fixture，132 个切点导致位姿
+ * 崩塌、重建只能出噪声（15,874 面且形态不可辨），拿去断言「质量」毫无意义。
+ * 实测这条：84 帧 / 0.5 秒间隔 → 92,832 面、包围盒 6.0×1.9×3.9m。
+ */
+const DEFAULT_FIXTURE = path.join('fixtures', 'whitebox', 'room-tour.mp4')
 
 function log(msg) {
   console.log(msg)
@@ -297,7 +303,7 @@ console.log('{}')
     const submitRes = await fetch(`${app}/api/whitebox/jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectName: PROJ, videoUrl, fps: 3, maxFrames: 12, targetSize: 6 }),
+      body: JSON.stringify({ projectName: PROJ, videoUrl, interval: 0.5, maxFrames: 96, targetSize: 6 }),
     })
     const submitJson = await submitRes.json()
 
@@ -353,7 +359,7 @@ console.log('{}')
 
           // 三角形数与包围盒（来自作业统计，由 Python 侧实测）
           const stats = job.stats || {}
-          check('三角形数 > 1000', Number(stats.triangles) > 1000, String(stats.triangles))
+          check('三角形数 > 20000', Number(stats.triangles) > 20000, String(stats.triangles))
           const maxEdge = Number(stats.bboxMaxEdge)
           check(
             '包围盒最大边在 6m ±10%',
@@ -379,7 +385,7 @@ console.log('{}')
       const cRes = await fetch(`${app}/api/whitebox/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: PROJ, videoUrl, fps: 3, maxFrames: 12 }),
+        body: JSON.stringify({ projectName: PROJ, videoUrl, interval: 0.5, maxFrames: 96 }),
       })
       const cJson = await cRes.json()
       if (cJson.ok) {
@@ -446,7 +452,7 @@ if (!envReady) {
     try {
       const loaded = await babylonLoad(full)
       check('Babylon 加载成功', loaded.meshes > 0, `${loaded.meshes} 个网格`)
-      check('Babylon 读到顶点', loaded.vertices > 1000, String(loaded.vertices))
+      check('Babylon 读到顶点', loaded.vertices > 10000, String(loaded.vertices))
       check('Babylon 读到法线', loaded.hasNormals === true)
     } catch (e) {
       check('Babylon 加载成功', false, e?.message || String(e))

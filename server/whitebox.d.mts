@@ -40,6 +40,8 @@ export type WhiteboxJobSnapshot = {
   assetTitle: string
   stats: WhiteboxJobStats | null
   frames: number | null
+  /** 抽帧间隔（秒）。重建质量主要由它决定 */
+  interval?: number
   device: string | null
   startedAt: number | null
   finishedAt: number | null

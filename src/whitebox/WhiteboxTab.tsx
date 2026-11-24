@@ -72,8 +72,10 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
   const [health, setHealth] = useState<WhiteboxHealth | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
   const [videoUrl, setVideoUrl] = useState('')
-  const [fps, setFps] = useState(2)
-  const [maxFrames, setMaxFrames] = useState(12)
+  // 帧间隔是决定重建质量的关键：间隔越大，相邻帧重叠越少，位姿越容易崩。
+  // 默认 0.5 秒（42 秒视频 → 84 帧，覆盖全片且画面重叠充足）。
+  const [frameInterval, setFrameInterval] = useState(0.5)
+  const [maxFrames, setMaxFrames] = useState(96)
   const [targetSize, setTargetSize] = useState(6)
   const [job, setJob] = useState<WhiteboxJob | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -152,7 +154,7 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
       const created = await submitWhiteboxJob({
         projectName,
         videoUrl,
-        fps,
+        interval: frameInterval,
         maxFrames,
         targetSize,
       })
@@ -278,29 +280,33 @@ export default function WhiteboxTab({ projectName, assets, toast, onOpenStudio3d
 
         <div className="wb-grid">
           <label>
-            抽帧帧率
+            抽帧间隔（秒）
             <input
               type="number"
-              min={0.5}
-              max={30}
-              step={0.5}
-              value={fps}
+              min={0.1}
+              max={3}
+              step={0.1}
+              value={frameInterval}
               disabled={busy}
-              onChange={(e) => setFps(Number(e.target.value) || 2)}
+              onChange={(e) => setFrameInterval(Number(e.target.value) || 0.5)}
             />
-            <span className="wb-field-hint">越高越密，位姿估计需要足够基线</span>
+            <span className="wb-field-hint">
+              越小越密。间隔过大时相邻帧不重叠，位姿会崩、重建塌成薄板
+            </span>
           </label>
           <label>
             最大帧数
             <input
               type="number"
               min={4}
-              max={12}
+              max={96}
               value={maxFrames}
               disabled={busy}
-              onChange={(e) => setMaxFrames(Math.min(12, Math.max(4, Number(e.target.value) || 12)))}
+              onChange={(e) => setMaxFrames(Math.min(96, Math.max(4, Number(e.target.value) || 96)))}
             />
-            <span className="wb-field-hint">硬上限 12（显存与耗时）</span>
+            <span className="wb-field-hint">
+              硬上限 96。长视频会自动拉大间隔以覆盖全片
+            </span>
           </label>
           <label>
             目标尺寸（米）

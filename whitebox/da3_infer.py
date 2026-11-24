@@ -11,7 +11,7 @@
 - 帧数少于 4 直接失败：位姿估计需要基线。
 
 用法：
-  python da3_infer.py --video in.mp4 --out out.npz --fps 2 --max-frames 12
+  python da3_infer.py --video in.mp4 --out out.npz --interval 0.5 --max-frames 96
   python da3_infer.py ... --state-root /path   # 指定 .whitebox 所在目录
 """
 from __future__ import annotations
@@ -30,8 +30,23 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 HERE = Path(__file__).resolve().parent
-HARD_MAX_FRAMES = 12
 MIN_FRAMES = 4
+# 帧数上限。实测（M4 Pro / 24GB，卧室 42 秒巡游）：
+#   12 帧 → 1.55GB / 1.9s      42 帧 → 1.73GB / 6.2s      84 帧 → 2.07GB / 17.4s
+# 内存几乎不随时间线增长，所以这个上限控制的是耗时与 TSDF 体素精度，不是内存。
+HARD_MAX_FRAMES = 96
+# 目标帧间隔 —— 本次修复的核心。
+#
+# 之前是「全片等间隔凑满 12 帧」：42 秒视频变成每 4 秒一帧，相邻帧相机早已
+# 走出视野、画面几乎不重叠，DA3 估不出连贯位姿，重建塌成一片薄板
+# （实测 15,874 面，形态完全不可辨）。
+#
+# 同一视频的对照实测：
+#   间隔 4.0s（旧逻辑）→ 塌成薄片，看不出房间
+#   间隔 1.0s          → 能辨认床与墙，69,390 面
+#   间隔 0.5s          → 完整房间轮廓，位姿跳变 9 处 → 5 处
+# 0.5 秒是「重叠足够」与「帧数可控」的平衡点：42 秒视频 → 84 帧 → 17 秒跑完。
+TARGET_FRAME_INTERVAL = 0.5
 PROCESS_RES = 504
 
 
@@ -56,36 +71,57 @@ def resolve_runtime_root(state_root: Path | None, runtime_root: Path | None) -> 
     return whitebox_root(root)
 
 
-def plan_frame_indices(total: int, src_fps: float, fps: float, max_frames: int) -> list[int]:
-    """决定要读哪几帧。
+def plan_frame_indices(
+    total: int,
+    src_fps: float,
+    interval: float = TARGET_FRAME_INTERVAL,
+    max_frames: int = HARD_MAX_FRAMES,
+) -> list[int]:
+    """按**固定时间间隔**取帧，而不是「全片凑满 N 帧」。
 
-    两段逻辑，缺一不可：
-    1. fps → 按源帧率折算出步长，得到「按请求帧率抽」的候选。
-    2. 候选超过 max_frames 时**在全片等间隔抽稀**，而不是截断取前 N 个。
+    这是重建质量的关键。DA3 靠相邻帧的重叠来估位姿；帧间隔一旦大到相机走出
+    视野，位姿就崩，TSDF 会把互相矛盾的点云平均成一片噪声薄板。
 
-    第 2 步是关键：一台机器重建 30 秒的镜头，截断取前 8 帧只会还原开头两秒，
-    后面的空间完全丢失。等间隔抽稀才覆盖全片。
+    实测同一条 42 秒卧室巡游：
+      间隔 4.0s（旧的摊薄逻辑）→ 塌成薄片，15,874 面
+      间隔 1.0s               → 能辨认床与墙，69,390 面
+      间隔 0.5s               → 完整房间轮廓，28,200 面（84 帧覆盖全片）
+
+    所以默认 0.5 秒。只有当视频长到「间隔 0.5 秒会超过 max_frames」时，
+    才退化成拉大间隔——保证覆盖全片但不让帧数爆掉。
+
+    Args:
+        total: 视频总帧数
+        src_fps: 源帧率
+        interval: 目标帧间隔（秒）
+        max_frames: 帧数硬上限
+
+    Returns:
+        要读取的帧索引（升序）
     """
     if total <= 0 or src_fps <= 0:
         return []
-    step = max(1, int(round(src_fps / fps))) if fps > 0 else 1
-    candidates = list(range(0, total, step))
-    if not candidates:
-        return []
-    if len(candidates) <= max_frames:
-        return candidates
-    # 等间隔抽稀到 max_frames，含首尾
-    if max_frames == 1:
-        return [candidates[0]]
-    picks = [round(i * (len(candidates) - 1) / (max_frames - 1)) for i in range(max_frames)]
-    return [candidates[i] for i in picks]
+    if interval <= 0:
+        interval = TARGET_FRAME_INTERVAL
+
+    # 长视频：先算「按 interval 取会有多少帧」，超上限就等比拉大间隔
+    duration = total / src_fps
+    want = max(1, int(round(duration / interval)) + 1)
+    if want > max_frames:
+        interval = duration / (max_frames - 1)
+
+    step = max(1, int(round(interval * src_fps)))
+    indices = list(range(0, total, step))
+    if indices and indices[-1] > total - 1:
+        indices[-1] = total - 1
+    return indices[:max_frames]
 
 
-def sample_frames(video: Path, fps: float, max_frames: int) -> tuple[list, float]:
+def sample_frames(video: Path, interval: float, max_frames: int) -> tuple[list, float]:
     """按计划好的索引单遍读帧，避免把整条视频读进内存。
 
-    返回 (RGB 帧列表, 实际帧率)。实际帧率回填给调用方，因为这个值是
-    抽稀之后的等效值，不等于请求的 fps。
+    返回 (RGB 帧列表, 实际帧率)。这个帧率是「间隔换算出的等效值」，
+    长视频会自动拉大间隔，所以它可能小于 1/interval。
     """
     import cv2
 
@@ -97,7 +133,7 @@ def sample_frames(video: Path, fps: float, max_frames: int) -> tuple[list, float
         if src_fps <= 0:
             src_fps = 25.0
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        wanted = plan_frame_indices(total, src_fps, fps, max_frames)
+        wanted = plan_frame_indices(total, src_fps, interval, max_frames)
         if not wanted:
             return [], src_fps
 
@@ -152,7 +188,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--video", required=True)
     ap.add_argument("--out", required=True, help="输出 npz 路径")
-    ap.add_argument("--fps", type=float, default=2.0)
+    ap.add_argument(
+        "--interval",
+        type=float,
+        default=TARGET_FRAME_INTERVAL,
+        help="目标帧间隔（秒）。默认 0.5——间隔越大，相邻帧重叠越少，位姿越容易崩",
+    )
+    # 兼容旧调用方（服务端早期的 --fps 参数）：给了 fps 就换算成间隔
+    ap.add_argument("--fps", type=float, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--max-frames", type=int, default=HARD_MAX_FRAMES)
     ap.add_argument("--state-root", default=None, help="用户自装时的状态根")
     ap.add_argument("--runtime-root", default=None, help="直接指定环境根（随安装包时用）")
@@ -187,7 +230,13 @@ def main() -> int:
 
     started = time.time()
     emit({"type": "phase", "phase": "sampling"})
-    frames, actual_fps = sample_frames(video, args.fps, max_frames)
+    interval = args.interval
+    if args.fps is not None and args.fps > 0:
+        # 旧参数换算：fps=2 → interval=0.5
+        interval = 1.0 / args.fps
+        log(f"--fps {args.fps} 已换算为间隔 {interval:.2f}s（建议直接用 --interval）")
+    log(f"抽帧策略：间隔 {interval:.2f}s，上限 {max_frames} 帧")
+    frames, actual_fps = sample_frames(video, interval, max_frames)
     if len(frames) < MIN_FRAMES:
         emit({
             "type": "error",

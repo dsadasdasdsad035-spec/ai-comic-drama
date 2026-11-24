@@ -27,9 +27,16 @@ const JOB_TIMEOUT_MS = Math.max(30_000, Number(process.env.WHITEBOX_TIMEOUT_MS) 
 /** 子进程超过这么久没有任何输出即认为卡死。 */
 const STALL_MS = Math.max(15_000, Number(process.env.WHITEBOX_STALL_MS) || 120_000)
 
-const HARD_MAX_FRAMES = 12
+// 与 whitebox/da3_infer.py 保持一致。
+//
+// 12 帧是早期基于「内存不够」的错误假设设的；实测 84 帧只占 2.07GB。
+// 真正决定重建质量的是**帧间隔**：42 秒视频按旧的「12 帧摊薄」等于每 4 秒
+// 一帧，相机早已走出视野，位姿崩、重建塌成薄板（15,874 面、形态不可辨）。
+// 改成按 0.5 秒间隔采样后同一视频出 92,832 面、房间轮廓清晰。
+const HARD_MAX_FRAMES = 96
 const MIN_FRAMES = 4
-const DEFAULT_FPS = 2
+/** 目标帧间隔（秒）。前端默认值也用它。 */
+const DEFAULT_INTERVAL = 0.5
 const DEFAULT_TARGET_SIZE = 6
 
 const INSTALL_HINT = '先运行 bash whitebox/install.sh（首次约需 2GB 下载）'
@@ -201,8 +208,9 @@ function runOnce(bin, args, { timeoutMs = 120_000, cwd = undefined } = {}) {
 // ---------------------------------------------------------------- 输入校验
 
 function normalizeInput(input) {
-  const fps = Number(input?.fps ?? DEFAULT_FPS)
-  if (!(fps > 0.1 && fps <= 30)) throw new Error('抽帧帧率必须在 0.1–30 之间')
+  // interval 是主参数；fps 保留给旧调用方，两者等价换算
+  const interval = Number(input?.interval ?? (input?.fps ? 1 / Number(input.fps) : DEFAULT_INTERVAL))
+  if (!(interval > 0.05 && interval <= 10)) throw new Error('抽帧间隔必须在 0.05–10 秒之间')
 
   // 硬上限：规格要求不得接受大于 12 的值
   const rawMax = Number(input?.maxFrames ?? HARD_MAX_FRAMES)
@@ -214,7 +222,7 @@ function normalizeInput(input) {
   const resolution = Number(input?.resolution ?? 384)
   if (!(resolution >= 128 && resolution <= 512)) throw new Error('TSDF 分辨率必须在 128–512 之间')
 
-  return { fps, maxFrames, targetSize, resolution }
+  return { interval, maxFrames, targetSize, resolution }
 }
 
 /**
@@ -254,6 +262,7 @@ function snapshot(job) {
     assetTitle: job.assetTitle,
     stats: job.stats,
     frames: job.frames,
+    interval: job.interval,
     device: job.device,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
@@ -424,7 +433,7 @@ async function startJob(job) {
         path.join(repo, 'whitebox', 'da3_infer.py'),
         '--video', job.videoFile,
         '--out', npz,
-        '--fps', String(job.fps),
+        '--interval', String(job.interval),
         '--max-frames', String(job.maxFrames),
         ...(usesBundledRuntime(appRoot)
           ? ['--runtime-root', bundledRuntimePath(appRoot)]
@@ -570,7 +579,7 @@ export async function submitWhiteboxJob(input, appRoot) {
     videoFile: source.file,
     videoUrl: source.url,
     sourceLabel: source.label,
-    fps: settings.fps,
+    interval: settings.interval,
     maxFrames: settings.maxFrames,
     targetSize: settings.targetSize,
     resolution: settings.resolution,
@@ -653,4 +662,4 @@ export function shutdownWhiteboxJobs() {
   }
 }
 
-export { CONCURRENCY as WHITEBOX_CONCURRENCY, HARD_MAX_FRAMES, MIN_FRAMES }
+export { CONCURRENCY as WHITEBOX_CONCURRENCY, HARD_MAX_FRAMES, MIN_FRAMES, DEFAULT_INTERVAL }

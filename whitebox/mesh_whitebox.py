@@ -58,6 +58,19 @@ def load_npz(npz_path: Path):
     if extrinsics.size == 0 or intrinsics.size == 0:
         raise SystemExit("npz 缺少位姿（extrinsics/intrinsics），无法融合")
 
+    # DA3 直接输出的是 (N,3,4)；只有经过 da3_infer.py 的 npz 才是补好的 (N,4,4)。
+    # 这里也要兜一次：别人手工喂 npz（调试、批量重跑、外部工具产出）时不该因为
+    # 少一行齐次行就崩在 np.linalg.inv 的 "must be square" 上。
+    if extrinsics.ndim != 3 or extrinsics.shape[1:] not in ((3, 4), (4, 4)):
+        raise SystemExit(f"extrinsics 形状不支持：{extrinsics.shape}（期望 (N,3,4) 或 (N,4,4)）")
+    if extrinsics.shape[1:] == (3, 4):
+        import numpy as _np
+
+        padded = _np.tile(_np.eye(4), (len(extrinsics), 1, 1))
+        padded[:, :3, :4] = extrinsics
+        extrinsics = padded
+        print("extrinsics 3x4 → 4x4 已补齐", flush=True)
+
     return depth, conf, extrinsics, intrinsics
 
 

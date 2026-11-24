@@ -56,7 +56,8 @@ export type WhiteboxJob = {
 export type WhiteboxSubmitInput = {
   projectName: string
   videoUrl: string
-  fps?: number
+  /** 抽帧间隔（秒），默认 0.5。决定相邻帧重叠度，比帧数更关键 */
+  interval?: number
   maxFrames?: number
   targetSize?: number
   resolution?: number
@@ -138,7 +139,7 @@ export function whiteboxErrorText(code: string | null, message: string | null): 
     case 'env-missing':
       return `推理环境未就绪：${message || '缺少依赖'}`
     case 'frames-too-few':
-      return `视频过短：${message || '抽出的帧数不足 4 帧，建议提高抽帧帧率'}`
+      return `视频过短：${message || '抽出的帧数不足 4 帧，建议减小抽帧间隔'}`
     case 'inference-failed':
       return `推理失败：${message || '未知原因'}`
     case 'mesh-failed':
