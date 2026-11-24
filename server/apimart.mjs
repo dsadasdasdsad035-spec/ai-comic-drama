@@ -21,6 +21,11 @@ const DEFAULT_BASE = 'https://api.apimart.ai/v1'
 const CATALOG_TIMEOUT_MS = 30_000
 const SUBMIT_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 60_000
+/**
+ * 视频上传大小上限。实测单次配额是 2000 次 / 72 小时、文件保留 3 天；
+ * 大小上限渠道未明说，先按 200MB 兜住（Seedance 参考视频通常 15 秒内）。
+ */
+const MAX_VIDEO_UPLOAD_BYTES = 200 * 1024 * 1024
 const DOWNLOAD_TIMEOUT_MS = 120_000
 /** 与前端 waitVideo 12min 对齐，减少「云端已完成、本地先超时」 */
 const TASK_TIMEOUT_MS = 12 * 60_000
@@ -458,6 +463,70 @@ export async function uploadImage({
   }
 }
 
+/**
+ * 参考视频上传：`POST /uploads/videos`（multipart，字段名 file）。
+ *
+ * 2026-11-24 实测：`POST /v1/uploads/videos` 返回 `{url, content_type, filename,
+ * expires_at, retention_days: 3}`，URL 形如 `https://getapib.org/video/...`。
+ * 之前 APIMart 分支直接拒绝本地视频（「只接受公网 URL；本地无法上传」）是
+ * 保守假设，实际能传；不传的话画布上连线的项目视频素材一点都发不出去。
+ *
+ * 保留期只有 3 天：签名 URL 过期后旧任务重放会失败，但出片本身是即时的。
+ */
+export async function uploadVideo({
+  baseUrl,
+  apiKey,
+  filePath,
+  buffer,
+  mime,
+  filename,
+  signal,
+  timeoutMs = UPLOAD_TIMEOUT_MS,
+  fetchImpl = defaultFetchImpl,
+}) {
+  const bytes = buffer ? Buffer.from(buffer) : fs.readFileSync(filePath)
+  if (bytes.length > MAX_VIDEO_UPLOAD_BYTES) {
+    throw new ApimartError(`参考视频超过 ${MAX_VIDEO_UPLOAD_BYTES / 1024 / 1024}MB 上限`, { kind: 'bad-request' })
+  }
+  const name = filename || (filePath ? path.basename(filePath) : 'video.mp4')
+  const type = mime || 'video/mp4'
+  const form = new UndiciFormData()
+  form.append('file', new Blob([bytes], { type }), name)
+  const lt = timeoutController(signal, timeoutMs)
+  try {
+    const r = await fetchImpl(`${resolveBaseUrl(baseUrl)}/uploads/videos`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: lt.signal,
+    })
+    const text = await r.text()
+    let j
+    try {
+      j = JSON.parse(text)
+    } catch {
+      throw new ApimartError(`视频上传返回了非 JSON 响应（HTTP ${r.status}）`, { kind: 'api', status: r.status })
+    }
+    if (!r.ok) throw errorFromResponse(text, r.status)
+    const url = String(j?.url ?? j?.data?.url ?? '').trim()
+    if (!url) throw new ApimartError('视频上传接口没有返回 URL', { kind: 'api', status: r.status })
+    return { url, filename: String(j?.filename ?? name), contentType: String(j?.content_type ?? type) }
+  } catch (e) {
+    if (e instanceof ApimartError) throw e
+    if (e?.name === 'AbortError') throw abortError(lt)
+    const raw = String(e?.message || e || '参考视频上传失败')
+    const networkish = /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|SSL|certificate|socket/i.test(raw)
+    throw new ApimartError(
+      networkish
+        ? `无法连接 APIMart 上传接口（${resolveApimartHttpsProxy() ? `经代理 ${resolveApimartHttpsProxy()}` : '未配置代理；请开启系统代理或设置 HTTPS_PROXY'}）`
+        : raw || '参考视频上传失败',
+      { kind: 'network' },
+    )
+  } finally {
+    lt.dispose()
+  }
+}
+
 // ---------------------------------------------------------------- 图像
 
 export function buildImagePayload({ model, prompt, ratio = '16:9', size, refUrls = [], n = 1 }) {
@@ -553,6 +622,12 @@ export function buildVideoPayload({
       resolution: res,
       ...(images.length ? { image_with_roles: images } : {}),
       ...(vids.length ? { video_urls: vids } : {}),
+      // 带参考视频时必须显式声明「参考」任务类型。不传的话上游会按提示词把任务
+      // 自动判成「视频编辑」，进而要求 ratio=adaptive、duration=-1 并整单失败
+      // （2026-11-24 实测报错原文）。方舟分支早就这么传了，APIMart 漏了同一条。
+      // 这里是 seedance-2.5 分支，判定依据是家族而不是模型条目字段——
+      // 老设置库里的条目没有 videoRefTaskType，靠字段会漏。
+      ...(vids.length ? { omni_reference_task_type: 'reference' } : {}),
       ...(generateAudio ? { generate_audio: true, ...(audio ? { audio_url: audio } : {}) } : { generate_audio: false }),
       watermark: false,
     }

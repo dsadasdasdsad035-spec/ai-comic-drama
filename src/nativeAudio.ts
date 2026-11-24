@@ -52,7 +52,7 @@ export function speakingNames(
  * 解析结果分三种，调用方必须显式分流：
  * - `reference`：有可用样本，带 `audio_url` 提交，音色跨镜一致。
  * - `no-reference`：**可以出片**，但只发 `generate_audio`，声音由模型决定。
- * - `blocked`：真差错或上游不支持（模型没能力、多说话人、镜头太短、样本不合规）。
+ * - `blocked`：只剩上游一定会拒绝的两种情况——模型没有音频能力、镜头短于下限。
  *
  * 以前的形状只有 `ok: true/false`，把「没有样本」和「不能出片」混成一个 false，
  * 结果是无样本时整条降级成静音视频——与 spec「无样本可选无参考」直接冲突。
@@ -98,16 +98,17 @@ function characterLabel(card: CharacterSheet): string {
  * 音色参考约束的是「用什么声音说话」，与这一镜写不写台词无关：无声镜也可以
  * 带原生音轨（环境声、呼吸、即兴发声），同样需要一个音色锚点。所以**没有台词
  * 不是禁用条件**——此时不猜说话人，按 `preferredCharacter`（镜上已保存的选择）
- * 再到第一个有可用样本的角色卡。以前这里直接报「这一镜没有台词」，等于把
- * 「推断不出说话人」当成了「不能用」，用户只能去编一句台词才能开开关。
+ * 再到第一个有可用样本的角色卡。
  *
- * 仍然拦住多说话人：APIMart Seedance 2.5 只接受一个 audio_url
- * （`maxRefAudios: 1`、`supportsMultiSpeaker: false`），混两段音色不是保守做法，
- * 而是上游根本不支持。
+ * **不做强门镜**：音色参考只是可选增强，只有「模型没有原生音频能力」和
+ * 「镜头短于上游下限」这两种上游一定会拒绝的情况才 `blocked`。其余一律降级成
+ * `no-reference` 照常出片，只发 `generate_audio`、声音由模型决定：
  *
- * **没有样本不再拦截**：返回 `no-reference`，出片照常，只是声音由模型决定。
- * 只有样本存在但不合 provider 约束（时长超范围）才拦，因为那需要用户先改样本，
- * 静默换别的角色音色或悄悄去掉参考都会让人以为用的是自己的音色。
+ * - 多说话人：上游只接受一条 `audio_url`（`maxRefAudios: 1`）。硬选其中一人
+ *   会让所有人同声，比不带参考更失真，所以本次不带参考但仍出音轨。
+ * - 说话人不在角色库：没有卡就没有样本，猜不出该用谁的音色。
+ * - 样本不合规（时长超范围）：不是用户本意，但也不该因此拒绝出片；明说这次
+ *   没用参考，用户想锁定音色再去重新生成样本。
  */
 export function nativeAudioRef(input: {
   dialogue: { speaker: string; text: string }[]
@@ -125,17 +126,32 @@ export function nativeAudioRef(input: {
     return blocked(`原生音频请求最短 ${minReq} 秒（当前按 ${input.seconds}s 计）`)
   }
   const speakers = speakingNames(input.dialogue, input.performance)
-  if (speakers.length > 1) {
-    return blocked('首期原生音频只支持单说话人；请拆成单人镜或改用静音视频')
-  }
 
   // 有唯一说话人时以说话人为准；无声镜沿用已保存的角色。
   // 两条路径都先按名字定位，只有「一个名字都没有」时才去扫可用样本。
   const named = speakers[0] || String(input.preferredCharacter || '').trim()
   const card = named ? findCharacter(input.characters, named) : undefined
-  if (named && !card) return blocked(`找不到角色卡：${named}`)
   /** 无参考时的角色名：能定位到卡就用卡名，否则沿用台词里的说话人 */
   const speakerLabel = card ? characterLabel(card) : named
+
+  // 多说话人：上游一条 audio_url 装不下两套音色。不拦出片，只是本次不带参考。
+  if (speakers.length > 1) {
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character: speakerLabel,
+      reason: `本镜有多个说话人（${speakers.join('、')}），音色参考只支持单个角色`,
+    }
+  }
+  // 说话人不在角色库：没有卡就没有样本，同样降级而不是拒绝出片。
+  if (named && !card) {
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character: named,
+      reason: `说话人「${named}」不在角色库里`,
+    }
+  }
 
   const chosen = card ?? input.characters.find((c) => isVoiceSampleUsable(c.voiceSample))
   if (!chosen) {
@@ -176,9 +192,12 @@ export function nativeAudioRef(input: {
     }
   }
   if (!isVoiceSampleUsable(sample)) {
-    return blocked(
-      `角色「${character}」样本 ${sample.seconds.toFixed(1)}s，需 ${input.caps.minSeconds}-${input.caps.maxSeconds} 秒`,
-    )
+    return {
+      ok: true,
+      kind: 'no-reference',
+      character,
+      reason: `角色「${character}」的样本 ${sample.seconds.toFixed(1)}s 不在 ${input.caps.minSeconds}-${input.caps.maxSeconds} 秒范围内`,
+    }
   }
   return {
     ok: true,

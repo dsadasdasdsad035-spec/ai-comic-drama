@@ -345,6 +345,27 @@ export function canonicalProjectMediaRef(ref) {
   return bare
 }
 
+/**
+ * 站内路径 → 本地文件绝对路径，同时认两个根。
+ *
+ * 图片早就有这个能力（见 resolveRef 里的 project-assets 分支），视频与音频却各自
+ * 只拼媒体根，于是从素材库连线或桌面端探测生成的 `/project-assets/<项目>/<文件>`
+ * 会被判「不存在」。统一到这里，避免再有人漏一支。
+ *
+ * 找不到不抛错，返回 null，由调用方用自己的领域文案报错。
+ */
+export function localFileForRef(ref, appRoot) {
+  const canon = canonicalProjectMediaRef(ref)
+  if (!canon || canon.startsWith('data:') || /^https?:\/\//i.test(canon)) return null
+  try {
+    const pm = parseProjectMediaUrl(canon)
+    const file = pm ? locateProjectMediaFile(appRoot, pm.name, pm.file) : mediaPathFromUrl(appRoot, canon)
+    return fs.existsSync(file) ? file : null
+  } catch {
+    return null
+  }
+}
+
 /** 本地相对路径 / dataURL / http URL / 项目媒体 URL → 可直接给方舟的 image 字段 */
 export function resolveRef(ref, appRoot) {
   const canon = canonicalProjectMediaRef(ref)

@@ -104,9 +104,15 @@ check('缺失视频进入 missing', refs.missing.some((m) => m.token === 'asset-
 const request = build(baseShot)
 check('第一条视频进入 reference_video', request.video?.url === '/videos/a.mp4', JSON.stringify(request.video))
 check('第二条视频列在 omittedVideos', request.omittedVideos.length === 1 && request.omittedVideos[0].label.includes('调度B'), JSON.stringify(request.omittedVideos))
-check('视频不占图片额度', request.refs.length === 2, String(request.refs.length))
+// 只有 asset-img 一条画面连线；refImage 按 spec 不再隐式入图，视频另占 video 槽不占图片额度
+check('视频不占图片额度', request.refs.length === 1, String(request.refs.length))
 check('缺失视频阻塞出片', request.blocking.some((x) => x.code === 'video-asset-missing'), JSON.stringify(request.blocking))
-check('提示词只要求参考运动', /@视频1/.test(request.prompt) && /运动、机位与节奏/.test(request.prompt), request.prompt.slice(-160))
+// 正文只由人/Agent 写入：不再拼「@视频1 只参考运动」这类运行时段落；空正文直接阻塞
+check(
+  '正文不拼运行时视频段落',
+  request.prompt === '' && request.blocking.some((x) => x.code === 'shot-prompt-empty'),
+  JSON.stringify(request.prompt),
+)
 check('不再使用旧 3D 白模文案', !/白模|网格|视锥/.test(request.prompt), request.prompt.slice(-160))
 check('过期 3D 不再阻塞出片', !request.blocking.some((x) => x.code === 'schedule-stale'), JSON.stringify(request.blocking))
 
@@ -127,10 +133,40 @@ const unsupported = build(baseShot, { key: 'v', model: 'seedance-1-0-pro', suppo
 check('模型不支持视频参考给警告', unsupported.warnings.some((x) => x.code === 'video-ref-unsupported'), JSON.stringify(unsupported.warnings))
 
 const native = build({ ...baseShot, audioMode: 'native' })
-check('原生音频与视频素材冲突', native.blocking.some((x) => x.code === 'native-video-conflict'), JSON.stringify(native.blocking))
+check(
+  '原生音频可与视频素材并存',
+  !native.blocking.some((x) => x.code === 'native-video-conflict'),
+  JSON.stringify(native.blocking),
+)
+check('原生音频仍带视频附件', native.video?.url === '/videos/a.mp4', JSON.stringify(native.video))
+check(
+  '原生音频同时带参考图与视频',
+  native.refs.length > 0,
+  `${native.refs.length} 张`,
+)
+// 有原生音频能力的模型：native 与视频参考同时在请求里，不再互相排斥
+const nativeAudioModel = {
+  key: 'v25',
+  model: 'seedance-2.5',
+  providerKind: 'apimart',
+  audioOut: true,
+  supportsVideoRef: true,
+}
+const nativeOk = build({ ...baseShot, audioMode: 'native', videoPrompt: '夜雨街头' }, nativeAudioModel)
+check(
+  '原生音频 + 视频参考走 native 模式',
+  nativeOk.mode === 'native' && nativeOk.video?.url === '/videos/a.mp4',
+  `${nativeOk.mode} / ${nativeOk.video?.url}`,
+)
+check(
+  '原生音频 + 视频参考不产生 native 相关阻断',
+  !nativeOk.blocking.some((x) => x.code.startsWith('native-')),
+  nativeOk.blocking.map((x) => x.code).join(','),
+)
 
 const withImages = build({ ...baseShot, refExtras: ['/b.jpg', '/c.jpg', '/d.jpg', '/e.jpg', '/f.jpg'] })
-check('图片参考不限张数', withImages.refs.length === 7, String(withImages.refs.length))
+// 1 条连线 + 5 条 refExtras；旧期望 7 是 refImage 还会隐式入图时的口径
+check('图片参考不限张数', withImages.refs.length === 6, String(withImages.refs.length))
 check('图片与视频并存', withImages.video?.url === '/videos/a.mp4', JSON.stringify(withImages.video))
 
 const onlyV1 = build({ ...baseShot, refIds: ['asset-v1', 'asset-img'] })

@@ -1595,7 +1595,7 @@ function InspectorBody({
       >
         <span>
           原生音频
-          <i className="hint-inline" title="Seedance 2.5 原生音轨；只支持单说话人和有效音色样本">
+          <i className="hint-inline" title="Seedance 2.5 原生音轨；有音色样本时锁音色，没有或不合规时声音由模型决定，不拦出片">
             视频自带声音
           </i>
         </span>

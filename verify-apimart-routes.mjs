@@ -124,6 +124,15 @@ const testProvider = {
   apiKey: 'test-key',
   caps: ['text', 'image', 'video', 'audio'],
 }
+/** 方舟渠道：dryRun 只拼 payload 不联网，用来断言「参考图 + 参考视频」并存 */
+const arkProvider = {
+  id: 'ark-test',
+  label: 'Ark Mock',
+  kind: 'ark',
+  baseUrl: `${mockBase}/api/v3`,
+  apiKey: 'test-key',
+  caps: ['video'],
+}
 const testModels = [
   {
     key: 'mock-text',
@@ -157,7 +166,21 @@ const testModels = [
     source: 'manual',
     runtime: 'ready',
     supportsVideoRef: true,
-    features: { firstFrame: true, lastFrame: true, videoRef: true },
+    features: { firstFrame: true, lastFrame: true, videoRef: true, audioOut: true },
+  },
+  // 走方舟渠道的 dryRun：只验路由层拼装（不联网、不花额度），用来断言参考图与
+  // 参考视频能并存——APIMart 分支在 dryRun 之前还有一次可达性探测
+  {
+    key: 'mock-ark-ref',
+    label: 'Mock Ark Ref',
+    cap: 'video',
+    caps: ['video', 'videoRef'],
+    provider: 'ark-test',
+    model: 'doubao-seedance-1-0-lite-i2v-250428',
+    source: 'manual',
+    runtime: 'ready',
+    supportsVideoRef: true,
+    features: { firstFrame: true, textToVideo: true, audioOut: true },
   },
   {
     key: 'mock-tts',
@@ -195,8 +218,15 @@ const putSettings = async (settings) => {
 try {
   const next = {
     ...original,
-    providers: [...original.providers.filter((p) => p.id !== 'apimart-test'), testProvider],
-    models: [...original.models.filter((m) => m.provider !== 'apimart-test'), ...testModels],
+    providers: [
+      ...original.providers.filter((p) => p.id !== 'apimart-test' && p.id !== 'ark-test'),
+      testProvider,
+      arkProvider,
+    ],
+    models: [
+      ...original.models.filter((m) => m.provider !== 'apimart-test' && m.provider !== 'ark-test'),
+      ...testModels,
+    ],
   }
   await putSettings(next)
 
@@ -310,6 +340,32 @@ try {
     if (job.status === 'succeeded' || job.status === 'failed') break
   }
   check('视频任务完成', job?.status === 'succeeded' && /^\/videos\//.test(job.url || ''), JSON.stringify(job).slice(0, 200))
+
+  // 参考图与参考视频同属全模态参考，必须并存：以前 refMode 被 !videoRefMode
+  // 短路，连线视频时参考图会被整包丢掉。
+  // 用 ark 渠道的 dryRun 验路由层：dryRun 在提交前返回，不碰网络。
+  const coexist = await api('/api/seedance', {
+    method: 'POST',
+    body: JSON.stringify({
+      dryRun: true,
+      modelKey: 'mock-ark-ref',
+      refImages: ['/generated/apimart-mock-ref.png'],
+      refVideos: ['https://cdn.example.com/ref.mp4'],
+      prompt: '夜雨街头',
+      seconds: 5,
+      ratio: '16:9',
+      resolution: '720p',
+    }),
+  })
+  const coexistContent = coexist.body.request?.content ?? []
+  check(
+    '参考图与参考视频并存',
+    coexist.body.ok === true &&
+      coexist.body.mode === 'video' &&
+      coexistContent.filter((c) => c.role === 'reference_image').length === 1 &&
+      coexistContent.filter((c) => c.role === 'reference_video').length === 1,
+    JSON.stringify(coexist.body).slice(0, 260),
+  )
 
   const voices = await api('/api/voices?modelKey=mock-tts')
   check(

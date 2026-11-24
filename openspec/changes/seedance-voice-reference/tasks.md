@@ -48,7 +48,7 @@
 - [x] 6.3 运行 `npm run build`、`node verify-performance*.mjs`、`node verify-export.mjs`、`node verify-lipsync*.mjs`；验证：全部通过，旧 TTS/口型路径不回退。
 - [ ] 6.4 在用户确认后做真实 Seedance 2.5 A/B：至少 3 个 4 秒以上单说话人镜头，使用自己生成/授权音频，比较音色相似度、跨镜稳定性、口型、是否双声、成本和等待；未确认时保持未验收，不写通过。
 - [x] 6.5 更新 evidence/README：记录探测结果（对象 400、2 秒 400、4 秒 data URL 成功、版权失败、成本 0.3883）、mock 证据、真实 A/B 状态、未支持项和回滚方式；验证：证据不把 mock 写成真实通过。
-- [x] 6.6 写清楚本变更与 `shot-performance-direction` 的依赖/冲突：native 与 provider 口型互斥，apply/archive 顺序要先协调；验证：任务说明和 evidence 都记录该前置。
+- [x] 6.6 写清楚本变更与 `shot-performance-direction` 的依赖/冲突：native 与 provider 口型互不禁用（2026-11-24 修订），apply/archive 顺序仍要先协调；验证：任务说明和 evidence 都记录该前置。
 
 ## 7. 无参考原生音频与 4 秒边界修正（2026-11-22）
 
@@ -63,10 +63,22 @@
 - [x] 7.7 回归对齐：`verify-native-export.mjs` 的「off 镜头 audio=tts」断言改为 `none`（R2 已生效）；修 `README.md` 三处陈旧表述（连播 TTS、多人回退、切回恢复 TTS）。验证：`verify-native-audio.mjs` / `verify-native-export.mjs` / `verify-shot-seconds.mjs` / `verify-native-audio-ui.mjs` / `verify-character-voice.mjs` / `verify-apimart-video-payload.mjs` 全部退出码 0；`rg "TTS/native 音轨会播放|继续用静音视频 \+ TTS|切回关闭恢复 TTS" README.md` 无结果。另修 `verify-shot-outgoing-duration.mjs`、`verify-character-voice-ui.mjs` 中随文案改名的过时选择器。
 - [x] 7.8 更新 `docs/seedance-audio.md` 与 `evidence/README.md`：记录无参考成功任务与 4 秒合法性，产物 `evidence/seedance-native-noref-test.mp4`；台词「被念出」标注为人工听感确认（自动化只覆盖任务成功与非静音音轨）。验证：文档结论不超出实测范围。
 
+## 8. 取消强门镜：原生音频不再被参考约束（2026-11-24）
+
+背景：用户要求「原生音频到底还有哪些限制，全部放开，不做强门镜」，并明确「原生音频只能用参考图模式」这条要取消。7.x 已把「无样本」放开，但多说话人、说话人不在角色库、样本时长不合规仍是硬门，且 `videoPrompt` 里还有一条 `native-video-conflict` 直接禁止原生音频 + 视频素材。
+
+- [x] 8.1 `src/nativeAudio.ts`：多说话人、说话人不在角色库、样本时长不合规一律从 `blocked` 改为可提交的 `no-reference` 并说明原因；`blocked` 只剩「模型没有音频能力」与「镜头短于上游下限」。验证：`verify-native-audio.mjs` 三条断言改为「降级为无参考而非拦阻」。
+- [x] 8.2 `src/videoPrompt.ts`：删除 `native-video-conflict` 阻断；`native-no-image` 从 error 降为 warn（模型未声明 `textToVideo` 时提示可能被拒）。验证：`verify-video-asset-ref.mjs` 断言 native + 视频素材同时存在且不产生 native 阻断；`verify-shot-seconds.mjs` 断言缺角色卡仍走 native。
+- [x] 8.3 `src/App.tsx`：native 分支同时提交 `refVideos`，不再因为走 native 就丢掉视频素材参考。
+- [x] 8.4 `server/app.ts`：`refMode` 不再被 `!videoRefMode` 短路，参考图与参考视频可同时提交（此前连线视频时参考图会被整包丢弃）。验证：`verify-apimart-routes.mjs` 新增「参考图与参考视频并存」dryRun 断言。
+- [x] 8.5 `src/LipSyncPanel.tsx` / `src/NativeAudioPanel.tsx`：provider 口型入口不再对 native 禁用，改为说明「做口型会用配音替换原生音轨」。
+- [x] 8.6 `src/agent/shotVideoHarnessTools.ts`：`set_shot_video_options` 的说明与拒绝条件同步放宽，只有模型不具备音频能力才返回错误。验证：`tests/shot-video-harness-tools.ts` 新增两条（无样本仍写入 native / 无能力才拒绝）。
+- [x] 8.7 同步 `specs/video-native-audio/spec.md`：删除「首期只支持单说话人」「原生音频使用参考图模式而不是首尾帧」「原生音频与 provider 口型互斥」三条旧要求，改为「不做强门镜，只降级不拦截」「原生音频可与视频素材参考并存」「两个独立步骤」。
+
 ## Workflow follow-up
 
 - 实现前确认 `shot-performance-direction` 已应用或与其并行；本变更复用其 `performance.speaks`、`lipSync` 和相关 UI，不重复实现。
-- APIMart 能力以实测为准：单 `audio_url` 字符串（可选）、`generate_audio:true` 可不带参考、视频时长 4-30 秒（含 4）、首期单说话人；不要重新引入 `reference_audio` 数组或对象形状。
+- APIMart 能力以实测为准：单 `audio_url` 字符串（可选）、`generate_audio:true` 可不带参考、视频时长 4-30 秒（含 4）；不要重新引入 `reference_audio` 数组或对象形状。音色参考是可选增强，不做强门镜（见 8.x）。
 - 本变更与 `canvas-prod-modes-no-voice` 的 R2（连播/导出只认成片音轨）方向一致；TTS 相关表述以 R2 为准，不要再写「切回恢复 TTS」。
 - 归档前运行 `openspec validate seedance-voice-reference --strict`，同步 `character-voice-reference` / `video-native-audio` 主 specs。
 - 真实 Seedance 2.5 原生音频调用必须由用户逐次/按批次确认；证据中区分 mock 与真实产物。

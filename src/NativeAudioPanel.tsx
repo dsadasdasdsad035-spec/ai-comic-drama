@@ -81,12 +81,13 @@ export default function NativeAudioPanel({
    * 开关只看模型能力，不看音色样本。
    *
    * 以前这里要求 `ref.ok`，等于「没有角色音色样本就没法开原生音轨」。但样本
-   * 缺失只是拿不到音色锚点，不该拦住出片：用户点了按钮就该拿到视频。缺样本时
-   * 仍然记录 native 偏好，出片时只发 `generate_audio`，声音由模型决定。
+   * 缺失、多说话人、说话人不在角色库、样本不合规都只是拿不到音色锚点，不该
+   * 拦住出片：用户点了按钮就该拿到视频。这些情况仍记 native 偏好，出片时只发
+   * `generate_audio`，声音由模型决定。
    */
   const canEnable = Boolean(caps?.supported)
   const reason = !caps?.supported ? '当前模型没有通过音频参考探测' : ''
-  /** 只有真拦阻（模型没能力/多说话人/镜头太短/样本不合规）才算不可用 */
+  /** 只剩上游一定会拒绝的两种情况（模型没能力 / 镜头短于下限）才算不可用 */
   const blockedHint = Boolean(mode === 'native' && !ref.ok)
   const blockedReason = ref.ok ? '' : ref.reason
   /** 已开 native 但没有音色样本：不是降级，只是声音由模型决定 */
@@ -179,7 +180,9 @@ export default function NativeAudioPanel({
         </div>
       )}
       {mode === 'native' && data.lipSync?.mode === 'provider' && (
-        <div className="gen-warn">原生音频与 provider 口型互斥，请把口型切回关闭或提示词模式。</div>
+        <div className="gen-warn">
+          本镜同时选了 provider 口型：出片带原生音轨，随后做口型时会用配音替换这条音轨。
+        </div>
       )}
     </div>
   )

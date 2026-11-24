@@ -236,7 +236,7 @@ export function buildShotVideoRequest(input: {
         preferredCharacter: d.audioRef?.character,
       })
     : null
-  /** 只在「模型没有原生音频能力」或「音色样本不合规」时降级；无样本仍走 native */
+  /** 只在「模型没有原生音频能力」或「镜头短于上游下限」时降级；无样本仍走 native */
   const nativeBlocked = Boolean(nativeRef && !nativeRef.ok)
   /**
    * 被拦下时按**普通出片**重算时长：原生音频的门槛只在真的要带音轨时才成立，
@@ -287,11 +287,11 @@ export function buildShotVideoRequest(input: {
    * 音色参考是**可选增强**，不是原生音轨的前置条件。
    *
    * - 有可用样本 → 带上 `audio_url`（`audio` 附件），音色跨镜一致。
-   * - 没有样本（`no-reference`）→ 照常 native，只发 `generate_audio`，声音由
-   *   模型决定。2026-11-22 实测这条组合能出片且会念出台词
-   *   （`task_01M81KX9X0DN2JBVXS9KCGY1` 同类任务），不是非法请求。
-   * - `blocked`（模型没能力 / 样本不合规）→ 才降级成普通静音出片并在 warnings
-   *   里说明原因，避免让用户以为拿到的是带音轨的成片。
+   * - 没有样本、多说话人、说话人不在角色库、样本不合规（`no-reference`）→ 照常
+   *   native，只发 `generate_audio`，声音由模型决定。2026-11-22 实测这条组合能
+   *   出片且会念出台词（`task_01M81KX9X0DN2JBVXS9KCGY1` 同类任务）。
+   * - `blocked`（模型没能力 / 镜头短于上游下限）→ 才降级成普通静音出片并在
+   *   warnings 里说明原因，避免让用户以为拿到的是带音轨的成片。
    */
   const nativeDegraded = Boolean(nativeMode && nativeBlocked)
   const nativeNoReference =
@@ -422,7 +422,7 @@ export function buildShotVideoRequest(input: {
       message: `无音色参考，声音由模型决定：${nativeNoReference.reason}`,
     })
   }
-  // 模型没有原生音频能力 / 样本不合规才降级，这时明确说本次没有原生音轨
+  // 模型没有原生音频能力 / 镜头短于上游下限才降级，这时明确说本次没有原生音轨
   if (nativeDegraded && nativeRef && !nativeRef.ok) {
     warnings.push({
       code: 'native-degraded',
@@ -430,26 +430,24 @@ export function buildShotVideoRequest(input: {
       message: `本次不带原生音轨出片：${nativeRef.reason}`,
     })
   }
-  if (nativeMode && primaryVideo) {
-    blocking.push({
-      code: 'native-video-conflict',
-      level: 'error',
-      message: '原生音频只能用参考图模式，请取消视频素材参考',
+  // 原生音频与视频素材参考可以并存：APIMart Seedance 2.5 的请求体同时接受
+  // video_urls 与 generate_audio/audio_url，以前那条「只能用参考图模式」是产品
+  // 限制而不是上游约束，已取消。
+  // 纯文本 + 原生音轨同样放行：没有连线图/视频时由模型自由发挥画面。
+  if (nativeMode && refs.length === 0 && !primaryVideo) {
+    warnings.push({
+      code: 'native-no-image',
+      level: 'warn',
+      message: input.model?.features?.textToVideo === false
+        ? '没有连线参考图或视频，且当前模型未声明文生视频能力，提交后可能被拒绝'
+        : '没有连线参考图或视频：本次按纯文本 + 原生音轨出片，画面与声音都由模型决定',
     })
   }
-  if (refs.length === 0 && !firstFrame && !primaryVideo) {
+  if (!nativeMode && refs.length === 0 && !firstFrame && !primaryVideo) {
     blocking.push({
       code: 'no-image',
       level: 'error',
       message: '在画布上为分镜连线角色或图片素材，或勾选运镜库视频参考 / 连线视频素材后再出片',
-    })
-  }
-  // 降级出片按普通路径处理，不再要求「原生音频专用」的连线参考图
-  if (nativeMode && !nativeDegraded && refs.length === 0) {
-    blocking.push({
-      code: 'native-no-image',
-      level: 'error',
-      message: '原生音频需要至少一张连线参考图（角色、素材或相邻镜）',
     })
   }
 

@@ -42,6 +42,26 @@ check(
     sd.image_with_roles?.[2]?.role === 'reference_image',
 )
 check('Seedance 参考视频', sd.video_urls?.[0] === 'https://cdn/ref.mp4')
+/**
+ * 带参考视频必须声明「参考」任务类型，否则上游按提示词把任务判成「视频编辑」，
+ * 要求 ratio=adaptive、duration=-1 并整单失败（2026-11-24 实测报错原文）。
+ * 同一条请求真跑通过：task_01M87114YP1A68DFB1RQ4Q1VY3（5.04s / 1280x720）。
+ */
+check(
+  'Seedance 参考视频声明参考任务类型',
+  sd.omni_reference_task_type === 'reference',
+  String(sd.omni_reference_task_type),
+)
+check(
+  '无参考视频时不声明任务类型',
+  buildVideoPayload({
+    family: 'seedance-2.5',
+    model: 'seedance-2.5',
+    prompt: 'x',
+    seconds: 5,
+    referenceImages: ['https://cdn/ref.png'],
+  }).omni_reference_task_type === undefined,
+)
 check('Seedance 分辨率/时长', sd.resolution === '720p' && sd.duration === 5)
 check('Seedance 静音', sd.generate_audio === false && sd.watermark === false)
 check('Seedance 时长下限', kindOf(() => buildVideoPayload({

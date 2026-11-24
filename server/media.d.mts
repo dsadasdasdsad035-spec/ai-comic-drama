@@ -70,4 +70,9 @@ export declare function migrateProjectMedia(
   project: Record<string, any>,
 ): MigrationResult
 export declare function canonicalProjectMediaRef(ref: string): string
+/**
+ * 站内路径 → 本地文件绝对路径，同时认 `/project-assets/<项目>/<文件>` 与媒体根两个根。
+ * 找不到、data URL、http URL 都返回 null。
+ */
+export declare function localFileForRef(ref: string, appRoot: string): string | null
 export declare function resolveRef(ref: string, appRoot: string): string

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-让画布的视频生成可以使用 Seedance 2.5 的原生音频，并把一个角色的 TTS 音色样本作为**可选**音色参考；模型重新发声和生成嘴型，参考音频不会被原样播放。没有可用样本时仍可开原生音轨，声音由模型决定。首期只支持单说话人镜头。
+让画布的视频生成可以使用 Seedance 2.5 的原生音频，并把一个角色的 TTS 音色样本作为**可选**音色参考；模型重新发声和生成嘴型，参考音频不会被原样播放。没有可用样本时仍可开原生音轨，声音由模型决定。音色参考不做强门镜：除「模型不具备音频能力」外，其余情况一律降级为「无音色参考」照常出片；原生音频可与参考图、视频素材参考同时提交。
 
 ## ADDED Requirements
 
@@ -44,24 +44,36 @@
 - **WHEN** 调用方传入对象或数组形式的音频参考
 - **THEN** 在本地请求层拒绝，不把错误形状发给 APIMart
 
-### Requirement: 原生音频首期只支持单说话人
+### Requirement: 音色参考不做强门镜，只降级不拦截
 
-一个 `native` 镜头 MUST 只有一个真正说话的角色。镜头有两个或更多说话人时 MUST 禁用 native，提示拆成单人镜或改用 `off`（静音视频）；MUST NOT 把多个角色混成一个 `audio_url` 或冒充多参考。
+`native` 模式 MUST 只在两种上游一定会拒绝的情况下阻止出片：模型没有音频能力、镜头短于 provider 下限。其余「拿不到音色锚点」的情况 MUST NOT 拦截出片，MUST 一律按无参考提交（`generate_audio: true`、不带 `audio_url`）并在该镜标明原因：
 
-#### Scenario: 单说话人
+- 多说话人：上游只接受一条 `audio_url`，硬选一人会让所有人同声。
+- 说话人不在角色库（无卡即无样本，猜不出该用谁的音色）。
+- 样本时长不合 provider 范围。
+- 样本缺失、失效或无音频文件。
 
-- **WHEN** 镜头只有陈默一句台词，陈默有有效音色样本
-- **THEN** native 可用，`audio_url` 使用陈默样本
+MUST NOT 因为上述任一情况把镜头降级成静音视频或拒绝写入 `audio_mode = native`。
 
-#### Scenario: 双人对话
+#### Scenario: 多说话人镜头
 
-- **WHEN** 镜头里陈默和林岚都有台词
-- **THEN** native 禁用并说明“首期只支持单说话人”，`off` 仍可用
+- **WHEN** 镜头里陈默和林岚都有台词，用户开启原生音频
+- **THEN** 开关可开启并写入 `audio_mode = native`，本次不带 `audio_url`，面板说明「本镜有多个说话人，音色参考只支持单个角色」，出片照常带原生音轨
 
-#### Scenario: 画外音
+#### Scenario: 说话人不在角色库
 
-- **WHEN** 画面内只有一个人说话，另一句是画外音
-- **THEN** 只有画面内说话人进入 `audio_url`；画外音不驱动 native
+- **WHEN** 台词点名的说话人在角色库里没有角色卡
+- **THEN** 按无参考出片，面板说明「说话人 X 不在角色库里」，不拦阻
+
+#### Scenario: 样本时长不合规
+
+- **WHEN** 角色音色样本只有 1.2 秒（低于 provider 的 2 秒下限）
+- **THEN** 按无参考出片并说明样本时长，开关保持开启，不降级成静音
+
+#### Scenario: 模型不具备音频能力
+
+- **WHEN** 当前视频模型没有声明 `audioOut`
+- **THEN** 开关禁用并说明原因，不写入 `native`
 
 ### Requirement: 原生音频的音色参考是可选增强
 
@@ -110,24 +122,24 @@
 - **WHEN** 用户选择 provider 支持的 `-1` 自动时长
 - **THEN** 只在 provider 明确支持时允许，不静默使用
 
-### Requirement: 原生音频使用参考图模式而不是首尾帧
+### Requirement: 原生音频可与视频素材参考并存
 
-当前 Seedance 2.5 文档把首帧/首尾帧与音频参考列为互斥场景。`native` 镜头 MUST 使用参考图模式携带关键帧，MUST NOT 同时提交 `first_frame_image`/`last_frame_image` 与 `audio_url`，直到渠道实测确认可以混用。
+`native` 镜头 MAY 同时提交参考图与参考视频。系统 MUST NOT 以「原生音频只能用参考图模式」之类理由阻止带视频素材的镜头出片；参考图与参考视频同属全模态参考，MUST 在同一请求中一并提交。
 
 #### Scenario: 已有首帧
 
 - **WHEN** 镜头已有关键帧并切到 native
 - **THEN** 关键帧作为 reference_image 发送，不作为 first_frame_image
 
-#### Scenario: 首尾帧任务
+#### Scenario: 连线了视频素材
 
-- **WHEN** 镜头使用首尾帧模式
-- **THEN** native 入口禁用，提示改用参考图模式或 off
+- **WHEN** 镜头开了 native 且连线了视频素材
+- **THEN** 请求同时带 `generate_audio`、参考图与参考视频，出片不被阻止
 
-#### Scenario: 未探测的混用
+#### Scenario: 没有任何图片或视频连线
 
-- **WHEN** 渠道没有明确确认首尾帧 + 音频可混用
-- **THEN** 不发送该组合，不把上游 400 当成成功
+- **WHEN** 镜头开了 native 且既无参考图也无参考视频
+- **THEN** 按纯文本 + 原生音轨出片，只给「画面与声音都由模型决定」的提示，不阻止；仅当模型未声明文生视频能力时才警告提交可能被拒
 
 ### Requirement: 音频参考必须可读取且通过内容审核
 
@@ -167,19 +179,19 @@
 - **WHEN** 一集里既有 native 镜头也有 off 镜头
 - **THEN** 每个镜头按自己的模式选音轨，统一响度，不跨镜串音
 
-### Requirement: 原生音频与 provider 口型互斥
+### Requirement: 原生音频与 provider 口型是两个独立步骤
 
-同一镜头 MUST NOT 同时启用原生音频和外部 provider 口型。`native` 模式下 provider 口型入口 MUST 禁用并说明“原生音频已包含声画”；切回 `off` 后才允许 provider 口型。已有 provider 口型结果 MUST 保留，不自动删除。
+原生音频与 provider 口型 MUST NOT 互相禁用入口：`native` 生成的是带原生音轨的视频，provider 口型是在成片视频上再用配音重做一版。同时选择时 MUST 在面板说明「做口型时会用配音替换这条音轨」，由用户决定采用哪一版。已有 provider 口型结果 MUST 保留，不自动删除。
 
-#### Scenario: native 下点口型
+#### Scenario: native 下查看口型入口
 
-- **WHEN** 镜头已启用 native，用户查看 provider 口型入口
-- **THEN** 入口禁用并说明原生音频已包含声画
+- **WHEN** 镜头已启用 native，用户查看 provider 口型
+- **THEN** 入口可用，并提示做口型会用配音替换原生音轨
 
 #### Scenario: 切回 off
 
 - **WHEN** 用户关闭 native
-- **THEN** provider 口型入口恢复，已有结果仍可查看/采用
+- **THEN** provider 口型入口保持可用，已有结果仍可查看/采用
 
 #### Scenario: 已有口型结果
 

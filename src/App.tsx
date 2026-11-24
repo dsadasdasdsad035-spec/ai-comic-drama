@@ -3354,7 +3354,7 @@ function Shell() {
       const blocked = request.blocking[0]
       if (blocked) {
         patch(id, { vidState: 'error', vidError: blocked.message })
-        if (blocked.code !== 'no-image' && blocked.code !== 'native-no-image') {
+        if (blocked.code !== 'no-image') {
           setToast(blocked.message)
           window.setTimeout(() => setToast(''), 3600)
         }
@@ -3389,7 +3389,13 @@ function Shell() {
       try {
         const res = await startVideo({
           ...(request.mode === 'native'
-            ? { refImages: imageUrls, generateAudio: true, audioRef: request.audio?.url }
+            ? {
+                refImages: imageUrls,
+                // 原生音频与视频素材参考并存：Seedance 2.5 同时接受 video_urls 与 generate_audio
+                ...(request.video ? { refVideos: [request.video.url] } : {}),
+                generateAudio: true,
+                audioRef: request.audio?.url,
+              }
             : request.video
               ? {
                   refVideos: [request.video.url],

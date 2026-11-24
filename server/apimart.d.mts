@@ -73,6 +73,19 @@ export declare function uploadImage(opts: {
   fetchImpl?: typeof fetch
 }): Promise<{ url: string; filename: string; contentType: string }>
 
+/** 参考视频上传（POST /uploads/videos，multipart）；返回保留 3 天的公网 URL */
+export declare function uploadVideo(opts: {
+  baseUrl: string
+  apiKey: string
+  filePath?: string
+  buffer?: Buffer | Uint8Array
+  mime?: string
+  filename?: string
+  signal?: AbortSignal
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}): Promise<{ url: string; filename: string; contentType: string }>
+
 export declare function buildImagePayload(opts: {
   model: string
   prompt: string

@@ -157,7 +157,7 @@ export default function LipSyncPanel({ data, onPatch, settings, projectName, nat
         <select value={state.mode} onChange={(e) => setMode(e.target.value as typeof state.mode)}>
           <option value="off">关闭</option>
           <option value="prompt">提示词</option>
-          <option value="provider" disabled={nativeAudio}>外部口型</option>
+          <option value="provider">外部口型</option>
         </select>
         {state.adopted && <span className="lip-badge">已采用口型版</span>}
         {(stale || state.status === 'stale') && <span className="lip-badge warn">源或台词变了，需重做</span>}
@@ -172,7 +172,9 @@ export default function LipSyncPanel({ data, onPatch, settings, projectName, nat
       )}
 
       {state.mode === 'provider' && nativeAudio && (
-        <div className="gen-warn">原生音频已包含声画，provider 口型入口已禁用；切回关闭后可继续使用。</div>
+        <div className="gen-warn">
+          当前镜头开着原生音频：外部口型会用它自己的配音重做一版，成片音轨会被替换掉；两边都想要就先切回原版再对比。
+        </div>
       )}
 
       {state.mode === 'provider' && !nativeAudio && (

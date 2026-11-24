@@ -168,8 +168,8 @@ check(
 check('零角色卡空镜仍走 native 且无 audio 附件', noChars.mode === 'native' && noChars.audio === null, noChars.mode)
 
 /**
- * 台词点名了一个角色库里没有的说话人：这是数据不一致，不是「没有样本」。
- * 猜不出该用谁的音色，也不该静默按无参考出片——明确拦下让人先补角色卡。
+ * 台词点名了一个角色库里没有的说话人：猜不出该用谁的音色，但不是不能出片。
+ * 按无参考照常走 native，只在 warning 里说清声音由模型决定。
  */
 const missingCard = { ...shotData(6), refIds: [] }
 const noCardHit = lib.buildShotVideoRequest({
@@ -181,9 +181,9 @@ const noCardHit = lib.buildShotVideoRequest({
   resolution: '720p',
 })
 check(
-  '说话人不在角色库时降级并说明',
-  noCardHit.mode !== 'native' && noCardHit.warnings.some((w) => w.code === 'native-degraded'),
-  noCardHit.warnings.map((w) => w.code).join(','),
+  '说话人不在角色库时仍走 native 并说明',
+  noCardHit.mode === 'native' && noCardHit.warnings.some((w) => w.code === 'native-no-reference'),
+  `${noCardHit.mode} / ${noCardHit.warnings.map((w) => w.code).join(',')}`,
 )
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

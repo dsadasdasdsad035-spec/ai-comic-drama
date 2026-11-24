@@ -103,6 +103,7 @@ App.generateVideoOne
 - 首个 adapter 把探测到的字段封装成 `audioRefField`；如果 provider 只接受公网 URL，而项目音频只有本地路径，则 native 入口禁用并提示上传/公网地址，**不回退**成无参考。
 - `generateAudio: true` 时，Seedance 2.5 payload 的 `generate_audio` 从 false 改为 true；其他模型如果未通过探测，拒绝 native。
 - 首期只有一个 `audio_url`，提示词固定写“音色参考音频1”；不要让提示词声称存在多个音频槽位。
+- **不做强门镜（2026-11-24 修订）**：音色参考只是可选增强，不再因为「拿不到音色锚点」阻止出片。多说话人、说话人不在角色库、样本时长不合规一律降级成无参考（只发 `generate_audio`）并说明原因；只有「模型没有 `audioOut`」和「镜头短于上游下限」才拦。以前把这些当硬门，等于让用户为了开开关去拆镜或重生成样本。
 - **`audio_url` 是可选增强，不是 `generate_audio` 的前置**：2026-11-22 实测 `generate_audio:true` 不传 `audio_url` 也能成功出片（`task_01M81KX9X0DN2JBVBSXS9KCGY1`，4.064s，AAC 单音轨，cost 0.3883）。没有可用样本时照常提交 `generate_audio: true`、不带 `audio_url`，UI 标「声音由模型决定」。实现里 `server/app.ts` 与 `server/apimart.mjs` 那两道「无参考就 400/throw」是绕开未探测项的保守门，不是上游限制，应予移除。
 - **时长边界是 `>= 4`，不是 `> 4`**：同一实测 `duration: 4` 成功；`src/videoSeconds.ts` 的 `audioMin + 1` 抬升和 `apimart.mjs` 的 `duration <= 4` 拒绝都超出实测，改为 `>= 4`。
 
@@ -115,7 +116,7 @@ App.generateVideoOne
 - 声音是视频提示词技能的分内职责：`skills/short-drama-video-prompts/SKILL.md` 已要求正文写「运镜与声音」、音画同出路线写清声源/说话人/语种/逐字台词（`VID-23`、`VID-25`）。
 - 台词逐字来自 `dialogue`，由 Agent/人读到后自行组织；不重写、不翻译。
 - 参考音频只写“音色参考”，不写“原样播放”或“逐字对齐 TTS”。
-- 首期只支持单说话人；多说话人 native 禁用，不做 `@音频1..N` 的多槽绑。
+- 不做强门镜：多说话人只是本次不带参考（见决策 3 的 2026-11-24 修订），不做 `@音频1..N` 的多槽绑。
 - `nativeAudioPrompt()` 保留为离线文本工具（生成草稿/测试用），**没有生产调用方**，也不再依赖它进入请求。
 - 无参考时 UI 标「声音由模型决定」；正文缺本镜台词时给软提示「模型可能只出声不说话」，不拦出片、不改正文。
 
@@ -134,8 +135,8 @@ App.generateVideoOne
 ### 6. 参考音频上限和优先级由 provider 描述
 
 - provider 能力描述包含 `audioRefField`、`maxRefAudios`、`minSeconds`、`maxSeconds`、`maxTotalSeconds`、`supportsMultiSpeaker`。APIMart 实测 `audioRefField: audio_url`、`maxRefAudios: 1`、`supportsMultiSpeaker: false`。
-- 首期只允许一个真正说话的角色；有两个或更多说话人时 native 禁用，提示拆镜或走 off（静音）。
-- 单段短于/长于 provider 范围时不提交，提示重生成样本。
+- 只有一个真正说话的角色时才带参考；多说话人不带参考、照常出原生音轨（上游一条 `audio_url` 装不下两套音色）。
+- 单段短于/长于 provider 范围时本次不带参考并说明，不阻止出片（见决策 3 的 2026-11-24 修订）。
 
 ### 7. 能力探测是提交前的硬门
 
@@ -154,7 +155,7 @@ GET /api/seedance/audio-capabilities?modelKey=...
 ### 8. 兼容与迁移
 
 - 旧项目没有 `voiceSample`、`audioMode`、`audioRef`、`audioMeta` 时按无样本/off 读取；不批量迁移。
-- 旧 TTS 文件与口型结果保持可读；provider 口型路径不变，只是 native 镜头禁用该入口。
+- 旧 TTS 文件与口型结果保持可读；provider 口型路径不变，两个入口互不禁用（见 2026-11-24 修订）。
 - 如果 APIMart 探测不支持音频参考，角色音色样本仍可交付（试听/未来复用），但 native 入口禁用；不把整个变更阻塞在音频参考上。
 - 回滚：关闭 native 即回到静音视频（`off`）；删除 `voiceSample` 只影响 native 的音色一致性，旧 TTS 文件继续可用。
 
@@ -164,14 +165,14 @@ GET /api/seedance/audio-capabilities?modelKey=...
 |---|---|
 | 参考音频只影响音色，模型仍重新发声，跨镜一致性不保证 | UI/文档明确“音色参考不是逐字同步”；真实 A/B 验收；保留 provider 口型作为精确路径 |
 | 参考音频触发版权/内容安全 | 只用自己生成/授权音频；显示 provider 原始原因；不自动换音频 |
-| 2 秒镜头被 provider 拒绝 | native 最短 4 秒；不足时禁用并提示 |
-| 首尾帧与音频参考互斥 | native 用 reference_image 模式，不提交 first/last frame + audio_url |
+| 2 秒镜头被 provider 拒绝 | native 最短 4 秒；不足时降级为普通出片并说明（不静默继续带音轨） |
+| 首尾帧与音频参考互斥 | native 用 reference_image 模式，不提交 first/last frame + audio_url；参考视频与参考图可并存 |
 | APIMart 不暴露音频参考字段，或字段名与文档不一致 | 先探测；不支持则禁用 native；不猜字段、不静默降级 |
 | 本地音频 /voices 不可被 provider 访问 | 可编码为 data URL（实测成功）；不能访问/超限就阻止提交 |
-| 多说话人 native | 首期禁用；提示拆镜或走 off+TTS，不把多人混成一个 audio_url |
+| 多说话人 native | 本次不带音色参考、照常出原生音轨（上游一条 audio_url 装不下两套音色），不阻止出片 |
 | native 音频与 TTS 双重人声 | 镜头级音轨互斥；native 不使用 voiceUrl；导出按模式选择 |
 | 生成转场/native 音频接缝 | 先按硬切并加短淡入淡出；复杂转场音频单独验收 |
-| TTS 样本过短/过长 | 2-30 秒硬校验；保留样本但标不可用，提示改试音稿 |
+| TTS 样本过短/过长 | 2-30 秒校验；本次不带参考并说明，样本保留，想锁音色再去重生成 |
 | 2.0+ 真实调用成本/等待 | 默认关闭、逐镜确认、成本预览；测试只用 mock/dryRun |
 | 旧项目/旧接口 | 全部新字段可选，默认 off；旧 TTS/口型路径不变 |
 

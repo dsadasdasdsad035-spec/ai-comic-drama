@@ -66,7 +66,8 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
     description:
       '【平台内置】写入某镜出片相关开关：表情参考、原生音频、工位（生图/出片）。' +
       '至少提供一个字段；只有当前模型不支持原生音频才会拒绝，' +
-      '缺音色样本或说话人无法判定时仍会开启，出片阶段降级为静音视频并给出说明。',
+      '缺音色样本、多说话人、说话人不在角色库或样本不合规时仍会开启，' +
+      '只是不带音色参考、声音由模型决定。',
     schema: z
       .object({
         no: z.string().min(1).describe('镜号，例如 S03'),
@@ -139,7 +140,7 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
             return { ok: false, error: '当前模型不支持原生音频' }
           }
           if (!ref.ok) {
-            // 多说话人 / 镜头太短 / 样本不合规：这些才是真的不能提交
+            // 只剩上游一定会拒绝的两种情况（模型没能力 / 镜头短于下限）
             return { ok: false, error: ref.reason }
           }
           patch.audio_mode = 'native'

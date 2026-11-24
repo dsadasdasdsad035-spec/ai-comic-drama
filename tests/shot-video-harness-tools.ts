@@ -147,6 +147,54 @@ async function main() {
     assert.equal(r.ok, false)
   })
 
+  /**
+   * 原生音频不再做强门镜：只有「模型没有音频能力」才拒绝。
+   * 缺音色样本 / 多说话人 / 说话人不在角色库都要照常写入 audio_mode=native，
+   * 出片阶段只发 generate_audio，声音由模型决定。
+   */
+  await check('set_shot_video_options 无音色样本仍开启 native', async () => {
+    let snap = project()
+    const prev = globalThis.fetch
+    // 写回走 deps.writeShot → POST /api/project；这里只需要它返回 ok
+    globalThis.fetch = (async () =>
+      ({ ok: true, status: 200, json: async () => ({ ok: true }) }) as Response) as typeof fetch
+    try {
+      const tools = createBuiltinPlatformTools({
+        projectName: '演示',
+        epNo: 1,
+        getSnapshot: () => snap,
+        setSnapshot: (p) => (snap = p),
+        getSelectedVideoModel: () => ({
+          key: 'v25',
+          model: 'seedance-2.5',
+          providerKind: 'apimart',
+          audioOut: true,
+        }),
+      })
+      const r = await toolOf(tools, 'set_shot_video_options').invoke({ no: 'S01', audioMode: 'native' })
+      assert.equal(r.ok, true, String(r.error))
+      const written = snap.shots.find((s) => s.id === 'E01-S01')
+      assert.equal(written?.audio_mode, 'native')
+      assert.ok(!written?.audio_ref?.url, '没有样本时不该写 audio_ref')
+    } finally {
+      globalThis.fetch = prev
+    }
+  })
+
+  await check('set_shot_video_options 模型无能力才拒绝', async () => {
+    let snap = project()
+    const tools = createBuiltinPlatformTools({
+      projectName: '演示',
+      epNo: 1,
+      getSnapshot: () => snap,
+      setSnapshot: (p) => (snap = p),
+      getSelectedVideoModel: () => ({ key: 'v10', model: 'seedance-1-0-pro', providerKind: 'ark' }),
+    })
+    const r = await toolOf(tools, 'set_shot_video_options').invoke({ no: 'S01', audioMode: 'native' })
+    assert.equal(r.ok, false)
+    assert.match(String(r.error), /不支持原生音频/)
+  })
+
   if (bad) {
     console.error(`\n${bad} 项失败`)
     process.exit(1)

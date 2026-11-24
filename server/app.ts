@@ -104,6 +104,7 @@ import {
   migrateProjectMedia,
   parseProjectMediaUrl,
   locateProjectMediaFile,
+  localFileForRef,
   resolveProjectMediaPath,
   resolveRef,
   saveProjectImage,
@@ -165,6 +166,7 @@ import {
   submitVideo as submitApimartVideo,
   synthesizeSpeech as synthesizeApimartSpeech,
   uploadImage as uploadApimartImage,
+  uploadVideo as uploadApimartVideo,
   probeApimartReachable,
   resolveApimartHttpsProxy,
   videoFamilyFor,
@@ -420,13 +422,22 @@ function readApiKey(): string | null {
   return process.env.ARK_API_KEY || null
 }
 
-/** 从 ~/.canghe-skills/.env 或进程环境里读任意 KEY */
-function readEnvKey(name: string): string | null {
-  const candidates = [
+/**
+ * 找 Key 的 `.env` 清单。与 providerEnvNames 一起用于「缺 Key」的报错文案：
+ * 只写「去设置页填一下」会让人以为 `.env` 不算数，而本仓库的 `.env` 被清掉过，
+ * 用户照着提示写进 `.env` 后仍报缺 Key，只能靠猜到底读的是哪个文件。
+ */
+function envKeyFiles(): string[] {
+  return [
     path.join(os.homedir(), '.canghe-skills', '.env'),
     path.join(process.cwd(), '.canghe-skills', '.env'),
     path.join(process.cwd(), '.env'),
   ]
+}
+
+/** 从 ~/.canghe-skills/.env 或进程环境里读任意 KEY */
+function readEnvKey(name: string): string | null {
+  const candidates = envKeyFiles()
   const re = new RegExp(`^\\s*${name}\\s*=\\s*(.+)$`, 'm')
   for (const f of candidates) {
     try {
@@ -437,6 +448,34 @@ function readEnvKey(name: string): string | null {
     }
   }
   return process.env[name] || null
+}
+
+/** 该渠道认哪些环境变量名；顺序与 providerKey 的兜底一致 */
+function providerEnvNames(p?: Provider): string[] {
+  if (!p) return []
+  if (p.kind === 'ark') return ['ARK_API_KEY']
+  if (p.kind === 'ark-plan') return ['ARK_AGENT_PLAN_API_KEY', 'ARK_PLAN_API_KEY', 'VOLC_API_KEY']
+  if (p.kind === 'apimart') return ['APIMART_API_KEY', 'APIB_API_KEY']
+  if (p.kind === 'volc-tts') {
+    return ['VOLC_TTS_API_KEY', 'ARK_AGENT_PLAN_API_KEY', 'ARK_PLAN_API_KEY', 'VOLC_API_KEY']
+  }
+  if (p.kind === 'elevenlabs') return ['ELEVENLABS_API_KEY']
+  if (p.kind === 'minimax') return ['MINIMAX_API_KEY']
+  if (p.kind === 'openai') return ['OPENAI_API_KEY']
+  return []
+}
+
+/**
+ * 缺 Key 的报错文案：设置页与 `.env` 都是合法来源，两条都要说清。
+ * 顺带报出该渠道认的变量名，避免写成 `APIB_API_KEY` 却查 `APIMART_API_KEY` 这种错位。
+ */
+function missingKeyMessage(p?: Provider): string {
+  const label = p?.label || p?.kind || 'ark'
+  const names = providerEnvNames(p)
+  const paths = envKeyFiles()
+  return names.length
+    ? `渠道「${label}」没有 API Key：设置页填一次，或写进 ${paths.join(' / ')} 里的 ${names.join(' 或 ')}`
+    : `渠道「${label}」没有 API Key，去设置页填一下`
 }
 
 // ---------------------------------------------------------------- 设置（存 SQLite settings 表）
@@ -1455,29 +1494,12 @@ function providerKey(p?: Provider): string {
   const own = String(p?.apiKey || '').trim()
   if (own) return own
   if (!p || p.kind === 'ark') return readApiKey() || ''
-  if (p.kind === 'ark-plan') {
-    return (
-      readEnvKey('ARK_AGENT_PLAN_API_KEY') ||
-      readEnvKey('ARK_PLAN_API_KEY') ||
-      readEnvKey('VOLC_API_KEY') ||
-      ''
-    )
+  // 顺序与 providerEnvNames 一致：APIMART_ 是 deploy/.env.example 的主名，APIB_ 是旧名
+  const names = providerEnvNames(p)
+  for (const name of names) {
+    const v = readEnvKey(name)
+    if (v) return v
   }
-  if (p.kind === 'apimart') {
-    return readEnvKey('APIB_API_KEY') || readEnvKey('APIMART_API_KEY') || ''
-  }
-  if (p.kind === 'volc-tts') {
-    return (
-      readEnvKey('VOLC_TTS_API_KEY') ||
-      readEnvKey('ARK_AGENT_PLAN_API_KEY') ||
-      readEnvKey('ARK_PLAN_API_KEY') ||
-      readEnvKey('VOLC_API_KEY') ||
-      ''
-    )
-  }
-  if (p.kind === 'elevenlabs') return readEnvKey('ELEVENLABS_API_KEY') || ''
-  if (p.kind === 'minimax') return readEnvKey('MINIMAX_API_KEY') || ''
-  if (p.kind === 'openai') return readEnvKey('OPENAI_API_KEY') || ''
   return ''
 }
 
@@ -1585,14 +1607,22 @@ function extractJson(text: string): any {
   throw new Error(`模型返回的不是合法 JSON：${body.slice(0, 120)}`)
 }
 
-/** 参考视频：asset:// / http(s) 原样用；本地路径只接受媒体根下的文件 */
+/**
+ * 参考视频：asset:// / http(s) 原样用；站内路径解析到磁盘文件。
+ *
+ * 站内路径有两个根，不能一律拼媒体根：
+ * - `/project-assets/<项目>/<文件>` → `<projects>/<项目>/assets/`（素材库视频、镜头参考）
+ * - 其余 `/videos/...` 等 → 媒体根（`public/` 或 SB_MEDIA_ROOT）
+ *
+ * 少掉第一个分支时，从素材库连线或桌面端探测生成的视频会被判「不存在」，
+ * 与图片解析（`resolveRef` 里同样有 project-assets 分支）的行为不一致。
+ */
 function resolveVideoRef(ref: string, root: string): { local: string; external: string } {
   const s = String(ref || '').trim()
   if (!s) throw new Error('参考视频为空')
   if (s.startsWith('asset://') || /^https?:\/\//i.test(s)) return { local: '', external: s }
-  const clean = s.split('?')[0].replace(/^\//, '')
-  const file = mediaPath(root, clean)
-  if (!fs.existsSync(file)) throw new Error(`参考视频不存在：${ref}`)
+  const file = localFileForRef(s, root)
+  if (!file) throw new Error(`参考视频不存在：${ref}`)
   return { local: file, external: '' }
 }
 
@@ -5804,7 +5834,7 @@ export function createAppHandler({ root }: { root: string }) {
               res.end(
                 JSON.stringify({
                   ok: false,
-                  message: `渠道「${provider?.label || kind}」没有 API Key，去设置页填一下`,
+                  message: missingKeyMessage(provider),
                   kind: 'no-key',
                 }),
               )
@@ -7218,7 +7248,7 @@ export function createAppHandler({ root }: { root: string }) {
               res.end(
                 JSON.stringify({
                   ok: false,
-                  message: `渠道「${provider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                  message: missingKeyMessage(provider),
                   kind: 'no-key',
                 }),
               )
@@ -7351,8 +7381,9 @@ export function createAppHandler({ root }: { root: string }) {
               image = ''
             }
             // 出片输入只有三类互斥形态：首帧、全模态参考（图/视频）、纯文本。
+            // 图与视频同属全模态参考，可以并存；只有首帧与参考互斥。
             const videoRefMode = refVideos.length > 0
-            const refMode = !videoRefMode && refImages.length > 0
+            const refMode = refImages.length > 0
             // 全模态参考（图 / 视频）与首帧互斥
             const referenceMode = refMode || videoRefMode
 
@@ -7414,7 +7445,7 @@ export function createAppHandler({ root }: { root: string }) {
               res.end(
                 JSON.stringify({
                   ok: false,
-                  message: `渠道「${provider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                  message: missingKeyMessage(provider),
                   kind: 'no-key',
                 }),
               )
@@ -7527,10 +7558,31 @@ export function createAppHandler({ root }: { root: string }) {
                 if (effVideoRefMode) {
                   for (const r of refVideos) {
                     const v = resolveVideoRef(r, root)
-                    if (!v.external) {
-                      throw new ApimartError('APIMart 视频参考只接受公网 URL；本地参考视频无法上传', { kind: 'unsupported' })
+                    if (v.external) {
+                      refVideoUrls.push(v.external)
+                      continue
                     }
-                    refVideoUrls.push(v.external)
+                    // 本地视频（项目素材 / 生成产物）先换公网 URL：
+                    // POST /uploads/videos 实测可用，返回保留 3 天的签名地址。
+                    const mp4 = await ensureMp4Video(v.local)
+                    try {
+                      const up = await uploadApimartVideo({
+                        baseUrl: base,
+                        apiKey: runKey,
+                        filePath: mp4.file,
+                        mime: 'video/mp4',
+                        filename: `video-ref-${refVideoUrls.length}.mp4`,
+                      })
+                      refVideoUrls.push(up.url)
+                    } finally {
+                      if (mp4.temp) {
+                        try {
+                          fs.unlinkSync(mp4.file)
+                        } catch {
+                          /* 临时转码文件删不掉不影响结果 */
+                        }
+                      }
+                    }
                   }
                 }
               } catch (e) {
@@ -7928,7 +7980,7 @@ export function createAppHandler({ root }: { root: string }) {
             res.end(
               JSON.stringify({
                 ok: false,
-                message: `渠道「${imgProvider?.label || 'ark'}」没有 API Key，去设置页填一下`,
+                message: missingKeyMessage(imgProvider),
                 kind: 'no-key',
               }),
             )

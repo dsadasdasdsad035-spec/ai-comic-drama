@@ -46,12 +46,12 @@ check('4 秒整可提交（含边界）', r.ok, r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({ dialogue, characters, caps, seconds: 2 })
 check('2 秒禁用', !r.ok && r.reason.includes('最短 4 秒'), r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({ dialogue: [...dialogue, { speaker: '林岚', text: '我不该来。' }], characters, caps, seconds: 5 })
-check('双说话人禁用', !r.ok && r.reason.includes('单说话人'))
+check('双说话人降级为无参考而非拦阻', r.ok && r.kind === 'no-reference' && r.reason.includes('多个说话人'), r.ok ? r.kind : r.reason)
 // 失效样本按无参考提交（spec：「失效样本视同没有样本」），不是拦阻
 r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample: { ...sample, stale: true } }], caps, seconds: 5 })
 check('失效样本转为无参考而非拦阻', r.ok && r.kind === 'no-reference' && r.reason.includes('失效'), r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample: { ...sample, seconds: 1.2 } }], caps, seconds: 5 })
-check('样本不合规仍拦阻', !r.ok && r.reason.includes('2-30'), r.ok ? r.kind : r.reason)
+check('样本不合规降级为无参考而非拦阻', r.ok && r.kind === 'no-reference' && r.reason.includes('2-30'), r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({ dialogue, characters: [{ ...characters[0], voiceSample: { ...sample, url: '' } }], caps, seconds: 5 })
 check('样本缺音频文件转为无参考', r.ok && r.kind === 'no-reference', r.ok ? r.kind : r.reason)
 
@@ -63,7 +63,7 @@ check('无台词无已选角色时取首个可用样本', r.ok && r.kind === 're
 r = lib.nativeAudioRef({ dialogue: [], characters: [], caps, seconds: 5 })
 check('无台词且无任何角色时可提交无参考', r.ok && r.kind === 'no-reference' && r.reason.includes('音色样本'), r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({ dialogue: [], characters, caps, seconds: 5, preferredCharacter: '林岚' })
-check('已存角色不在角色库时明说找不到', !r.ok && r.reason.includes('找不到角色卡'), r.ok ? r.kind : r.reason)
+check('已存角色不在角色库时降级并说明', r.ok && r.kind === 'no-reference' && r.reason.includes('不在角色库'), r.ok ? r.kind : r.reason)
 r = lib.nativeAudioRef({
   dialogue: [{ speaker: '陈默', text: '' }],
   characters,
