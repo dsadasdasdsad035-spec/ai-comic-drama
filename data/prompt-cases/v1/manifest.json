@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-24T03:38:19.347Z",
+  "license": "reference-only",
+  "note": "提示词案例种子。内容来自 vflow.live / apiko.app / higgsfield.ai 的公开数据，一律 reference-only：界面必须显示出处，不得当作本项目产物发布。媒体只存外链，不下载。",
+  "taxonomyVersion": "2026-11-24.2",
+  "counts": {
+    "cases": 14344,
+    "facets": 118508,
+    "bySource": {
+      "apiko": 567,
+      "higgsfield": 112,
+      "vflow": 13665
+    }
+  },
+  "files": {
+    "cases": {
+      "name": "cases.jsonl.gz",
+      "bytes": 12452821,
+      "sha256": "1e186ba7c9090e04"
+    },
+    "facets": {
+      "name": "facets.jsonl.gz",
+      "bytes": 1287072,
+      "sha256": "01b47383a62e1a2c"
+    }
+  }
+}

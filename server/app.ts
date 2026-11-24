@@ -3096,7 +3096,29 @@ export function authorizeStudioRequest(req: any): {
   return { ok: true, publicBase, sessionToken: token || undefined }
 }
 
-export function runServerStartupTasks(root: string) {  try {
+export function runServerStartupTasks(root: string) {
+  /**
+   * 内置案例种子：异步灌入，不阻塞启动。
+   *
+   * 13MB 解压 + 14,344 条写入约 2-3 秒，放在启动路径上会让首屏等待。
+   * 灌之前先比对 settings 里的哈希标记，已灌过同版本直接返回（一次 SELECT）。
+   * 失败只打日志——用户仍可手工跑 scripts/sync-case-sources.mjs。
+   */
+  void (async () => {
+    try {
+      const { seedPromptCases } = await import('./prompt-cases-seed.mjs')
+      const result = seedPromptCases(root, resolveRoot(root), {
+        log: (line: string) => console.log(line),
+      })
+      if (!result.seeded && result.reason && result.reason !== '已灌入过同版本种子') {
+        console.log(`[prompt-cases] 内置种子未灌入：${result.reason}`)
+      }
+    } catch (e) {
+      console.log(`[prompt-cases] 内置种子加载失败：${(e as Error)?.message || e}`)
+    }
+  })()
+
+  try {
     cleanupStaleJobs(root)
   } catch {
     /* 清理失败不阻塞启动 */

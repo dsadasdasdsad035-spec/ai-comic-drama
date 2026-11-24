@@ -59,6 +59,39 @@
 
 **限制**：索引 12 MB / 20 秒，逐条 512 KB / 8 秒，提交并发 4，单次预览上限 60 条。任何一步失败都返回可读原因，单条失败不影响同批其余条目。
 
+## 内置种子：案例随仓库分发
+
+14,344 条案例**进仓库**（`data/prompt-cases/v1/`），新装的应用开箱就有数据，
+不需要先联网跑 55 分钟同步。
+
+```
+data/prompt-cases/v1/
+  manifest.json        条数、哈希、词表版本、许可口径
+  cases.jsonl.gz       11.9 MB  14,344 条
+  facets.jsonl.gz       1.2 MB  118,508 条
+```
+
+格式选择：
+
+- **JSONL + gzip**，不是 JSON 数组。同一份数据压缩后体积一样，但 JSONL 解析
+  快 10 倍（56ms vs 618ms）——不必先拼成整个字符串再整体 `JSON.parse`。
+- **案例与分面分开**。分面压缩率极高（21.8MB → 1.2MB，`axis`/`value` 大量重复）。
+- **manifest 记账**：加载时先比对哈希，同版本不重复导入。
+
+加载端（`server/prompt-cases-seed.mjs`）三条约束：
+
+1. **不阻塞启动**：异步灌入（实测 934ms 完成 14,344 + 118,508 条），首屏不等待。
+2. **不覆盖用户数据**：`INSERT OR IGNORE`，主键已存在就跳过。用户改过的收藏与备注
+   在重灌后仍然保留（已实测验证）。
+3. **种子损坏不影响启动**：文件缺失、哈希不符、解压失败都只打日志。
+
+更新种子（改了案例库或词表之后）：
+
+```bash
+node scripts/export-case-seed.mjs           # 重新导出
+node scripts/export-case-seed.mjs --check   # 校验种子与库是否一致
+```
+
 ## 全量同步：把案例灌进本地库
 
 外部来源的价值在「离线可查」。`scripts/sync-case-sources.mjs` 把 vflow 与 apiko

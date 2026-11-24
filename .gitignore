@@ -90,7 +90,10 @@ dsh/
 public/publish-packages/
 
 # 部署：本机数据目录、DTK 源码与运行期密钥
-/data/
+/data/*
+# 例外：内置案例种子随仓库分发（开箱即用的数据，不含密钥）。
+# 必须逐层放行：被忽略的目录 git 不会进去看，只写 !/data/prompt-cases/ 无效。
+!/data/prompt-cases/
 .dtk/
 deploy/proxy/.htpasswd
 # 部署目标与 SSH 凭据（deploy.sh 加载，含明文密码）

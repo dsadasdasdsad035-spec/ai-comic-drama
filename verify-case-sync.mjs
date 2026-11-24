@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import zlib from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 import { CASE_SOURCES, LICENSE_BY_SOURCE, CASE_SOURCE_REGISTRY } from './server/prompt-cases.mjs'
 import { applyDefaultProjectsDir } from './server/default-projects-dir.mjs'
@@ -128,6 +129,46 @@ if (dir && fs.existsSync(path.join(dir, 'storyboard.sqlite'))) {
   const idx = all("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='prompt_cases'").map((r) => r.name)
   unit('prompt_cases 有索引', idx.length >= 2, idx.join(','))
 }
+
+// ---------------------------------------------------------------- 内置种子
+
+const seedDir = path.join(ROOT, 'data/prompt-cases/v1')
+unit('种子目录存在', fs.existsSync(seedDir))
+if (fs.existsSync(seedDir)) {
+  const manPath = path.join(seedDir, 'manifest.json')
+  unit('种子有 manifest', fs.existsSync(manPath))
+  if (fs.existsSync(manPath)) {
+    const man = JSON.parse(fs.readFileSync(manPath, 'utf8'))
+    unit('种子版本 schemaVersion=1', man.schemaVersion === 1, String(man.schemaVersion))
+    unit('种子许可为仅参考', man.license === 'reference-only', man.license)
+    unit('种子声明总量', Boolean(man.counts?.cases > 0), `${man.counts?.cases} 条`)
+    for (const key of ['cases', 'facets']) {
+      const meta = man.files?.[key]
+      const file = meta ? path.join(seedDir, meta.name) : ''
+      unit(`种子文件 ${key} 存在`, Boolean(file && fs.existsSync(file)))
+      if (file && fs.existsSync(file)) {
+        const buf = fs.readFileSync(file)
+        unit(`${key} 字节数与 manifest 一致`, buf.length === meta.bytes, `${buf.length}`)
+        unit(`${key} 大小在仓库可接受范围（<20MB）`, buf.length < 20 * 1024 * 1024, `${(buf.length / 1024 / 1024).toFixed(1)}MB`)
+        // 能解压
+        let ok = true
+        try {
+          zlib.gunzipSync(buf)
+        } catch {
+          ok = false
+        }
+        unit(`${key} 可解压`, ok)
+      }
+    }
+  }
+}
+unit('加载端模块存在', fs.existsSync(path.join(ROOT, 'server/prompt-cases-seed.mjs')))
+const seedSrc = fs.readFileSync(path.join(ROOT, 'server/prompt-cases-seed.mjs'), 'utf8')
+unit('灌入用 INSERT OR IGNORE（不覆盖用户改动）', /INSERT OR IGNORE/.test(seedSrc))
+unit('灌入有幂等标记', /SEED_MARK_KEY/.test(seedSrc))
+const appSrc = fs.readFileSync(path.join(ROOT, 'server/app.ts'), 'utf8')
+unit('启动时挂上种子灌入', /seedPromptCases/.test(appSrc))
+unit('灌入不阻塞启动（异步）', /void \(async \(\) =>/.test(appSrc))
 
 // ---------------------------------------------------------------- journal
 
