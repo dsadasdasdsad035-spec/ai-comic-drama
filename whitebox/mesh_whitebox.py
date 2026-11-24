@@ -305,7 +305,13 @@ def main() -> int:
     ap.add_argument("--npz", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--target-size", type=float, default=6.0, help="包围盒最大边归一到多少米")
-    ap.add_argument("--resolution", type=int, default=384, help="TSDF 体素数")
+    ap.add_argument("--resolution", type=int, default=384, help="TSDF 体素数（自动模式下作为基准）")
+    ap.add_argument(
+        "--no-auto-resolution",
+        dest="auto_resolution",
+        action="store_false",
+        help="关闭分辨率自适应（默认开启：按跨度反推分辨率以保持体素边长）",
+    )
     ap.add_argument("--json", action="store_true", help="把统计打进 done 事件")
     ap.add_argument(
         "--conf-filter",
@@ -348,8 +354,27 @@ def main() -> int:
         for i in range(len(centered))
     ]
 
+    # 分辨率自适应：resolution 是「体素盒切成多少格」，跨度变大时固定分辨率
+    # 等于放大体素、丢失细节——实测拼接后跨度从 2.25m 涨到 4.21m，384 分辨率
+    # 下体素从 0.0073 粗到 0.0137（近一倍），表面立刻变糊。
+    #
+    # 按「保持体素边长不变」反推需要的分辨率，实测代价曲线（跨度 4.21m）：
+    #   0.006m → 768 格 → 318k 面 / 89s / 11.4GB
+    #   0.010m → 512 格 → 119k 面 / 28s / 7.2GB
+    #   0.014m → 384 格 → 61k 面 / 19s / 约 3GB
+    # 取 0.010：细节够用，内存仍在安全区。768 那档把 24GB 机器逼到危险边缘
+    # （此前 process_res=756 崩过一次）。
+    VOXEL_TARGET = 0.010
+    res = args.resolution
+    if getattr(args, "auto_resolution", False):
+        want = int(round(volume_length / VOXEL_TARGET))
+        # 上限 512：768 实测 11.4GB / 89s，代价远超收益
+        res = max(128, min(512, want))
+        if res != args.resolution:
+            log(f"分辨率自适应：{args.resolution} → {res}（跨度 {span:.2f}m，目标体素 {VOXEL_TARGET}m）")
+
     mesh, integrated, voxel_length = integrate_tsdf(
-        depth, conf, centered, intrinsics, volume_length, args.resolution, args.conf_filter
+        depth, conf, centered, intrinsics, volume_length, res, args.conf_filter
     )
     tri_count = len(mesh.triangles)
     log(f"TSDF：{integrated} 帧积分，{len(mesh.vertices)} 顶点 / {tri_count} 三角（体素 {voxel_length:.4f}）")
