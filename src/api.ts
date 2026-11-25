@@ -1533,6 +1533,8 @@ export type KnowledgeSettingsView = {
   llmModel?: string
   /** 哪一项来自环境变量；设置页据此提示「这一项由 .env 提供」 */
   compact?: { baseUrlFromEnv: boolean; apiKeyFromEnv: boolean }
+  /** 桌面端自带的知识库：地址与 Key 由应用注入，手填无效 */
+  builtin?: boolean
   defaultBaseUrl?: string
 }
 

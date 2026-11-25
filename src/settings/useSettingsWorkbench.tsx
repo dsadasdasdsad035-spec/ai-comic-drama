@@ -114,6 +114,7 @@ export function useSettingsWorkbench({
     enabled: false,
     hasApiKey: false,
     llmModel: '',
+    builtin: false,
   })
   const [knowledgeKeyInput, setKnowledgeKeyInput] = useState('')
   const [knowledgeTesting, setKnowledgeTesting] = useState(false)
@@ -237,6 +238,7 @@ export function useSettingsWorkbench({
           enabled: Boolean(s.knowledge?.enabled),
           hasApiKey: Boolean(s.knowledge?.hasApiKey),
           llmModel: s.knowledge?.llmModel || '',
+          builtin: Boolean(s.knowledge?.builtin),
           compact: s.knowledge?.compact,
           defaultBaseUrl: s.knowledge?.defaultBaseUrl,
         })
@@ -422,6 +424,7 @@ export function useSettingsWorkbench({
         enabled: Boolean(saved.knowledge?.enabled),
         hasApiKey: Boolean(saved.knowledge?.hasApiKey),
         llmModel: saved.knowledge?.llmModel || '',
+        builtin: Boolean(saved.knowledge?.builtin),
         compact: saved.knowledge?.compact,
         defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
       })
@@ -774,6 +777,7 @@ export function useSettingsWorkbench({
         enabled: Boolean(saved.knowledge?.enabled),
         hasApiKey: Boolean(saved.knowledge?.hasApiKey),
         llmModel: saved.knowledge?.llmModel || '',
+        builtin: Boolean(saved.knowledge?.builtin),
         compact: saved.knowledge?.compact,
         defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
       })
@@ -816,6 +820,7 @@ export function useSettingsWorkbench({
         enabled: Boolean(saved.knowledge?.enabled),
         hasApiKey: Boolean(saved.knowledge?.hasApiKey),
         llmModel: saved.knowledge?.llmModel || '',
+        builtin: Boolean(saved.knowledge?.builtin),
         compact: saved.knowledge?.compact,
         defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
       })

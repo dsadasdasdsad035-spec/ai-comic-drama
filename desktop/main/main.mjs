@@ -359,11 +359,14 @@ async function ensureService() {
         ...bundledRuntimeEnv(APP_ROOT),
         // 账号与钱包的去向：默认本地账本，只有显式设置环境变量才转线上
         SB_BILLING_BASE: resolveBillingBase(),
-        // 内置知识库：把地址与 Key 交给服务端，与用户在设置页手填是同一套配置路径
+        // 内置知识库：把地址与 Key 交给服务端，与用户在设置页手填是同一套配置路径。
+        // SB_BUILTIN_KNOWLEDGE=1 让它强制覆盖设置库里可能残留的旧地址 ——
+        // 内置实例每次启动端口都不同，旧值必然失效（详见 knowledge-settings.mjs）。
         ...(knowledge
           ? {
               ANYTHINGLLM_BASE_URL: knowledge.origin,
               ANYTHINGLLM_API_KEY: knowledge.apiKey,
+              SB_BUILTIN_KNOWLEDGE: '1',
             }
           : {}),
       },

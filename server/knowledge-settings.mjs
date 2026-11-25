@@ -9,6 +9,12 @@ import { DEFAULT_KB_BASE_URL, validateKbBaseUrl } from './knowledge.mjs'
 /** 环境变量名。容器部署时用它们兜底，设置库优先。 */
 export const KB_ENV_BASE_URL = 'ANYTHINGLLM_BASE_URL'
 export const KB_ENV_API_KEY = 'ANYTHINGLLM_API_KEY'
+/**
+ * 内置知识库标记（桌面端随包时由主进程注入 `1`）。
+ * 置为 1 时上面的两个地址/Key 变量会**强制覆盖**设置库里的旧值，
+ * 因为内置实例每次启动端口都不同，旧地址必然失效。
+ */
+export const KB_ENV_BUILTIN = 'SB_BUILTIN_KNOWLEDGE'
 
 /** @type {{ baseUrl: string, apiKey: string, enabled: boolean }} */
 const EMPTY = { baseUrl: '', apiKey: '', enabled: false }
@@ -36,23 +42,35 @@ export function normalizeKbSettings(raw) {
  * 与 DTK 的规则一致（`applyCreativeEnvDefaults`）：逐字段判断，而不是只看地址。
  * 只看地址会漏掉「地址填在设置库、Key 来自 .env」这种半配置状态。
  *
+ * **例外：内置知识库（`SB_BUILTIN_KNOWLEDGE=1`）反过来，env 强制覆盖。**
+ * 桌面版随包带的知识库每次启动用随机空闲端口，地址必然变；如果还让设置库里
+ * 手工填过的旧地址优先，用户就会连到一个早已不存在的端口，表现为「连不上」
+ * 或「还没配置」，而界面上看不出是端口过期。所以内置模式下一律以 env 为准。
+ * 想改回外部服务：关掉内置（SB_DISABLE_BUILTIN_KNOWLEDGE=1）再填地址。
+ *
  * @returns settings 与各字段是否来自环境，供设置页显示「来自环境变量」
  */
 export function applyKbEnvDefaults(input, env = {}) {
   const base = normalizeKbSettings(input)
   const envBaseUrl = String(env[KB_ENV_BASE_URL] || '').trim().replace(/\/+$/, '')
   const envApiKey = String(env[KB_ENV_API_KEY] || '').trim()
+  /** 内置知识库：地址由桌面端注入且每次不同，必须以 env 为准 */
+  const builtin = String(env[KB_ENV_BUILTIN] || '').trim() === '1'
 
-  const baseUrlFromEnv = !base.baseUrl && Boolean(envBaseUrl)
-  const apiKeyFromEnv = !base.apiKey && Boolean(envApiKey)
+  const useEnvBase = builtin ? Boolean(envBaseUrl) : !base.baseUrl && Boolean(envBaseUrl)
+  const useEnvKey = builtin ? Boolean(envApiKey) : !base.apiKey && Boolean(envApiKey)
 
   const merged = normalizeKbSettings({
-    baseUrl: base.baseUrl || envBaseUrl,
-    apiKey: base.apiKey || envApiKey,
+    baseUrl: useEnvBase ? envBaseUrl : base.baseUrl,
+    apiKey: useEnvKey ? envApiKey : base.apiKey,
     // 地址可用就算启用；`normalizeKbSettings` 会再校验一次地址格式
     enabled: true,
   })
-  return { settings: merged, fromEnv: { baseUrl: baseUrlFromEnv, apiKey: apiKeyFromEnv } }
+  return {
+    settings: merged,
+    builtin,
+    fromEnv: { baseUrl: useEnvBase, apiKey: useEnvKey },
+  }
 }
 
 /** 设置库为空时的默认值（用于表单初始值） */
@@ -66,13 +84,15 @@ export function kbSettingsDefaults() {
  * 与 `redactCreativeSettings` / `redactStockSettings` 同一规矩：密钥原文永不出服务端。
  */
 export function redactKbSettings(input, env = {}) {
-  const { settings, fromEnv } = applyKbEnvDefaults(input, env)
+  const { settings, fromEnv, builtin } = applyKbEnvDefaults(input, env)
   return {
     baseUrl: settings.baseUrl,
     enabled: settings.enabled,
     hasApiKey: Boolean(settings.apiKey),
     llmModel: settings.llmModel || '',
     compact: { baseUrlFromEnv: fromEnv.baseUrl, apiKeyFromEnv: fromEnv.apiKey },
+    /** 桌面端自带的知识库：设置页据此说明「地址由应用管理，手填无效」 */
+    builtin,
     defaultBaseUrl: DEFAULT_KB_BASE_URL,
   }
 }

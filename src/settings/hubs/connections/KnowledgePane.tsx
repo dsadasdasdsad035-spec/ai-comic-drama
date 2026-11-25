@@ -31,6 +31,20 @@ export function KnowledgePane({ wb }: Props) {
         </span>
       </header>
 
+      {knowledge.builtin ? (
+        <div className="st-hint" data-knowledge-builtin style={{ marginBottom: 10 }}>
+          <p style={{ margin: 0 }}>
+            <strong>桌面版已内置知识库</strong>，随应用启动，地址与 Key 由应用自动管理。
+            下面的地址与 Key 输入框在内置模式下<b>不生效</b> —— 内置实例每次启动端口都不同，
+            手填的地址会被覆盖。
+          </p>
+          <p style={{ margin: '6px 0 0' }}>
+            想改用你自己的 AnythingLLM：设置环境变量 <code>SB_DISABLE_BUILTIN_KNOWLEDGE=1</code>
+            启动应用，再在这里手填地址与 Key。
+          </p>
+        </div>
+      ) : null}
+
       <div className="st-grid">
         <label className="st-field">
           <span>
@@ -40,6 +54,7 @@ export function KnowledgePane({ wb }: Props) {
           <input
             className="input"
             data-knowledge-base-url
+            readOnly={Boolean(knowledge.builtin)}
             value={knowledge.baseUrl}
             placeholder={knowledge.defaultBaseUrl || 'http://127.0.0.1:3001'}
             onChange={(e) => wb.setKnowledge((prev) => ({ ...prev, baseUrl: e.target.value.trim() }))}
@@ -73,6 +88,7 @@ export function KnowledgePane({ wb }: Props) {
             className="input"
             type="password"
             data-knowledge-api-key
+            readOnly={Boolean(knowledge.builtin)}
             value={knowledgeKeyInput}
             placeholder={knowledge.hasApiKey ? '已配置（留空则保持不变）' : '在 AnythingLLM 设置 → API Keys 生成'}
             onChange={(e) => setKnowledgeKeyInput(e.target.value)}
