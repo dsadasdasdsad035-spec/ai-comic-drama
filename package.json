@@ -33,7 +33,11 @@
     "desktop:whitebox:bundle": "node desktop/scripts/bundle-whitebox.mjs",
     "desktop:whitebox:verify": "node desktop/scripts/bundle-whitebox.mjs --verify",
     "desktop:dist:bundled": "npm run desktop:prep && node desktop/scripts/bundle-whitebox.mjs && electron-builder --config desktop/electron-builder.bundled.cjs --mac dmg",
-    "desktop:build:bundled": "npm run desktop:prep && node desktop/scripts/bundle-whitebox.mjs && electron-builder --config desktop/electron-builder.bundled.cjs --dir"
+    "desktop:build:bundled": "npm run desktop:prep && node desktop/scripts/bundle-whitebox.mjs && electron-builder --config desktop/electron-builder.bundled.cjs --dir",
+    "desktop:knowledge:bundle": "node desktop/scripts/bundle-anythingllm.mjs",
+    "desktop:knowledge:verify": "node desktop/scripts/bundle-anythingllm.mjs --verify",
+    "desktop:dist:knowledge": "npm run desktop:prep && node desktop/scripts/bundle-anythingllm.mjs && electron-builder --config desktop/electron-builder.anythingllm.cjs --mac dmg",
+    "desktop:build:knowledge": "npm run desktop:prep && node desktop/scripts/bundle-anythingllm.mjs && electron-builder --config desktop/electron-builder.anythingllm.cjs --dir"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.30",

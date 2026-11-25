@@ -10,7 +10,8 @@ import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { resolveDataRoots } from './data-roots.mjs'
-import { startService, bundledRuntimeEnv } from './service.mjs'
+import { startService, bundledRuntimeEnv, resolveNodeBinary } from './service.mjs'
+import { startAnythingLlm } from './anythingllm.mjs'
 
 /** 应用根：打包后在 Resources/app（服务端与前端产物都在这里），开发时是仓库根 */
 const APP_ROOT = app.isPackaged
@@ -44,6 +45,14 @@ const USER_DATA_NAME = 'storyboard-canvas'
 let win = null
 /** @type {Awaited<ReturnType<typeof startService>> | null} */
 let service = null
+/**
+ * 内置知识库（AnythingLLM）句柄。
+ *
+ * 只有随包带了 `bin/anythingllm/` 才启用；没有就退回「用户自己配外部服务」的模式。
+ * 显式关闭：`SB_DISABLE_BUILTIN_KNOWLEDGE=1`。
+ * @type {Awaited<ReturnType<typeof startAnythingLlm>> | null}
+ */
+let knowledge = null
 /** 是否正在退出：避免退出流程里把「主动停止」误判成崩溃 */
 let quitting = false
 /** 当前窗口指向的 origin，用于导航白名单 */
@@ -96,13 +105,16 @@ function boot() {
   })
 
   app.on('before-quit', (event) => {
-    if (quitting || !service) return
+    if (quitting || (!service && !knowledge)) return
     // 先拦一次，等子进程真正退出后再放行，避免留下孤儿监听进程
     event.preventDefault()
     quitting = true
     const dying = service
+    const dyingKb = knowledge
     service = null
-    dying.stop().finally(() => app.quit())
+    knowledge = null
+    // 两个都要收：知识库是独立的两进程，漏掉会留下 8888/随机端口在监听
+    Promise.allSettled([dying?.stop?.(), dyingKb?.stop?.()]).finally(() => app.quit())
   })
 }
 
@@ -277,6 +289,52 @@ function showDisconnected(win, detail) {
 
 // ---------------------------------------------------------------- 服务
 
+/**
+ * 定位内置知识库产物目录。
+ *
+ * 打包后：<App>.app/Contents/Resources/knowledge（见 electron-builder.anythingllm.cjs）
+ * 开发时：<仓库>/desktop/bin/anythingllm（bundle-anythingllm.mjs 的产物）
+ */
+function builtinKnowledgeDir() {
+  if (String(process.env.SB_DISABLE_BUILTIN_KNOWLEDGE || '').trim() === '1') return ''
+  const candidates = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'knowledge') : '',
+    path.join(APP_ROOT, 'desktop', 'bin', 'anythingllm'),
+  ].filter(Boolean)
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'server', 'index.js'))) return dir
+    } catch {
+      /* 继续找 */
+    }
+  }
+  return ''
+}
+
+/**
+ * 尽力拉起内置知识库。
+ *
+ * 失败**不阻断**应用启动：知识库是可选能力（spec: 未配置即不存在感），
+ * 它起不来时应用照常可用，只是知识库视图显示未配置。
+ */
+async function ensureKnowledge(roots) {
+  const dir = builtinKnowledgeDir()
+  if (!dir) return null
+  try {
+    const handle = await startAnythingLlm({
+      bundleDir: dir,
+      dataDir: path.join(app.getPath('userData'), 'knowledge'),
+      nodeBin: resolveNodeBinary(APP_ROOT),
+      log: (line) => console.log(line),
+    })
+    console.log(`[desktop] 内置知识库已启动：${handle.origin}`)
+    return handle
+  } catch (e) {
+    console.error('[desktop] 内置知识库启动失败（应用继续，知识库不可用）：', e?.message || e)
+    return null
+  }
+}
+
 async function ensureService() {
   if (!win) return
   showSplash(win)
@@ -290,6 +348,9 @@ async function ensureService() {
   }
 
   try {
+    // 知识库先起：它的地址与 Key 要作为环境变量交给本应用服务
+    knowledge = knowledge || (await ensureKnowledge(roots))
+
     service = await startService({
       root: APP_ROOT,
       // 外部二进制显式注入；存在与否都不影响服务启动，缺了只是对应功能报可读错误
@@ -298,6 +359,13 @@ async function ensureService() {
         ...bundledRuntimeEnv(APP_ROOT),
         // 账号与钱包的去向：默认本地账本，只有显式设置环境变量才转线上
         SB_BILLING_BASE: resolveBillingBase(),
+        // 内置知识库：把地址与 Key 交给服务端，与用户在设置页手填是同一套配置路径
+        ...(knowledge
+          ? {
+              ANYTHINGLLM_BASE_URL: knowledge.origin,
+              ANYTHINGLLM_API_KEY: knowledge.apiKey,
+            }
+          : {}),
       },
       onExit: ({ code, signal }) => {
         // 主动退出时不提示；其它情况一律当作崩溃，把选择权交给用户
