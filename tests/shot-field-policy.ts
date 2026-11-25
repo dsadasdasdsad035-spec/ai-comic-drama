@@ -14,6 +14,7 @@ import {
   mergeShotsDraft,
 } from '../src/shotSync'
 import type { ProjectShot } from '../src/api'
+import { isLegacyHardCut } from '../src/transition'
 
 let bad = 0
 function check(name: string, fn: () => void | Promise<void>) {
@@ -77,7 +78,13 @@ const INCOMING = {
   dialogue_delivery: [{ line: 0, emotion: '克制' }],
   refIds: ['ref-new'],
   refExtras: ['/new.png'],
-  transition_out: { kind: 'dissolve' },
+  // 当前模型：转场是 mode:'effect' + effect 对象。`kind` 是已退役的旧字段（见 types.ts 的
+  // TransitionOut），所以这里的载荷必须用现在的形状，否则连 normalizeTransitionOut 都过不了。
+  transition_out: {
+    to: 'E01-S02',
+    mode: 'effect',
+    effect: { type: 'dissolve', seconds: 0.5, presetId: 'dissolve' },
+  },
   prod_kind: 'video',
   motion_note: '横移跟拍',
   video_prompt_override: { text: '新手改', fingerprint: 'fp-new', createdAt: 't2' },
@@ -141,7 +148,12 @@ async function main() {
     // 参考连线是增补语义：文件里的新连线追加，既有连线保留（旧项不因文件没提而断开）
     assert.deepEqual(s.refIds, ['ref-new'])
     assert.deepEqual(s.refExtras, ['/new.png'])
-    assert.deepEqual(s.transition_out, { kind: 'dissolve' })
+    // 转场按当前模型归一：mode 恒为 effect，effect 完整保留（presetId/type/seconds）
+    assert.deepEqual(s.transition_out, {
+      to: 'E01-S02',
+      mode: 'effect',
+      effect: { type: 'dissolve', seconds: 0.5, presetId: 'dissolve' },
+    })
     assert.equal(s.prod_kind, 'video')
     assert.equal(s.motion_note, '横移跟拍')
   })
@@ -236,6 +248,34 @@ async function main() {
     const r = mergeShotsDraft([OLD, other], [INCOMING], 1, 'merge', 'agent')
     assert.equal(r.shots.length, 2)
     assert.equal((r.shots.find((s) => s.id === 'E02-S01') as ProjectShot).desc, '别的集')
+  })
+
+  /**
+   * 升级前的转场是 `{kind:'cut'|'dissolve'}`，现在统一成 `{mode:'effect', effect}`，
+   * 硬切用「没有转场」表达。老记录如果直接被 normalizeTransitionOut 吃掉，
+   * `kind:'cut'` 会变成 0.5s 叠化 —— 等于替用户改了片子，且看不出来。
+   */
+  await check('legacy {kind:cut} 读入后是硬切，不是 0.5s 叠化', () => {
+    assert.equal(isLegacyHardCut({ kind: 'cut' }), true)
+    assert.equal(isLegacyHardCut({ kind: 'dissolve' }), false)
+    assert.equal(isLegacyHardCut({}), false)
+    assert.equal(isLegacyHardCut(null), false)
+
+    // 写回路径：agent 交来 legacy 硬切，结果必须是「无转场」
+    const legacyCut = { id: 'E01-S01', no: 'S01', transition_out: { kind: 'cut' } } as unknown as ProjectShot
+    const r = mergeShotsDraft([OLD], [legacyCut], 1, 'merge', 'agent')
+    const s = r.shots[0] as unknown as Record<string, unknown>
+    assert.equal(s.transition_out, null, 'legacy 硬切应清空转场，而不是变成叠化')
+
+    // 对照：非硬切的 legacy 值仍按当前模型归一
+    const legacyDissolve = {
+      id: 'E01-S01',
+      no: 'S01',
+      transition_out: { kind: 'dissolve' },
+    } as unknown as ProjectShot
+    const r2 = mergeShotsDraft([OLD], [legacyDissolve], 1, 'merge', 'agent')
+    const s2 = r2.shots[0] as unknown as Record<string, unknown>
+    assert.equal((s2.transition_out as Record<string, unknown>)?.mode, 'effect')
   })
 
   console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 分镜字段策略全部通过')

@@ -16,6 +16,7 @@ export type SettingsLegacySection =
   | 'skills'
   | 'experts'
   | 'mcp'
+  | 'knowledge'
   | 'data'
 
 export type SettingsPane = SettingsLegacySection | 'overview'
@@ -37,6 +38,7 @@ export const ALL_LEGACY_SECTIONS: SettingsLegacySection[] = [
   'skills',
   'experts',
   'mcp',
+  'knowledge',
   'data',
 ]
 
@@ -55,6 +57,8 @@ export const LEGACY_SECTION_TO_NAV: Record<SettingsLegacySection, { hub: Setting
   pricing: { hub: 'billing', pane: 'pricing' },
   // 账户与充值已提升为顶层「账户」视图；旧深链继续落到计价页，避免白屏
   billing: { hub: 'billing', pane: 'pricing' },
+  // 知识库是外部服务的连接配置，与渠道 Key / DTK 同类，归「连接与模型」而不是「智能与扩展」
+  knowledge: { hub: 'connections', pane: 'knowledge' },
   data: { hub: 'data', pane: 'data' },
 }
 
@@ -93,6 +97,7 @@ export const HUB_PANES: Record<SettingsHub, { id: SettingsPane; label: string }[
   connections: [
     { id: 'providers', label: '渠道' },
     { id: 'models', label: '模型库' },
+    { id: 'knowledge', label: '知识库' },
   ],
   pipeline: [
     { id: 'routing', label: '默认路由' },

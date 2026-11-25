@@ -91,6 +91,7 @@ import {
 } from './board/episodeOps'
 import { resolveEpisodeTarget, setEpisodeTargetSeconds } from './productionContext'
 import StudioFrame from './creative/StudioFrame'
+import KnowledgeView from './knowledge/KnowledgeView'
 import { postStudioCanvasContext } from './creative/pushStudioCanvasContext'
 import { getPromptCase } from './promptCases/api'
 import { useStudioProjectSync } from './creative/useStudioProjectSync'
@@ -4199,6 +4200,15 @@ function Shell() {
             // 创意会话整体交给宿主：这里只放容器与错误态
             <StudioFrame projectName={projectName} />
           ) : null
+        ) : view === 'knowledge' ? (
+          <KnowledgeView
+            projectName={projectName}
+            toast={(m) => {
+              setToast(m)
+              window.setTimeout(() => setToast(''), 3000)
+            }}
+            onOpenSettings={() => changeView('settings', { settingsSection: 'knowledge' })}
+          />
         ) : view === 'settings' ? (
           <Settings
             currentProjectName={projectName}

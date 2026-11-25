@@ -19,6 +19,10 @@ import {
   type VoiceOption,
   type RulePack,
   type Stage,
+  type KnowledgeSettingsView,
+  type KnowledgeTestResult,
+  getKnowledgeSettings,
+  testKnowledge,
 } from '../api'
 import { CAP_LABELS, CAP_ORDER, isRunnableModel, modelCaps, modelCapsLabel, modelHasCap } from '../modelCaps'
 import { normalizeRules } from '../skills/legacyPrompts'
@@ -98,6 +102,23 @@ export function useSettingsWorkbench({
   const [stock, setStock] = useState<StockSettings>({ providers: {} })
   const [stockStatus, setStockStatus] = useState<Record<string, { ok: boolean; reason?: string; keyFromEnv?: boolean }>>({})
   const [stockTesting, setStockTesting] = useState(false)
+  /**
+   * 知识库：服务端回读的形状（Key 只有 hasApiKey）+ 表单里新输入的 Key。
+   *
+   * 为什么 Key 单独一份：回读拿不到原文，把「新输入的 Key」混进回读值会让
+   * 「已配置」显示与服务端状态互相污染。保存时只有非空的 `knowledgeKeyInput`
+   * 才覆盖，留空即沿用旧 Key（与服务端 mergeKbSettings 的语义一致）。
+   */
+  const [knowledge, setKnowledge] = useState<KnowledgeSettingsView>({
+    baseUrl: '',
+    enabled: false,
+    hasApiKey: false,
+    llmModel: '',
+  })
+  const [knowledgeKeyInput, setKnowledgeKeyInput] = useState('')
+  const [knowledgeTesting, setKnowledgeTesting] = useState(false)
+  const [knowledgeTestResult, setKnowledgeTestResult] = useState<KnowledgeTestResult | null>(null)
+  const [knowledgeTestError, setKnowledgeTestError] = useState('')
   const [adapters, setAdapters] = useState<AdapterInfo[] | null>(null)
   /** 反推工具探测结果：只在点「检测」或进页面时取一次，不轮询 */
   const [reverseHealth, setReverseHealth] = useState<ReaHealth | null>(null)
@@ -210,6 +231,15 @@ export function useSettingsWorkbench({
         setCreative(normalizeCreativeSettings(s.creative))
         setCreativeFromEnv(s.creativeFromEnv || {})
         setStock({ providers: { ...((s.stock?.providers || {}) as StockSettings['providers']) } })
+        // 知识库读的是脱敏视图（Key 只有 hasApiKey），不走 /api/settings 的那份
+        setKnowledge({
+          baseUrl: s.knowledge?.baseUrl || '',
+          enabled: Boolean(s.knowledge?.enabled),
+          hasApiKey: Boolean(s.knowledge?.hasApiKey),
+          llmModel: s.knowledge?.llmModel || '',
+          compact: s.knowledge?.compact,
+          defaultBaseUrl: s.knowledge?.defaultBaseUrl,
+        })
         setLipSync(normalizeLipSyncSettings(s.lipSync))
         setCustomVoices(Array.isArray(s.customVoices) ? s.customVoices : [])
         setVoiceModelKey(s.defaults?.audio || '')
@@ -348,6 +378,12 @@ export function useSettingsWorkbench({
         agentHostMode,
         creative,
         stock,
+        // 知识库：只有新输入的 Key 才覆盖；`compact` 是服务端派生值，不提交
+        knowledge: {
+          baseUrl: knowledge.baseUrl,
+          ...(knowledge.llmModel ? { llmModel: knowledge.llmModel } : {}),
+          ...(knowledgeKeyInput.trim() ? { apiKey: knowledgeKeyInput.trim() } : {}),
+        },
         lipSync,
         customVoices,
         apiKey,
@@ -380,6 +416,16 @@ export function useSettingsWorkbench({
       setCreative(next.creative as CreativeSettings)
       setCreativeFromEnv((saved as AppSettings).creativeFromEnv || {})
       setStock(next.stock)
+      // 保存后清空新 Key 输入，并按服务端回读更新「是否已配置」
+      setKnowledge({
+        baseUrl: saved.knowledge?.baseUrl || '',
+        enabled: Boolean(saved.knowledge?.enabled),
+        hasApiKey: Boolean(saved.knowledge?.hasApiKey),
+        llmModel: saved.knowledge?.llmModel || '',
+        compact: saved.knowledge?.compact,
+        defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
+      })
+      setKnowledgeKeyInput('')
       setLipSync(next.lipSync)
       setCustomVoices(next.customVoices)
       setApiKey(next.apiKey)
@@ -704,6 +750,82 @@ export function useSettingsWorkbench({
     }
   }
 
+  /**
+   * 知识库连通性检测。
+   *
+   * 先落盘再测：服务端读的是设置库，不保存就永远是旧配置（与 `testStock` 同理）。
+   * 检测结果与失败原因分开存：失败时保留之前成功的 workspaceCount 会造成误读，
+   * 所以错误只进 `knowledgeTestError`。
+   */
+  const testKnowledgeConnection = async () => {
+    setKnowledgeTesting(true)
+    setKnowledgeTestResult(null)
+    setKnowledgeTestError('')
+    try {
+      const saved = await saveSettings({
+        knowledge: {
+          baseUrl: knowledge.baseUrl,
+          ...(knowledge.llmModel ? { llmModel: knowledge.llmModel } : {}),
+          ...(knowledgeKeyInput.trim() ? { apiKey: knowledgeKeyInput.trim() } : {}),
+        },
+      } as Partial<AppSettings>)
+      setKnowledge({
+        baseUrl: saved.knowledge?.baseUrl || '',
+        enabled: Boolean(saved.knowledge?.enabled),
+        hasApiKey: Boolean(saved.knowledge?.hasApiKey),
+        llmModel: saved.knowledge?.llmModel || '',
+        compact: saved.knowledge?.compact,
+        defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
+      })
+      setKnowledgeKeyInput('')
+      const r = await testKnowledge()
+      setKnowledgeTestResult(r)
+      toast(`连接成功：上游有 ${r.workspaceCount} 个知识库`)
+    } catch (e) {
+      setKnowledgeTestError((e as Error).message || '检测失败')
+    } finally {
+      setKnowledgeTesting(false)
+    }
+  }
+
+  /** 重新拉一次脱敏设置（面板打开时用，避免显示别的入口刚改过的旧值） */
+  const refreshKnowledgeSettings = async () => {
+    try {
+      const view = await getKnowledgeSettings()
+      setKnowledge(view)
+    } catch {
+      /* 读取失败不阻塞面板；保存时会再报一次 */
+    }
+  }
+
+  /**
+   * 只保存知识库子树。
+   *
+   * 用于「清除 Key」这类面板内动作：它不该顺带把表单里其它未保存的改动落盘，
+   * 也不该依赖用户先点主保存按钮。
+   */
+  const saveWithKnowledge = async (patch: {
+    baseUrl?: string
+    apiKey?: string
+    clearApiKey?: boolean
+  }) => {
+    try {
+      const saved = await saveSettings({ knowledge: patch } as Partial<AppSettings>)
+      setKnowledge({
+        baseUrl: saved.knowledge?.baseUrl || '',
+        enabled: Boolean(saved.knowledge?.enabled),
+        hasApiKey: Boolean(saved.knowledge?.hasApiKey),
+        llmModel: saved.knowledge?.llmModel || '',
+        compact: saved.knowledge?.compact,
+        defaultBaseUrl: saved.knowledge?.defaultBaseUrl,
+      })
+      setKnowledgeKeyInput('')
+      onSaved?.()
+    } catch (e) {
+      toast((e as Error).message || '知识库设置保存失败')
+    }
+  }
+
   const skillSourceLabel = (source: SkillTextRecord['source']) => {
     if (source === 'override') return '用户覆盖'
     if (source === 'skillhub') return 'SkillHub'
@@ -737,6 +859,16 @@ export function useSettingsWorkbench({
     setStockStatus,
     stockTesting,
     setStockTesting,
+    knowledge,
+    setKnowledge,
+    knowledgeKeyInput,
+    setKnowledgeKeyInput,
+    knowledgeTesting,
+    knowledgeTestResult,
+    knowledgeTestError,
+    testKnowledgeConnection,
+    refreshKnowledgeSettings,
+    saveWithKnowledge,
     adapters,
     setAdapters,
     adapterError,

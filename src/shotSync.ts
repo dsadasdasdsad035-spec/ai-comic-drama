@@ -1,7 +1,7 @@
 import type { ProjectShot } from './api'
 import { resolveProdKind } from './shotProdKind'
 import { dialogueToText, parseDialogue } from './prompts'
-import { normalizeTransitionOut } from './transition'
+import { isLegacyHardCut, normalizeTransitionOut } from './transition'
 import type { ShotData } from './types'
 
 /**
@@ -216,9 +216,13 @@ export function mergeShotsDraft(
       next.refIds = fieldPolicy === 'import' ? mergeRefIds(old.refIds, g.refIds) : g.refIds
     }
     setIf('refExtras', g.refExtras)
-    // 接缝写回一律归一化：外部（导入/Agent）带来的生成配置不进项目
+    // 接缝写回一律归一化：外部（导入/Agent）带来的生成配置不进项目。
+    // legacy `{kind:'cut'}` 是硬切，写回时清空而不是变成叠化。
     if (writable.includes('transition_out') && g.transition_out !== undefined) {
-      next.transition_out = g.transition_out ? normalizeTransitionOut(g.transition_out) : null
+      next.transition_out =
+        g.transition_out && !isLegacyHardCut(g.transition_out)
+          ? normalizeTransitionOut(g.transition_out)
+          : null
     }
     setIf('prod_kind', g.prod_kind)
     setIf('motion_note', g.motion_note)
@@ -384,11 +388,15 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     refExtras: s.refExtras,
     // 字段缺失（旧项目）才沿用画布上的值；显式 null 表示已经删掉，不能复活。
     // 归一化在这里做：旧存档里的生成配置（generated）读入即剥离，画布与写回都只见效果位。
+    // 升级前的 `{kind:'cut'}` 是硬切语义，必须变成 undefined（没有转场），
+    // 直接归一化会把它静默变成 0.5s 叠化 —— 那等于替用户改了片子。
     transitionOut:
       s.transition_out === undefined
         ? fallback.transitionOut
         : s.transition_out
-          ? normalizeTransitionOut(s.transition_out)
+          ? isLegacyHardCut(s.transition_out)
+            ? undefined
+            : normalizeTransitionOut(s.transition_out)
           : undefined,
     sceneNo: s.scene_no ?? fallback.sceneNo,
     sceneSlug: s.scene_slug ?? fallback.sceneSlug,

@@ -72,6 +72,23 @@ export function normalizeTransitionOut(input?: Partial<TransitionOut> | null, to
   }
 }
 
+/**
+ * 旧数据里的转场是不是硬切。
+ *
+ * 升级前的字段是 `{ kind: 'cut' | 'dissolve' | ... }`，现在统一成
+ * `{ mode: 'effect', effect }` —— 硬切用「没有转场」表达。所以读到带 `kind` 的
+ * 老记录时必须判断一次：`kind === 'cut'` 应当被当作**硬切**（返回 true，
+ * 由调用方丢弃这个转场），而不是静默归一成 0.5s 叠化。
+ *
+ * 为什么不在 `normalizeTransitionOut` 里直接处理：它只回答「怎么归一成新形状」，
+ * 而「要不要保留这个转场」是调用方的语义决策（画布与出片路径的取舍可能不同）。
+ * 单独给一个判定函数，谁读老数据谁决定。
+ */
+export function isLegacyHardCut(input: unknown): boolean {
+  const legacy = String((input as { kind?: unknown } | null | undefined)?.kind || '').trim()
+  return legacy === 'cut'
+}
+
 /** 效果时长夹紧：短镜的 80%，上限 1.5s；不足下限返回 0（走硬切） */
 export function clampEffectSeconds(seconds: number, aDur: number, bDur: number): number {
   const max = Math.min(MAX_EFFECT_SECONDS, Math.min(aDur, bDur) * 0.8)

@@ -42,6 +42,9 @@ export const PROJECT_CASCADE = [
   { table: 'publish_jobs', column: 'project', key: 'name' },
   { table: 'publish_intents', column: 'project', key: 'name' },
   { table: 'deliverables', column: 'project', key: 'name' },
+  // 知识库映射：项目没了就没人再引用这个上游库标识。上游库本身由
+  // deleteProject 在事务提交后尽力删除（失败只记 warning，不回滚删除）。
+  { table: 'knowledge_links', column: 'project_name', key: 'name' },
 ]
 
 function argsFor(item, projectId, name) {
@@ -241,6 +244,16 @@ export function deleteProject(root, name, opts = {}) {
   const n = safeProjectName(name)
   const db = openDatabase(root)
   let snapshotPath = ''
+  /** 事务前记下上游库标识：删映射后就查不到了，但库里删完才发现要删上游就晚了 */
+  let kbSlug = ''
+  try {
+    kbSlug = String(
+      db.prepare('SELECT workspace_slug FROM knowledge_links WHERE project_name = ?').get(n)
+        ?.workspace_slug || '',
+    ).trim()
+  } catch {
+    /* 老库没有这张表：跳过 */
+  }
   try {
     const project = db.prepare('SELECT * FROM projects WHERE name = ?').get(n)
     if (!project) {
@@ -305,12 +318,16 @@ export function deleteProject(root, name, opts = {}) {
       }
     }
 
+    // 上游知识库的清理不在这里做：这个函数是同步的，而删上游要发 HTTP。
+    // 把标识作为独立字段返回，由调用方（app.ts 的删除路由）尽力删并把结果
+    // 追加进 warnings —— 不在这里吞掉失败，才能让「没删干净」可见。
     return {
       name: n,
       ok: true,
       snapshot: path.relative(root, snapshotPath),
       filesRemoved,
       sharedFilesKept: true,
+      knowledgeSlug: kbSlug,
       warnings,
     }
   } finally {

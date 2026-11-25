@@ -23704,3 +23704,358 @@ button.crumb:hover {
   flex-wrap: wrap;
   margin-bottom: 10px;
 }
+
+/* ---------------------------------------------------------------- 知识库 */
+
+/*
+ * 知识库视图：左文档清单 + 右问答。
+ *
+ * 两个非成功态必须能看：未配置时整页引导（`.kb-guide`），连不上时保留清单
+ * 并在顶部挂一条可重试横幅（`.kb-banner`）—— 页面不整体变空白。
+ * 窄宽度（< 1100px）两栏收起为单栏：清单在上，问答给剩余高度。
+ */
+.kb-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 16px;
+  gap: 10px;
+}
+
+.kb-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.kb-head h2 {
+  margin: 0 0 2px;
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+.kb-sub {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.kb-sub code {
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
+.kb-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* label 当按钮用：file input 必须被触发，不能 display:none 外层 */
+.kb-head-actions .btn {
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.kb-head-actions .btn.is-busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.kb-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--warn, #b45309);
+  border-radius: var(--r-md);
+  background: rgba(180, 83, 9, 0.12);
+  color: var(--warn-text, #fbbf24);
+  font-size: var(--fs-xs);
+}
+
+.kb-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+
+.kb-docs,
+.kb-chat {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kb-docs-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.kb-accept {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+
+.kb-docs ul {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.kb-docs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm, 6px);
+}
+
+.kb-docs li:hover {
+  background: var(--panel-2);
+}
+
+.kb-doc-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kb-doc-title {
+  color: var(--text);
+  font-size: var(--fs-sm, 13px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-doc-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.kb-doc-actions {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+
+.kb-doc-actions .btn-ghost.is-danger:hover {
+  color: var(--danger, #f87171);
+}
+
+.kb-empty {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+  padding: 16px;
+}
+
+.kb-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.kb-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.kb-msg-role {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.kb-msg.is-user .kb-msg-body {
+  align-self: flex-start;
+  background: var(--accent-dim);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  padding: 8px 11px;
+  color: var(--text);
+  font-size: var(--fs-sm, 13px);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kb-msg.is-assistant .kb-msg-body {
+  color: var(--text);
+  font-size: var(--fs-sm, 13px);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.kb-cites {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm, 6px);
+  background: var(--panel-2);
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.kb-cites summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: var(--fs-xs);
+  user-select: none;
+}
+
+.kb-cites ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-cite-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.kb-cite-title {
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.kb-cite-score {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+
+.kb-cite-text {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 未命中：这不是引用卡的变体，而是一条明确的「没有依据」声明 */
+.kb-no-hit {
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-sm, 6px);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.kb-composer {
+  border-top: 1px solid var(--line);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-composer textarea {
+  width: 100%;
+  resize: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: var(--fs-sm, 13px);
+  font-family: inherit;
+  line-height: 1.5;
+  padding: 8px 10px;
+}
+
+.kb-composer textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.kb-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.kb-guide {
+  max-width: 640px;
+  margin: 40px auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  padding: 22px 24px;
+  color: var(--text);
+}
+
+.kb-guide h2 {
+  margin: 0 0 10px;
+  font-size: var(--fs-lg);
+}
+
+.kb-guide p,
+.kb-guide li {
+  color: var(--muted);
+  font-size: var(--fs-sm, 13px);
+  line-height: 1.75;
+}
+
+.kb-guide ol {
+  padding-left: 1.25rem;
+  margin: 10px 0 16px;
+}
+
+.kb-guide code {
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-xs);
+}
+
+/* 设置面板里的「来自环境变量」标记 */
+.st-env-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  vertical-align: middle;
+}
+
+@media (max-width: 1100px) {
+  .kb-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(120px, 34%) 1fr;
+  }
+}

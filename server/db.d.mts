@@ -2,6 +2,16 @@
 export declare function safeProjectName(name: unknown): string
 export declare function resolveRoot(appRoot: string): string
 export declare function dbPath(root: string): string
+/** 独立连接：给成片/发布/知识库等需要自己控制生命周期的地方用，不参与 open() 的单例切换 */
+export declare function openDatabase(root: string): {
+  prepare(sql: string): {
+    get(...args: unknown[]): Record<string, unknown> | undefined
+    all(...args: unknown[]): Record<string, unknown>[]
+    run(...args: unknown[]): { changes: number | bigint }
+  }
+  exec(sql: string): void
+  close(): void
+}
 export declare function listProjects(root: string): {
   name: string
   title: string

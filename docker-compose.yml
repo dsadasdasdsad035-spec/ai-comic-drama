@@ -37,6 +37,11 @@ services:
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       VOLC_TTS_API_KEY: ${VOLC_TTS_API_KEY:-}
       SYNC_LABS_API_KEY: ${SYNC_LABS_API_KEY:-}
+      # 知识库（可选）：AnythingLLM 实例的地址与 API Key。
+      # 留空即未配置，知识库视图只显示引导，其它功能不受影响。
+      # 容器里访问宿主机服务要用 host.docker.internal，不是 127.0.0.1。
+      ANYTHINGLLM_BASE_URL: ${ANYTHINGLLM_BASE_URL:-}
+      ANYTHINGLLM_API_KEY: ${ANYTHINGLLM_API_KEY:-}
       # 创意摄取：DTK 优先（抖音），yt-dlp 兜底（B 站/直链）
       DTK_BASE_URL: ${DTK_BASE_URL:-}
       DTK_API_KEY: ${DTK_API_KEY:-}

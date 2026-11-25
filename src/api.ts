@@ -1487,6 +1487,11 @@ export type AppSettings = {
   creativeFromEnv?: { dtk?: boolean; ytdlp?: boolean }
   /** 在线素材来源：启用、Key（只回 hasApiKey）与可选 Base URL；缺省全部关闭 */
   stock?: StockSettings
+  /**
+   * 知识库伴生服务（AnythingLLM）：地址与 Key。
+   * 读取时 Key 只回 `hasApiKey`；`compact` 标明哪一项来自环境变量。
+   */
+  knowledge?: KnowledgeSettingsView
   apiKey: string
   rules: Record<string, RulePack>
   /** 旧规则包已迁移为技能覆盖；避免重复迁移 */
@@ -1510,6 +1515,255 @@ export async function saveSettings(patch: Partial<AppSettings>): Promise<AppSett
   const j = await readJsonRes(r)
   if (!j.ok) throw new Error(j.message || '保存设置失败')
   return j.settings as AppSettings
+}
+
+// ---------------------------------------------------------------- 知识库
+
+/**
+ * 知识库设置的回读形状。
+ *
+ * 与 `StockSettings` 同一规矩：Key 只回 `hasApiKey`，原文永不出服务端。
+ * `compact` 是只读派生（服务端算），保存时会被忽略。
+ */
+export type KnowledgeSettingsView = {
+  baseUrl: string
+  enabled: boolean
+  hasApiKey: boolean
+  /** 推给上游的对话模型名；空 = 用默认 MiniMax-M3.1-Flash */
+  llmModel?: string
+  /** 哪一项来自环境变量；设置页据此提示「这一项由 .env 提供」 */
+  compact?: { baseUrlFromEnv: boolean; apiKeyFromEnv: boolean }
+  defaultBaseUrl?: string
+}
+
+/** 保存用的编辑态：可以带 apiKey 原文，也可以显式清空 */
+export type KnowledgeSettingsPatch = {
+  baseUrl?: string
+  apiKey?: string
+  clearApiKey?: boolean
+}
+
+export type KnowledgeDoc = {
+  /** 上游文档标识，移出/删除要原样回传 */
+  location: string
+  title: string
+  wordCount: number
+}
+
+export type KnowledgeDocsResult = {
+  slug: string
+  name: string
+  docCount: number
+  documents: KnowledgeDoc[]
+}
+
+export type KnowledgeSearchHit = {
+  text: string
+  title: string
+  score: number
+  location: string
+}
+
+export type KnowledgeSource = { title: string; text: string; score: number }
+
+export type KnowledgeHistoryItem = {
+  role: 'user' | 'assistant'
+  content: string
+  sentAt: number
+  sources: KnowledgeSource[]
+}
+
+export type KnowledgeTestResult = {
+  baseUrl: string
+  authenticated: boolean
+  workspaceCount: number
+  /**
+   * 连接测试时顺便把本应用的对话模型推给上游的结果。
+   * `null` = 本应用还没有可用的 MiniMax 渠道，未做代配。
+   */
+  llm?: { ok: boolean; error?: string; written?: string[] } | null
+  /** 代配来源渠道 id，便于界面说明「用的是哪个渠道」 */
+  llmSource?: string
+}
+
+/** 知识库接口的错误：带 `configured` 让页面能区分「没配」与「配了但坏了」 */
+export class KnowledgeError extends Error {
+  configured: boolean
+  constructor(message: string, configured: boolean) {
+    super(message)
+    this.name = 'KnowledgeError'
+    this.configured = configured
+  }
+}
+
+async function knowledgeJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await apiFetch(path, init)
+  const j = await readJsonRes(r)
+  if (!j.ok) {
+    throw new KnowledgeError(String(j.message || `知识库请求失败（HTTP ${r.status}）`), j.configured !== false)
+  }
+  return j as T
+}
+
+export async function getKnowledgeSettings(): Promise<KnowledgeSettingsView> {
+  return knowledgeJson<KnowledgeSettingsView>('/api/knowledge/settings')
+}
+
+export async function testKnowledge(): Promise<KnowledgeTestResult> {
+  return knowledgeJson<KnowledgeTestResult>('/api/knowledge/test', { method: 'POST' })
+}
+
+export async function getKnowledgeDocs(project: string): Promise<KnowledgeDocsResult> {
+  return knowledgeJson<KnowledgeDocsResult>(
+    `/api/knowledge/docs?project=${encodeURIComponent(project)}`,
+  )
+}
+
+/** 可接受类型只认上游：不在这里维护第二份扩展名清单 */
+export async function getKnowledgeAcceptedTypes(): Promise<{ extensions: string[] }> {
+  return knowledgeJson<{ extensions: string[] }>('/api/knowledge/accepted-types')
+}
+
+export async function uploadKnowledgeDoc(
+  project: string,
+  file: File,
+): Promise<{ slug: string; documents: KnowledgeDoc[] }> {
+  return knowledgeJson<{ slug: string; documents: KnowledgeDoc[] }>(
+    `/api/knowledge/upload?project=${encodeURIComponent(project)}&filename=${encodeURIComponent(file.name)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    },
+  )
+}
+
+/** 移出本库：只解绑，文档留在实例文档池 */
+export async function removeKnowledgeDocs(
+  project: string,
+  locations: string[],
+): Promise<{ removed: number }> {
+  return knowledgeJson<{ removed: number }>('/api/knowledge/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project, locations }),
+  })
+}
+
+/** 从实例文档池彻底删除：会影响所有挂载同一文档的库 */
+export async function purgeKnowledgeDocs(locations: string[]): Promise<{ purged: number }> {
+  return knowledgeJson<{ purged: number }>('/api/knowledge/purge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locations }),
+  })
+}
+
+export async function getKnowledgeHistory(project: string): Promise<KnowledgeHistoryItem[]> {
+  const r = await knowledgeJson<{ history: KnowledgeHistoryItem[] }>(
+    `/api/knowledge/history?project=${encodeURIComponent(project)}`,
+  )
+  return r.history
+}
+
+export async function searchKnowledge(
+  project: string,
+  query: string,
+  opts: { topN?: number; scoreThreshold?: number } = {},
+): Promise<KnowledgeSearchHit[]> {
+  const r = await knowledgeJson<{ hits: KnowledgeSearchHit[] }>('/api/knowledge/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project, query, ...opts }),
+  })
+  return r.hits
+}
+
+export async function readKnowledgeDoc(
+  docName: string,
+): Promise<{ title: string; text: string; wordCount: number }> {
+  return knowledgeJson<{ title: string; text: string; wordCount: number }>(
+    `/api/knowledge/doc?docName=${encodeURIComponent(docName)}`,
+  )
+}
+
+/** SSE 事件形状：上游原样透传，这里只声明我们消费的字段 */
+export type KnowledgeChatEvent = {
+  type?: string
+  textResponse?: string
+  sources?: KnowledgeSource[]
+  close?: boolean
+  error?: string | null
+}
+
+/**
+ * 流式问答。
+ *
+ * 手工解析 SSE 而不上 EventSource：要 POST，且要能中断（AbortSignal）。
+ * 上游事件形状保持不变，本函数只做切帧与 JSON 解码。
+ */
+export async function streamKnowledgeChat(
+  input: { project: string; message?: string; reset?: boolean },
+  handlers: {
+    onEvent: (ev: KnowledgeChatEvent) => void
+    signal?: AbortSignal
+  },
+): Promise<void> {
+  const res = await apiFetch('/api/knowledge/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(input),
+    signal: handlers.signal,
+  })
+  if (!res.ok || !res.body) {
+    let message = `知识库问答失败（HTTP ${res.status}）`
+    let configured = true
+    try {
+      const j = await readJsonRes(res)
+      message = String(j.message || message)
+      configured = j.configured !== false
+    } catch {
+      /* 非 JSON 响应 */
+    }
+    throw new KnowledgeError(message, configured)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    // 上游以空行分隔事件；半帧留在 buf 里等下一块
+    let idx
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      for (const line of frame.split('\n')) {
+        const ev = parseKnowledgeSseLine(line)
+        if (ev) handlers.onEvent(ev)
+      }
+    }
+  }
+  // 收尾：没有以空行结束的最后一帧也要处理
+  for (const line of buf.split('\n')) {
+    const ev = parseKnowledgeSseLine(line)
+    if (ev) handlers.onEvent(ev)
+  }
+}
+
+/** 单行 SSE 解码：非 data 行、[DONE]、坏 JSON 一律跳过（上游有心跳帧） */
+export function parseKnowledgeSseLine(line: string): KnowledgeChatEvent | null {
+  const text = String(line || '').trim()
+  if (!text.startsWith('data:')) return null
+  const payload = text.slice(5).trim()
+  if (!payload || payload === '[DONE]') return null
+  try {
+    const j = JSON.parse(payload) as KnowledgeChatEvent
+    return j && typeof j === 'object' ? j : null
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------- 渠道测试

@@ -450,6 +450,14 @@ CREATE TABLE IF NOT EXISTS stock_imports (
   UNIQUE(project_id, provider, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_imports_url ON stock_imports(project_id, asset_url);
+-- 知识库是外部服务（AnythingLLM）的伴生能力：本库只存「项目 → 上游库标识」的映射。
+-- 不能由项目名反推标识：上游会把 name 归一成 slug（小写、去空格），撞名时还会追加
+-- 唯一后缀（hunter → hunter-2），所以创建后必须回读并落库。
+CREATE TABLE IF NOT EXISTS knowledge_links (
+  project_name   TEXT PRIMARY KEY,
+  workspace_slug TEXT NOT NULL,
+  created_at     TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_deliverables_project ON deliverables(project, episode);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_key ON publish_jobs(idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_publish_jobs_project ON publish_jobs(project, episode);

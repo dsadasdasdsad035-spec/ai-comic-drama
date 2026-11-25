@@ -2,6 +2,7 @@ import type { SettingsPane } from '../settingsNav'
 import type { SettingsWorkbench } from '../useSettingsWorkbench'
 import { ProvidersPane } from './connections/ProvidersPane'
 import { ModelsPane } from './connections/ModelsPane'
+import { KnowledgePane } from './connections/KnowledgePane'
 import { RoutingPane } from './pipeline/RoutingPane'
 import { LipSyncPane } from './pipeline/LipSyncPane'
 import { VoicesPane } from './pipeline/VoicesPane'
@@ -25,6 +26,8 @@ export function SettingsPaneSwitch({ pane, wb }: Props) {
       return <ProvidersPane wb={wb} />
     case 'models':
       return <ModelsPane wb={wb} />
+    case 'knowledge':
+      return <KnowledgePane wb={wb} />
     case 'routing':
       return <RoutingPane wb={wb} />
     case 'lipsync':

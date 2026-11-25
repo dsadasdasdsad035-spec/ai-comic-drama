@@ -46,6 +46,7 @@ import {
   getSetting,
   setSetting,
   dbPath,
+  openDatabase,
   safeProjectName,
   listSkillOverrides,
   getSkillOverride,
@@ -131,6 +132,18 @@ import {
   redactStockSettings,
 } from './stock-settings.mjs'
 import {
+  applyKbEnvDefaults,
+  mergeKbSettings,
+  normalizeKbSettings,
+  redactKbSettings,
+} from './knowledge-settings.mjs'
+import {
+  MAX_KB_UPLOAD_BYTES,
+  createKnowledgeClient,
+  deleteKbLink,
+  translateKbError,
+} from './knowledge.mjs'
+import {
   StockError,
   describeProviders as describeStockProviders,
   importStockItem,
@@ -172,7 +185,7 @@ import {
   videoFamilyFor,
   videoUrlFromTask,
 } from './apimart.mjs'
-import { getApimartFetch } from './apimart-network.mjs'
+import { getApimartFetch, getExternalFetch } from './apimart-network.mjs'
 import { handleBillingHttp, initBilling } from './billing/http.mjs'
 import { parseBearer, parseSessionCookie, sessionFromToken } from './billing/auth.mjs'
 import { billingModeInfo, proxyRemoteBilling, proxyRemoteMedia, shouldProxyRemoteBilling, shouldProxyRemoteMedia } from './remote-billing.mjs'
@@ -580,6 +593,8 @@ type AppSettings = {
   creative?: CreativeSettings
   /** 在线素材来源：每个来源的启用、Key 与可选 Base URL；缺省全部关闭 */
   stock?: ReturnType<typeof normalizeStockSettings>
+  /** 知识库伴生服务（AnythingLLM）：地址与 Key；缺省未配置，其它功能不受影响 */
+  knowledge?: ReturnType<typeof normalizeKbSettings>
   /** 口型 provider；默认关闭 */
   lipSync?: {
     provider: 'off' | 'sync-labs'
@@ -1123,6 +1138,7 @@ function normalizeSettings(raw: any): AppSettings {
         customVoices: normalizeCustomVoices(raw.customVoices),
         creative: normalizeCreativeSettings(raw.creative),
         stock: normalizeStockSettings(raw.stock),
+        knowledge: normalizeKbSettings(raw.knowledge),
         apiKey,
         rules,
         skillsMigrated: Boolean(raw.skillsMigrated),
@@ -1155,6 +1171,7 @@ function normalizeSettings(raw: any): AppSettings {
     customVoices: normalizeCustomVoices(raw?.customVoices),
     creative: normalizeCreativeSettings(raw?.creative),
     stock: normalizeStockSettings(raw?.stock),
+    knowledge: normalizeKbSettings(raw?.knowledge),
     apiKey,
     rules,
     skillsMigrated: Boolean(raw?.skillsMigrated),
@@ -1165,6 +1182,61 @@ function normalizeSettings(raw: any): AppSettings {
 let settingsReady = false
 /** 插件启动时赋值（server.config.root），供设置层定位 DB */
 let appRoot = ''
+
+/**
+ * 知识库客户端：按请求读取设置，不在进程里缓存。
+ *
+ * 理由与 `listStudioModels` 一致：设置页改完地址或 Key，下一次请求就该生效，
+ * 不该要求重启。出网走 `getExternalFetch()`（可能带系统代理），
+ * 但客户端内部对回环地址会强制直连 —— 本机服务经代理必然失败。
+ *
+ * 必须经 `applyKbEnvDefaults` 而不是直接读设置库：容器部署用环境变量给地址与 Key，
+ * 设置库是空的。只做读时兜底（设置页显示）会让「页面说已配置、请求说没配置」
+ * 两边打架 —— 这是验收里实际抓到的缺陷。
+ */
+const kbClient = createKnowledgeClient({
+  getSettings: () => applyKbEnvDefaults(getAppSettings().knowledge, process.env).settings,
+  getExternalFetch: () => getExternalFetch() as unknown as (url: string, init?: unknown) => Promise<Response>,
+  log: (line: string) => console.log(line),
+})
+
+/** 知识库默认使用的上游对话模型。可在设置页改成别的 MiniMax 型号。 */
+const KB_DEFAULT_LLM_MODEL = 'MiniMax-M3.1-Flash'
+
+/**
+ * 解析「推给上游的对话模型配置」：直接复用本应用已配好的 MiniMax 渠道。
+ *
+ * 为什么复用而不是让用户另填：用户在设置页只维护一套 MiniMax Key，
+ * 知识库再要一份等于把同一个秘密存两处、且两处可能不同步。
+ *
+ * 返回 null 表示本应用还没有可用的 MiniMax 渠道 —— 此时不做代配，
+ * 由界面提示用户去上游手工配置（spec：未配置即不存在感）。
+ *
+ * @returns {{ basePath: string, model: string, apiKey: string, tokenLimit: number, source: string } | null}
+ */
+function knowledgeLlmConfig(): {
+  basePath: string
+  model: string
+  apiKey: string
+  tokenLimit: number
+  source: string
+} | null {
+  const s = getAppSettings()
+  const provider = s.providers.find((p) => p.kind === 'minimax')
+  if (!provider) return null
+  const key = providerKey(provider)
+  if (!key) return null
+  const basePath = String(provider.baseUrl || 'https://api.minimaxi.com/v1').replace(/\/+$/, '')
+  // 模型名可由知识库设置覆盖；缺省用验证过输出干净的那个型号
+  const model = String(s.knowledge?.llmModel || '').trim() || KB_DEFAULT_LLM_MODEL
+  return {
+    basePath,
+    model,
+    apiKey: key,
+    tokenLimit: 245760,
+    source: provider.id,
+  }
+}
 /** 懒打开 DB（供设置/模型覆盖用；项目路由也会各自 open，同一文件同一连接缓存） */
 function getAppSettings(): AppSettings {
   try {
@@ -1212,6 +1284,8 @@ function withKeyStatus(s: AppSettings): AppSettings {
     creativeFromEnv: envApplied.fromEnv,
     // 在线素材来源的 Key 也不回传原文
     stock: redactStockSettings(s.stock) as AppSettings['stock'],
+    // 知识库 Key 同理；环境兜底的来源单独标出，避免用户分不清该改哪边
+    knowledge: redactKbSettings(s.knowledge, process.env) as unknown as AppSettings['knowledge'],
   } as AppSettings
 }
 
@@ -1294,6 +1368,11 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
       patch.stock !== undefined
         ? mergeStockSettings(cur.stock, patch.stock)
         : normalizeStockSettings(cur.stock),
+    // 知识库同理：脱敏后的空 Key 不能把已保存的 Key 清掉
+    knowledge:
+      patch.knowledge !== undefined
+        ? mergeKbSettings(cur.knowledge, patch.knowledge)
+        : normalizeKbSettings(cur.knowledge),
     apiKey: typeof patch.apiKey === 'string' ? patch.apiKey : cur.apiKey,
     rules: { ...cur.rules, ...(patch.rules || {}) },
     skillsMigrated:
@@ -1305,6 +1384,44 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   // 模型表变了要同步给创意会话宿主，否则它的模型选择器还停在旧列表
   notifySettingsChanged('settings')
   return next
+}
+
+/**
+ * 项目删除后尽力清理上游知识库。
+ *
+ * 三条刻意的选择：
+ * 1. **不阻塞删除**：外部服务挂了不该让用户删不掉项目，失败只进 warnings；
+ * 2. **映射行已在事务里删掉**（PROJECT_CASCADE），所以这里只处理上游；
+ * 3. **未配置时整体跳过**：没配知识库的项目本来就没有上游库，不做无意义的请求。
+ *
+ * 失败时把上游标识写进警告，让用户能去 AnythingLLM 控制台手工清理 —— 只说
+ * 「清理失败」而不给标识，用户就无从下手。
+ */
+async function cleanupKnowledgeAfterProjectDelete(result: any): Promise<void> {
+  const rows = Array.isArray(result?.results) ? result.results : []
+  if (!rows.length) return
+  const cfg = applyKbEnvDefaults(getAppSettings().knowledge, process.env).settings
+  if (!cfg.enabled) return
+  for (const row of rows) {
+    const slug = String(row?.knowledgeSlug || '').trim()
+    if (!slug) continue
+    // 内部字段不外泄：它只用于这里的清理
+    delete row.knowledgeSlug
+    try {
+      const r = await kbClient.deleteWorkspace(slug)
+      if (r.deleted === false && r.reason !== 'not-found') {
+        row.warnings = [
+          ...(Array.isArray(row.warnings) ? row.warnings : []),
+          `知识库未能自动清理（${r.reason || '未知原因'}）：可在 AnythingLLM 控制台删除「${slug}」`,
+        ]
+      }
+    } catch (e: any) {
+      row.warnings = [
+        ...(Array.isArray(row.warnings) ? row.warnings : []),
+        `知识库未能自动清理：${e?.message || String(e)}（可在 AnythingLLM 控制台删除「${slug}」）`,
+      ]
+    }
+  }
 }
 
 /** 按能力取模型条目：显式 key > 该能力默认 > 该能力第一条 */
@@ -5442,6 +5559,8 @@ export function createAppHandler({ root }: { root: string }) {
               }
               if (raw || fromBody.length) {
                 const result = deleteProjects(rootDir, names, { appRoot: root })
+                // 上游知识库要发 HTTP，只能在拿到结果后尽力删（失败进 warnings）
+                await cleanupKnowledgeAfterProjectDelete(result)
                 res.end(JSON.stringify(result))
                 return
               }
@@ -5450,6 +5569,7 @@ export function createAppHandler({ root }: { root: string }) {
               if (!first.ok && first.code === 'active_jobs') res.statusCode = 409
               else if (!first.ok && first.code === 'not_found') res.statusCode = 404
               else if (!first.ok) res.statusCode = 500
+              await cleanupKnowledgeAfterProjectDelete({ results: [first] })
               res.end(JSON.stringify({ ...first, sharedFilesKept: true }))
               return
             }
@@ -6741,6 +6861,214 @@ export function createAppHandler({ root }: { root: string }) {
             res.end(JSON.stringify({ ok: false, kind: 'not-found', message: '未知的在线素材接口' }))
           } catch (e: any) {
             fail(e)
+          }
+          return
+        }
+
+        // ---- 知识库：AnythingLLM 伴生服务的服务端代理 ----
+        // 凭据不出服务端：浏览器只调这里，上游 Key 只在本进程内存里用。
+        // 未配置时所有接口都返回 ok:false + 可读原因，前端据此进引导态。
+        if (url.startsWith('/api/knowledge/')) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-store')
+          const kbFail = (e: any) => {
+            const status = Number(e?.status) || 0
+            res.statusCode =
+              e?.code === 'kb_not_configured'
+                ? 409
+                : status === 401 || status === 403
+                  ? 401
+                  : status === 404
+                    ? 404
+                    : 502
+            res.end(
+              JSON.stringify({
+                ok: false,
+                configured: e?.code !== 'kb_not_configured',
+                message: translateKbError(e),
+              }),
+            )
+          }
+          try {
+            if (url === '/api/knowledge/settings' && req.method === 'GET') {
+              res.end(
+                JSON.stringify({
+                  ok: true,
+                  ...redactKbSettings(getAppSettings().knowledge, process.env),
+                }),
+              )
+              return
+            }
+
+            if (url === '/api/knowledge/test' && req.method === 'POST') {
+              const r = await kbClient.test()
+              /*
+               * 连接成功后顺手把本应用的对话模型配置推给上游。
+               *
+               * 用户已经在设置页为「知识库」环节配过 MiniMax，再让他去 AnythingLLM
+               * 界面手填一遍是重复劳动；知识库能不能回答取决于上游有没有 LLM，
+               * 所以这一步属于「连接测试」的语义范围。
+               *
+               * 失败只回传原因、不改连接结论：连通性是硬事实，代配模型是便利功能。
+               */
+              const llm = knowledgeLlmConfig()
+              let llmResult: { ok: boolean; error?: string; written?: string[] } | null = null
+              if (llm) {
+                try {
+                  llmResult = await kbClient.applyLlmConfig(llm)
+                } catch (e: any) {
+                  llmResult = { ok: false, error: e?.message || String(e) }
+                }
+              }
+              res.end(JSON.stringify({ ...r, ok: true, llm: llmResult, llmSource: llm ? llm.source : '' }))
+              return
+            }
+
+            if (url === '/api/knowledge/accepted-types' && req.method === 'GET') {
+              const types = await kbClient.acceptedTypes()
+              res.end(JSON.stringify({ ok: true, ...types }))
+              return
+            }
+
+            if (url === '/api/knowledge/docs' && req.method === 'GET') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const project = safeProjectName(String(q.get('project') || '').trim())
+              if (!project) throw new Error('缺少项目名')
+              const db = openDatabase(resolveRoot(root))
+              let slug = await kbClient.ensureWorkspace(project, db)
+              let detail
+              try {
+                detail = await kbClient.listDocs(slug)
+              } catch (e: any) {
+                // 上游库被手工删掉了但映射还在：清掉映射重建一次，不让用户卡在 404
+                if (Number(e?.status) !== 404) throw e
+                deleteKbLink(db, project)
+                slug = await kbClient.ensureWorkspace(project, db)
+                detail = await kbClient.listDocs(slug)
+              }
+              res.end(JSON.stringify({ ...detail, ok: true, slug }))
+              return
+            }
+
+            if (url === '/api/knowledge/upload' && req.method === 'POST') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const project = safeProjectName(String(q.get('project') || '').trim())
+              const filename = String(q.get('filename') || '').trim()
+              if (!project) throw new Error('缺少项目名')
+              // 先按 Content-Length 预拒绝：否则要等整个 Body 读完才报超限
+              const declared = Number(req.headers['content-length']) || 0
+              if (declared > MAX_KB_UPLOAD_BYTES) {
+                res.statusCode = 413
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    message: `文件超过上限 ${Math.round(MAX_KB_UPLOAD_BYTES / 1024 / 1024)}MB`,
+                  }),
+                )
+                return
+              }
+              const bytes = await readBody(req, MAX_KB_UPLOAD_BYTES)
+              const db = openDatabase(resolveRoot(root))
+              const slug = await kbClient.ensureWorkspace(project, db)
+              const docs = await kbClient.uploadDoc({
+                slug,
+                filename,
+                bytes,
+                mime: String(req.headers['content-type'] || 'application/octet-stream'),
+              })
+              res.end(JSON.stringify({ ok: true, slug, documents: docs }))
+              return
+            }
+
+            if (url === '/api/knowledge/remove' && req.method === 'POST') {
+              const body = await readJson(req)
+              const project = safeProjectName(String(body?.project || '').trim())
+              if (!project) throw new Error('缺少项目名')
+              const db = openDatabase(resolveRoot(root))
+              const slug = await kbClient.ensureWorkspace(project, db)
+              const r = await kbClient.removeDocs(slug, body?.locations)
+              res.end(JSON.stringify({ ok: true, ...r }))
+              return
+            }
+
+            if (url === '/api/knowledge/purge' && req.method === 'POST') {
+              const body = await readJson(req)
+              // 彻底删除不依赖项目映射：文档在实例池里，跨项目共用
+              const r = await kbClient.purgeDocs(body?.locations)
+              res.end(JSON.stringify({ ok: true, ...r }))
+              return
+            }
+
+            if (url === '/api/knowledge/history' && req.method === 'GET') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const project = safeProjectName(String(q.get('project') || '').trim())
+              if (!project) throw new Error('缺少项目名')
+              const db = openDatabase(resolveRoot(root))
+              const slug = await kbClient.ensureWorkspace(project, db)
+              const history = await kbClient.history(slug, {
+                limit: q.get('limit') ? Number(q.get('limit')) : undefined,
+              })
+              res.end(JSON.stringify({ ok: true, slug, history }))
+              return
+            }
+
+            if (url === '/api/knowledge/chat' && req.method === 'POST') {
+              const body = await readJson(req)
+              const project = safeProjectName(String(body?.project || '').trim())
+              if (!project) throw new Error('缺少项目名')
+              const db = openDatabase(resolveRoot(root))
+              const slug = await kbClient.ensureWorkspace(project, db)
+              const upstream = await kbClient.chatStream({
+                slug,
+                message: body?.message,
+                reset: Boolean(body?.reset),
+                mode: body?.mode,
+              })
+              // SSE 原样透传：不解析、不改协议，前端按上游事件形状消费
+              res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+              res.setHeader('Cache-Control', 'no-cache')
+              res.setHeader('Connection', 'keep-alive')
+              res.flushHeaders?.()
+              if (!upstream.body) {
+                res.end()
+                return
+              }
+              try {
+                for await (const chunk of upstream.body as any) {
+                  if (res.writableEnded || res.destroyed) break
+                  res.write(chunk)
+                }
+              } finally {
+                res.end()
+              }
+              return
+            }
+
+            if (url === '/api/knowledge/search' && req.method === 'POST') {
+              const body = await readJson(req)
+              const project = safeProjectName(String(body?.project || '').trim())
+              if (!project) throw new Error('缺少项目名')
+              const db = openDatabase(resolveRoot(root))
+              const slug = await kbClient.ensureWorkspace(project, db)
+              const hits = await kbClient.search(slug, body?.query, {
+                topN: body?.topN,
+                scoreThreshold: body?.scoreThreshold,
+              })
+              res.end(JSON.stringify({ ok: true, hits }))
+              return
+            }
+
+            if (url === '/api/knowledge/doc' && req.method === 'GET') {
+              const q = new URL(req.url || '', 'http://x').searchParams
+              const doc = await kbClient.readDoc(String(q.get('docName') || ''))
+              res.end(JSON.stringify({ ok: true, ...doc }))
+              return
+            }
+
+            res.statusCode = 404
+            res.end(JSON.stringify({ ok: false, message: '未知的知识库接口' }))
+          } catch (e: any) {
+            kbFail(e)
           }
           return
         }

@@ -36,6 +36,7 @@ import type { CharacterExpressionSheet, CharacterSheet } from '../characters'
 import { readCharacters, type ProjectChar } from '../charMap'
 import { createMaterialTools } from './materialTools'
 import { createPromptCaseTools } from './promptCaseTools'
+import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from './knowledgeTools'
 import { defineTool, type ToolDef } from './tool'
 import { collectShotReferences, limitReferences } from '../shotReferences'
 import {
@@ -1067,6 +1068,10 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   byName.set('generate_narration', createGenerateNarrationTool(input))
   // 案例库是全局作用域，与 list_projects 同层：不碰项目快照，未选项目也能查
   for (const t of createPromptCaseTools()) byName.set(t.name, t)
+  // 知识库：项目名从上下文注入，工具参数里没有项目字段（作用域由服务端钉死）
+  for (const t of createKnowledgeTools({ projectName: () => input.projectName })) {
+    byName.set(t.name, t)
+  }
   for (const t of createMaterialTools({
     projectName: () => input.projectName,
     epNo: () => resolveEpNo(input),
@@ -1125,6 +1130,7 @@ const PLATFORM_READ_TOOL_NAMES = [
   'list_installed_skills',
   'list_experts',
   'list_projects',
+  ...KNOWLEDGE_TOOL_NAMES,
 ]
 
 export function builtinPlatformToolNames(): string[] {
