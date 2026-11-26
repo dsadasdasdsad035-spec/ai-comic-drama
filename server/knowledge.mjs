@@ -777,14 +777,58 @@ export function createKnowledgeClient(deps) {
     })
     const results = Array.isArray(j?.results) ? j.results : []
     return results.map((r) => ({
-      text: String(r?.text || ''),
+      /*
+       * 必须剥 `<document_metadata>` 头：向量检索走的是这条路径（不是 normalizeSources），
+       * 上游会把它塞进每段 text 开头。不剥的话模型和引用卡都会看到这堆内部标注。
+       */
+      text: stripChunkMetadata(r?.text),
       title: String(r?.metadata?.title || r?.metadata?.chunkSource || '').trim(),
       score: Number(r?.score) || 0,
-      location: String(r?.metadata?.url || '').trim(),
+      /*
+       * `metadata.url` 是 `file://` 指向 collector 的 hotdir 暂存文件 —— 那是解析中间物，
+       * 不是可复用的文档标识（read_knowledge_doc 拿它会 404）。
+       * 真正能用的是 chunkSource（= 落盘文件名，形如 xxx.md-<uuid>.json）。
+       */
+      location: String(r?.metadata?.chunkSource || r?.metadata?.url || '').trim(),
     }))
   }
 
-  /** 读单个文档的正文。上游返回解析后的 JSON，正文在 `pageContent`。 */
+  /**
+   * 按标题在实例文档清单里找落盘文件名。
+   *
+   * 为什么需要：向量检索返回的 metadata 里 `chunkSource` 为空、`url` 指向 collector
+   * 暂存文件，两者都不是可复用标识（实测）。模型手里只有标题（`world.md`），
+   * 而上游 `/v1/document/:name` 只认落盘名（`world.md-<uuid>.json`）。
+   *
+   * 找不到返回空串，由调用方报 404。
+   */
+  async function findByTitle(title) {
+    const want = String(title || '').trim()
+    if (!want) return ''
+    try {
+      const root = await json('/v1/documents')
+      const files = []
+      const walk = (node) => {
+        if (!node || typeof node !== 'object') return
+        if (node.type === 'file') files.push(node)
+        for (const item of node.items || []) walk(item)
+      }
+      walk(root?.localFiles)
+      // 先按上游填充的 title 精确匹配
+      for (const f of files) {
+        if (String(f.title || '').trim() === want) return String(f.name || '').trim()
+      }
+      // title 为空时按落盘名前缀匹配（落盘名形如 `<title>-<uuid>.json`）
+      for (const f of files) {
+        const n = String(f.name || '')
+        if (n.startsWith(`${want}-`) && n.endsWith('.json')) return n
+      }
+    } catch {
+      /* 清单读取失败就当没找到 */
+    }
+    return ''
+  }
+
   /**
    * 读单个文档的正文。
    *
@@ -801,7 +845,24 @@ export function createKnowledgeClient(deps) {
     const raw = String(docName || '').trim()
     if (!raw) throw new Error('缺少文档标识')
     const name = raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw
-    const j = await json(`/v1/document/${encodeURIComponent(name)}`)
+    /*
+     * `read_knowledge_doc` 的常见入参是「文档标题」（如 `world.md`），因为向量检索
+     * 的 metadata 里 chunkSource 是空的、url 指向 collector 暂存文件，都不可复用。
+     * 上游的 /v1/document/:name 只认落盘文件名（`xxx.md-<uuid>.json`），
+     * 拿标题去查会 404。所以标题查不到时回退到「在库清单里按标题找文件名」。
+     */
+    let target = name
+    let j = await json(`/v1/document/${encodeURIComponent(target)}`).catch((e) => {
+      if (Number(e?.status) === 404) return null
+      throw e
+    })
+    if (!j?.document && !j?.localFiles?.items?.length) {
+      const found = await findByTitle(name)
+      if (found) {
+        target = found
+        j = await json(`/v1/document/${encodeURIComponent(target)}`).catch(() => null)
+      }
+    }
     const doc = j?.document || j?.localFiles?.items?.[0] || null
     if (!doc) {
       const err = new Error(`文档「${raw}」在上游不存在`)
@@ -811,7 +872,7 @@ export function createKnowledgeClient(deps) {
     /* 上游详情里的 title 常为 null，真标题在 metadata（JSON 字符串）里 */
     const meta = parseDocMeta(doc?.metadata)
     let text = String(doc?.pageContent || doc?.content || '').trim()
-    if (!text) text = readLocalDocText(raw, name, config().documentsRoot)
+    if (!text) text = readLocalDocText(target, target, config().documentsRoot)
     return {
       title: String(doc?.title || meta?.title || doc?.name || name).trim(),
       text,
