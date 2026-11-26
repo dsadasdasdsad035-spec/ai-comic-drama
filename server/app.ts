@@ -1209,6 +1209,28 @@ const kbClient = createKnowledgeClient({
   log: (line: string) => console.log(line),
 })
 
+/**
+ * 知识库路由的公共前置：项目必须**真的存在**。
+ *
+ * 为什么不能只校验名字格式：ensureWorkspace 会在上游自动建库，一个手滑写错的项目名
+ * 就会在上游留下一个空 workspace（实测边界测试里造出 6 个 `__no_such__*` 垃圾库，
+ * 只能手工去控制台删）。这里先查本地 projects 表，不存在直接报可读错误。
+ *
+ * @returns 校验通过的（已 safeProjectName 归一化的）项目名
+ */
+function requireKnowledgeProject(raw: unknown, root: string): string {
+  const project = safeProjectName(String(raw || '').trim())
+  if (!project) throw new Error('缺少项目名')
+  const db = openDatabase(resolveRoot(root))
+  const row = db.prepare('SELECT name FROM projects WHERE name = ?').get(project)
+  if (!row) {
+    const err: any = new Error(`项目「${project}」不存在`)
+    err.status = 404
+    throw err
+  }
+  return project
+}
+
 /** 知识库默认使用的上游对话模型。可在设置页改成别的 MiniMax 型号。 */
 const KB_DEFAULT_LLM_MODEL = 'MiniMax-M3.1-Flash'
 
@@ -6941,8 +6963,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/docs' && req.method === 'GET') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const project = safeProjectName(String(q.get('project') || '').trim())
-              if (!project) throw new Error('缺少项目名')
+              const project = requireKnowledgeProject(q.get('project'), root)
               const db = openDatabase(resolveRoot(root))
               let slug = await kbClient.ensureWorkspace(project, db)
               let detail
@@ -6961,9 +6982,8 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/upload' && req.method === 'POST') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const project = safeProjectName(String(q.get('project') || '').trim())
+              const project = requireKnowledgeProject(q.get('project'), root)
               const filename = String(q.get('filename') || '').trim()
-              if (!project) throw new Error('缺少项目名')
               // 先按 Content-Length 预拒绝：否则要等整个 Body 读完才报超限
               const declared = Number(req.headers['content-length']) || 0
               if (declared > MAX_KB_UPLOAD_BYTES) {
@@ -6991,8 +7011,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/remove' && req.method === 'POST') {
               const body = await readJson(req)
-              const project = safeProjectName(String(body?.project || '').trim())
-              if (!project) throw new Error('缺少项目名')
+              const project = requireKnowledgeProject(body?.project, root)
               const db = openDatabase(resolveRoot(root))
               const slug = await kbClient.ensureWorkspace(project, db)
               const r = await kbClient.removeDocs(slug, body?.locations)
@@ -7010,8 +7029,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/history' && req.method === 'GET') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const project = safeProjectName(String(q.get('project') || '').trim())
-              if (!project) throw new Error('缺少项目名')
+              const project = requireKnowledgeProject(q.get('project'), root)
               const db = openDatabase(resolveRoot(root))
               const slug = await kbClient.ensureWorkspace(project, db)
               const history = await kbClient.history(slug, {
@@ -7023,8 +7041,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/chat' && req.method === 'POST') {
               const body = await readJson(req)
-              const project = safeProjectName(String(body?.project || '').trim())
-              if (!project) throw new Error('缺少项目名')
+              const project = requireKnowledgeProject(body?.project, root)
               const db = openDatabase(resolveRoot(root))
               const slug = await kbClient.ensureWorkspace(project, db)
               const upstream = await kbClient.chatStream({
@@ -7055,8 +7072,7 @@ export function createAppHandler({ root }: { root: string }) {
 
             if (url === '/api/knowledge/search' && req.method === 'POST') {
               const body = await readJson(req)
-              const project = safeProjectName(String(body?.project || '').trim())
-              if (!project) throw new Error('缺少项目名')
+              const project = requireKnowledgeProject(body?.project, root)
               const db = openDatabase(resolveRoot(root))
               const slug = await kbClient.ensureWorkspace(project, db)
               const hits = await kbClient.search(slug, body?.query, {

@@ -153,6 +153,13 @@ export function translateKbError(err, opts = {}) {
     return 'AnythingLLM 里还没有可用的对话模型：请先在它的设置中配置 LLM 与 embedder'
   }
   if (status === 404 || lower.includes('not found')) {
+    /*
+     * 404 有两个来源，不能都翻译成「上游库没了」：
+     * - 本地前置校验（requireKnowledgeProject）判项目不存在 → 文案里带「项目」，
+     *   原文已经说清楚了，直接透传
+     * - 上游库被手工删除 → 提示「重开页面会自动重建」
+     */
+    if (lower.includes('项目')) return raw
     return '知识库在上游不存在了（可能被手工删除）：重新打开页面会自动重建'
   }
   if (status === 400 && lower.includes('workspace')) {
