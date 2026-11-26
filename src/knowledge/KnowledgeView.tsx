@@ -17,6 +17,12 @@ import {
 import { KnowledgeCitations } from './KnowledgeCitations'
 import { normalizeStreamSources, stripReasoning } from './stripReasoning'
 
+/**
+ * 上游「库里没有任何内容」时的固定英文回答。
+ * 换行与空白不固定，用宽松匹配。
+ */
+const NO_HIT_RE = /there is no relevant information in this workspace/i
+
 type Props = {
   projectName: string
   toast: (message: string) => void
@@ -198,7 +204,32 @@ export default function KnowledgeView({ projectName, toast, onOpenSettings }: Pr
         const last = next[i]
         if (last?.role === 'assistant') {
           const cleaned = stripReasoning(last.content)
-          if (cleaned !== last.content) next[i] = { ...last, content: cleaned }
+          /*
+           * 上游在「库里没有任何内容」时返回一句固定英文：
+           *   There is no relevant information in this workspace to answer your query.
+           * 用户看不出这是「空库」还是「没查到」，更不知道该做什么。
+           * 换成中文并说清原因 —— 这是全新项目的必现路径，不是异常。
+           */
+          if (NO_HIT_RE.test(cleaned)) {
+            next[i] = {
+              ...last,
+              content:
+                '这个知识库还没有可用内容，所以无法回答。\n先上传文档（右上角「上传文档」），等解析完成后（通常几秒到十几秒）再提问。',
+            }
+          } else if (!cleaned && last.content.trim()) {
+            /*
+             * 剥完是空的，说明推理块吃光了输出预算（MiniMax 系不允许关 thinking，
+             * 复杂提问时 <think> 能吃掉几千 token，正文一个字没有）。不能留一条
+             * 空白消息让用户以为界面坏了 —— 明说被截断，并给出可操作建议。
+             */
+            next[i] = {
+              ...last,
+              content:
+                '模型这次的推理把输出预算用完了，正文被截断。\n可以：把问题问得更具体，或在设置里调大上游的最大输出。',
+            }
+          } else if (cleaned !== last.content) {
+            next[i] = { ...last, content: cleaned }
+          }
         }
         return next
       })

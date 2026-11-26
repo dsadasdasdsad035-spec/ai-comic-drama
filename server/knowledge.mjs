@@ -540,6 +540,14 @@ export function createKnowledgeClient(deps) {
       ...(Number(input?.tokenLimit) > 0
         ? { GenericOpenAiTokenLimit: String(Math.floor(Number(input.tokenLimit))) }
         : {}),
+      /*
+       * 输出上限必须显式抬高。上游 default 是 1024（见 genericOpenAi/index.js），
+       * 而 MiniMax-M3.1-Flash **不允许关闭 thinking**（实测报 "requires adaptive
+       * thinking"，M3/M2.7 可以但会输出 <think> 文本）。推理会先吃掉预算：
+       * 实测一次复杂提问产生 4242 字符的未闭合 <think>，正文一个字没有，
+       * 用户看到的是空白回答。给 8192 留出推理 + 正文的空间。
+       */
+      GenericOpenAiMaxTokens: '8192',
     }
     const j = await json('/v1/system/update-env', {
       method: 'POST',
