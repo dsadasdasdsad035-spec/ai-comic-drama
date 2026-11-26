@@ -162,7 +162,54 @@ bundle 时间必须**晚于**源码改动时间，进程必须**晚于** bundle�
 
 ---
 
-## 3. 运行时位置
+## 3. DTK 抓抖音：「CDN 下载失败」多半是 SNI 阻断，不是代码问题
+
+2026-11-26 用户报「DTK 解析视频报错」。实测结论：**DTK 解析是成功的**（拿到标题和 18 个直链），卡在从 `douyinvod.com` 下载。
+
+### 怎么判断是哪一层
+
+| 现象 | 含义 |
+| --- | --- |
+| 报「DTK 解析失败 / UPSTREAM_UNREACHABLE」 | DTK 自己连不上抖音，查容器出网 / browser-rpc |
+| 报「从 CDN 下载视频失败」 | DTK 解析成功了，是本机下不了那个 CDN |
+| 报「未启用：在设置页填写 DTK 服务地址与 API Key」 | 配置丢了，见第 5 节「凭据与网络」 |
+
+### 判定「网络层按域名拦截」的依据
+
+同时满足这几条就是链路被干扰，改代码和重解析都没用：
+
+```bash
+# 1. TCP 能连
+nc -z -G 5 <cdn-ip> 443            # → succeeded
+# 2. TLS 握手中被切断
+curl -v https://<cdn-host>/        # → Recv failure: Connection reset by peer
+# 3. 同域名不同 IP 有的通有的断
+for ip in $(dig +short www.douyin.com); do curl --resolve "www.douyin.com:443:$ip" ...; done
+# 4. 其他国内站 TLS 正常，只有该平台不通
+#    baidu/qq/jd OK，douyin/bilibili/cdn 全 SSLEOFError
+```
+
+2026-11-26 本机实测：`www.douyin.com` 6 个 IP 里 4 通 2 断；`v11-weba.douyinvod.com` / `v26-web.douyinvod.com` / `www.douyin.com` 三个 CDN 域名全被切断；百度/QQ/京东 TLS 全部正常。**TCP 通但 TLS reset = 按 SNI 精确阻断**，与 IP 无关，所以换 IP、多试候选都救不了。
+
+### 代码侧的改进（2026-11-26 已做，`server/ingest.mjs`）
+
+1. **收全 `urls[]` 备用地址**：DTK 每个 video/stream 节点除 `url` 外还有 `urls` 数组，带同清晰度的多个 CDN 域名。旧代码只读 `url`，18 条候选里丢了 33 条备用路径（摊平后 51 条、覆盖 3 个域名）。
+2. **不再截断到 4 条**：逐条试到成功为止。候选按 DTK 顺序（码率从高到低），能下时优先拿高画质。
+3. **错误分类**：失败原因按 TLS/连接切断 vs 4xx 签名过期归类。多数是前者时报「网络层按域名拦截，重新解析不会变好」，并建议换网络或给解析服务配代理——避免用户反复重试。
+
+回归：`node verify-dtk-candidates.mjs`（15 条断言，stub fetch，不联网）。
+
+### 不可行的路（已排除）
+
+- **换候选/IP**：域名只有 3 个，全被阻断。
+- **走 DTK 的 `downloads` 端点**：需要 `media:write` / `media:read` scope，当前 Key 只有 `douyin:read`/`tiktok:read`/`bilibili:read`；且 DTK 容器内下同样 CDN 也是 `SSLEOFError`，说明它也没绕过。
+- **改 Clash 模式**：实测运行在 rule 模式，抖音本应走 DIRECT，但被阻断的 IP 即使 DIRECT 也不通。
+
+可行的只有：换网络（手机热点）、或让下载侧有个能访问该平台的出口。
+
+---
+
+## 4. 运行时位置
 
 | 用途 | 路径 |
 | --- | --- |
@@ -182,7 +229,7 @@ bundle 时间必须**晚于**源码改动时间，进程必须**晚于** bundle�
 
 ---
 
-## 4. 凭据与网络
+## 5. 凭据与网络
 
 - 渠道 Key 读取顺序：设置库 `apiKey` > `~/.canghe-skills/.env` > `./.canghe-skills/.env` > `./.env` > 进程环境变量
 - 仓库根 `.env` 被 gitignore，**已丢失两次**（`git clean -xfd` 会带走）。重要 Key 建议同时写进 `~/.canghe-skills/.env`（不在仓库里，不受 git 清理影响）
@@ -191,7 +238,7 @@ bundle 时间必须**晚于**源码改动时间，进程必须**晚于** bundle�
 
 ---
 
-## 5. 验证脚本
+## 6. 验证脚本
 
 本仓库用 `verify-*.mjs` 平铺在根目录，不是 jest/vitest。
 
@@ -216,7 +263,7 @@ npx esbuild tests/xxx.ts --bundle --platform=node --format=esm \
 
 ---
 
-## 6. 已知未修问题
+## 7. 已知未修问题
 
 - **计费价目表低估 Seedance 2.5 约 22 倍**：`server/billing/price-catalog.mjs` 按 `video_second` 计价（720p = 0.15 credits/秒，5 秒估 0.75），实际按 completion token 扣 16.902 credits。平台自有 Key 出片按此表收费会亏。建议改为按 `completion_tokens` 计价并对齐实测单价（约 6e-5 credits/token）。
 - `server/whitebox.mjs` 有一批未提交改动（`HARD_MAX_FRAMES` 12→96、`DEFAULT_FPS`→`DEFAULT_INTERVAL=0.5`），来自另一工作流，不要顺手回退。

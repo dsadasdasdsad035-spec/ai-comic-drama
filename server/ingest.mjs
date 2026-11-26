@@ -387,14 +387,32 @@ const dtkAdapter = {
     }
     if (!data) throw new Error('DTK 没有返回解析结果')
 
-    // 归一化后视频在 data.media.video.url；不同版本可能落在 streams/顶层字段
+    // 归一化后视频在 data.media.video.url；不同版本可能落在 streams/顶层字段。
+    //
+    // 每个 video / stream 节点还有 `urls` 数组：同一个清晰度的**多个 CDN 备用地址**
+    // （抖音实测一条 stream 给 3 条：v11-weba.douyinvod.com / v26-web.douyinvod.com /
+    // www.douyin.com）。只取 `url` 会丢掉 2/3 的可用路径——而抖音这类 CDN 会按域名
+    // 做 SNI 阻断，多一个域名就多一次绕过机会，所以备用地址必须一起收。
     const media = data?.media || {}
-    const candidates = [
-      media?.video?.url,
-      ...(Array.isArray(media?.streams) ? media.streams.map((s) => s?.url) : []),
-      data?.video?.url,
-      data?.video_url,
+    /** 把 {url, urls[]} 形状的节点摊平成候选；`url` 排在自己那组的最前面 */
+    const expandNode = (node) => {
+      if (!node || typeof node !== 'object') return []
+      const out = []
+      if (typeof node.url === 'string') out.push(node.url)
+      if (Array.isArray(node.urls)) {
+        for (const u of node.urls) if (typeof u === 'string') out.push(u)
+      }
+      return out
+    }
+    const rawCandidates = [
+      ...expandNode(media?.video),
+      ...(Array.isArray(media?.streams) ? media.streams.flatMap((s) => expandNode(s)) : []),
+      ...expandNode(data?.video),
+      typeof data?.video_url === 'string' ? data.video_url : '',
     ].filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))
+
+    // 去重但保序：同一个 URL 常在 video 与 streams[0] 里各出现一次
+    const candidates = [...new Set(rawCandidates)]
     let videoUrl = candidates[0] || ''
     if (!videoUrl) throw new Error('DTK 未返回可下载的视频地址（可能是图集或解析不到视频流）')
 
@@ -419,34 +437,77 @@ const dtkAdapter = {
       ...(referer ? { Referer: referer } : {}),
     }
 
-    const tried = []
+    /**
+     * 逐条尝试全部候选，而不是只试前 4 条。
+     *
+     * 抖音/B 站对 CDN 域名做按域名的 SNI 阻断（TCP 能连、TLS 握手中被 reset），
+     * 同一视频的备用地址分布在不同域名（douyinvod.com / douyin.com / bilivideo
+     * 镜像等），多一个域名就多一次机会。候选按 DTK 给出的顺序（清晰度从高到低）
+     * 依次尝试，取第一条成功的：能下的往往是高码率那条。
+     *
+     * 失败原因按类型归类，便于判断是「网络层拦截」还是「链接过期」——
+     * 前者重解析无用，后者重解析通常能好。
+     */
+    const failureKinds = { blocked: 0, expired: 0, other: 0 }
+    const failedHosts = new Set()
     let bytes = null
     let usedUrl = ''
-    for (const candidate of [videoUrl, ...candidates.slice(1)].slice(0, 4)) {
+    let lastDetail = ''
+    for (const candidate of candidates) {
       try {
         const u = await assertPublicUrl(candidate)
         const vr = await fetch(u, { headers: cdnHeaders, signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: 'follow' })
         if (!vr.ok) {
-          tried.push(`${vr.status}`)
+          // 4xx 多为签名过期/鉴权失败；5xx 与网络错误另算
+          if (vr.status >= 400 && vr.status < 500) failureKinds.expired++
+          else failureKinds.other++
+          lastDetail = `HTTP ${vr.status}`
+          try {
+            failedHosts.add(new URL(candidate).hostname)
+          } catch {
+            /* 非法 URL 已在 filter 阶段排除 */
+          }
           continue
         }
         const buf = Buffer.from(await vr.arrayBuffer())
         if (!buf.length) {
-          tried.push('empty')
+          failureKinds.other++
+          lastDetail = '响应为空'
           continue
         }
         bytes = buf
         usedUrl = candidate
         break
       } catch (e) {
-        tried.push(String(e?.message || e).slice(0, 40))
+        const msg = String(e?.cause?.code || e?.message || e || '')
+        // TLS 被 reset / 连接被拒 = 网络层拦截；超时既不明确也不算干净
+        if (/ECONNRESET|EPROTO|UNEXPECTED_EOF|SSL|TLS|socket hang up|ECONNREFUSED|ECONNABORTED/i.test(msg)) {
+          failureKinds.blocked++
+        } else if (/ETIMEDOUT|timeout|aborted/i.test(msg)) {
+          failureKinds.other++
+        } else {
+          failureKinds.other++
+        }
+        lastDetail = msg.slice(0, 40)
+        try {
+          failedHosts.add(new URL(candidate).hostname)
+        } catch {
+          /* ignore */
+        }
       }
     }
     if (!bytes) {
-      throw new Error(
-        `从 CDN 下载视频失败（已尝试 ${tried.length} 个地址：${tried.join(' / ')}）。` +
-          '直链可能已过期，重新解析一次通常能拿到新的；若持续 403，说明该平台的 CDN 需要额外鉴权。',
-      )
+      const hosts = [...failedHosts]
+      const hostList = hosts.length ? hosts.join(' / ') : '无'
+      // 主要失败原因是 TLS/连接被切断时，重解析拿到的还是同一批域名，白等一轮
+      const blockedMostly = failureKinds.blocked >= Math.max(1, candidates.length / 2)
+      const hint = blockedMostly
+        ? `已尝试 ${candidates.length} 条候选、${hosts.length} 个域名（${hostList}），多数是 TLS/连接被切断——` +
+          '这是网络层按域名拦截该平台 CDN，重新解析不会变好。' +
+          '换用其它网络（如手机热点）、或给解析服务配一个能访问该平台的代理后再试。'
+        : `已尝试 ${candidates.length} 条候选、${hosts.length} 个域名（${hostList}），最后错误：${lastDetail}。` +
+          '直链可能已过期，重新解析一次通常能拿到新的。'
+      throw new Error(`从 CDN 下载视频失败：${hint}`)
     }
     videoUrl = usedUrl
     if (!bytes.length) throw new Error('DTK 返回的视频地址内容为空')
