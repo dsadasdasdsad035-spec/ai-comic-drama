@@ -367,6 +367,8 @@ async function ensureService() {
               ANYTHINGLLM_BASE_URL: knowledge.origin,
               ANYTHINGLLM_API_KEY: knowledge.apiKey,
               SB_BUILTIN_KNOWLEDGE: '1',
+              // 读单文档正文要用：`/v1/document` 只回元数据，正文在实例磁盘上
+              SB_KNOWLEDGE_DOCUMENTS_DIR: knowledge.documentsDir,
             }
           : {}),
       },

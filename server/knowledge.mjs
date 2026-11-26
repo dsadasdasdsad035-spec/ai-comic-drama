@@ -11,6 +11,9 @@
  * 2. 客户端（`createKnowledgeClient`）—— 需要 fetch 与配置，由 app.ts 注入。
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
+
 // ---------------------------------------------------------------- 常量
 
 /** 上游默认端口。AnythingLLM 的 docker 默认就是 3001。 */
@@ -188,6 +191,59 @@ export function buildUploadForm(input) {
 }
 
 /**
+ * 直接读上游实例里的文档 JSON 拿正文。
+ *
+ * 为什么需要：`/v1/document/:docName` 只返回元数据，正文只在实例磁盘上的
+ * `documents/<folder>/<name>.json` 的 `pageContent` 里。本应用与上游同机时可以直接读。
+ *
+ * 安全：`folder` 与 `name` 都来自我们自己拼的 docpath / 上游返回的文件名，
+ * 但依然做一次路径穿越检查 —— 拼路径的代码一旦被别处复用，不该变成任意文件读取。
+ *
+ * @param {string} docpath 可能带目录前缀的标识
+ * @param {string} filename 纯文件名（兜底用）
+ * @param {string} [documentsRoot] 上游的 documents 根目录；未配置时直接返回空
+ */
+function readLocalDocText(docpath, filename, documentsRoot) {
+  if (!documentsRoot) return ''
+  try {
+    const rel = String(docpath || '').replace(/\\/g, '/')
+    const folder = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : 'custom-documents'
+    const file = rel.includes('/') ? rel.slice(rel.lastIndexOf('/') + 1) : String(filename || '')
+    if (!file) return ''
+    if (folder.includes('..') || file.includes('..')) return ''
+    const base = path.resolve(documentsRoot)
+    const target = path.resolve(base, folder, file)
+    // 必须落在 documentsRoot 之内
+    if (!target.startsWith(base + path.sep)) return ''
+    if (!fs.existsSync(target)) return ''
+    const parsed = JSON.parse(fs.readFileSync(target, 'utf8'))
+    return String(parsed?.pageContent || parsed?.content || '').trim()
+  } catch {
+    /* 读不到就退回空串，让调用方自己决定怎么呈现 */
+    return ''
+  }
+}
+
+/**
+ * 解析上游文档条目里的 `metadata`。
+ *
+ * 真实上游把它存成一个 JSON **字符串**（不是对象），形如：
+ *   "{\"id\":\"...\",\"url\":\"file://...\",\"title\":\"世界观·朱雀卷.md\",...}"
+ * 标题、作者、来源都在里面。解析失败一律返回空对象，让调用方退回别的字段 ——
+ * 它不该因为元数据脏了就整条文档查不出来。
+ */
+export function parseDocMeta(raw) {
+  if (!raw) return {}
+  if (typeof raw === 'object') return /** @type {Record<string, unknown>} */ (raw)
+  try {
+    const obj = JSON.parse(String(raw))
+    return obj && typeof obj === 'object' ? /** @type {Record<string, unknown>} */ (obj) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
  * 把上游的 workspace 对象归一成前端要的形状。
  *
  * 上游 `GET /v1/workspaces` 的条目字段在各版本间有出入（documents 计数在
@@ -225,7 +281,7 @@ export function normalizeUploadedDocs(raw, fallbackName = '') {
     .map((d) => ({
       location: String(d?.location || d?.docpath || '').trim(),
       docId: String(d?.id || d?.docId || '').trim(),
-      title: String(d?.title || d?.name || d?.filename || fallbackName || '').trim(),
+      title: String(d?.title || parseDocMeta(d?.metadata)?.title || d?.name || d?.filename || fallbackName || '').trim(),
       wordCount: Number(d?.wordCount) || 0,
     }))
     .filter((d) => d.location || d.docId || d.title)
@@ -327,6 +383,8 @@ export function setKnowledgeFetcher(fn) {
  */
 export function createKnowledgeClient(deps) {
   const getSettings = deps.getSettings
+  /** 可选：返回上游 documents 目录的绝对路径（用于读单文档正文） */
+  const getDocumentsRoot = deps.getDocumentsRoot
   const log = deps.log || (() => {})
   const timeoutMs = Number(deps.timeoutMs) || 60_000
 
@@ -337,6 +395,12 @@ export function createKnowledgeClient(deps) {
       baseUrl: String(s.baseUrl || '').trim().replace(/\/+$/, ''),
       apiKey: String(s.apiKey || '').trim(),
       enabled: Boolean(s.enabled) && Boolean(s.baseUrl),
+      /*
+       * 上游实例的 documents 根目录，只用于读单文档正文
+       * （`/v1/document` 只回元数据，正文在磁盘上）。
+       * 由调用方注入；拿不到就是空串，readDoc 会退回「只有元数据」。
+       */
+      documentsRoot: String((typeof getDocumentsRoot === 'function' ? getDocumentsRoot() : '') || '').trim(),
     }
   }
 
@@ -552,7 +616,16 @@ export function createKnowledgeClient(deps) {
         // 真实上游用 docpath；老版本/其它实现可能给 location
         location: String(d?.location || d?.docpath || '').trim(),
         docId: String(d?.docId || d?.id || '').trim(),
-        title: String(d?.title || d?.filename || d?.name || '').trim(),
+        /*
+         * 标题的取值顺序：d.title → metadata.title → filename。
+         *
+         * 为什么必须读 metadata：真实上游的 workspace 详情里 `title` 是 null，
+         * 真正的标题藏在 `metadata`（一个 JSON **字符串**）的 title 字段里。
+         * 退回 `filename` 会显示成 `weknora_rag.md-902d283c-....json` —— 更糟的是
+         * 上游对落盘名做了 slugify，中文文件名会被整个剥掉，只剩 `.md-<uuid>.json`。
+         * 实测过：上传「世界观·朱雀卷.md」在清单里显示成 `.md-4082695e-....json`。
+         */
+        title: String(d?.title || parseDocMeta(d?.metadata)?.title || d?.filename || d?.name || '').trim(),
         wordCount: Number(d?.wordCount) || 0,
       })),
     }
@@ -697,19 +770,36 @@ export function createKnowledgeClient(deps) {
   }
 
   /** 读单个文档的正文。上游返回解析后的 JSON，正文在 `pageContent`。 */
+  /**
+   * 读单个文档的正文。
+   *
+   * 入参 `docName` 可以是 workspace 详情里的 `docpath`（`custom-documents/xxx.json`）
+   * 或纯文件名；上游只接受**纯文件名**（它把入参当 filename 拼到每个子目录去试，
+   * 带斜杠会 404，实测）。
+   *
+   * 关键限制：`/v1/document/:docName` **只返回元数据，不含 pageContent**
+   * （实测 keys 里没有正文）。正文存在实例的 `documents/<folder>/<name>.json` 里。
+   * 本应用与上游同机（桌面内置或本机 docker），所以这里按 `documentsRoot` 直接读文件；
+   * 远程部署时读不到就退回只给元数据，不让整个工具调用失败。
+   */
   async function readDoc(docName) {
-    const name = String(docName || '').trim()
-    if (!name) throw new Error('缺少文档标识')
+    const raw = String(docName || '').trim()
+    if (!raw) throw new Error('缺少文档标识')
+    const name = raw.includes('/') ? raw.slice(raw.lastIndexOf('/') + 1) : raw
     const j = await json(`/v1/document/${encodeURIComponent(name)}`)
     const doc = j?.document || j?.localFiles?.items?.[0] || null
     if (!doc) {
-      const err = new Error(`文档「${name}」在上游不存在`)
+      const err = new Error(`文档「${raw}」在上游不存在`)
       err.status = 404
       throw err
     }
+    /* 上游详情里的 title 常为 null，真标题在 metadata（JSON 字符串）里 */
+    const meta = parseDocMeta(doc?.metadata)
+    let text = String(doc?.pageContent || doc?.content || '').trim()
+    if (!text) text = readLocalDocText(raw, name, config().documentsRoot)
     return {
-      title: String(doc?.title || doc?.name || name).trim(),
-      text: String(doc?.pageContent || doc?.content || '').trim(),
+      title: String(doc?.title || meta?.title || doc?.name || name).trim(),
+      text,
       wordCount: Number(doc?.wordCount) || 0,
     }
   }

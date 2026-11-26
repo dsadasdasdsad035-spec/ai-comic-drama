@@ -19,6 +19,7 @@ export declare function buildUploadForm(input: {
   mime?: string
   workspaceSlug?: string
 }): { form: FormData; filename: string }
+export declare function parseDocMeta(raw: unknown): Record<string, unknown>
 export declare function normalizeWorkspace(raw: unknown): {
   slug: string
   name: string
@@ -119,6 +120,11 @@ export interface KnowledgeClient {
 export declare function createKnowledgeClient(deps: {
   getSettings: () => { baseUrl: string; apiKey: string; enabled: boolean }
   getExternalFetch?: () => ((url: string, init?: unknown) => Promise<Response>) | null
+  /**
+   * 可选：上游实例 documents 目录的绝对路径。
+   * `/v1/document` 只返回元数据，正文在磁盘上，读全文需要它。
+   */
+  getDocumentsRoot?: () => string
   timeoutMs?: number
   log?: (line: string) => void
 }): KnowledgeClient

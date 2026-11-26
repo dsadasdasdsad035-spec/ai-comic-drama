@@ -176,9 +176,11 @@ function startMockAnythingLLM() {
       const doc = p.match(/^\/v1\/document\/(.+)$/)
       if (doc) {
         const name = decodeURIComponent(doc[1])
+        // 真实上游只接受纯文件名（带斜杠会 404）
+        if (name.includes('/')) return send(404, { error: 'Not Found' })
         for (const ws of state.workspaces.values()) {
-          const hit = ws.documents.find((d) => d.location === name || d.title === name)
-          if (hit) return send(200, { document: { ...hit, pageContent: `${hit.title} 正文` } })
+          const hit = ws.documents.find((d) => d.location.split('/').pop() === name || d.title === name)
+          if (hit) return send(200, { document: { ...hit } })
         }
         return send(404, {})
       }
@@ -394,10 +396,12 @@ try {
     assert.equal(r.body.history[0].content, '主角是谁')
   })
 
-  await check('读文档正文', async () => {
+  await check('读文档（真实上游只回元数据，正文靠本地磁盘补）', async () => {
     const r = await api(base, `/api/knowledge/doc?docName=${encodeURIComponent(firstDoc)}`)
-    assert.equal(r.body.ok, true)
-    assert.match(r.body.text, /正文/)
+    assert.equal(r.body.ok, true, r.body.message || '读取失败')
+    assert.ok(r.body.title, '应当有标题')
+    // mock 没有磁盘，所以 text 为空；真机由 SB_KNOWLEDGE_DOCUMENTS_DIR 补齐
+    assert.equal(typeof r.body.text, 'string')
   })
 
   await check('移出本库', async () => {

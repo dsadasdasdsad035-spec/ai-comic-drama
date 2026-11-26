@@ -554,9 +554,21 @@ function startMockAnythingLLM() {
       const docMatch = path.match(/^\/v1\/document\/(.+)$/)
       if (docMatch) {
         const name = decodeURIComponent(docMatch[1])
+        /*
+         * 真实上游只接受**纯文件名**（它把入参当 filename 拼到每个子目录去试）。
+         * 所以这里按 basename 匹配，并拒绝含斜杠的入参 —— 与真实行为一致。
+         */
+        if (name.includes('/')) return send(404, { error: 'Not Found' })
         for (const ws of state.workspaces.values()) {
-          const doc = ws.documents.find((d) => d.location === name || d.title === name)
-          if (doc) return send(200, { document: { ...doc, pageContent: `${doc.title} 的全文` } })
+          const doc = ws.documents.find(
+            (d) => d.location.split('/').pop() === name || d.title === name,
+          )
+          if (doc) {
+            // 真实上游的 document 接口只回元数据，不含 pageContent；
+            // 正文由客户端从磁盘读（mock 里没有磁盘，所以给空串）
+            const { pageContent: _omit, ...meta } = doc
+            return send(200, { document: { ...meta } })
+          }
         }
         return send(404, {})
       }
@@ -740,13 +752,18 @@ await check('客户端：可接受类型来自上游', async () => {
   assert.deepEqual(t.extensions, ['.doc', '.md', '.pdf', '.txt'])
 })
 
-await check('客户端：读单文档取正文', async () => {
+await check('客户端：读单文档接受 docpath 与纯文件名', async () => {
   const { db } = openTempDb()
   const slug = await client.ensureWorkspace('读文档', db)
   const docs = await client.uploadDoc({ slug, filename: '全文.md', bytes: Buffer.from('x') })
+  // 前端拿到的 location 是 custom-documents/xxx.json；readDoc 要能剥掉前缀
   const doc = await client.readDoc(docs[0].location)
   assert.equal(doc.title, '全文.md')
-  assert.match(doc.text, /全文/)
+  // 真实上游的 document 接口不返回正文，正文由本地磁盘补齐（mock 无磁盘 → 空）
+  assert.equal(typeof doc.text, 'string')
+  const bare = docs[0].location.split('/').pop()
+  const doc2 = await client.readDoc(bare)
+  assert.equal(doc2.title, '全文.md')
   db.close()
 })
 

@@ -154,6 +154,8 @@ export async function startAnythingLlm(opts) {
 
   // ---- 准备可写目录。产物在 .app 里是只读的，一切都落在 dataDir
   const storageDir = path.join(dataDir, 'server', 'storage')
+  /** 上游存解析后文档 JSON 的目录（读单文档正文要用） */
+  const documentsDir = path.join(storageDir, 'documents')
   const hotdir = path.join(dataDir, 'collector', 'hotdir')
   const outputs = path.join(dataDir, 'collector', 'outputs')
   const dbFile = path.join(dataDir, 'anythingllm.db')
@@ -293,5 +295,5 @@ export async function startAnythingLlm(opts) {
     void collector
   }
 
-  return { origin, apiKey, dataDir, running, stop, logTail }
+  return { origin, apiKey, dataDir, documentsDir, running, stop, logTail }
 }

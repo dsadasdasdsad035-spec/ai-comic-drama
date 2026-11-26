@@ -1197,6 +1197,15 @@ let appRoot = ''
 const kbClient = createKnowledgeClient({
   getSettings: () => applyKbEnvDefaults(getAppSettings().knowledge, process.env).settings,
   getExternalFetch: () => getExternalFetch() as unknown as (url: string, init?: unknown) => Promise<Response>,
+  /**
+   * 上游实例的 documents 目录。
+   *
+   * 为什么需要：`GET /v1/document/:name` 只返回元数据，正文只在实例磁盘上的
+   * `documents/<folder>/<name>.json` 的 pageContent 里。本应用与上游同机时可直接读。
+   * 桌面内置时由主进程通过 SB_KNOWLEDGE_DOCUMENTS_DIR 注入；
+   * 外部部署时不设，读正文会退回「只有元数据」（工具仍可用，只是没有全文）。
+   */
+  getDocumentsRoot: () => String(process.env.SB_KNOWLEDGE_DOCUMENTS_DIR || '').trim(),
   log: (line: string) => console.log(line),
 })
 
