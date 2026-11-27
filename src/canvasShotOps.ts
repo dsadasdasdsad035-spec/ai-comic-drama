@@ -70,9 +70,8 @@ export function deletedShotIds(prev: ProjectShot[], next: ProjectShot[], eps?: n
 export function planAddShot(
   shots: ProjectShot[],
   ep: number,
-  prodKind: 'image' | 'video' = 'video',
 ): { shot: ProjectShot; next: ProjectShot[] } {
-  const shot = blankShot(ep, nextShotNo(shots, ep), prodKind)
+  const shot = blankShot(ep, nextShotNo(shots, ep), 'video')
   return { shot, next: [...shots, shot] }
 }
 
@@ -84,11 +83,7 @@ export function planInsertAfter(
   const target = shots.find((s) => s.id === afterShotId)
   if (!target) return null
   const ep = episodeOf(target)
-  const inherited =
-    target.prod_kind === 'image' || target.prod_kind === 'video'
-      ? target.prod_kind
-      : inferProdKindFromProjectShot(target)
-  const shot = blankShot(ep, nextNoAfter(shots, ep, target.no ?? ''), inherited)
+  const shot = blankShot(ep, nextNoAfter(shots, ep, target.no ?? ''), 'video')
   return { shot, next: insertAfter(shots, afterShotId, shot) }
 }
 

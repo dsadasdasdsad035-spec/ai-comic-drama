@@ -209,54 +209,37 @@ const layout = await p.evaluate(async () => {
     imageModeNoImg: m.defaultTabForShot('image', false),
     videoModeHasImg: m.defaultTabForShot('video', true),
     migrated,
-    chipsVideo: m.shotStatusChips({
-      prodKind: 'video',
-      hasImage: true,
-      candidateCount: 2,
-      hasVideo: false,
-      seconds: 5,
-      promptSource: 'auto',
-      nativeAudio: true,
-      refCount: 2,
-    }),
-    chipsImage: m.shotStatusChips({
-      prodKind: 'image',
-      hasImage: true,
-      candidateCount: 2,
-      hasVideo: false,
-      seconds: 5,
-    }),
+    coerceVideo: m.coerceShotTab('video', 'audio', true),
+    coerceVideoMeta: m.coerceShotTab('video', 'meta', true),
+    coerceVideoMore: m.coerceShotTab('video', 'more', true),
+    coerceImageAudio: m.coerceShotTab('image', 'audio', true),
   }
 })
 check(
-  '旧偏好读入后新键回落默认 true',
-  layout.migrated.collapsed.videoSettings === true && layout.migrated.collapsed.motionPrompt === true,
-  JSON.stringify(layout.migrated.collapsed),
-)
-check(
   '旧偏好其余键不被重置',
   layout.migrated.collapsed.refs === true &&
-    layout.migrated.collapsed.advanced === false &&
     layout.migrated.collapsed.shotParams === false &&
-    layout.migrated.width === 440 &&
-    layout.migrated.tab === 'more',
+    layout.migrated.width === 440,
   JSON.stringify(layout.migrated),
+)
+check(
+  '旧音画/更多偏好映射到出片页',
+  layout.migrated.tab === 'outgoing' &&
+    layout.coerceVideo === 'outgoing' &&
+    layout.coerceVideoMeta === 'outgoing' &&
+    layout.coerceVideoMore === 'outgoing',
+  JSON.stringify({ tab: layout.migrated.tab, v: layout.coerceVideo, m: layout.coerceVideoMeta }),
+)
+check(
+  '生图镜非法 tab 回落到画面',
+  layout.coerceImageAudio === 'visual',
+  layout.coerceImageAudio,
 )
 check('宽度夹取 320–520', layout.min === 320 && layout.max === 520 && layout.mid === 400, JSON.stringify(layout))
 check(
   '默认 tab 随生产模式',
   layout.imageModeNoImg === 'visual' && layout.videoModeHasImg === 'outgoing',
   JSON.stringify(layout),
-)
-check(
-  '出片镜 chip 不含画面项',
-  !layout.chipsVideo.some((c) => c.label.startsWith('画面')),
-  JSON.stringify(layout.chipsVideo),
-)
-check(
-  '生图镜 chip 仅画面',
-  layout.chipsImage.length === 1 && layout.chipsImage[0].label.startsWith('画面'),
-  JSON.stringify(layout.chipsImage),
 )
 
 // 默认页 + 出片提示词
@@ -294,38 +277,34 @@ check(
   (await emptyBadge.getAttribute('title').catch(() => '')) ?? 'no badge',
 )
 await selectShot('S01')
-check('出片镜为出片/音画/元数据 tab', (await p.locator('.si-tabs [role="tab"]').count()) === 3)
+check('出片镜只有出片一页', (await p.locator('.si-tabs [role="tab"]').count()) === 1)
 check('出片镜默认出片页', (await activeTab()) === '出片', await activeTab())
-check('出片页直接看到出片提示词', (await p.locator('[data-video-prompt-panel]').count()) === 1)
-check('就绪条可见', (await p.locator('[data-readiness-bar]').count()) === 1)
+check('出片页直接看到提示词槽位', (await p.locator('[data-slot="prompt"] [data-video-prompt-panel]').count()) === 1)
+check('四槽位进入即可见', (await p.locator('.si-slot').count()) === 4)
+check('就绪条已移除', (await p.locator('[data-readiness-bar]').count()) === 0)
 check('工位徽章出片', (await p.locator('.si-badge-prod--video').count()) === 1)
 await p.locator('.si-menu summary').click()
 check('菜单含镜头类型切换', (await p.locator('.si-menu-pop button').filter({ hasText: '镜头类型' }).count()) === 1)
 await p.keyboard.press('Escape')
-await p.locator('.si-tabs [role="tab"]', { hasText: '音画' }).click()
 await p.waitForTimeout(200)
-check('音画 Tab 含原生音频', (await p.locator('.native-audio-field').count()) === 1)
+check('音画页已移除', (await p.locator('.si-tabs [role="tab"]', { hasText: '音画' }).count()) === 0)
+check('原生音频开关已移除', (await p.locator('[data-native-audio]').count()) === 0)
+check('音频槽位在位', (await p.locator('[data-slot="audio"]').count()) === 1)
 await selectShot('S02')
 check('切到生图镜显示画面 tab', (await activeTab()) === '画面', await activeTab())
 check('生图镜无视频主吸底', (await p.locator('[data-shot-footer] button', { hasText: '生成视频' }).count()) === 0)
 await selectShot('S01')
 check('出片镜卡片头生成禁用', await shotNode('S01').locator('.shot-gen').isDisabled())
-await p.locator('.si-chip', { hasText: '提示词' }).click()
-await p.waitForTimeout(300)
-check('提示词 chip 切到出片页', (await activeTab()) === '出片', await activeTab())
-check('切到出片页后提示词面板可见', await p.locator('[data-video-prompt-panel]').isVisible())
+check('状态 chip 已移除', (await p.locator('.si-chip').count()) === 0)
+check('提示词面板可见', await p.locator('[data-video-prompt-panel]').isVisible())
 await selectShot('S01')
 check('手动选页后切镜头保持', (await activeTab()) === '出片', await activeTab())
 
 // chip 路由：按镜类型切换镜头
 await selectShot('S02')
-await p.locator('.si-chip', { hasText: '画面' }).click()
-await p.waitForTimeout(250)
-check('画面 chip 切到画面页', (await activeTab()) === '画面', await activeTab())
+check('生图镜切回画面页', (await activeTab()) === '画面', await activeTab())
 await selectShot('S01')
-await p.locator('.si-chip', { hasText: '成片' }).click()
-await p.waitForTimeout(250)
-check('成片 chip 切到出片页', (await activeTab()) === '出片', await activeTab())
+check('出片镜保持出片页', (await activeTab()) === '出片', await activeTab())
 
 await selectShot('S02')
 await p.locator('.si-tabs [role="tab"]', { hasText: '画面' }).click()

@@ -8,7 +8,8 @@ type Props = {
   batch: { total: number; done: number } | null
   charsOn: boolean
   diagOn: boolean
-  onAddImageShot: () => void
+  onAddImageAsset: () => void
+  onAddAudioAsset: () => void
   onAddVideoShot: () => void
   onGenAll: () => void
   onUnifyTransitions: () => void
@@ -37,7 +38,8 @@ export default function BoardMenu({
   batch,
   charsOn,
   diagOn,
-  onAddImageShot,
+  onAddImageAsset,
+  onAddAudioAsset,
   onAddVideoShot,
   onGenAll,
   onUnifyTransitions,
@@ -82,7 +84,7 @@ export default function BoardMenu({
       <button
         className={`tm-btn ${busy ? 'on' : ''}`}
         onClick={() => setOpen((v) => !v)}
-        title="批量生成画面 / 视图 / 清理"
+        title="批量出图（素材卡）/ 视图 / 清理"
       >
         操作
         {busy ? <span className="bm-prog">{progText}</span> : <span className="tm-cur">批量 · 视图 · 清理</span>}
@@ -96,9 +98,9 @@ export default function BoardMenu({
             className="bm-item"
             onClick={act(onGenAll)}
             disabled={busy || !canGen}
-            title={canGen ? `按顺序逐镜生成画面（约 ¥${perImage}/张）` : '未配置 ARK_API_KEY'}
+            title={canGen ? `按顺序对已填提示词的图片素材卡出图（约 ¥${perImage}/张）` : '未配置 ARK_API_KEY'}
           >
-            批量生成画面
+            批量出图（素材卡）
             <span className="bm-hint">{batch ? `${batch.done}/${batch.total}` : `¥${perImage}/张`}</span>
           </button>
           <button
@@ -126,8 +128,11 @@ export default function BoardMenu({
           </button>
 
           <div className="bm-sec">画布</div>
-          <button className="bm-item" onClick={act(onAddImageShot)}>
-            新建生图镜<span className="bm-hint">Seedream</span>
+          <button className="bm-item" onClick={act(onAddImageAsset)}>
+            新建图片素材卡<span className="bm-hint">Seedream</span>
+          </button>
+          <button className="bm-item" onClick={act(onAddAudioAsset)}>
+            新建音频素材卡<span className="bm-hint">语音 / 音乐</span>
           </button>
           <button className="bm-item" onClick={act(onAddVideoShot)}>
             新建出片镜<span className="bm-hint">Seedance</span>

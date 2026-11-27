@@ -24059,3 +24059,156 @@ button.crumb:hover {
     grid-template-rows: minmax(120px, 34%) 1fr;
   }
 }
+
+/* ---------- 出片镜参考槽位（图片 / 视频 / 音频 / 提示词） ---------- */
+
+.si-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.si-slot {
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.si-slot-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.si-slot-head b {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.si-slot-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}
+
+.si-slot-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-style: normal;
+}
+
+.si-slot-list,
+.si-slot-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.si-slot-list li,
+.si-slot-extras li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.si-slot-thumb {
+  flex: none;
+  width: 48px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+}
+
+.si-slot-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.si-slot-copy b {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+}
+
+.si-slot-copy span {
+  overflow: hidden;
+  font-size: var(--fs-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.si-slot-copy em {
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  font-style: normal;
+}
+
+.si-slot-extras code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.si-slot-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.si-slot-audio audio {
+  width: 100%;
+  height: 30px;
+}
+
+.si-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.si-slot-inline {
+  margin-left: auto;
+}
+
+.si-slot-manual {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.si-slot-lexicon {
+  margin-top: 8px;
+}
+
+.vp-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.vp-slot-chars {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-2xs);
+}

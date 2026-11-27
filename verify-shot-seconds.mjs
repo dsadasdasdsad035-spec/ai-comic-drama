@@ -120,8 +120,8 @@ check('3s 静音 + Seedance 2.5 请求 4s', silent.seconds === 4 && silent.secon
  *
  * 音色参考只是音轨的增强项：拿不到样本不该把「出片」整条堵死，也不该把
  * 「有没有声音」一起丢掉。2026-11-22 实测确认 `generate_audio:true` 不带
- * `audio_url` 能出片且会念台词，所以这里钉住新语义——不阻塞、仍走 native
- * 模式、没有 audio 附件、给出 no-reference warn，时长仍按原生门槛（含 4）。
+ * `audio_url` 能出片且会念台词，所以这里钉住新语义——不阻塞、`generateAudio`
+ * 恒真（由模型能力决定）、没有 audio 附件、给出无音色参考 warn，时长仍按原生门槛（含 4）。
  */
 const noSample = { ...characters[0], voiceSample: undefined }
 const buildNoSample = (seconds) =>
@@ -136,11 +136,11 @@ const buildNoSample = (seconds) =>
 
 const degraded = buildNoSample(4.2)
 check('无音色样本不阻塞出片', degraded.blocking.length === 0, degraded.blocking.map((b) => b.message).join(';'))
-check('无音色样本仍走 native', degraded.mode === 'native', degraded.mode)
+check('无音色样本仍带原生音轨', degraded.generateAudio === true, String(degraded.generateAudio))
 check('无音色样本不带 audio 附件', degraded.audio === null)
 check(
-  '无音色样本给出 no-reference warn',
-  degraded.warnings.some((w) => w.code === 'native-no-reference'),
+  '无音色样本给出无音色参考 warn',
+  degraded.warnings.some((w) => w.code === 'audio-no-reference'),
   degraded.warnings.map((w) => w.code).join(','),
 )
 check(
@@ -150,7 +150,7 @@ check(
 )
 check('无音色样本时长按原生门槛（4）', degraded.seconds === 4, String(degraded.seconds))
 
-// 零角色卡 + 无台词的纯空镜：没有任何可判定的说话人，照样能走 native
+// 零角色卡 + 无台词的纯空镜：没有任何可判定的说话人，照样带原生音轨
 const bareShot = { ...shotData(6), refIds: [], dialogue: '' }
 const noChars = lib.buildShotVideoRequest({
   data: bareShot,
@@ -162,14 +162,14 @@ const noChars = lib.buildShotVideoRequest({
 })
 check(
   '零角色卡空镜不因音色缺失阻塞',
-  !noChars.blocking.some((b) => b.code === 'native-unavailable'),
+  noChars.blocking.length === 0,
   noChars.blocking.map((b) => b.code).join(','),
 )
-check('零角色卡空镜仍走 native 且无 audio 附件', noChars.mode === 'native' && noChars.audio === null, noChars.mode)
+check('零角色卡空镜仍带原生音轨且无 audio 附件', noChars.generateAudio === true && noChars.audio === null, String(noChars.generateAudio))
 
 /**
  * 台词点名了一个角色库里没有的说话人：猜不出该用谁的音色，但不是不能出片。
- * 按无参考照常走 native，只在 warning 里说清声音由模型决定。
+ * 照常带原生音轨，只在 warning 里说清声音由模型决定。
  */
 const missingCard = { ...shotData(6), refIds: [] }
 const noCardHit = lib.buildShotVideoRequest({
@@ -181,9 +181,9 @@ const noCardHit = lib.buildShotVideoRequest({
   resolution: '720p',
 })
 check(
-  '说话人不在角色库时仍走 native 并说明',
-  noCardHit.mode === 'native' && noCardHit.warnings.some((w) => w.code === 'native-no-reference'),
-  `${noCardHit.mode} / ${noCardHit.warnings.map((w) => w.code).join(',')}`,
+  '说话人不在角色库时仍带原生音轨并说明',
+  noCardHit.generateAudio === true && noCardHit.warnings.some((w) => w.code === 'audio-no-reference'),
+  `${noCardHit.generateAudio} / ${noCardHit.warnings.map((w) => w.code).join(',')}`,
 )
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')

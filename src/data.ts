@@ -33,6 +33,11 @@ export type AssetNodeType = Node<
     title: string
     kind: AssetKind
     url?: string
+    /** 生成提示词（图片 Seedream / 音频 TTS） */
+    prompt?: string
+    refIds?: string[]
+    genState?: 'idle' | 'running' | 'error'
+    genError?: string
     designId?: string
     /** expression-sheet 归属的角色名；普通素材/场景/道具为空 */
     characterName?: string

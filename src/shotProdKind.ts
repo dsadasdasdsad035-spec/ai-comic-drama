@@ -44,33 +44,24 @@ function mergedImageEvidence(s: ProjectShot, fallback?: ProdKindFallback) {
   }
 }
 
-/** 遗留水合：双轨优先出片；合并 project 与画布残留态再推断 */
+/** 序列中镜头一律出片；仅遗留 `prod_kind === 'image'` 在迁移前仍可读作生图 */
 export function inferProdKindFromProjectShot(
   s: ProjectShot,
-  fallback?: ProdKindFallback,
+  _fallback?: ProdKindFallback,
 ): ShotProdKind {
-  const video = mergedVideoEvidence(s, fallback)
-  const image = mergedImageEvidence(s, fallback)
-  if (hasVideoProdEvidence(video)) return 'video'
-  if (hasImageProdEvidence(image)) return 'image'
+  if (s.prod_kind === 'image') return 'image'
   return 'video'
 }
 
 export function inferProdKindFromShotData(d: ShotData): ShotProdKind {
-  if (hasVideoProdEvidence(d)) return 'video'
-  if (hasImageProdEvidence(d)) return 'image'
+  if (d.prodKind === 'image') return 'image'
   return 'video'
 }
 
 /** 项目已存 prod_kind 时，成片证据为 video 则纠正误锁的 image */
 export function resolveProdKind(s: ProjectShot, fallback?: ProdKindFallback): ShotProdKind {
-  const inferred = inferProdKindFromProjectShot(s, fallback)
-  if (s.prod_kind === 'video') return 'video'
-  if (s.prod_kind === 'image') {
-    if (inferred === 'video') return 'video'
-    return 'image'
-  }
-  return inferred
+  if (s.prod_kind === 'image') return 'image'
+  return inferProdKindFromProjectShot(s, fallback)
 }
 
 export function effectiveProdKind(d: Pick<ShotData, 'prodKind'> & ShotData): ShotProdKind {

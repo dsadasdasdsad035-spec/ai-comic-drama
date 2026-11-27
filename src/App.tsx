@@ -57,6 +57,9 @@ import TaskCenter from './TaskCenter'
 import ToolMenu from './ToolMenu'
 import BoardMenu from './BoardMenu'
 import { effectiveProdKind } from './shotProdKind'
+import { planImageShotToAssetCards } from './imageShotMigration'
+import { buildAssetImageRefs } from './assetCardRefs'
+import { audioModelReady } from './assetCardGeneration'
 import type { ShotProdKind } from './types'
 import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
@@ -422,6 +425,9 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       kind?: string
       title?: string
       url?: string
+      prompt?: string
+      refIds?: string[]
+      note?: string
       designId?: string
       characterName?: string
       sourceShotId?: string
@@ -433,6 +439,9 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       kind: d.kind || 'image',
       title: d.title || '',
       url: d.url || '',
+      ...(d.prompt ? { prompt: d.prompt } : {}),
+      ...(d.refIds?.length ? { refIds: [...d.refIds] } : {}),
+      ...(d.note ? { note: d.note } : {}),
       ...(d.designId ? { designId: d.designId } : {}),
       ...(d.characterName ? { characterName: d.characterName } : {}),
       ...(d.sourceShotId ? { sourceShotId: d.sourceShotId } : {}),
@@ -1367,6 +1376,42 @@ function Shell() {
             shots = repairedOnLoad.shots
           }
         }
+        const migPlan = planImageShotToAssetCards({
+          shots,
+          assets: (p.assets ?? []) as ProjectAsset[],
+          canvas: p.canvas,
+          imageShotsToAssetCards: p.imageShotsToAssetCards,
+        })
+        if (migPlan) {
+          const deleteShotIds = shots
+            .filter((s) => s.prod_kind === 'image')
+            .map((s) => String(s.id))
+            .filter(Boolean)
+          try {
+            await patchProject(projectName, {
+              shots: migPlan.shots,
+              assets: migPlan.assets,
+              canvas: migPlan.canvas,
+              imageShotsToAssetCards: true,
+              ...(deleteShotIds.length ? { deleteShotIds, shotsMode: 'partial' as const } : {}),
+            })
+            if (!alive || epoch !== projectEpochRef.current) return
+            p = {
+              ...p,
+              shots: migPlan.shots,
+              assets: migPlan.assets,
+              canvas: migPlan.canvas,
+              imageShotsToAssetCards: true,
+            }
+            shots = migPlan.shots
+            if (migPlan.migratedCount > 0) {
+              setToast(`已将 ${migPlan.migratedCount} 张生图镜迁为图片素材卡`)
+              window.setTimeout(() => setToast(''), 3600)
+            }
+          } catch {
+            /* 迁移失败不置标记，下次打开重试 */
+          }
+        }
         // 存量 v1 本地画布 → 项目库的一次性迁移（只在项目还没有布局行时跑）。
         // 必须排在读素材卡之前：它会把旧节点 uid 写回 assets.canvas_id，位置写进 canvas。
         const legacy = await migrateLegacyCanvasIfNeeded(projectName, p)
@@ -2063,12 +2108,25 @@ function Shell() {
         const tgt = nodesRef.current.find((n) => n.id === c.target)
         if (!tgt) return
         const tgtType = (tgt as unknown as { type?: string }).type
-        if (tgtType !== 'shot') return
-        const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
-        if (!cur.includes(c.source!)) {
-          patch(c.target, { refIds: [...cur, c.source!] } as never)
-          setToast(`已连线为参考（共 ${cur.length + 1} 张）`)
-          window.setTimeout(() => setToast(''), 1800)
+        if (tgtType === 'shot') {
+          const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+          if (!cur.includes(c.source!)) {
+            patch(c.target, { refIds: [...cur, c.source!] } as never)
+            setToast(`已连线为参考（共 ${cur.length + 1} 张）`)
+            window.setTimeout(() => setToast(''), 1800)
+          }
+          return
+        }
+        if (tgtType === 'asset') {
+          const kind = String((tgt.data as { kind?: string }).kind || '')
+          if (kind !== 'image') return
+          const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
+          if (!cur.includes(c.source!)) {
+            patch(c.target, { refIds: [...cur, c.source!] } as never)
+            setToast(`已连线为出图参考（共 ${cur.length + 1} 项）`)
+            window.setTimeout(() => setToast(''), 1800)
+          }
+          return
         }
         return
       }
@@ -2135,18 +2193,18 @@ function Shell() {
     [edges, setEdges, applyEdgeRemoval, needsEdgeDeleteConfirm],
   )
   /** 新增镜头：生成正式 `E{集}-{镜号}` 镜头并落库，再水合到画布 */
-  const addShot = async (prodKind: ShotProdKind) => {
+  const addShot = async () => {
     if (!readyProject) {
       setToast('先选择项目再新增镜头')
       window.setTimeout(() => setToast(''), 2200)
       return
     }
-    const { shot, next } = planAddShot(projectShots, epNo, prodKind)
+    const { shot, next } = planAddShot(projectShots, epNo)
     try {
       await persistProjectShots(next, [], { fit: true })
       const fresh = nodesRef.current.find((n) => n.data.shotId === shot.id)
       if (fresh) setSelId(fresh.id)
-      setToast(`已新增${prodKind === 'video' ? '出片' : '生图'}镜 E${String(epNo).padStart(2, '0')}·${shot.no}`)
+      setToast(`已新增出片镜 E${String(epNo).padStart(2, '0')}·${shot.no}`)
       window.setTimeout(() => setToast(''), 2200)
     } catch (e) {
       setToast((e as Error).message || '新增镜头失败')
@@ -2184,6 +2242,19 @@ function Shell() {
    */
   const addAsset = () => {
     const card = newAssetCard(nodesRef.current, { title: '新素材', kind: 'image', url: '' })
+    setNodes((ns) => [...ns, card])
+    setSelId(card.id)
+  }
+
+  /** 新建图片/音频生成素材卡（不占镜号） */
+  const addGenerateAssetCard = (kind: 'image' | 'audio') => {
+    if (!readyProject) {
+      setToast('先选择项目再新建素材卡')
+      window.setTimeout(() => setToast(''), 2200)
+      return
+    }
+    const title = kind === 'image' ? '图片生成' : '音频生成'
+    const card = newAssetCard(nodesRef.current, { title, kind, url: '', prompt: '' })
     setNodes((ns) => [...ns, card])
     setSelId(card.id)
   }
@@ -2442,7 +2513,8 @@ function Shell() {
     const out: Edge[] = []
     const inCanvas = new Set(canvasNodes.map((n) => n.id))
     const shotsById = new Map(shownNodes.map((n) => [n.id, n]))
-    for (const n of shownNodes) {
+    const refHosts = [...shownNodes, ...canvasNodes.filter((n) => (n as unknown as { type?: string }).type === 'asset')]
+    for (const n of refHosts) {
       for (const rid of (n.data as unknown as { refIds?: string[] }).refIds ?? []) {
         if (!inCanvas.has(rid)) continue
         const eid = `ref-${rid}-${n.id}`
@@ -2615,9 +2687,11 @@ function Shell() {
   /** 对选中的卡片批量执行 */
   const runOnSelected = async () => {
     if (selBusy) return
-    const list = nodesRef.current.filter(
-      (n) => n.selected && isShotCanvasNode(n) && effectiveProdKind(n.data) === 'image',
-    )
+    const list = nodesRef.current.filter((n) => {
+      if (!n.selected || !isAssetCanvasNode(n)) return false
+      const kind = String((n.data as { kind?: string }).kind || '')
+      return kind === 'image' || kind === 'scene' || kind === 'prop'
+    })
     if (list.length === 0) return
     const ac = new AbortController()
     batchAbortRef.current = ac
@@ -2811,12 +2885,7 @@ function Shell() {
         const relation: Relation = e.data?.relation ?? 'cut'
         const src = shotsById.get(e.source)
         const tgt = shotsById.get(e.target)
-        const sequenceSolid = Boolean(
-          src &&
-            tgt &&
-            effectiveProdKind(src.data) === 'video' &&
-            effectiveProdKind(tgt.data) === 'video',
-        )
+        const sequenceSolid = Boolean(src && tgt && isShotCanvasNode(src) && isShotCanvasNode(tgt))
         const base = {
           ...e,
           selectable: false,
@@ -2987,6 +3056,34 @@ function Shell() {
         newAssetCard(prev, { title: input.title, kind: input.kind, url: input.url }),
       ])
       setToast(`已导入素材：${input.title}`)
+      window.setTimeout(() => setToast(''), 2400)
+    },
+    [setNodes],
+  )
+
+  /**
+   * 槽位「添加」→ 建一张素材卡并立即连到该镜。
+   *
+   * 连线才是出片的参考来源（槽位由连线派生），所以这里必须一步完成建卡 + 写 refIds，
+   * 不能只建卡让用户再手动连线。
+   */
+  const addAssetRefFromSlot = useCallback(
+    (shotNodeId: string, kind: 'image' | 'video' | 'audio', url: string, title: string) => {
+      setNodes((prev) => {
+        const card = newAssetCard(prev, { title, kind, url })
+        return prev.map((n) =>
+          n.id === shotNodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  refIds: [...new Set([...(((n.data as { refIds?: string[] }).refIds) ?? []), card.id])],
+                },
+              }
+            : n,
+        ).concat(card)
+      })
+      setToast(`已添加${kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片'}参考：${title}`)
       window.setTimeout(() => setToast(''), 2400)
     },
     [setNodes],
@@ -3224,15 +3321,15 @@ function Shell() {
     async (id: string, opts: { signal?: AbortSignal } = {}) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      if (effectiveProdKind(node.data) === 'video') {
-        patch(id, { genState: 'error', genError: '出片镜请用侧栏生成视频，或新建生图镜' })
+      if (isShotCanvasNode(node)) {
+        patch(id, { genState: 'error', genError: '出图请使用图片素材卡' })
         return
       }
       if (activeImgRef.current.has(id)) return
-      // prompt 可能缺失（旧项目镜头没有 keyframe_prompt 且 desc 为空时 shotToData 会给出 undefined）
-      const prompt = String(node.data.prompt ?? '').trim()
+      const assetData = node.data as unknown as { prompt?: string; title?: string; url?: string }
+      const prompt = String(assetData.prompt ?? '').trim()
       if (!prompt) {
-        patch(id, { genState: 'error', genError: '请先填写画面提示词' })
+        patch(id, { genState: 'error', genError: '请先填写提示词' })
         return
       }
       if (!projectName) {
@@ -3246,7 +3343,7 @@ function Shell() {
       const token = ++imgTokenRef.current
       patch(id, { genState: 'running', genError: undefined })
       // 单镜也要记账：之前只有批量才记，导致右上角金额偏低
-      const tid = startTask('image', `${node.data.no} 出图`, {
+      const tid = startTask('image', `${assetData.title || '素材卡'} 出图`, {
         cost: imageCost(price, candCount),
         retry: () => void generateOne(id),
         cancel: () => cancelGenerate(id),
@@ -3254,41 +3351,32 @@ function Shell() {
       activeImgRef.current.set(id, { token, controller, taskId: tid })
       const current = () => activeImgRef.current.get(id)?.token === token
       try {
-        let ref: string | undefined
-        let composed = false
-        if (refMode && node.data.refImage) {
-          if (marksAsGuide && node.data.marks.length > 0) {
-            ref = await composeReference(node.data.refImage, node.data.marks)
-            composed = true
-          } else {
-            ref = node.data.refImage
-          }
-        }
-        // 角色/相邻分镜/素材统一由共享解析器排序；当前镜预览 ref 仅作 Seedream 输入，不占视频 slot。
-        const collected = collectShotReferences({
-          node,
+        const built = buildAssetImageRefs({
+          node: node as unknown as AssetNodeType,
           nodes: nodesRef.current,
           characters,
           missingMedia,
         })
-        if (collected.missing.length) {
-          const first = collected.missing[0]
+        if (built.missing.length) {
+          const first = built.missing[0]
           throw new Error(`${first.label}：${first.reason}`)
         }
-        const extraCandidates = collected.refs.filter((r) => r.url !== ref)
+        const ref = refMode && assetData.url ? assetData.url : undefined
         const extraBudget = Math.max(0, 10 - (ref ? 1 : 0))
-        const limited = limitReferences(extraCandidates, extraBudget)
+        const limited = built.limited.used.length > extraBudget
+          ? { used: built.limited.used.slice(0, extraBudget), omitted: built.limited.used.slice(extraBudget) }
+          : built.limited
         const extraRefs = limited.used.map((r) => r.url)
         const refLabels = limited.used.map((r, i) => `图${(ref ? 2 : 1) + i}=${r.label}`)
-        if (limited.omitted.length) {
+        if (limited.omitted?.length) {
           setToast(`参考图超过 10 张，已省略：${limited.omitted.map((r) => r.label).join('、')}`)
           window.setTimeout(() => setToast(''), 3600)
         }
-        const refIntro = ref ? '图1=构图与上一镜连贯性；' : ''
         const res = await generateImage({
-          prompt: (composed ? prompt + COMPOSE_HINT : prompt) +
+          prompt:
+            prompt +
             (extraRefs.length
-              ? `\n\n参考图说明：${refIntro}${refLabels.join('，')}。对应主体必须与参考图保持一致。`
+              ? `\n\n参考图说明：${refLabels.join('，')}。对应主体必须与参考图保持一致。`
               : ''),
           ratio,
           refImage: ref,
@@ -3300,14 +3388,10 @@ function Shell() {
         if (!current()) return
         const urls = res.urls?.length ? res.urls : [res.url]
         patch(id, {
-          candidates: urls,
-          activeIdx: 0,
-          refImage: urls[0],
+          url: urls[0],
           genState: 'idle',
           genError: undefined,
-          videoUrl: undefined,
-          vidState: 'idle',
-        })
+        } as never)
         endTask(tid)
         if (res.warning) {
           setToast(res.warning)
@@ -3330,7 +3414,46 @@ function Shell() {
         if (current()) activeImgRef.current.delete(id)
       }
     },
-    [patch, ratio, refMode, marksAsGuide, candCount, charImages, characters, modelPick, price, missingMedia, cancelGenerate, projectName],
+    [patch, ratio, refMode, candCount, characters, modelPick, price, missingMedia, cancelGenerate, projectName],
+  )
+
+  const generateAssetAudio = useCallback(
+    async (id: string) => {
+      const node = nodesRef.current.find((n) => n.id === id)
+      if (!node || !isAssetCanvasNode(node)) return
+      const d = node.data as unknown as { prompt?: string; title?: string; kind?: string }
+      if (String(d.kind) !== 'audio') return
+      const prompt = String(d.prompt ?? '').trim()
+      if (!prompt) {
+        patch(id, { genState: 'error', genError: '请先填写提示词' } as never)
+        return
+      }
+      if (!projectName) {
+        patch(id, { genState: 'error', genError: '先选择项目' } as never)
+        return
+      }
+      const models = appSettings?.models ?? []
+      const ready = audioModelReady(modelPick.audio, models)
+      if (!ready.ok) {
+        patch(id, { genState: 'error', genError: ready.reason } as never)
+        return
+      }
+      patch(id, { genState: 'running', genError: undefined } as never)
+      const tid = startTask('voice', `${d.title || '音频卡'} 生成`, {})
+      try {
+        const voice = await generateVoice({
+          text: prompt,
+          modelKey: modelPick.audio,
+          project: projectName,
+        })
+        patch(id, { url: voice.url, genState: 'idle', genError: undefined } as never)
+        endTask(tid)
+      } catch (e) {
+        patch(id, { genState: 'error', genError: (e as Error).message } as never)
+        endTask(tid, (e as Error).message)
+      }
+    },
+    [patch, projectName, appSettings, modelPick, price],
   )
 
   /**
@@ -3341,10 +3464,6 @@ function Shell() {
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node) return
-      if (effectiveProdKind(node.data) === 'image') {
-        patch(id, { vidState: 'error', vidError: '生图镜不能主出片，请新建出片镜或改镜头类型' })
-        return
-      }
       const request = buildShotVideoRequest({
         data: node.data,
         nodeId: node.id,
@@ -3379,7 +3498,7 @@ function Shell() {
       const imageUrls = request.refs.map((r) => r.url)
       const audioRef = request.audio
         ? {
-            character: request.audio.character || '',
+            ...(request.audio.character ? { character: request.audio.character } : {}),
             url: request.audio.url,
             label: request.audio.label,
           }
@@ -3391,29 +3510,17 @@ function Shell() {
       })
       try {
         const res = await startVideo({
-          ...(request.mode === 'native'
-            ? {
-                refImages: imageUrls,
-                // 原生音频与视频素材参考并存：Seedance 2.5 同时接受 video_urls 与 generate_audio
-                ...(request.video ? { refVideos: [request.video.url] } : {}),
-                generateAudio: true,
-                audioRef: request.audio?.url,
-              }
-            : request.video
-              ? {
-                  refVideos: [request.video.url],
-                  ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
-                }
-              : imageUrls.length > 0
-                ? { refImages: imageUrls }
-                : { image: request.firstFrame?.url || '' }),
+          // 原生音轨由模型能力决定，不再与参考形态互斥：图片与视频参考可以并存。
+          ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
+          ...(request.video ? { refVideos: [request.video.url] } : {}),
+          ...(request.audio ? { audioRef: request.audio.url } : {}),
+          ...(request.generateAudio ? { generateAudio: true } : {}),
           prompt: effective.text,
           seconds: request.seconds,
           ratio,
           resolution: vidRes,
-          ...(request.video || request.mode === 'native'
-            ? {}
-            : { cameraFixed: node.data.move === '固定' }),
+          // 带参考视频时上游按视频自身帧率出片，camera_fixed 不适用
+          ...(request.video ? {} : { cameraFixed: node.data.move === '固定' }),
           modelKey,
           ...(projectName && node.data.shotId
             ? { project: projectName, shotId: String(node.data.shotId) }
@@ -3442,7 +3549,7 @@ function Shell() {
             modelKey,
             createdAt,
           },
-          ...(request.mode === 'native' && audioRef
+          ...(audioRef
             ? {
                 audioMode: 'native' as const,
                 audioRef,
@@ -3797,9 +3904,11 @@ function Shell() {
 
   const generateAll = async () => {
     if (batch) return
-    const list = nodesRef.current.filter(
-      (n) => isShotCanvasNode(n) && n.data.shotId && effectiveProdKind(n.data) === 'image',
-    )
+    const list = nodesRef.current.filter((n) => {
+      if (!isAssetCanvasNode(n)) return false
+      const d = n.data as { kind?: string; prompt?: string }
+      return String(d.kind) === 'image' && Boolean(String(d.prompt ?? '').trim())
+    })
     if (list.length === 0) return
     setBatch({ total: list.length, done: 0 })
     for (const n of list) {
@@ -4477,8 +4586,9 @@ function Shell() {
                 batch={batch}
                 charsOn={charsOn}
                 diagOn={diagOn}
-                onAddImageShot={() => void addShot('image')}
-                onAddVideoShot={() => void addShot('video')}
+                onAddImageAsset={() => addGenerateAssetCard('image')}
+                onAddAudioAsset={() => addGenerateAssetCard('audio')}
+                onAddVideoShot={() => void addShot()}
                 onGenAll={generateAll}
                 onUnifyTransitions={unifyTransitions}
                 onExportEpisodeSrt={exportEpisodeSrt}
@@ -4515,10 +4625,10 @@ function Shell() {
               <div className="canvas-hint">
                 <b>{formatEpisodeLabel(epNo)} 还没有镜头</b>
                 <span>项目里这一集确实没有镜头：导入分镜表或新建镜头后卡片会自动出现。</span>
-                <button className="btn-mini" onClick={() => void addShot('image')}>
-                  新建生图镜
+                <button className="btn-mini" onClick={() => addGenerateAssetCard('image')}>
+                  新建图片素材卡
                 </button>
-                <button className="btn-mini" onClick={() => void addShot('video')}>
+                <button className="btn-mini" onClick={() => void addShot()}>
                   新建出片镜
                 </button>
                 {otherEpCounts.length > 0 && (
@@ -4782,6 +4892,7 @@ function Shell() {
             onDelete={removeShot}
             onReset={resetAll}
             onGenerate={generateOne}
+            onGenerateAssetAudio={generateAssetAudio}
             onCancelGenerate={cancelGenerate}
             ratio={ratio}
             setRatio={setRatio}
@@ -4808,12 +4919,10 @@ function Shell() {
             pick={modelPick}
             onPick={pickModelKey}
             onAddAssetCard={addAssetCardFromStock}
+            onAddAssetRef={addAssetRefFromSlot}
             hasPrevShot={selectedHasPrevShot}
             onPublishClipFrame={handlePublishClipFrame}
             onLinkPrevShotTail={handleLinkPrevShotTail}
-            narratorVoice={narratorVoice}
-            onSaveNarratorVoice={saveNarratorVoice}
-            onGenerateNarration={() => selected && void generateNarrationOne(selected.id)}
           />
           )}
         </main>

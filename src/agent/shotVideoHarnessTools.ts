@@ -100,8 +100,11 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
       }
 
       if (prod_kind !== undefined) {
-        patch.prod_kind = prod_kind
-        notes.push(`工位：${prod_kind === 'image' ? '生图' : '出片'}`)
+        if (prod_kind === 'image') {
+          return { ok: false, error: '不再支持生图镜；请在画布使用图片素材卡出图' }
+        }
+        patch.prod_kind = 'video'
+        notes.push('工位：出片')
       }
 
       if (audioMode !== undefined) {
@@ -145,7 +148,11 @@ export function createSetShotVideoOptionsTool(deps: MaterialToolDeps): ToolDef {
           }
           patch.audio_mode = 'native'
           if (ref.kind === 'reference') {
-            patch.audio_ref = { character: ref.ref.character, url: ref.ref.url }
+            patch.audio_ref = {
+            ...(ref.ref.character ? { character: ref.ref.character } : {}),
+            url: ref.ref.url,
+            source: 'character' as const,
+          }
             patch.audio_meta = {
               fingerprint: nativeAudioFingerprint({
                 modelKey: model?.key,

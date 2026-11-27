@@ -1,8 +1,11 @@
 /**
- * 原生音频 UI 回归：能力门、4 秒下限、单说话人，以及**无台词镜也能开音色参考**。
+ * 音频槽位 UI 回归：自动带入台词说话人的音色、可换可移除、原生音轨恒开。
+ *
+ * 语义已从「逐镜打开原生音频开关」改为「音频槽位只承载音色参考，
+ * 原生音轨由模型能力决定」。所以这里断言的是槽位内容与写回，而不是 checkbox。
  *
  * 用真实后端（临时项目目录 + seed 落库）而不是 mock 项目接口：
- * 这个脚本要断言「勾选后写回 project.json」，mock 掉项目接口就没法验证真正的
+ * 这个脚本要断言「选择后写回 project.json」，mock 掉项目接口就没法验证真正的
  * 落库链路；只有 /api/settings 需要 mock（临时项目里没有模型库）。
  *
  * 跑法：node verify-native-audio-ui.mjs
@@ -143,12 +146,13 @@ function waitShotWrite() {
 /** 画布节点里还有角色卡，顺序不可靠，一律按镜号定位 */
 const shotNode = (no) => page.locator(`.react-flow__node:has(.shot-no:text-is("${no}"))`)
 
-async function openShotAudioTab(no) {
+/** 出片镜只有一个页面：选中即出片，槽位直接可见 */
+async function openShotSlots(no) {
   await shotNode(no).click()
-  // Inspector 是四页驾驶舱：原生音频收在「音画」页
-  await page.getByRole('tab', { name: '音画' }).click()
-  await page.locator('[data-native-audio]').waitFor({ state: 'visible', timeout: 10000 })
+  await page.locator('[data-slot="audio"]').waitFor({ state: 'visible', timeout: 10000 })
 }
+
+const audioSlot = () => page.locator('[data-slot="audio"]')
 
 try {
   await page.goto(`${app}/#/`, { waitUntil: 'domcontentloaded' })
@@ -156,55 +160,61 @@ try {
   await openBoardEpisode(page, PROJECT, { base: app, episode: 1 })
   await page.locator('.react-flow__node').first().waitFor({ timeout: 15000 })
 
-  await openShotAudioTab('S01')
-  check('5 秒单说话人可开启', !(await page.locator('[data-native-audio] input[type=checkbox]').isDisabled()))
-  const firstWrite = waitShotWrite()
-  await page.locator('[data-native-audio] input[type=checkbox]').check()
-  await firstWrite
-  const s01 = await readShot('S01')
-  check('写回 audio_mode=native', s01?.audio_mode === 'native', String(s01?.audio_mode))
-  check('写回 audio_ref', s01?.audio_ref?.url === sample.url, JSON.stringify(s01?.audio_ref))
+  // S01：唯一说话人「陈默」有音色样本 → 槽位自动带入
+  await openShotSlots('S01')
+  check('出片镜只有出片一页', (await page.locator('.si-tabs [role="tab"]').count()) === 1)
+  const s01Text = await audioSlot().innerText()
+  check('槽位自动带入说话人音色', s01Text.includes('陈默'), s01Text.replace(/\n/g, ' '))
+  check('槽位给出音频播放器', (await audioSlot().locator('audio').count()) === 1)
+  check('不再有原生音频开关', (await page.locator('[data-native-audio]').count()) === 0)
+  check('不再有音画页', (await page.getByRole('tab', { name: '音画' }).count()) === 0)
 
-  // 2 秒镜头：面板按**请求秒数**判定（会抬到 5），所以仍可开启。
-  // 断言仍可开启而不是「禁用」——后者是面板自己抬高秒数之前的旧行为
-  await openShotAudioTab('S02')
-  check('2 秒镜头按请求秒数仍可开启', !(await page.locator('[data-native-audio] input[type=checkbox]').isDisabled()))
+  // 2 秒镜头：秒数由模型下限抬到 4，音频槽位照样可用，不做逐镜门禁
+  await openShotSlots('S02')
+  check('2 秒镜头音频槽位可用', (await audioSlot().innerText()).includes('陈默'))
 
-  // 无台词空镜：以前这里报「这一镜没有台词，不能使用音色参考」并置灰
-  await openShotAudioTab('S03')
-  const silentBox = page.locator('[data-native-audio] input[type=checkbox]')
-  check('无台词镜头可开启 native', !(await silentBox.isDisabled()))
-  const silentText = await page.locator('[data-native-audio]').innerText()
-  check('不再提示没有台词', !silentText.includes('没有台词，不能使用'))
-  check('说明取用了谁的音色', silentText.includes('陈默'))
-  const silentWrite = waitShotWrite()
-  await silentBox.check()
-  await silentWrite
-  const s03 = await readShot('S03')
-  check('无声镜写回 audio_mode=native', s03?.audio_mode === 'native', String(s03?.audio_mode))
-  check('无声镜写回 audio_ref', s03?.audio_ref?.character === '陈默', JSON.stringify(s03?.audio_ref))
+  // 无台词空镜：沿用已保存/首个可用样本，不再报「没有台词」
+  await openShotSlots('S03')
+  const s03Text = await audioSlot().innerText()
+  check('无台词镜头不提示不能使用', !s03Text.includes('没有台词，不能使用'), s03Text.replace(/\n/g, ' '))
+  check('无台词镜头仍有音色参考', s03Text.includes('陈默'), s03Text.replace(/\n/g, ' '))
 
-  // 没有音色样本的角色：开关仍可点，而且**照常带原生音轨出片**（声音由模型决定）
-  await openShotAudioTab('S04')
-  const bareBox = page.locator('[data-native-audio] input[type=checkbox]')
-  check('无音色样本仍可开启 native', !(await bareBox.isDisabled()))
-  const bareWrite = waitShotWrite()
-  await bareBox.check()
-  await bareWrite
+  // S04：说话人没有样本 → 槽位显示空态，并说明声音由模型决定
+  await openShotSlots('S04')
+  const s04Text = await audioSlot().innerText()
+  check('无样本时槽位为空态', !s04Text.includes('林岚 音色'), s04Text.replace(/\n/g, ' '))
+  check('说明声音由模型决定', s04Text.includes('声音由模型决定'), s04Text.replace(/\n/g, ' '))
+  check('不出现「降级为静音」', !s04Text.includes('降级为静音'), s04Text.replace(/\n/g, ' '))
+
+  // 手选一条音频：写入 audio_ref 且标来源
+  const pickWrite = waitShotWrite()
+  const manual = audioSlot().locator('.si-slot-manual')
+  await manual.fill('/videos/picked-voice.mp3')
+  await manual.press('Enter')
+  await pickWrite
   const s04 = await readShot('S04')
-  check('无音色样本写回 audio_mode=native', s04?.audio_mode === 'native', String(s04?.audio_mode))
-  check('无音色样本不写 audio_ref', !s04?.audio_ref?.url, JSON.stringify(s04?.audio_ref))
-  const bareText = await page.locator('[data-native-audio]').innerText()
-  check('说明声音由模型决定', bareText.includes('声音由模型决定'), bareText.replace(/\n/g, ' '))
-  check('不出现「降级为静音」', !bareText.includes('降级为静音'), bareText.replace(/\n/g, ' '))
-  check('给出无音色参考徽章', bareText.includes('无音色参考'), bareText.replace(/\n/g, ' '))
-  // S04 的 video_prompt 里没有台词，所以也要出现「正文没写台词」软提示
-  check('正文缺台词时给软提示', bareText.includes('正文没写台词'), bareText.replace(/\n/g, ' '))
+  check('手选音频写回 audio_ref', s04?.audio_ref?.url === '/videos/picked-voice.mp3', JSON.stringify(s04?.audio_ref))
+  check('手选音频标 source=manual', s04?.audio_ref?.source === 'manual', JSON.stringify(s04?.audio_ref))
+  await page.waitForTimeout(400)
+  const pickedText = await audioSlot().innerText()
+  check(
+    '槽位显示手选条目并标为手工地址',
+    pickedText.includes('手工地址') && (await audioSlot().locator('audio').count()) === 1,
+    pickedText.replace(/\n/g, ' '),
+  )
 
-  // S01 的正文写了台词，就不该出现这条软提示（避免把「已写」误报成「没写」）
-  await openShotAudioTab('S01')
-  const s01Text = await page.locator('[data-native-audio]').innerText()
-  check('正文写了台词时不提示', !s01Text.includes('正文没写台词'), s01Text.replace(/\n/g, ' '))
+  // 移除：清掉 audio_ref（audioRef 不在 bizSignature 里，靠显式写回）
+  await audioSlot().locator('button', { hasText: '移除' }).click()
+  const cleared = await (async () => {
+    const started = Date.now()
+    while (Date.now() - started < 12000) {
+      const shot = await readShot('S04')
+      if (!shot?.audio_ref?.url) return shot
+      await page.waitForTimeout(400)
+    }
+    return await readShot('S04')
+  })()
+  check('移除后 audio_ref 被清空', !cleared?.audio_ref?.url, JSON.stringify(cleared?.audio_ref))
 
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
   await page.screenshot({ path: path.join(EVIDENCE, 'native-audio-ui.png') })

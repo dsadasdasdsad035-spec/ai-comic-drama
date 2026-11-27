@@ -62,11 +62,14 @@ export type DialogueDelivery = {
 
 export type ShotAudioMode = 'off' | 'native'
 
-/** 本镜唯一说话角色的音色参考；APIMart 只接受单个 audio_url 字符串。 */
+/** 音频槽位的音色参考；APIMart 只接受单个 audio_url 字符串。 */
 export type AudioRef = {
-  character: string
+  /** 角色名；手选素材或手工地址时为空 */
+  character?: string
   url: string
   label?: string
+  /** 槽位来源标签，只用于界面显示，不参与请求 */
+  source?: 'character' | 'asset' | 'manual'
 }
 
 export type AudioMeta = {

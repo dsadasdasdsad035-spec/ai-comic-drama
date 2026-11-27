@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS projects (
   source     TEXT DEFAULT '',
   logline    TEXT DEFAULT '',
   revision   INTEGER DEFAULT 0,
+  extra      TEXT DEFAULT '{}',
   created_at TEXT,
   updated_at TEXT
 );
@@ -86,7 +87,8 @@ CREATE TABLE IF NOT EXISTS assets (
   tags     TEXT DEFAULT '[]',
   design_id TEXT DEFAULT '',
   canvas_id TEXT DEFAULT '',
-  sort     INTEGER DEFAULT 0
+  sort     INTEGER DEFAULT 0,
+  extra      TEXT DEFAULT '{}'
 );
 -- 画布节点几何：只存位置，不存内容。node_key 形如 shot:E01-S03 / asset:<canvasId>。
 -- 单独成表而不是加列到 assets/shots：assets 落库是整表替换，几何跟着重写会因一次漏传就丢位置。
@@ -1841,16 +1843,7 @@ function assemble(p) {
   const assets = db
     .prepare('SELECT * FROM assets WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
-    .map((a) => ({
-      kind: a.kind || 'image',
-      title: a.title || '',
-      url: a.url || '',
-      note: a.note || '',
-      tags: JSON.parse(a.tags || '[]'),
-      ...(a.design_id ? { designId: a.design_id } : {}),
-      // 画布节点 id 由它派生（asset-<canvasId>）；空串表示这张卡还没有画布身份
-      ...(a.canvas_id ? { canvasId: a.canvas_id } : {}),
-    }))
+    .map(rowToAsset)
   const designs = db
     .prepare('SELECT * FROM designs WHERE project_id = ? ORDER BY sort, id')
     .all(pid)
@@ -1935,6 +1928,7 @@ function assemble(p) {
     .all(pid)
     .map((row) => ({ key: row.node_key, x: Number(row.x), y: Number(row.y) }))
   const rev = Number(p.revision)
+  const projectExtra = parseJsonColumn(p.extra, {})
   return {
     schema: 1,
     name: p.title || p.name,
@@ -1954,7 +1948,40 @@ function assemble(p) {
     episodes,
     shots,
     canvas,
+    ...(projectExtra.imageShotsToAssetCards ? { imageShotsToAssetCards: true } : {}),
   }
+}
+
+function assetExtraFromRow(raw) {
+  const extra = parseJsonColumn(raw, {})
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return {}
+  return extra
+}
+
+function rowToAsset(a) {
+  const extra = assetExtraFromRow(a.extra)
+  const prompt = typeof extra.prompt === 'string' ? extra.prompt : ''
+  const refIds = Array.isArray(extra.refIds) ? extra.refIds.filter((x) => typeof x === 'string') : []
+  return {
+    kind: a.kind || 'image',
+    title: a.title || '',
+    url: a.url || '',
+    note: a.note || '',
+    tags: JSON.parse(a.tags || '[]'),
+    ...(a.design_id ? { designId: a.design_id } : {}),
+    ...(a.canvas_id ? { canvasId: a.canvas_id } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(refIds.length ? { refIds } : {}),
+  }
+}
+
+function packAssetExtra(a) {
+  const extra = {}
+  const prompt = typeof a?.prompt === 'string' ? a.prompt.trim() : ''
+  if (prompt) extra.prompt = prompt
+  const refIds = Array.isArray(a?.refIds) ? a.refIds.filter((x) => typeof x === 'string') : []
+  if (refIds.length) extra.refIds = refIds
+  return Object.keys(extra).length ? JSON.stringify(extra) : '{}'
 }
 
 /**
@@ -2028,12 +2055,22 @@ export function writeProject(root, name, data = {}) {
       // 同一身份被两张卡同时占用会让画布出现两个同 id 节点，后来的让位
       if (canvasId && used.has(canvasId)) canvasId = ''
       if (canvasId) used.add(canvasId)
-      return { kind, title, url: String(a?.url || ''), note: String(a?.note || ''), tags: a?.tags ?? [], designId, canvasId }
+      return {
+        kind,
+        title,
+        url: String(a?.url || ''),
+        note: String(a?.note || ''),
+        tags: a?.tags ?? [],
+        designId,
+        canvasId,
+        prompt: typeof a?.prompt === 'string' ? a.prompt : '',
+        refIds: Array.isArray(a?.refIds) ? a.refIds : [],
+      }
     })
     db.prepare('DELETE FROM assets WHERE project_id = ?').run(pid)
     for (const [i, a] of clean.entries()) {
       db.prepare(
-        'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,canvas_id,sort) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO assets (project_id,kind,title,url,note,tags,design_id,canvas_id,sort,extra) VALUES (?,?,?,?,?,?,?,?,?,?)',
       ).run(
         pid,
         a.kind,
@@ -2044,8 +2081,19 @@ export function writeProject(root, name, data = {}) {
         a.designId,
         a.canvasId,
         i,
+        packAssetExtra(a),
       )
     }
+  }
+
+  if (data.imageShotsToAssetCards !== undefined) {
+    const prev = parseJsonColumn(cur.extra, {})
+    const next = { ...prev, imageShotsToAssetCards: Boolean(data.imageShotsToAssetCards) }
+    db.prepare('UPDATE projects SET extra = ?, updated_at = ? WHERE id = ?').run(
+      jsonColumn(next),
+      now,
+      pid,
+    )
   }
 
   if (data.designs !== undefined) {

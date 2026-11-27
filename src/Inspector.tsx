@@ -10,11 +10,6 @@ import { CANDIDATE_COUNTS, effectiveSeconds, MOVES, RATIOS, SHOT_SIZES } from '.
 import { hasNeighborReference } from './shotReferences'
 import { imageCost, money, videoCost, type Pricing } from './pricing'
 import type { AppSettings, Cap, Stage } from './api'
-import type { NarratorVoice, ProjectEpisode, ProjectShot } from './api'
-import NarrationPanel from './NarrationPanel'
-import CaptionPanel from './CaptionPanel'
-import { nodeToShot } from './shotSync'
-import VideoPromptAuditPanel from './VideoPromptAuditPanel'
 import { listVideoFiles, type VideoFile } from './api'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
@@ -29,29 +24,21 @@ import { ACCEPT_ATTR, uploadImageFile } from './mediaUpload'
 import { CharacterImageCropModal } from './CharacterImageCropModal'
 import type { MaterialCropPlan } from './imageMaterialCrop'
 import { materialUploadGateFromFile, releaseMaterialCropPlan } from './materialImageGate'
-import PerformanceEditor from './PerformanceEditor'
-import NativeAudioPanel from './NativeAudioPanel'
 import { VideoOutgoingModelRow } from './VideoOutgoingWorkbench'
-import OutgoingVideoPromptPanel, { type VideoSubmitTarget } from './OutgoingVideoPromptPanel'
+import OutgoingVideoPromptPanel from './OutgoingVideoPromptPanel'
 import Fold from './Fold'
 import GenErrorNote from './GenErrorNote'
 import { parseUpstreamTaskIdFromError } from './videoRecover'
-import { audioRefCapabilitiesFor } from './nativeAudio'
 import { effectiveVideoPrompt, isVideoPromptHandEdited, type ShotVideoRequest } from './videoPrompt'
 import { requestSecondsNote } from './videoSeconds'
-import { videoRefLimitLabel } from './videoRefLimits'
 import { parseDialogue, reconcileDialogueDelivery } from './prompts'
-import { performanceVideoEntryCount } from './performance'
 import { visibleShotTabsForProdKind } from './canvasProdMode'
-import { effectiveProdKind } from './shotProdKind'
 import {
   clampInspectorWidth,
   coerceShotTab,
   DEFAULT_INSPECTOR_WIDTH,
   loadInspectorPrefs,
-  performanceSummary,
   saveInspectorPrefs,
-  shotStatusChips,
   type CollapsibleSection,
   type InspectorPrefs,
   type ShotInspectorTab,
@@ -63,11 +50,15 @@ function AssetPanel({
   patch,
   onDelete,
   projectName,
+  onGenerate,
+  onGenerateAudio,
 }: {
   node: AssetNodeType
   patch: (id: string, p: Record<string, unknown>) => void
   onDelete: (id: string) => void
   projectName: string
+  onGenerate?: (id: string) => void
+  onGenerateAudio?: (id: string) => void
 }) {
   const d = node.data
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -78,7 +69,7 @@ function AssetPanel({
   const [cropPending, setCropPending] = useState<MaterialCropPlan | null>(null)
   const [cropBusy, setCropBusy] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
-  const set = (p: Partial<{ title: string; kind: AssetKind; url: string }>) => patch(node.id, p as never)
+  const set = (p: Partial<{ title: string; kind: AssetKind; url: string; prompt?: string }>) => patch(node.id, p as never)
 
   /**
    * 本地上传：保存成功才写地址。素材卡会落库，所以不能像参考图那样先塞 dataURL。
@@ -202,6 +193,21 @@ function AssetPanel({
         <span>标题</span>
         <input value={d.title} onChange={(e) => set({ title: e.target.value })} />
       </label>
+      {(d.kind === 'image' || d.kind === 'audio') && (
+        <label className="field">
+          <span>生成提示词</span>
+          <textarea
+            className="prompt-box"
+            value={d.prompt ?? ''}
+            onChange={(e) => set({ prompt: e.target.value })}
+            rows={4}
+            placeholder={d.kind === 'audio' ? '要写进模型的文本（旁白或音乐描述）' : 'Seedream 画面描述'}
+          />
+          {(d.refIds?.length ?? 0) > 0 && d.kind === 'image' ? (
+            <p className="st-hint">已连线 {d.refIds!.length} 项参考，出图时会带上（不含相邻镜头）。</p>
+          ) : null}
+        </label>
+      )}
       <div className="field">
         <span>{d.kind === 'video' ? '视频来源' : d.kind === 'audio' ? '音频来源' : '图片来源'}</span>
         <button
@@ -286,7 +292,7 @@ function AssetPanel({
           ) : d.kind === 'audio' ? (
             <div className="asset-preview asset-preview-audio">
               <audio src={d.url} controls preload="metadata" />
-              <span className="st-hint">音频素材只用于预览与管理，暂不参与出片音轨</span>
+              <span className="st-hint">连线到出片镜时作为音色参考；不单独成为时间线音轨</span>
             </div>
           ) : (
             <img src={d.url} alt={d.title} className="asset-preview" />
@@ -296,9 +302,30 @@ function AssetPanel({
         )}
       </div>
       <p className="st-hint">
-        从卡片右侧的圆点拉线到分镜卡，或<b>右击卡片</b>直接点选要连的镜头，连线即参考 ——
-        生成画面时图会作为参考图传给模型；视频卡用于管理与预览素材（Seedance 1.0 出片只吃单首帧）。
+        图片/音频卡：填写提示词后在此生成；可把角色或其他素材<b>连到本卡</b>作为出图参考。
+        连到<b>出片镜</b>时，图片进画面参考，音频进音频槽。
       </p>
+      {d.kind === 'image' && onGenerate ? (
+        <button
+          type="button"
+          className="gen-go"
+          disabled={d.genState === 'running'}
+          onClick={() => onGenerate(node.id)}
+        >
+          {d.genState === 'running' ? '出图中…' : '生成图片'}
+        </button>
+      ) : null}
+      {d.kind === 'audio' && onGenerateAudio ? (
+        <button
+          type="button"
+          className="gen-go"
+          disabled={d.genState === 'running'}
+          onClick={() => onGenerateAudio(node.id)}
+        >
+          {d.genState === 'running' ? '生成中…' : '生成音频'}
+        </button>
+      ) : null}
+      {d.genError ? <p className="st-hint error-text">{d.genError}</p> : null}
       <button className="btn-ghost reset" onClick={() => onDelete(node.id)}>删除素材卡</button>
       {pickerOpen && (
         <MediaPicker
@@ -391,12 +418,345 @@ function ShotClipFrameActions({
   )
 }
 
+/** 槽位标题行：名字 + 计数 + 一行说明 */
+function SlotHead({
+  label,
+  count,
+  hint,
+}: {
+  label: string
+  count?: number
+  hint?: string
+}) {
+  return (
+    <div className="si-slot-head">
+      <b>{label}</b>
+      {count != null ? <span className="si-slot-count">{count}</span> : null}
+      {hint ? <em className="si-slot-hint">{hint}</em> : null}
+    </div>
+  )
+}
+
+const AUDIO_SOURCE_LABEL: Record<string, string> = {
+  character: '角色音色',
+  asset: '素材库',
+  manual: '手工地址',
+}
+
+/**
+ * 图片槽位：画布连线（角色/场景/道具/相邻镜/表情）+ 素材选择器 + 手工地址。
+ *
+ * 槽位条目就是请求里的 `reference_image` 集合，不截断张数。
+ */
+function ImageSlot({
+  request,
+  data,
+  onPatch,
+  projectName,
+  onAddAsset,
+}: {
+  request: ShotVideoRequest | null
+  data: ShotData
+  onPatch: (p: Partial<ShotData>) => void
+  projectName: string
+  onAddAsset: (kind: 'image' | 'video' | 'audio', url: string, title: string) => void
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const refs = request?.refs ?? []
+  return (
+    <section className="si-slot" data-slot="image">
+      <SlotHead label="图片" count={refs.length} hint="连线 / 素材库 / 手工地址" />
+      {refs.length ? (
+        <ul className="si-slot-list">
+          {refs.map((r) => (
+            <li key={`${r.slot}-${r.index}-${r.url}`}>
+              <img className="si-slot-thumb" src={r.url} alt="" loading="lazy" />
+              <span className="si-slot-copy">
+                <b>图{r.index}</b>
+                <span>{r.label}</span>
+                <em>{r.purpose}</em>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="refx-empty">还没有图片参考。右击画布卡片连线角色/场景/道具，或从下面添加。</p>
+      )}
+      {request?.omitted.length ? (
+        <p className="gen-note">
+          省略 {request.omitted.length} 项：{request.omitted.map((o) => o.label).join('、')}
+        </p>
+      ) : null}
+      <div className="si-slot-actions">
+        <button type="button" className="btn-mini" onClick={() => setPickerOpen(true)}>
+          添加图片
+        </button>
+        <label className="chk si-slot-inline">
+          <input
+            type="checkbox"
+            checked={Boolean(data.useExpressionRef)}
+            onChange={(e) => onPatch({ useExpressionRef: e.target.checked })}
+          />
+          表情参考
+        </label>
+      </div>
+      <ManualUrlAdd
+        placeholder="图片 URL / /generated/xx.jpg，回车添加"
+        onAdd={(v) => onPatch({ refExtras: [...(data.refExtras ?? []), v] })}
+      />
+      {(data.refExtras ?? []).length ? (
+        <ul className="si-slot-extras">
+          {data.refExtras!.map((r, i) => (
+            <li key={`${r}-${i}`}>
+              <img className="si-slot-thumb" src={r} alt="" />
+              <code>{r}</code>
+              <button
+                type="button"
+                className="btn-mini"
+                title="移除"
+                onClick={() => onPatch({ refExtras: (data.refExtras ?? []).filter((_, j) => j !== i) })}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {pickerOpen ? (
+        <MediaPicker
+          projectName={projectName}
+          currentKind="image"
+          accept={['image']}
+          onConfirm={(item) => {
+            setPickerOpen(false)
+            onAddAsset('image', item.url, item.title || '图片素材')
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * 视频槽位：连线视频素材 + 镜头语言库运镜参照 + 素材选择器。
+ *
+ * 首期只提交第一条，其余在槽位内列出被忽略原因。
+ */
+function VideoSlot({
+  request,
+  data,
+  onPatch,
+  projectName,
+  onAddAsset,
+}: {
+  request: ShotVideoRequest | null
+  data: ShotData
+  onPatch: (p: Partial<ShotData>) => void
+  projectName: string
+  onAddAsset: (kind: 'image' | 'video' | 'audio', url: string, title: string) => void
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const lexicon = useMemo(() => resolveShotLexiconRef(data), [data])
+  const options = useMemo(() => listCameraLexicon({ limit: 132 }), [])
+
+  const bindLexicon = async (key: string) => {
+    if (!key) {
+      onPatch({ lexiconRefKey: undefined, lexiconRefUrl: undefined, motionLexiconAsRef: false })
+      return
+    }
+    setBusy(true)
+    try {
+      const r = await importCameraLexiconPreset(projectName, key)
+      onPatch({ lexiconRefKey: key, lexiconRefUrl: r.url, motionLexiconAsRef: true })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const video = request?.video ?? null
+  return (
+    <section className="si-slot" data-slot="video">
+      <SlotHead label="视频" count={video ? 1 : 0} hint="连线素材 / 运镜参照 / 素材库" />
+      {video ? (
+        <ul className="si-slot-list">
+          <li>
+            <video className="si-slot-thumb" src={video.url} muted playsInline preload="metadata" />
+            <span className="si-slot-copy">
+              <b>视频1</b>
+              <span>{video.label}</span>
+              <em>{video.purpose}</em>
+            </span>
+          </li>
+        </ul>
+      ) : (
+        <p className="refx-empty">还没有视频参考。连线视频素材、选一条运镜参照，或从素材库添加。</p>
+      )}
+      {request?.omittedVideos.length ? (
+        <p className="gen-note">
+          {request.omittedVideos.map((o, i) => (
+            <span key={`${o.label}-${i}`}>
+              {o.label}：{o.reason}
+            </span>
+          ))}
+        </p>
+      ) : null}
+      <div className="si-slot-actions">
+        <button type="button" className="btn-mini" onClick={() => setPickerOpen(true)}>
+          添加视频
+        </button>
+      </div>
+      <label className="field si-slot-lexicon">
+        <span>运镜参照</span>
+        <select
+          value={data.lexiconRefKey || lexicon?.key || ''}
+          disabled={busy}
+          onChange={(e) => void bindLexicon(e.target.value)}
+        >
+          <option value="">默认（随景别/运镜）</option>
+          {options.map((e) => (
+            <option key={e.key} value={e.key}>
+              {e.cn} · {e.en}
+            </option>
+          ))}
+        </select>
+        {data.lexiconRefKey || lexicon ? (
+          <label className="chk">
+            <input
+              type="checkbox"
+              checked={Boolean(data.motionLexiconAsRef)}
+              onChange={(e) => onPatch({ motionLexiconAsRef: e.target.checked })}
+            />
+            作为运镜 reference_video
+          </label>
+        ) : null}
+      </label>
+      {pickerOpen ? (
+        <MediaPicker
+          projectName={projectName}
+          currentKind="video"
+          accept={['video']}
+          onConfirm={(item) => {
+            setPickerOpen(false)
+            onAddAsset('video', item.url, item.title || '视频素材')
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * 音频槽位：音色参考，单条。
+ *
+ * 三级来源：显式选择（素材库 / 手工地址）→ 台词说话人自动推断 → 空。
+ * 空槽位不代表静音——原生音轨由模型能力决定，仍会带 `generate_audio`。
+ */
+function AudioSlot({
+  request,
+  data,
+  onPatch,
+  projectName,
+  onAddAsset,
+}: {
+  request: ShotVideoRequest | null
+  data: ShotData
+  onPatch: (p: Partial<ShotData>) => void
+  projectName: string
+  onAddAsset: (kind: 'image' | 'video' | 'audio', url: string, title: string) => void
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const audio = request?.audio ?? null
+  const source = data.audioRef?.source
+  return (
+    <section className="si-slot" data-slot="audio">
+      <SlotHead label="音频" count={audio ? 1 : 0} hint="音色参考，单条" />
+      {audio ? (
+        <div className="si-slot-audio">
+          <div className="si-slot-copy">
+            <b>{audio.label}</b>
+            {source ? <em>{AUDIO_SOURCE_LABEL[source] ?? source}</em> : null}
+            <em>{audio.purpose}</em>
+          </div>
+          <audio src={audio.url} controls preload="metadata" />
+        </div>
+      ) : (
+        <p className="refx-empty">
+          没有音色参考：出片仍会带原生音轨，<b>声音由模型决定</b>。可以选一条音频锁定音色。
+        </p>
+      )}
+      <div className="si-slot-actions">
+        <button type="button" className="btn-mini" onClick={() => setPickerOpen(true)}>
+          {audio ? '更换' : '选择音频'}
+        </button>
+        {data.audioRef ? (
+          <button
+            type="button"
+            className="btn-mini"
+            // 写 null 而不是 undefined：服务端 mergeShots 会跳过 undefined，清不掉已存的音色
+            onClick={() => onPatch({ audioRef: null, audioMeta: undefined })}
+          >
+            移除
+          </button>
+        ) : null}
+      </div>
+      <ManualUrlAdd
+        placeholder="音频 URL / /videos/x.mp3，回车添加"
+        onAdd={(v) => onPatch({ audioRef: { url: v, source: 'manual' }, audioMeta: undefined })}
+      />
+      {pickerOpen ? (
+        <MediaPicker
+          projectName={projectName}
+          currentKind="audio"
+          currentUrl={data.audioRef?.url}
+          accept={['audio']}
+          onConfirm={(item) => {
+            setPickerOpen(false)
+            onPatch({
+              audioRef: { url: item.url, label: item.title || '音频素材', source: 'asset' },
+              audioMeta: undefined,
+            })
+            onAddAsset('audio', item.url, item.title || '音频素材')
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+/** 手工地址输入行：回车即加入 */
+function ManualUrlAdd({
+  placeholder,
+  onAdd,
+}: {
+  placeholder: string
+  onAdd: (url: string) => void
+}) {
+  return (
+    <input
+      className="refx-add-in si-slot-manual"
+      placeholder={placeholder}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return
+        const v = (e.target as HTMLInputElement).value.trim()
+        if (!v) return
+        onAdd(v)
+        ;(e.target as HTMLInputElement).value = ''
+      }}
+    />
+  )
+}
+
 type Props = {
   node: ShotNodeType | null
   patch: (id: string, patch: Partial<ShotData>) => void
   onDelete: (id: string) => void
   onReset: () => void
   onGenerate: (id: string) => void
+  onGenerateAssetAudio?: (id: string) => void
   onCancelGenerate: (id: string) => void
   ratio: string
   setRatio: (v: string) => void
@@ -429,13 +789,8 @@ type Props = {
    * 必须走这条显式解锁通道，普通 patch 清标记会被合并逻辑吞掉。
    */
   onUnlockHandEdit?: (nodeId: string, fields: string[]) => void
-  /** 视频提示词审计：同集镜头与集数据，供视频页只读展示合规结果 */
-  episodeShots?: ProjectShot[]
-  episodes?: ProjectEpisode[]
-  /** 审计用的参考集摘要；由画布侧解析后传入，缺省时不查参考一致性 */
-  auditRefs?: Array<{ kind?: string; name?: string }>
-  auditSceneNames?: string[]
-  auditPropNames?: string[]
+  /** 槽位「添加」把素材直接建成画布素材卡并连线到本镜 */
+  onAddAssetRef?: (shotNodeId: string, kind: 'image' | 'video' | 'audio', url: string, title: string) => void
   projectStyle: string
   stagePick: StagePick
   onPickStage: (stage: Stage, key: string) => void
@@ -443,9 +798,6 @@ type Props = {
   hasPrevShot?: boolean
   onPublishClipFrame?: (role: 'head' | 'tail') => Promise<{ title: string; notice?: string }>
   onLinkPrevShotTail?: () => Promise<{ title: string; notice?: string }>
-  narratorVoice?: NarratorVoice | null
-  onSaveNarratorVoice?: (next: NarratorVoice) => void
-  onGenerateNarration?: () => void
 }
 
 function ShotLexiconRefBlock({
@@ -543,6 +895,8 @@ export default function Inspector(props: Props) {
         patch={props.patch as unknown as (id: string, p: Record<string, unknown>) => void}
         onDelete={props.onDelete}
         projectName={props.projectName}
+        onGenerate={props.onGenerate}
+        onGenerateAudio={props.onGenerateAssetAudio}
       />
     )
   }
@@ -573,7 +927,6 @@ const VIDEO_MODE_LABEL: Record<ShotVideoRequest['mode'], string> = {
   first: '首帧',
   ref: '多参考图',
   video: '参考视频',
-  native: '原生音频',
 }
 
 function SiReadinessBar({ request }: { request: ShotVideoRequest }) {
@@ -587,89 +940,6 @@ function SiReadinessBar({ request }: { request: ShotVideoRequest }) {
         {block ? block.message : warn ? warn.message : '条件满足，可生成视频'}
       </span>
     </div>
-  )
-}
-
-function ShotVideoPromptPanel({
-  data,
-  request,
-  onPatch,
-  onUnlock,
-  submitTarget,
-}: {
-  data: ShotData
-  request: ShotVideoRequest
-  onPatch: (p: Partial<ShotData>) => void
-  onUnlock?: (fields: string[]) => void
-  submitTarget?: VideoSubmitTarget
-}) {
-  const effective = effectiveVideoPrompt(request, data.videoPromptOverride)
-  const meta = data.videoMeta && data.videoMeta.url === data.videoUrl ? data.videoMeta : null
-  const handEdited = isVideoPromptHandEdited(data)
-  const sourceLabel = effective.text.trim()
-    ? effective.source === 'legacy-override'
-      ? '旧版本正文'
-      : handEdited
-        ? '人工编辑正文'
-        : '镜头正文'
-    : '正文未填写'
-
-  return (
-    <OutgoingVideoPromptPanel
-      summary={
-        <>
-          {VIDEO_MODE_LABEL[request.mode]} ·{' '}
-          {requestSecondsNote(request.shotSeconds, request.seconds, request.secondsFloor)}
-          {request.resolution ? ` · ${request.resolution}` : ''} · 正文来自{sourceLabel}
-          <br />
-          参考图 {request.refs.length}
-          {videoRefLimitLabel() !== '不限' ? `/${videoRefLimitLabel()}` : ' 张'}
-          {request.omitted.length ? `（省略 ${request.omitted.length}）` : ''}
-          {` · 表情参考${data.useExpressionRef ? '开' : '关'}`}
-          {performanceVideoEntryCount(data.performance) > 0
-            ? ` · 表演 ${performanceVideoEntryCount(data.performance)} 人`
-            : ' · 无表演'}
-          {request.video ? ' · 参考视频 1' : ''}
-          {request.audio ? ' · 音色参考 1' : ''}
-        </>
-      }
-      refs={request.refs}
-      video={request.video}
-      audio={request.audio}
-      omitted={request.omitted}
-      omittedVideos={request.omittedVideos}
-      blocking={request.blocking}
-      warnings={request.warnings}
-      effective={effective}
-      handEdited={handEdited}
-      onSaveBody={(text) => {
-        // 正文只有一个落点：写回 video_prompt，并锁住它不被模型重写覆盖。
-        // 存量快照同时清空，保存动作本身就是迁移。
-        onPatch({
-          videoPrompt: text,
-          videoPromptOverride: undefined,
-          handEdited: [
-            ...new Set([
-              ...(data.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
-              'video_prompt',
-            ]),
-          ],
-        })
-        // 旧快照的 handEdited 标记必须显式解锁，否则会被服务端并集保留
-        if ((data.handEdited ?? []).includes('video_prompt_override')) {
-          onUnlock?.(['video_prompt_override'])
-        }
-      }}
-      onClearHandEdit={() => {
-        // 走显式解锁通道：服务端 handEdited 是并集，普通 patch 去标记会被吞掉
-        onUnlock?.(['video_prompt'])
-        onPatch({ handEdited: (data.handEdited ?? []).filter((f) => f !== 'video_prompt') })
-      }}
-      videoMeta={meta}
-      hasVideoUrl={Boolean(data.videoUrl)}
-      submitTarget={submitTarget}
-      defaultRefsOpen
-    />
   )
 }
 
@@ -747,20 +1017,13 @@ function InspectorBody({
   characters,
   videoRequest,
   onUnlockHandEdit,
-  episodeShots,
-  episodes,
-  auditRefs,
-  auditSceneNames,
-  auditPropNames,
   stagePick,
   onPickStage,
   onAddAssetCard,
+  onAddAssetRef,
   hasPrevShot,
   onPublishClipFrame,
   onLinkPrevShotTail,
-  narratorVoice,
-  onSaveNarratorVoice,
-  onGenerateNarration,
 }: BodyProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [pickVideo, setPickVideo] = useState('')
@@ -797,7 +1060,12 @@ function InspectorBody({
       handEdited: (d.handEdited ?? []).filter((f) => f !== 'performance' && f !== 'dialogue_delivery'),
     })
   }
-  const prodKind = effectiveProdKind(d)
+  /** 槽位「添加」：把选中的素材建成画布素材卡并连到本镜（连线才是出片来源） */
+  const addAssetFromSlot = (kind: 'image' | 'video' | 'audio', url: string, title: string) => {
+    onAddAssetRef?.(node.id, kind, url, title)
+  }
+
+  const prodKind = 'video' as const
   const shotTabs = useMemo(() => visibleShotTabsForProdKind(prodKind), [prodKind])
   const videoModelFamily = (settings?.models ?? []).filter(
     (m) => m.cap === 'video' || m.cap === 'videoRef',
@@ -807,12 +1075,6 @@ function InspectorBody({
     videoModelFamily.find((m) => m.key === selectedVideoKey) ||
     videoModelFamily.find((m) => m.key === settings?.defaults?.video) ||
     videoModelFamily[0]
-  const videoProvider = settings?.providers.find((p) => p.id === selectedVideoModel?.provider)
-  const audioCaps = audioRefCapabilitiesFor({
-    providerKind: videoProvider?.kind,
-    model: selectedVideoModel?.model,
-    audioOut: selectedVideoModel?.features?.audioOut,
-  })
   const sceneNo = Math.max(1, Math.round(Number(d.sceneNo) || 1))
   const sceneLabel = d.sceneSlug || `场 ${sceneNo}`
   /** 请求秒数只从拼装结果取；拼装缺失时退回本地取整，避免界面出现空值 */
@@ -938,17 +1200,6 @@ function InspectorBody({
     if (window.confirm(`删除镜头 ${d.no}？此操作不可撤销。`)) onDelete(node.id)
   }
 
-  const chips = shotStatusChips({
-    prodKind,
-    hasImage,
-    candidateCount: d.candidates?.length ?? 0,
-    hasVideo: Boolean(d.videoUrl),
-    seconds: requestSeconds,
-    promptSource: activeVideoPrompt?.source,
-    promptHandEdited: isVideoPromptHandEdited(d),
-    nativeAudio: d.audioMode === 'native',
-    refCount: (videoRequest?.refs.length ?? 0) + (videoRequest?.video ? 1 : 0),
-  })
   const imageReason = !String(d.prompt ?? '').trim() ? '先填写画面提示词' : ''
   const videoReason = videoRequest?.blocking[0]?.message ?? ''
 
@@ -982,9 +1233,7 @@ function InspectorBody({
           <div className="si-title">
             <div className="si-title-row">
               <span className="panel-no">{d.no}</span>
-              <span className={`si-badge-prod si-badge-prod--${prodKind}`}>
-                {prodKind === 'image' ? '生图镜' : '出片镜'}
-              </span>
+              <span className="si-badge-prod si-badge-prod--video">出片镜</span>
               {d.orphan && (
                 <em className="panel-orphan" title="project.json 里已没有这一镜">
                   孤儿
@@ -1006,43 +1255,12 @@ function InspectorBody({
             ⋯
           </summary>
           <div className="si-menu-pop">
-            <button
-              type="button"
-              onClick={(e) => {
-                closeMenu(e)
-                const next = prodKind === 'image' ? 'video' : 'image'
-                const label = next === 'image' ? '生图镜' : '出片镜'
-                if (
-                  !window.confirm(
-                    `将 ${d.no} 切换为${label}？工位互斥：主生成路径会随之改变。`,
-                  )
-                ) {
-                  return
-                }
-                set({ prodKind: next })
-                selectTab(next === 'image' ? 'visual' : 'outgoing')
-              }}
-            >
-              镜头类型：切换为{prodKind === 'image' ? '出片镜' : '生图镜'}
-            </button>
             {d.shotId && <button onClick={copyShotId}>复制稳定 ID</button>}
             <button className="danger" onClick={confirmDelete}>
               删除镜头
             </button>
           </div>
         </details>
-        <div className="si-chips">
-          {chips.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              className={`si-chip ${chip.tone}`}
-              onClick={() => selectTab(chip.tab)}
-            >
-              {chip.label}
-            </button>
-          ))}
-        </div>
       </header>
 
       <nav className="si-tabs" role="tablist" aria-label="镜头检查器">
@@ -1070,308 +1288,72 @@ function InspectorBody({
         role="tabpanel"
         aria-labelledby={`si-tab-${effectiveTab}`}
       >
-        <InspectorSection
-          id="shotParams"
-          title="镜头参数"
-          summary={`${d.seconds}s · ${d.size} · ${d.move}`}
-          tab="visual"
-          hidden={prodKind !== 'image' || effectiveTab !== 'visual'}
-          open={!prefs.collapsed.shotParams}
-          onToggle={() => toggleSection('shotParams')}
-        >
-          <label className="field">
-            <span>镜号</span>
-            <input value={d.no} onChange={(e) => set({ no: e.target.value })} />
-          </label>
-          <div className="field-row">
-            <label className="field">
-              <span>时长（秒）</span>
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                value={d.seconds}
-                onChange={(e) => set({ seconds: Number(e.target.value) || 0.1 })}
-              />
-            </label>
-            <label className="field">
-              <span>景别</span>
-              <select value={d.size} onChange={(e) => set({ size: e.target.value })}>
-                {SHOT_SIZES.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>运镜</span>
-            <select value={d.move} onChange={(e) => set({ move: e.target.value })}>
-              {MOVES.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          </label>
-        </InspectorSection>
-
-        <div className="field si-frame" data-shot-tab="visual" hidden={effectiveTab !== 'visual' || prodKind !== 'image'}>
-          <span>当前画面</span>
-          <div className="ref-thumb">
-            {d.refImage ? (
-              <img src={d.refImage} alt="当前画面" />
-            ) : (
-              <div className="ref-empty">拖图进卡片，或点底部「生成画面」</div>
-            )}
-          </div>
-          {(d.candidates?.length ?? 0) > 1 && (
-            <div className="si-cands">
-              {d.candidates!.map((c, i) => (
-                <button
-                  key={`${c}-${i}`}
-                  type="button"
-                  className={`si-cand ${i === (d.activeIdx ?? 0) ? 'on' : ''}`}
-                  title={`候选 ${i + 1}（点选即定稿）`}
-                  onClick={() =>
-                    set({ activeIdx: i, refImage: c, videoUrl: undefined, vidState: 'idle' })
-                  }
-                >
-                  <img src={c} alt={`候选 ${i + 1}`} />
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="ref-actions">
-            <label className="btn-ghost file">
-              更换
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (!f) return
-                  const r = new FileReader()
-                  r.onload = () =>
-                    set({ refImage: String(r.result), videoUrl: undefined, vidState: 'idle' })
-                  r.readAsDataURL(f)
-                }}
-              />
-            </label>
-          {d.videoUrl ? (
-            <div className="si-video-preview si-video-preview--visual">
-              <video src={d.videoUrl} muted loop playsInline controls preload="metadata" />
-              <ShotClipFrameActions
-                hasVideo
-                hasPrevShot={Boolean(hasPrevShot)}
-                showLinkPrev={false}
-                onPublishClipFrame={onPublishClipFrame}
-              />
-            </div>
-          ) : null}
-            {d.refImage && (
-              <button
-                className="btn-ghost"
-                onClick={() => set({ refImage: undefined, videoUrl: undefined, vidState: 'idle' })}
-              >
-                移除
-              </button>
-            )}
-          </div>
-        </div>
-
-        <label className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual' || prodKind !== 'image'}>
-          <span>画面提示词</span>
-          <textarea rows={4} value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} />
-        </label>
-
-        <InspectorSection
-          id="refs"
-          title="参考"
-          summary={`${d.refIds?.length ?? 0} 项连线 · Seedream 最多 10 张`}
-          tab="visual"
-          hidden={effectiveTab !== 'visual' || prodKind !== 'image'}
-          open={!prefs.collapsed.refs}
-          onToggle={() => toggleSection('refs')}
-        >
-          {(d.refIds?.length ?? 0) > 0 ? (
-            <div className="gen-note">画布连线 {d.refIds!.length} 项，出图时按 Seedream 规则解析（不含邻镜）。</div>
-          ) : (
-            <div className="refx-empty">
-              还没有参考。右击画布连线角色、场景或道具；生图镜不使用上一镜/下一镜。
-            </div>
-          )}
-          <div className="gen-note">右击画布卡片添加或移除参考；手工 URL 在「元数据」。</div>
-        </InspectorSection>
-
-        {prodKind === 'video' && videoRequest ? (
-          <div data-shot-tab="outgoing" hidden={effectiveTab !== 'outgoing'}>
-            <SiReadinessBar request={videoRequest} />
-          </div>
-        ) : null}
-
-        <InspectorSection
-          id="advanced"
-          title="手工参考 URL"
-          summary={`${d.refExtras?.length ?? 0} 项`}
-          tab="meta"
-          hidden={effectiveTab !== 'meta' || prodKind !== 'video'}
-          open={!prefs.collapsed.advanced}
-          onToggle={() => toggleSection('advanced')}
-        >
-          <div className="field">
-            <span>
-              手工参考 URL
-              <i
-                className="hint-inline"
-                title="画布连线仍是主入口；这里用于补充外部图片 URL 或本地路径"
-              >
-                高级
-              </i>
-            </span>
-            {(d.refExtras?.length ?? 0) === 0 && (
-              <div className="refx-empty">
-                没有手工参考。这里可粘图片 URL 或本地路径（/generated/xx.jpg），一行一张；出片解析见「出片」Tab 附件。
-              </div>
-            )}
-        {(d.refExtras ?? []).map((r, i) => (
-          <div className="refx-row" key={`${r}-${i}`}>
-            <img src={r} alt="" className="refx-thumb" />
-            <input
-              value={r}
-              onChange={(e) => {
-                const next = [...(d.refExtras ?? [])]
-                next[i] = e.target.value
-                set({ refExtras: next })
+      <div
+        className="si-slots"
+        data-shot-tab="outgoing"
+        hidden={effectiveTab !== 'outgoing'}
+      >
+        <ImageSlot
+          request={videoRequest}
+          data={d}
+          onPatch={set}
+          projectName={projectName}
+          onAddAsset={addAssetFromSlot}
+        />
+        <VideoSlot
+          request={videoRequest}
+          data={d}
+          onPatch={set}
+          projectName={projectName}
+          onAddAsset={addAssetFromSlot}
+        />
+        <AudioSlot
+          request={videoRequest}
+          data={d}
+          onPatch={set}
+          projectName={projectName}
+          onAddAsset={addAssetFromSlot}
+        />
+        <section className="si-slot" data-slot="prompt">
+          <SlotHead label="提示词" hint="唯一必填项，逐字提交" />
+          {activeVideoPrompt ? (
+            <OutgoingVideoPromptPanel
+              effective={activeVideoPrompt}
+              handEdited={isVideoPromptHandEdited(d)}
+              empty={!activeVideoPrompt.text.trim()}
+              onSaveBody={(text) => {
+                // 先解锁再写正文：解锁读的是 nodesRef 快照，若先 set 再解锁，
+                // 解锁会把刚写的正文回滚成旧值（set 是异步的）。
+                if ((d.handEdited ?? []).includes('video_prompt_override')) {
+                  onUnlockHandEdit?.(node.id, ['video_prompt_override'])
+                }
+                // 正文只有一个落点：写回 video_prompt，并锁住它不被模型重写覆盖。
+                set({
+                  videoPrompt: text,
+                  videoPromptOverride: undefined,
+                  handEdited: [
+                    ...new Set([
+                      ...(d.handEdited ?? []).filter((f) => f !== 'video_prompt_override'),
+                      'video_prompt',
+                    ]),
+                  ],
+                })
+              }}
+              onClearHandEdit={() => {
+                onUnlockHandEdit?.(node.id, ['video_prompt'])
+                set({ handEdited: (d.handEdited ?? []).filter((f) => f !== 'video_prompt') })
               }}
             />
-            <button className="btn-mini" title="删除" onClick={() => set({ refExtras: (d.refExtras ?? []).filter((_, j) => j !== i) })}>
-              ✕
-            </button>
-          </div>
-        ))}
-        <div className="refx-add">
-          <input
-            className="refx-add-in"
-            placeholder="图片 URL / /generated/xx.jpg，回车添加"
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter') return
-              const v = (e.target as HTMLInputElement).value.trim()
-              if (!v) return
-              set({ refExtras: [...(d.refExtras ?? []), v] })
-              ;(e.target as HTMLInputElement).value = ''
-            }}
-          />
-        </div>
-          </div>
-        </InspectorSection>
+          ) : null}
+        </section>
 
-        <div className="gen-box" data-shot-tab="visual" hidden={effectiveTab !== 'visual' || prodKind !== 'image'}>
+        <div className="gen-box vid-settings-block" data-shot-settings>
           <div className="gen-head">
-            <span>出图设置</span>
-          <span className="gen-cost">
-            Seedream 4.5 · ¥{money(imageCost(price, candCount))} / 次
-            {candCount > 1 ? ` · ${candCount} 张 × ¥${money(price.image)}` : ''}
-          </span>
-        </div>
-
-        <div className="gen-controls">
-          <select value={ratio} onChange={(e) => setRatio(e.target.value)} title="画幅">
-            {RATIOS.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
-          <select
-            value={candCount}
-            onChange={(e) => setCandCount(Number(e.target.value))}
-            title="一次出图张数"
-          >
-            {CANDIDATE_COUNTS.map((c) => (
-              <option key={c} value={c}>{c} 张</option>
-            ))}
-          </select>
-        </div>
-
-        <CapModelSelect
-          cap="image"
-          caps={IMAGE_CAPS}
-          label="出图模型"
-          settings={settings}
-          value={pick.image}
-          onChange={(key) => onPick('image', key)}
-        />
-
-        <label className="chk">
-          <input type="checkbox" checked={refMode} onChange={(e) => setRefMode(e.target.checked)} />
-          用当前画面作参考
-        </label>
-
-        <label className={`chk ${!refMode || d.marks.length === 0 ? 'dim' : ''}`}>
-          <input
-            type="checkbox"
-            checked={marksAsGuide}
-            disabled={!refMode || d.marks.length === 0}
-            onChange={(e) => setMarksAsGuide(e.target.checked)}
-          />
-          标注作为构图约束
-          <span className="chk-note">
-            {d.marks.length === 0 ? '（先画框）' : !refMode ? '（需开启参考图）' : `（${d.marks.length} 个标注）`}
-          </span>
-        </label>
-      </div>
-
-      <div className="gen-box vid-box" data-shot-tab="outgoing" hidden={effectiveTab !== 'outgoing' || prodKind !== 'video'}>
-        {d.videoUrl && (
-          <div className="si-video-preview">
-            <video src={d.videoUrl} muted loop autoPlay playsInline controls preload="metadata" />
-            <a className="btn-ghost vid-save" href={d.videoUrl} download={`${d.shotId || d.no}.mp4`}>
-              保存成片
-            </a>
-            <ShotClipFrameActions
-              hasVideo
-              hasPrevShot={Boolean(hasPrevShot)}
-              showLinkPrev
-              onPublishClipFrame={onPublishClipFrame}
-              onLinkPrevShotTail={onLinkPrevShotTail}
-            />
+            <span>生成设置</span>
+            <span className="gen-cost">
+              ¥{money(videoCost(price, requestSeconds, vidRes))} / 次
+            </span>
           </div>
-        )}
-        {videoRequest ? (
-          <>
-            {episodeShots && episodes ? (
-              <VideoPromptAuditPanel
-                shot={nodeToShot(d, node.id)}
-                episodeShots={episodeShots}
-                episodes={episodes}
-                chars={characters}
-                refs={auditRefs}
-                castSceneNames={auditSceneNames}
-                propNames={auditPropNames}
-              />
-            ) : null}
-            <ShotVideoPromptPanel
-            data={d}
-            request={videoRequest}
-            onPatch={set}
-            onUnlock={(fields) => onUnlockHandEdit?.(node.id, fields)}
-            submitTarget={{
-              modelLabel: selectedVideoModel?.label ?? '未选模型',
-              modelId: selectedVideoModel?.model,
-              providerLabel: videoProvider?.label,
-              modeLabel: VIDEO_MODE_LABEL[videoRequest.mode],
-              seconds: videoRequest.seconds,
-              resolution: videoRequest.resolution || vidRes,
-              ratio,
-            }}
-          />
-          </>
-        ) : null}
-        <Fold
-          className="vid-settings"
-          idPrefix="vid-settings"
-          sectionId="videoSettings"
-          title="出片设置"
-          meta={`${selectedVideoModel?.label ?? '未选模型'} · ${vidRes} · ${requestSecondsText} · ¥${money(videoCost(price, requestSeconds, vidRes))}`}
-          open={!prefs.collapsed.videoSettings}
-          onToggle={() => toggleSection('videoSettings')}
-        >
           <VideoOutgoingModelRow
             settings={settings}
             pick={pick}
@@ -1379,291 +1361,58 @@ function InspectorBody({
             vidRes={vidRes}
             onVidResChange={setVidRes}
           />
-        <div className="gen-controls">
-          <label className="field vid-len-field">
-            <span>时长（秒）</span>
-            <input
-              type="number"
-              step="0.1"
-              min="0.1"
-              data-shot-seconds
-              value={d.seconds}
-              onChange={(e) => set({ seconds: Number(e.target.value) || 0.1 })}
-            />
-          </label>
-          <span className="vid-len" data-shot-request-seconds>
-            {requestSecondsText} · {d.move === '固定' ? '固定机位' : `运镜 ${d.move}`}
-          </span>
-        </div>
-
-        <p className="vid-note">
-          连线了参考图就走<b>多参考图模式</b>（reference_image）；连线了视频素材则同时送
-          <b> reference_video</b>（首期只取第一条）。未连线参考图时无法出片。小时长会按模型下限
-          与原生音频门槛自动抬高请求秒数，界面同时显示镜头时长与请求秒数。
-        </p>
-        {(videoRequest?.refs.length ?? 0) > 0 && (
-          <p className="vid-refs">参考图 {videoRequest!.refs.length} 张（画布连线）· 多图模式</p>
-        )}
-        {hasNeighborReference(d.refIds) && (
-          <p className="vid-refs">已选相邻分镜参考：本次出片使用参考图模式。</p>
-        )}
-        {videos.length > 0 && (
-          <div className="vid-pick">
-            <select value={pickVideo} onChange={(e) => setPickVideo(e.target.value)} title="选一个已生成的视频挂到本镜">
-              <option value="">挂载已有视频…（{videos.length} 个）</option>
-              {videos.map((v) => (
-                <option key={v.url} value={v.url}>
-                  {v.name} · {(v.size / 1024 / 1024).toFixed(1)}MB
-                </option>
-              ))}
-            </select>
-            <button
-              className="btn-mini"
-              disabled={!pickVideo}
-              onClick={() => {
-                set({ videoUrl: pickVideo, vidState: 'idle', vidError: undefined })
-                setPickVideo('')
-              }}
-            >
-              挂上
-            </button>
-          </div>
-        )}
-        </Fold>
-      </div>
-
-      {prodKind === 'video' ? (
-        <InspectorSection
-          id="motionPrompt"
-          title="镜头参数"
-          summary={`${d.size} · ${d.move} · ${d.seconds}s`}
-          tab="outgoing"
-          hidden={effectiveTab !== 'outgoing'}
-          open={!prefs.collapsed.motionPrompt}
-          onToggle={() => toggleSection('motionPrompt')}
-        >
-          <p className="gen-note">
-            镜号、景别、运镜与镜头语言只作结构化数据：不会自动进入出片正文。出片正文在上方「本次出片提示词」里编辑。
-          </p>
-          <label className="field">
-            <span>镜号</span>
-            <input value={d.no} onChange={(e) => set({ no: e.target.value })} />
-          </label>
-          <div className="field-row">
-            <label className="field">
+          <div className="gen-controls">
+            <label className="field vid-len-field">
               <span>时长（秒）</span>
               <input
                 type="number"
                 step="0.1"
                 min="0.1"
+                data-shot-seconds
                 value={d.seconds}
                 onChange={(e) => set({ seconds: Number(e.target.value) || 0.1 })}
               />
             </label>
-            <label className="field">
-              <span>景别</span>
-              <select value={d.size} onChange={(e) => set({ size: e.target.value })}>
-                {SHOT_SIZES.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>运镜</span>
-            <select value={d.move} onChange={(e) => set({ move: e.target.value })}>
-              {MOVES.map((s) => (
-                <option key={s}>{s}</option>
+            <select value={ratio} onChange={(e) => setRatio(e.target.value)} title="画幅">
+              {RATIOS.map((r) => (
+                <option key={r} value={r}>{r}</option>
               ))}
             </select>
-          </label>
-          <ShotLexiconRefBlock
-            data={d}
-            projectName={projectName}
-            onPatch={set}
-            onAddAssetCard={onAddAssetCard}
-          />
-        </InspectorSection>
-      ) : null}
+          </div>
+          {requestSecondsText !== `${requestSeconds}s` ? (
+            <p className="gen-note" data-shot-request-seconds>{requestSecondsText}</p>
+          ) : null}
+        </div>
 
-      <div className="field" data-shot-tab="visual" hidden={effectiveTab !== 'visual' || prodKind !== 'image'}>
-        <span>构图标注（{d.marks.length}）</span>
-        <button className="btn-ghost" disabled={!d.marks.length} onClick={() => set({ marks: [] })}>
-          清除全部标注
-        </button>
-      </div>
-
-      <label
-        className="field"
-        data-shot-tab="narrative"
-        hidden={
-          effectiveTab !== 'narrative' || prodKind !== 'image'
-        }
-      >
-        <span>台词 / 音效</span>
-        <textarea rows={3} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
-        <em className="st-hint">供字幕与后续出片镜继承；本镜为生图工位。</em>
-      </label>
-      <label
-        className="field"
-        data-shot-tab="audio"
-        hidden={effectiveTab !== 'audio' || prodKind !== 'video'}
-      >
-        <span>台词 / 音效</span>
-        <textarea rows={3} value={d.dialogue} onChange={(e) => setDialogue(e.target.value)} />
-        <em className="st-hint">
-          只作数据与字幕：不会自动并入出片正文，需要时由创意会话读取后写进「本次出片提示词」的正文；原生音频见下方。
-        </em>
-      </label>
-
-      {/* 字幕紧跟台词：它就是台词的派生，放在旁白与表演之前 */}
-      <div
-        className="si-section"
-        data-shot-tab={prodKind === 'image' ? 'narrative' : 'audio'}
-        hidden={prodKind === 'image' ? effectiveTab !== 'narrative' : effectiveTab !== 'audio'}
-      >
-        <CaptionPanel data={d} shotNo={String(d.no || 'shot')} />
-      </div>
-
-      <InspectorSection
-        id="performance"
-        title="表演"
-        summary={performanceSummary(d.performance)}
-        tab={prodKind === 'image' ? 'narrative' : 'audio'}
-        hidden={
-          prodKind === 'image' ? effectiveTab !== 'narrative' : effectiveTab !== 'audio'
-        }
-        open={!prefs.collapsed.performance}
-        onToggle={() => toggleSection('performance')}
-      >
-        <p className="gen-note">
-          表演强度、动作与台词表演只作数据：不会自动并入出片正文，需要时由创意会话读取后写进「本次出片提示词」的正文。
-        </p>
-        <div className="field perf-inspector">
-          <PerformanceEditor
-            cast={d.cast}
-            performance={d.performance}
-            dialogue={parseDialogue(d.dialogue)}
-            delivery={d.dialogueDelivery}
-            onChange={setPerformance}
-          />
-          {(d.handEdited ?? []).some((f) => f === 'performance' || f === 'dialogue_delivery') && (
-            <button className="btn-mini ghost" onClick={clearPerformanceHand}>
-              恢复模型建议
-            </button>
+        <div className="gen-box vid-box" data-shot-result>
+          <div className="gen-head">
+            <span>成片</span>
+            {d.videoUrl ? <span className="gen-cost">{requestSeconds}s</span> : null}
+          </div>
+          {d.videoUrl ? (
+            <div className="si-video-preview">
+              <video src={d.videoUrl} muted loop autoPlay playsInline controls preload="metadata" />
+              <a className="btn-ghost vid-save" href={d.videoUrl} download={`${d.shotId || d.no}.mp4`}>
+                保存成片
+              </a>
+              <ShotClipFrameActions
+                hasVideo
+                hasPrevShot={Boolean(hasPrevShot)}
+                showLinkPrev
+                onPublishClipFrame={onPublishClipFrame}
+                onLinkPrevShotTail={onLinkPrevShotTail}
+              />
+            </div>
+          ) : (
+            <p className="refx-empty">还没有成片。填好上面四个槽位后点底部「生成视频」。</p>
           )}
         </div>
-      </InspectorSection>
-
-      {settings && onSaveNarratorVoice && onGenerateNarration ? (
-        <div
-          className="si-section"
-          data-shot-tab={prodKind === 'image' ? 'narrative' : 'audio'}
-          hidden={prodKind === 'image' ? effectiveTab !== 'narrative' : effectiveTab !== 'audio'}
-        >
-          <NarrationPanel
-            data={d}
-            narratorVoice={narratorVoice}
-            settings={settings}
-            onSaveNarratorVoice={onSaveNarratorVoice}
-            onGenerate={onGenerateNarration}
-          />
-        </div>
-      ) : null}
-
-      <label
-        className="field expression-ref-toggle"
-        data-shot-tab="audio"
-        hidden={effectiveTab !== 'audio' || prodKind !== 'video'}
-      >
-        <span>表情参考</span>
-        <span className="switch-row">
-          <input
-            type="checkbox"
-            checked={Boolean(d.useExpressionRef)}
-            onChange={(e) => set({ useExpressionRef: e.target.checked })}
-          />
-          带说话角色表情参考
-        </span>
-        <em>默认关；表情参考在排序中靠后，身份/场景/连线素材优先。</em>
-      </label>
-
-      <div
-        className="field native-audio-field"
-        data-shot-tab="audio"
-        hidden={effectiveTab !== 'audio' || prodKind !== 'video'}
-      >
-        <span>
-          原生音频
-          <i className="hint-inline" title="Seedance 2.5 原生音轨；有音色样本时锁音色，没有或不合规时声音由模型决定，不拦出片">
-            视频自带声音
-          </i>
-        </span>
-        <p className="gen-note">
-          音轨模式与音色参考只影响提交参数：台词不会自动拼进正文，需要时由创意会话读取后写进「本次出片提示词」的正文。
-        </p>
-        <NativeAudioPanel
-          data={d}
-          onPatch={set}
-          characters={characters}
-          caps={audioCaps}
-          modelKey={selectedVideoKey}
-        />
       </div>
 
-      <div className="field si-more" data-shot-tab="meta" hidden={effectiveTab !== 'meta' || prodKind !== 'video'}>
-        <span>镜头标识</span>
-        <div className="si-kv">
-          <span>稳定 ID</span>
-          <code>{d.shotId || '—'}</code>
-        </div>
-        <div className="si-kv">
-          <span>场次</span>
-          <span>
-            {sceneLabel} · {projectAspect}
-          </span>
-        </div>
-        <div className="si-kv">
-          <span>节点 ID</span>
-          <code>{node.id.slice(0, 8)}</code>
-        </div>
-        <div className="si-kv">
-          <span>坐标</span>
-          <span>
-            {Math.round(node.position.x)}, {Math.round(node.position.y)}
-          </span>
-        </div>
-        {d.orphan && <div className="gen-warn">project.json 里已没有这一镜。</div>}
-      </div>
       </div>
 
       <footer className="si-foot" data-shot-footer>
-        {effectiveTab === 'visual' && prodKind === 'image' && (
-          <>
-            <button
-              className="btn primary block"
-              disabled={d.genState !== 'running' && !String(d.prompt ?? '').trim()}
-              onClick={() =>
-                d.genState === 'running' ? onCancelGenerate(node.id) : onGenerate(node.id)
-              }
-              title={d.genState === 'running' ? '取消本次出图' : undefined}
-            >
-              {d.genState === 'running'
-                ? '取消生成'
-                : `生成画面${candCount > 1 ? ` ×${candCount}` : ''}`}
-            </button>
-            <div className="si-foot-note">
-              {d.genState === 'error' && d.genError ? (
-                <GenErrorNote message={d.genError} summary="出图失败" />
-              ) : imageReason ? (
-                imageReason
-              ) : (
-                `约 ¥${money(imageCost(price, candCount))} / 次`
-              )}
-            </div>
-          </>
-        )}
-        {effectiveTab === 'outgoing' && prodKind === 'video' && (
+        {effectiveTab === 'outgoing' && (
           <>
             <button
               className="btn primary block"
@@ -1697,7 +1446,7 @@ function InspectorBody({
             </div>
           </>
         )}
-        {(effectiveTab === 'narrative' || effectiveTab === 'audio' || effectiveTab === 'meta') && (
+        {effectiveTab === 'narrative' && (
           <div className="si-foot-note">改动会自动保存到当前镜头</div>
         )}
       </footer>

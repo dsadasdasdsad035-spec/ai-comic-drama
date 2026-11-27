@@ -669,8 +669,8 @@ export type ProjectShot = {
   dialogue_delivery?: DialogueDelivery[]
   /** 镜头音轨：off = 静音视频 + TTS，native = 视频自带音轨 */
   audio_mode?: 'off' | 'native'
-  /** native 的唯一说话角色音色参考 */
-  audio_ref?: { character: string; url: string; label?: string } | null
+  /** 音色参考；character 缺失表示手选素材或手工地址 */
+  audio_ref?: { character?: string; url: string; label?: string; source?: 'character' | 'asset' | 'manual' } | null
   /** native 请求指纹 */
   audio_meta?: { fingerprint: string; modelKey?: string; createdAt: string }
   /** 口型模式与结果；旧项目按 off 解释 */
@@ -827,6 +827,10 @@ export type ProjectAsset = {
   kind: string
   title: string
   url: string
+  /** 图片/音频素材卡生成提示词 */
+  prompt?: string
+  /** 图片素材卡接受的参考连线（画布节点 id） */
+  refIds?: string[]
   note?: string
   tags?: string[]
   /** 来自场景/道具设定卡的稳定标识；手工素材卡为空 */
@@ -902,6 +906,8 @@ export type ProjectData = {
   updated_at?: string
   /** GET /api/project 附带：本次打开迁移了几张旧图、哪些引用文件缺失 */
   media?: { migrated?: number; missing?: string[] }
+  /** 生图镜已迁成素材卡（一次性迁移标记） */
+  imageShotsToAssetCards?: boolean
 }
 
 export async function listProjects(): Promise<{ root: string; projects: ProjectSummary[] }> {
@@ -1021,6 +1027,8 @@ export type ProjectPatch = {
   lexiconWhitebox?: import('./lexiconWhitebox').LexiconWhiteboxSheet[]
   material3dScenes?: import('./material3d/material3dTypes').Material3dScene[]
   episodes?: unknown[]
+  /** 生图镜已迁出素材卡（只写 true，一次迁移） */
+  imageShotsToAssetCards?: boolean
   source?: string
   logline?: string
   style?: string

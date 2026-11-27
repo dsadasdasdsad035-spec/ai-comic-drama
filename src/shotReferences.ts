@@ -43,6 +43,19 @@ export type VideoReferenceCollection = {
   missing: MissingShotReference[]
 }
 
+/** 连线里的音频素材；与视频同构，首期只取第一条作音色参考。 */
+export type ResolvedAudioReference = {
+  token: string
+  url: string
+  label: string
+  title?: string
+}
+
+export type AudioReferenceCollection = {
+  refs: ResolvedAudioReference[]
+  missing: MissingShotReference[]
+}
+
 export type MissingShotReference = {
   token: string
   label: string
@@ -368,6 +381,53 @@ export function collectVideoReferences(input: {
       token: rid,
       url: d.url,
       label: `视频素材「${title}」`,
+      ...(d.title ? { title: d.title } : {}),
+    })
+  }
+
+  return { refs, missing }
+}
+
+/**
+ * 解析连线里的音频素材，作为音频槽位的候选音色参考。
+ *
+ * 与 `collectVideoReferences` 同构：独立于图片与视频额度，首期只取第一条。
+ * 以前音频素材在图片与视频两条解析里都被静默跳过，音频槽位没有可用来源。
+ */
+export function collectAudioReferences(input: {
+  node: ShotNodeType
+  nodes: ShotNodeType[]
+  missingMedia?: Set<string>
+}): AudioReferenceCollection {
+  const data = input.node.data
+  const refIds = data.refIds ?? []
+  const missingMedia = input.missingMedia ?? new Set<string>()
+  const refs: ResolvedAudioReference[] = []
+  const missing: MissingShotReference[] = []
+  const seen = new Set<string>()
+
+  for (const rid of refIds) {
+    if (!rid.startsWith('asset-')) continue
+    const asset = input.nodes.find((n) => n.id === rid)
+    const d = asset?.data as unknown as { kind?: string; url?: string; title?: string } | undefined
+    // 删卡后 refIds 常残留，此处不因悬空 id 阻止出片
+    if (!d) continue
+    if (assetMediaType((d.kind || 'image') as never, String(d.url || '')) !== 'audio') continue
+    const title = d.title || '未命名'
+    if (!d.url) {
+      addMissing(missing, rid, `音频素材「${title}」`, '音频素材没有地址')
+      continue
+    }
+    if (missingMedia.has(d.url)) {
+      addMissing(missing, rid, `音频素材「${title}」`, '音频素材文件缺失')
+      continue
+    }
+    if (seen.has(d.url)) continue
+    seen.add(d.url)
+    refs.push({
+      token: rid,
+      url: d.url,
+      label: `音频素材「${title}」`,
       ...(d.title ? { title: d.title } : {}),
     })
   }

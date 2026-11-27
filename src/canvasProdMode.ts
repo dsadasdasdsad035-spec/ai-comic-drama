@@ -25,14 +25,13 @@ export const SHOT_TAB_DEFS = [
   { id: 'visual' as const, label: '画面' },
   { id: 'narrative' as const, label: '叙事' },
   { id: 'outgoing' as const, label: '出片' },
-  { id: 'audio' as const, label: '音画' },
-  { id: 'meta' as const, label: '元数据' },
-] satisfies { id: 'visual' | 'narrative' | 'outgoing' | 'audio' | 'meta'; label: string }[]
+] satisfies { id: 'visual' | 'narrative' | 'outgoing'; label: string }[]
 
+/** 生图镜：画面 / 叙事；出片镜：只有出片（参考槽位页） */
 export function visibleShotTabs(mode: CanvasProdMode | ShotProdKind) {
   return mode === 'image'
     ? SHOT_TAB_DEFS.filter((t) => t.id === 'visual' || t.id === 'narrative')
-    : SHOT_TAB_DEFS.filter((t) => t.id === 'outgoing' || t.id === 'audio' || t.id === 'meta')
+    : SHOT_TAB_DEFS.filter((t) => t.id === 'outgoing')
 }
 
 /** 按单镜生产类型决定 Inspector Tab（取代画布全局出图/出片） */

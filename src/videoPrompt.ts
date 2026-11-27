@@ -19,7 +19,7 @@ import type { ShotData, VideoPromptOverride } from './types'
 import { limitVideoReferenceImages, VIDEO_REFERENCE_IMAGE_LIMIT, videoRefLimitLabel } from './videoRefLimits'
 import { secondsFloorReason, shotRequestSeconds, videoMaxSeconds, type SecondsFloor } from './videoSeconds'
 
-export type VideoRequestMode = 'first' | 'ref' | 'video' | 'native'
+export type VideoRequestMode = 'first' | 'ref' | 'video'
 
 export type VideoAttachment = {
   slot: 'image' | 'video' | 'audio'
@@ -48,6 +48,8 @@ export type ShotVideoRequest = {
   /** 没有手改时实际发送的正文 */
   prompt: string
   mode: VideoRequestMode
+  /** 是否带 Seedance 原生音轨：只由模型能力决定，与音频槽位无关 */
+  generateAudio: boolean
   refs: VideoAttachment[]
   firstFrame: { url: string; label: string; purpose: string } | null
   video: VideoAttachment | null
@@ -213,16 +215,21 @@ export function buildShotVideoRequest(input: {
   const d = input.data
   const resolution = String(input.resolution || '')
   const dialogue = parseDialogue(d.dialogue)
-  const nativeMode = d.audioMode === 'native'
+  /**
+   * 原生音轨由模型能力决定，不再由逐镜开关决定：模型声明了原生音频就恒发
+   * `generate_audio`，与音频槽位有没有内容无关。逐镜判断已整体删除——多说话人、
+   * 说话人不在角色库、缺少样本都只是拿不到音色锚点，不该关掉音轨。
+   */
   const audioCaps = audioRefCapabilitiesFor({
     providerKind: input.model?.providerKind,
     model: input.model?.model,
     audioOut: input.model?.audioOut,
   })
+  const generateAudio = Boolean(audioCaps?.supported)
   /** 唯一时长来源：取整、模型下限与原生音频门槛都在这里解出，后续一律读 seconds */
   const shotSeconds = Number(d.seconds) || 0
-  /** 先按原生音频门槛算一次：音色参考解析要用到它（原生下限含边界，4 秒合法） */
-  const nativeSeconds = nativeMode
+  /** 先算一次带原生音频门槛的秒数：音色参考解析要用到它（原生下限含边界，4 秒合法） */
+  const nativeSeconds = generateAudio
     ? shotRequestSeconds({
         seconds: shotSeconds,
         modelId: input.model?.model,
@@ -230,29 +237,20 @@ export function buildShotVideoRequest(input: {
         nativeAudioMinVideoSeconds: audioCaps?.minVideoSeconds,
       })
     : null
-  const nativeRef = nativeMode
+  const { seconds, floor: secondsFloor } =
+    nativeSeconds ?? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
+  /** 音频槽位的自动推断：台词说话人 → 角色音色样本；拿不到可用样本时只发 generate_audio */
+  const nativeRef = generateAudio
     ? nativeAudioRef({
         dialogue,
         performance: d.performance,
         characters: input.characters,
         caps: audioCaps,
-        seconds: nativeSeconds?.seconds ?? shotSeconds,
+        seconds,
         // 无声镜没有说话人可推断，沿用镜上已保存的音色角色
         preferredCharacter: d.audioRef?.character,
       })
     : null
-  /** 只在「模型没有原生音频能力」或「镜头短于上游下限」时降级；无样本仍走 native */
-  const nativeBlocked = Boolean(nativeRef && !nativeRef.ok)
-  /**
-   * 被拦下时按**普通出片**重算时长：原生音频的门槛只在真的要带音轨时才成立，
-   * 降级后还按 4 秒请求等于白等一段没有声音的时长。无参考**不算**降级——
-   * 它照常发 `generate_audio`，所以时长仍按原生门槛算。
-   */
-  const { seconds, floor: secondsFloor } = nativeBlocked
-    ? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
-    : nativeMode
-      ? (nativeSeconds ?? shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model }))
-      : shotRequestSeconds({ seconds: shotSeconds, modelId: input.model?.model })
 
   const { refs: candidates, missing, expressionNote } = collectShotComposerRefs({
     data: d,
@@ -291,20 +289,25 @@ export function buildShotVideoRequest(input: {
   const liveMotionNote = d.motionNote || ''
 
   /**
-   * 音色参考是**可选增强**，不是原生音轨的前置条件。
+   * 音频槽位取值三级：显式选择（素材库 / 手工地址）→ 台词自动推断 → 无。
    *
-   * - 有可用样本 → 带上 `audio_url`（`audio` 附件），音色跨镜一致。
-   * - 没有样本、多说话人、说话人不在角色库、样本不合规（`no-reference`）→ 照常
-   *   native，只发 `generate_audio`，声音由模型决定。2026-11-22 实测这条组合能
-   *   出片且会念出台词（`task_01M81KX9X0DN2JBVXS9KCGY1` 同类任务）。
-   * - `blocked`（模型没能力 / 镜头短于上游下限）→ 才降级成普通静音出片并在
-   *   warnings 里说明原因，避免让用户以为拿到的是带音轨的成片。
+   * `source === 'character'` 与没有 `source` 的存量值都是**上一次自动推断的记录**，
+   * 台词换人后必须重新推断，否则会锁死旧音色；只有显式选择的条目才优先于推断。
    */
-  const nativeDegraded = Boolean(nativeMode && nativeBlocked)
-  const nativeNoReference =
-    nativeMode && nativeRef?.ok === true && nativeRef.kind === 'no-reference' ? nativeRef : null
-  const audio: VideoAttachment | null =
-    nativeMode && nativeRef?.ok === true && nativeRef.kind === 'reference'
+  const explicitAudio =
+    d.audioRef && (d.audioRef.source === 'asset' || d.audioRef.source === 'manual')
+      ? d.audioRef
+      : null
+  const audio: VideoAttachment | null = explicitAudio
+    ? {
+        slot: 'audio',
+        index: 1,
+        url: explicitAudio.url,
+        label: explicitAudio.label || '音频素材',
+        purpose: '音色',
+        ...(explicitAudio.character ? { character: explicitAudio.character } : {}),
+      }
+    : generateAudio && nativeRef?.ok === true && nativeRef.kind === 'reference'
       ? {
           slot: 'audio',
           index: 1,
@@ -315,13 +318,7 @@ export function buildShotVideoRequest(input: {
         }
       : null
 
-  const mode: VideoRequestMode = nativeMode && !nativeDegraded
-    ? 'native'
-    : primaryVideo
-      ? 'video'
-      : limited.length > 0
-        ? 'ref'
-        : 'first'
+  const mode: VideoRequestMode = primaryVideo ? 'video' : limited.length > 0 ? 'ref' : 'first'
 
   const refs: VideoAttachment[] = limited.map((r, i) => ({
     slot: 'image',
@@ -434,40 +431,29 @@ export function buildShotVideoRequest(input: {
       message: `${invalidNeighbor.label}：${invalidNeighbor.reason}`,
     })
   }
-  // 无参考不是问题：它照样带原生音轨出片，只在提示里说清声音由模型决定
-  if (nativeNoReference) {
+  // 音频槽位为空且自动推断拿不到音色样本：音轨照常带，只说明声音由模型决定
+  if (generateAudio && !audio) {
     warnings.push({
-      code: 'native-no-reference',
+      code: 'audio-no-reference',
       level: 'warn',
-      message: `无音色参考，声音由模型决定：${nativeNoReference.reason}`,
-    })
-  }
-  // 模型没有原生音频能力 / 镜头短于上游下限才降级，这时明确说本次没有原生音轨
-  if (nativeDegraded && nativeRef && !nativeRef.ok) {
-    warnings.push({
-      code: 'native-degraded',
-      level: 'warn',
-      message: `本次不带原生音轨出片：${nativeRef.reason}`,
+      message: nativeRef?.ok === false
+        ? `无音色参考，声音由模型决定：${nativeRef.reason}`
+        : nativeRef && nativeRef.ok && nativeRef.kind === 'no-reference'
+          ? `无音色参考，声音由模型决定：${nativeRef.reason}`
+          : '音频槽位为空：声音由模型决定，跨镜音色不一定一致',
     })
   }
   // 原生音频与视频素材参考可以并存：APIMart Seedance 2.5 的请求体同时接受
   // video_urls 与 generate_audio/audio_url，以前那条「只能用参考图模式」是产品
   // 限制而不是上游约束，已取消。
-  // 纯文本 + 原生音轨同样放行：没有连线图/视频时由模型自由发挥画面。
-  if (nativeMode && refs.length === 0 && !primaryVideo) {
+  // 纯文本出片同样放行：没有连线图/视频时由模型自由发挥画面。
+  if (refs.length === 0 && !primaryVideo) {
     warnings.push({
-      code: 'native-no-image',
+      code: 'no-reference',
       level: 'warn',
       message: input.model?.features?.textToVideo === false
         ? '没有连线参考图或视频，且当前模型未声明文生视频能力，提交后可能被拒绝'
-        : '没有连线参考图或视频：本次按纯文本 + 原生音轨出片，画面与声音都由模型决定',
-    })
-  }
-  if (!nativeMode && refs.length === 0 && !firstFrame && !primaryVideo) {
-    blocking.push({
-      code: 'no-image',
-      level: 'error',
-      message: '在画布上为分镜连线角色或图片素材，或勾选运镜库视频参考 / 连线视频素材后再出片',
+        : '没有连线参考图或视频：画面由模型自由发挥',
     })
   }
 
@@ -484,6 +470,7 @@ export function buildShotVideoRequest(input: {
   return {
     prompt,
     mode,
+    generateAudio,
     refs,
     firstFrame,
     video,

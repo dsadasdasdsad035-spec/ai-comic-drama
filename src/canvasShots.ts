@@ -48,6 +48,8 @@ export function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
         title: a.title,
         kind: a.kind,
         url: a.url,
+        ...(a.prompt ? { prompt: a.prompt } : {}),
+        ...(a.refIds?.length ? { refIds: [...a.refIds] } : {}),
         ...(a.designId ? { designId: a.designId } : {}),
         ...(a.characterName ? { characterName: a.characterName } : {}),
         ...(a.sourceShotId ? { sourceShotId: a.sourceShotId } : {}),

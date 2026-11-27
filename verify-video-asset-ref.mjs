@@ -176,9 +176,9 @@ const nativeAudioModel = {
 }
 const nativeOk = build({ ...baseShot, audioMode: 'native', videoPrompt: '夜雨街头' }, nativeAudioModel)
 check(
-  '原生音频 + 视频参考走 native 模式',
-  nativeOk.mode === 'native' && nativeOk.video?.url === '/videos/a.mp4',
-  `${nativeOk.mode} / ${nativeOk.video?.url}`,
+  '原生音轨 + 视频参考并存',
+  nativeOk.generateAudio === true && nativeOk.video?.url === '/videos/a.mp4',
+  `${nativeOk.generateAudio} / ${nativeOk.video?.url}`,
 )
 check(
   '原生音频 + 视频参考不产生 native 相关阻断',

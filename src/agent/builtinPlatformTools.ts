@@ -843,7 +843,8 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
         detail:
           `项目「${name}」第 ${ep} 集 镜 ${shot.no}，${seconds}s，画幅 ${ratio}` +
           `，参考图 ${imageUrls.length} 张${request.video ? '，参考视频 1 条' : ''}` +
-          `${request.mode === 'native' ? '，原生音频' : ''}`,
+          `${request.generateAudio ? '，原生音频' : ''}` +
+          `${request.audio ? '，音色参考 1 条' : ''}`,
         payload: {
           project: name,
           episode: ep,
@@ -851,31 +852,22 @@ function createGenerateClipTool(input: BuiltinPlatformCtx): ToolDef {
           seconds,
           ratio,
           mode: request.mode,
+          generateAudio: request.generateAudio,
           refs: imageUrls.length,
         },
       })
       if (!gate.ok) return gate
       try {
         const submitted = await startVideo({
-          ...(request.mode === 'native'
-            ? {
-                refImages: imageUrls,
-                generateAudio: true,
-                ...(request.audio ? { audioRef: request.audio.url } : {}),
-              }
-            : request.video
-              ? {
-                  refVideos: [request.video.url],
-                  ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
-                }
-              : imageUrls.length > 0
-                ? { refImages: imageUrls }
-                : { image: request.firstFrame?.url || '' }),
+          ...(imageUrls.length > 0 ? { refImages: imageUrls } : {}),
+          ...(request.video ? { refVideos: [request.video.url] } : {}),
+          ...(request.audio ? { audioRef: request.audio.url } : {}),
+          ...(request.generateAudio ? { generateAudio: true } : {}),
           prompt: submitPrompt,
           seconds,
           ratio,
           ...(resolution ? { resolution } : {}),
-          ...(request.video || request.mode === 'native' ? {} : { cameraFixed: node.data.move === '固定' }),
+          ...(request.video ? {} : { cameraFixed: node.data.move === '固定' }),
           ...(modelKey ? { modelKey } : {}),
         })
         return {

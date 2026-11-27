@@ -5719,6 +5719,9 @@ export function createAppHandler({ root }: { root: string }) {
                 if (typeof body[k] !== 'string') throw new Error(`${k} 必须是字符串`)
                 patch[k] = body[k]
               }
+              if (body.imageShotsToAssetCards !== undefined) {
+                patch.imageShotsToAssetCards = Boolean(body.imageShotsToAssetCards)
+              }
               // 项目标题：库里的 title 列由 data.name 写入（见 writeProject 的列映射），
               // 这里显式接住 body.title，避免调用方得知道这个历史映射。
               if (body.title !== undefined) {

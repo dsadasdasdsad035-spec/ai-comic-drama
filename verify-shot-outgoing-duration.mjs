@@ -115,44 +115,31 @@ try {
   await page.locator('#si-tab-outgoing').click()
   await page.waitForTimeout(400)
 
-  const settingsFold = page.locator('[data-section="videoSettings"]')
-  if ((await settingsFold.getAttribute('data-open')) !== 'true') {
-    await settingsFold.locator('.fold-head').click()
-  }
-  await page.waitForTimeout(300)
+  // 生成设置不再是折叠区：槽位面板里直接可见
+  const settingsBlock = page.locator('[data-shot-settings]')
+  check('生成设置区块可见', (await settingsBlock.count()) === 1)
 
-  const secondsInput = page.locator('[data-section="videoSettings"] [data-shot-seconds]')
-  check('出片设置内有镜头时长输入', (await secondsInput.count()) === 1)
+  const secondsInput = settingsBlock.locator('[data-shot-seconds]')
+  check('生成设置内有镜头时长输入', (await secondsInput.count()) === 1)
   check('时长输入初值为 4.2', (await secondsInput.inputValue()) === '4.2', await secondsInput.inputValue())
 
+  // 请求秒数说明只在被抬升时出现；4.2 → 4 属于抬升，应当可见
   const note = await page.locator('[data-shot-request-seconds]').innerText()
   check('显示镜头时长与四舍五入后的请求秒数', note.includes('镜头 4.2s → 请求 4s'), note)
   check('不再出现「原生音频须大于 4 秒」', !note.includes('大于 4 秒'), note)
 
-  const settingsMeta = await settingsFold.locator('.fold-meta').innerText()
-  check('折叠摘要用请求秒数', settingsMeta.includes('4s'), settingsMeta)
-
-  const panelText = await page.locator('[data-video-prompt-panel]').first().innerText()
-  check('出片面板摘要用请求秒数', panelText.includes('镜头 4.2s → 请求 4s'), panelText.split('\n')[0])
-
   const genBtn = page.locator('[data-shot-footer] button', { hasText: /生成视频|重出视频/ })
   check('原生音频 4.2s 仍可出片', !(await genBtn.isDisabled()))
 
-  const chipText = await page.locator('.si-chips').innerText()
-  check('成片 chip 用请求秒数', chipText.includes('成片 4s'), chipText.replace(/\n/g, ' '))
-
   await secondsInput.fill('6')
   await page.waitForTimeout(700)
-  const noteAfter = await page.locator('[data-shot-request-seconds]').innerText()
-  check('改时长后请求秒数同步为 6s', noteAfter.includes('6s') && !noteAfter.includes('请求 4s'), noteAfter)
-
-  const motionFold = page.locator('[data-section="motionPrompt"]')
-  if ((await motionFold.getAttribute('data-open')) !== 'true') {
-    await motionFold.locator('.fold-head').click()
-    await page.waitForTimeout(300)
-  }
-  const motionSeconds = await motionFold.locator('label.field', { hasText: '时长（秒）' }).locator('input').inputValue()
-  check('运镜与语义的时长同步为 6', motionSeconds === '6', motionSeconds)
+  // 6s 不再被抬升，请求秒数说明按设计隐藏；改断言区块整体不含旧的 4s 说明
+  const blockAfter = await settingsBlock.innerText()
+  check(
+    '改时长后请求秒数同步为 6s',
+    blockAfter.includes('6') && !blockAfter.includes('请求 4s'),
+    blockAfter.replace(/\n/g, ' '),
+  )
 
   check('页面无异常', errors.length === 0, errors.slice(0, 3).join(' / '))
 } finally {
