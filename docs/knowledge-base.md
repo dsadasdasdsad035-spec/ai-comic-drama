@@ -148,7 +148,21 @@ node verify-knowledge-real.mjs       # 建库 / 上传 / 检索 / 库隔离 / �
 
 # 真实上游 + 活着的应用实例（库维度端到端）
 KB_APP_BASE=http://127.0.0.1:59252 node verify-knowledge-agent-real.mjs
+KB_APP_BASE=http://127.0.0.1:59252 node verify-knowledge-session-kb.mjs   # 两会话选不同库
+
+# 真实开发模式桌面端（npm run desktop:dev + 内置实例，不搭桩）
+KB_APP_BASE=http://127.0.0.1:<端口> node verify-knowledge-desktop-real.mjs
 ```
+
+桌面端的端口这样找：
+
+```bash
+lsof -nP -a -p $(pgrep -f server/desktop-entry.mjs) -iTCP -sTCP:LISTEN
+```
+
+`verify-knowledge-desktop-real.mjs` 是唯一一条**完全不搭桩**的验收：真实 Electron 进程、
+真实内置 AnythingLLM、真实 collector 解析与向量化。它只做维护与选库，不做问答，
+所以零 LLM token。
 
 跑真实验收时**务必**指定 `SB_PROJECTS_DIR` 到临时目录，否则库表会写进当前项目库。
 
@@ -165,6 +179,8 @@ KB_APP_BASE=http://127.0.0.1:59252 node verify-knowledge-agent-real.mjs
 | `/v1/document/:name` 不回正文 | 只拿到元数据，`pageContent` 为空 | 同机部署时直接读 `documents/` 目录里的 JSON；读不到退回元数据 |
 | 中文文件名被 slugify | 清单里显示成 `.md-<uuid>.json` | 标题优先取 `metadata.title`（JSON 字符串），回退 filename |
 | `system/update-env` 只认 camelCase | 用环境变量名（`LLM_PROVIDER`）会被静默过滤，`error` 仍是 false | 客户端只发 camelCase 键 |
+| **上游允许同名 workspace** | 重复建同名库不报 400，而是给 slug 加后缀（`69493` → `69493-88109941`） | 「同名不堆重复库」由本地 `name UNIQUE` 守（路由先 `getKnowledgeBaseByName`），不能指望上游拒绝 |
+| 上传后立刻检索常常 0 命中 | collector 解析是异步的 | 验收脚本要轮询等命中，不要一次断言 |
 
 ## 实现位置
 
@@ -178,4 +194,13 @@ KB_APP_BASE=http://127.0.0.1:59252 node verify-knowledge-agent-real.mjs
 | `src/settings/hubs/connections/KnowledgePane.tsx` | 设置面板 |
 | `src/agent/knowledgeTools.ts` | 三个 Agent 工具（作用域=会话选定的库） |
 | `server/studio-tool-bridge.mjs` | 桥：知识库工具按 sessionId 现建 |
-| `server/dsh-plugins/knowledge-ui/` | 会话头部的库选择器（dsh 插槽插件） |
+| `server/dsh-plugins/knowledge-ui/` | 会话头部与 hero 的库选择器（dsh 插槽插件，走 `slots.inject`） |
+
+插槽这块有两个只有真实宿主才会暴露的契约：
+
+1. **必须 `ctx.slots.inject(key, cb)`**。直接 `ctx.slots.register()` 会在插件激活时抛
+   `slot "..." is not declared (a parent entry's children table must declare it)` ——
+   别的包声明的 child slot 只在它的 entry 存活期间「已声明」。
+2. **空白会话不渲染头部**。`conversation.session.header` 在 `session.blank` 时收到
+   `hideChrome: true`，`header.actions` 整块不渲染。「新会话 → 先选库」是最主流的路径，
+   所以还要挂 `conversation.hero.options`。

@@ -33,7 +33,7 @@ import {
   getKnowledgeBaseByName,
   openDatabase,
 } from './server/db.mjs'
-import { createKnowledgeClient, translateKbError } from './server/knowledge.mjs'
+import { createKnowledgeClient, isUsableSlug, translateKbError } from './server/knowledge.mjs'
 import { applyKbEnvDefaults } from './server/knowledge-settings.mjs'
 
 const BASE = String(process.env.ANYTHINGLLM_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '')
@@ -82,6 +82,16 @@ function findFixture(name) {
   return path.join('/tmp', name)
 }
 
+/** 等 collector 把文档解析进向量库：刚上传完常常还是 0 命中 */
+async function waitHits(slug, query, topN = 4, tries = 20) {
+  for (let i = 0; i < tries; i++) {
+    const hits = await client.search(slug, query, { topN })
+    if (hits.length > 0) return hits
+    await new Promise((r) => setTimeout(r, 3000))
+  }
+  return []
+}
+
 const MD = String(process.env.KB_MD_PATH || findFixture('kb-verify-world.md'))
 const PDF = String(process.env.KB_PDF_PATH || findFixture('kb-src.pdf'))
 
@@ -103,13 +113,25 @@ try {
     const before = (await client.test()).workspaceCount
     slug = await client.createUpstreamWorkspace(KB_NAME)
     assert.ok(slug, '应当拿到上游标识')
+    assert.equal(isUsableSlug(slug), true, `slug 不可用：${slug}`)
     console.log(`   slug = ${slug}`)
     createKnowledgeBase(db, { name: KB_NAME, upstreamSlug: slug })
-    // 同名再建一次：上游会拒绝，客户端应回落到「按名字找回」而不是新建
-    const again = await client.createUpstreamWorkspace(KB_NAME)
-    assert.equal(again, slug, '同名库应找回同一个 slug，不重复建')
     const after = (await client.test()).workspaceCount
     assert.equal(after, before + 1, `上游库数应只 +1，实际 ${before} → ${after}`)
+    /*
+     * 实测结论：**上游允许同名 workspace**，重复创建会给 slug 加后缀
+     * （`69493` → `69493-88109941`），不会像早期 mock 那样返回 400。
+     * 所以「同名不堆重复库」只能由本地 name UNIQUE 守（路由先查
+     * getKnowledgeBaseByName），不能指望上游拒绝。这里断言的正是那道本地闸门。
+     */
+    assert.throws(
+      () => createKnowledgeBase(db, { name: KB_NAME, upstreamSlug: 'ws-other' }),
+      (e) => {
+        assert.equal(e.code, 'kb_name_taken')
+        return true
+      },
+      '本地唯一约束必须拦住同名建库',
+    )
   })
 
   await check('上传 markdown', async () => {
@@ -144,11 +166,13 @@ try {
     assert.ok(detail.docCount >= 1, `文档数应 ≥1，实际 ${detail.docCount}`)
     const titles = detail.documents.map((d) => d.title).join(' | ')
     console.log(`   清单（${detail.docCount}）：${titles}`)
-    assert.ok(/kb-verify-world|kb-src/.test(titles), `清单里应有测试文件，实际：${titles}`)
+    // 断言用的是本次实际上传的文件名（KB_MD_PATH 可覆盖），不写死清单
+    assert.ok(titles.includes(path.basename(MD)), `清单里应有 ${path.basename(MD)}，实际：${titles}`)
   })
 
   await check('向量检索命中期望内容', async () => {
-    const hits = await client.search(slug, '沈砚在哪一场登场', { topN: 4 })
+    // collector 解析是异步的：刚上传完往往还是 0 命中，必须等
+    const hits = await waitHits(slug, '沈砚在哪一场登场')
     assert.ok(hits.length > 0, '检索应至少命中一段')
     const joined = hits.map((h) => h.text).join('\n')
     console.log(`   命中 ${hits.length} 段，首段分数 ${hits[0].score.toFixed(3)}`)
@@ -160,7 +184,7 @@ try {
   })
 
   await check('Agent 工具能用同一客户端检索（search_knowledge 的底层）', async () => {
-    const hits = await client.search(slug, '核心道具是什么', { topN: 3 })
+    const hits = await waitHits(slug, '核心道具是什么', 3, 5)
     assert.ok(hits.length > 0)
     const joined = hits.map((h) => h.text).join(' ')
     console.log(`   道具检索命中 ${hits.length} 段`)
@@ -205,6 +229,11 @@ try {
   const row = getKnowledgeBaseByName(db, KB_NAME)
   if (row) deleteKnowledgeBase(db, row.id)
   db.close()
+  // 上游也清掉：真实验收不该在实例里留垃圾库（早期版本漏了这步）
+  if (slug) {
+    const r = await client.deleteWorkspace(slug).catch(() => null)
+    console.log(`清理：删除上游 workspace ${slug} → ${r?.deleted ? '成功' : '已不存在/失败'}`)
+  }
 }
 
 console.log(bad ? `\n${bad} 项失败` : '\n真实上游验收全部通过')

@@ -49,6 +49,7 @@
 - [x] 6.5 重写 `verify-knowledge-ui.mjs`：知识库视图的浏览器验收（建库→上传→改名→删除→无提问框），mock 上游
 - [x] 6.6 新写 `verify-knowledge-session-kb.mjs`：真实上游 + 两会话并发选不同库，断言检索结果互不串味；不涉及 Seedance，零视频成本
 - [x] 6.7 删掉依赖自写问答的脚本或改写：`verify-knowledge-ui-real-click.mjs` / `verify-knowledge-real-ui.mjs` / `verify-knowledge-model-tool.mjs` / `verify-knowledge-real.mjs` 按新形态处理（保留可复用的部分，删掉问答段）
+- [x] 6.9 真实开发模式桌面端验收：`verify-knowledge-desktop-real.mjs` 打真实 Electron 进程 + 内置 AnythingLLM，不搭桩；覆盖建库/上传/改名/删库与真实 dsh 宿主里的选库控件
 - [x] 6.8 更新 `docs/knowledge-base.md`：库独立命名、全局视图、创意会话选库、dsh 插槽方案、删库语义、旧问答历史断点说明；照文档实操一遍验证步骤可执行
 
 ## Workflow follow-up
