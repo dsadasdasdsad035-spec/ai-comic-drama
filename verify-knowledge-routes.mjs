@@ -1,9 +1,11 @@
 /**
  * 知识库路由集成验证：起真实 server（SB_PORT=0）+ 本地 mock AnythingLLM。
  *
- * 覆盖 `/api/knowledge/*` 的完整链路：设置读取/脱敏、连接自检、建库、上传、
- * 列表、移出、彻底删、检索、问答 SSE 透传、历史、文档正文、删库级联，
- * 以及未配置态的错误形状。
+ * 分工（避免与别的脚本重复）：
+ * - 本脚本验「设置 / 连接自检 / 类型清单 / 上传上限 / 文档标识校验 / 未知路由 /
+ *   错误码映射 / 越库读取」这些**横切契约**；
+ * - `verify-knowledge-bases.mjs` 验库 CRUD、文档与会话选库的完整链路；
+ * - `verify-knowledge-tools.mjs` 验 Agent 工具的作用域。
  *
  * 不依赖真实 AnythingLLM，不产生外部费用。
  * 跑法：node verify-knowledge-routes.mjs
@@ -36,12 +38,7 @@ async function check(name, fn) {
 // ---------------------------------------------------------------- mock 上游
 
 function startMockAnythingLLM() {
-  const state = {
-    workspaces: new Map(),
-    nextId: 1,
-    chats: [],
-    calls: [],
-  }
+  const state = { workspaces: new Map(), nextId: 1, calls: [] }
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
     // 真实上游在 /api/v1/*；mock 两种前缀都接受
@@ -134,42 +131,6 @@ function startMockAnythingLLM() {
           ],
         })
       }
-      const chats = p.match(/^\/v1\/workspace\/([^/]+)\/chats$/)
-      if (chats) {
-        const sid = url.searchParams.get('apiSessionId') || ''
-        const history = state.chats
-          .filter((c) => !sid || c.sessionId === sid)
-          .map((c) => ({ role: c.role, content: c.content, sentAt: c.sentAt, sources: c.sources }))
-        return send(200, { history })
-      }
-      const stream = p.match(/^\/v1\/workspace\/([^/]+)\/stream-chat$/)
-      if (stream) {
-        const ws = state.workspaces.get(decodeURIComponent(stream[1]))
-        if (!ws) return send(400, {})
-        const body = asJson()
-        if (body.reset) {
-          state.chats = []
-          res.writeHead(200, { 'Content-Type': 'text/event-stream' })
-          return res.end(`data: ${JSON.stringify({ type: 'textResponse', textResponse: '', sources: [], close: true })}\n\n`)
-        }
-        const sources = ws.documents.length
-          ? [{ title: ws.documents[0].title, chunk: `${ws.documents[0].title} 的片段` }]
-          : []
-        state.chats.push({ sessionId: body.sessionId, role: 'user', content: body.message, sentAt: 1, sources: [] })
-        state.chats.push({
-          sessionId: body.sessionId,
-          role: 'assistant',
-          content: '回答内容',
-          sentAt: 2,
-          sources,
-        })
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' })
-        res.write(`data: ${JSON.stringify({ type: 'textResponse', textResponse: '回答' })}\n\n`)
-        res.end(
-          `data: ${JSON.stringify({ type: 'textResponse', textResponse: '内容', sources, close: true })}\n\n`,
-        )
-        return
-      }
       if (p === '/v1/document/accepted-file-types') {
         return send(200, { types: { 'application/pdf': ['.pdf'], 'text/plain': ['.txt', '.md'] } })
       }
@@ -197,7 +158,7 @@ function startMockAnythingLLM() {
 // ---------------------------------------------------------------- 启动真实 server
 
 function resolveNodeBin() {
-  // server/index.mjs 要求 Node ≥ 24.9（AGENTS.md §5）。系统 node 常常只有 22，
+  // server/index.mjs 要求 Node ≥ 24.9（AGENTS.md §2）。系统 node 常常只有 22，
   // 所以优先用随包的 desktop/bin/node，再回落到当前进程。
   const bundled = path.join(ROOT, 'desktop', 'bin', 'node')
   return fs.existsSync(bundled) ? bundled : process.execPath
@@ -239,7 +200,7 @@ async function api(base, pathname, init = {}) {
   try {
     body = JSON.parse(text)
   } catch {
-    /* SSE 等非 JSON */
+    /* 非 JSON */
   }
   return { status: res.status, body }
 }
@@ -265,12 +226,9 @@ try {
   })
   const base = srv.base
 
-  // 建一个项目，路由要用到
-  await api(base, '/api/project?name=hunter&create=1', jsonInit('POST', { title: '猎魔人' }))
-
-  await check('未配置时 docs 返回 409 + 可读原因', async () => {
-    const r = await api(base, '/api/knowledge/docs?project=hunter')
-    assert.equal(r.status, 409)
+  await check('未配置时建库返回 409 + 可读原因', async () => {
+    const r = await api(base, '/api/knowledge/bases', jsonInit('POST', { name: '未配置库' }))
+    assert.equal(r.status, 409, `期望 409，实际 ${r.status}: ${JSON.stringify(r.body)}`)
     assert.equal(r.body.ok, false)
     assert.equal(r.body.configured, false)
     assert.match(r.body.message, /尚未配置/)
@@ -305,110 +263,95 @@ try {
     assert.equal(r.body.authenticated, true)
   })
 
-  await check('可接受类型来自上游', async () => {
+  await check('可接受类型来自上游（排序去重）', async () => {
     const r = await api(base, '/api/knowledge/accepted-types')
     assert.equal(r.body.ok, true)
     assert.deepEqual(r.body.extensions, ['.md', '.pdf', '.txt'])
   })
 
-  let slug = ''
-  await check('首次 docs 自动建库', async () => {
-    const r = await api(base, '/api/knowledge/docs?project=hunter')
+  const made = await api(base, '/api/knowledge/bases', jsonInit('POST', { name: '路由验收库' }))
+  assert.equal(made.body.ok, true, made.body.message)
+  const kbId = made.body.base.id
+
+  await check('库列表回读带上游文档数', async () => {
+    const r = await api(base, '/api/knowledge/bases')
     assert.equal(r.body.ok, true)
-    assert.match(r.body.slug, /^ws-\d+$/)
-    assert.equal(r.body.docCount, 0)
-    slug = r.body.slug
-  })
-
-  await check('再次 docs 复用同一库', async () => {
-    const before = mock.state.workspaces.size
-    const r = await api(base, '/api/knowledge/docs?project=hunter')
-    assert.equal(r.body.slug, slug)
-    assert.equal(mock.state.workspaces.size, before)
-  })
-
-  await check('项目之间隔离', async () => {
-    await api(base, '/api/project?name=star-sea&create=1', jsonInit('POST', { title: '星海' }))
-    const other = await api(base, '/api/knowledge/docs?project=star-sea')
-    assert.notEqual(other.body.slug, slug)
-    assert.equal(other.body.docCount, 0)
+    const row = r.body.bases.find((b) => b.id === kbId)
+    assert.ok(row, '列表应含刚建的库')
+    assert.equal(row.docCount, 0)
   })
 
   let firstDoc = ''
-  await check('上传挂到当前项目库', async () => {
-    const res = await fetch(`${base}/api/knowledge/upload?project=${encodeURIComponent('hunter')}&filename=${encodeURIComponent('世界观.md')}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/markdown' },
-      body: Buffer.from('# 世界观\n主角是猎人'),
-    })
+  await check('上传挂到指定库', async () => {
+    const res = await fetch(
+      `${base}/api/knowledge/upload?kbId=${encodeURIComponent(kbId)}&filename=${encodeURIComponent('世界观.md')}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/markdown' },
+        body: Buffer.from('# 世界观\n主角是猎人'),
+      },
+    )
     const body = await res.json()
     assert.equal(body.ok, true)
-    assert.equal(body.slug, slug)
+    assert.equal(body.kbId, kbId)
     assert.equal(body.documents.length, 1)
     assert.equal(body.documents[0].title, '世界观.md')
     firstDoc = body.documents[0].location
   })
 
-  await check('上传后清单可见，其它项目看不到', async () => {
-    const mine = await api(base, '/api/knowledge/docs?project=hunter')
-    assert.equal(mine.body.docCount, 1)
-    const other = await api(base, '/api/knowledge/docs?project=star-sea')
-    assert.equal(other.body.docCount, 0)
-  })
-
-  await check('上传超过上限被 413 拒', async () => {
+  await check('上传超过上限被 413 拒（按 Content-Length 预拒）', async () => {
     const big = Buffer.alloc(101 * 1024 * 1024)
-    const res = await fetch(`${base}/api/knowledge/upload?project=${encodeURIComponent('hunter')}&filename=big.bin`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: big,
-    })
+    const res = await fetch(
+      `${base}/api/knowledge/upload?kbId=${encodeURIComponent(kbId)}&filename=big.bin`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: big,
+      },
+    )
     assert.equal(res.status, 413)
   })
 
   await check('检索返回带 score 的命中', async () => {
-    const r = await api(base, '/api/knowledge/search', jsonInit('POST', { project: 'hunter', query: '猎人' }))
+    const r = await api(base, '/api/knowledge/search', jsonInit('POST', { kbId, query: '猎人' }))
     assert.equal(r.body.ok, true)
     assert.equal(r.body.hits.length, 1)
     assert.equal(r.body.hits[0].title, '世界观.md')
     assert.equal(typeof r.body.hits[0].score, 'number')
+    assert.equal(r.body.kbId, kbId)
   })
 
-  await check('问答 SSE 原样透传', async () => {
-    const res = await fetch(`${base}/api/knowledge/chat`, jsonInit('POST', { project: 'hunter', message: '主角是谁' }))
-    assert.match(String(res.headers.get('content-type')), /text\/event-stream/)
-    const text = await res.text()
-    const frames = text
-      .split('\n\n')
-      .map((f) => f.trim())
-      .filter(Boolean)
-      .map((f) => JSON.parse(f.slice(5)))
-    assert.equal(frames.map((f) => f.textResponse || '').join(''), '回答内容')
-    const last = frames[frames.length - 1]
-    assert.equal(last.close, true)
-    assert.equal(last.sources[0].title, '世界观.md')
-  })
-
-  await check('历史按会话回读', async () => {
-    const r = await api(base, '/api/knowledge/history?project=hunter')
-    assert.equal(r.body.ok, true)
-    assert.equal(r.body.history.length, 2)
-    assert.equal(r.body.history[0].content, '主角是谁')
-  })
-
-  await check('读文档（真实上游只回元数据，正文靠本地磁盘补）', async () => {
-    const r = await api(base, `/api/knowledge/doc?docName=${encodeURIComponent(firstDoc)}`)
+  await check('读文档：接受 workspace 详情里的 docpath', async () => {
+    const r = await api(
+      base,
+      `/api/knowledge/doc?kbId=${encodeURIComponent(kbId)}&docName=${encodeURIComponent(firstDoc)}`,
+    )
     assert.equal(r.body.ok, true, r.body.message || '读取失败')
     assert.ok(r.body.title, '应当有标题')
     // mock 没有磁盘，所以 text 为空；真机由 SB_KNOWLEDGE_DOCUMENTS_DIR 补齐
     assert.equal(typeof r.body.text, 'string')
   })
 
+  await check('越库读取被拒：另一库拿不到本库文档', async () => {
+    const other = await api(base, '/api/knowledge/bases', jsonInit('POST', { name: '另一个库' }))
+    const otherId = other.body.base.id
+    const r = await api(
+      base,
+      `/api/knowledge/doc?kbId=${encodeURIComponent(otherId)}&docName=${encodeURIComponent(firstDoc)}`,
+    )
+    assert.equal(r.status, 404, `期望 404，实际 ${r.status}: ${JSON.stringify(r.body)}`)
+    assert.match(String(r.body.message), /不在本次会话选定的知识库里/)
+  })
+
   await check('移出本库', async () => {
-    const r = await api(base, '/api/knowledge/remove', jsonInit('POST', { project: 'hunter', locations: [firstDoc] }))
+    const r = await api(
+      base,
+      '/api/knowledge/remove',
+      jsonInit('POST', { kbId, locations: [firstDoc] }),
+    )
     assert.equal(r.body.ok, true)
     assert.equal(r.body.removed, 1)
-    const docs = await api(base, '/api/knowledge/docs?project=hunter')
+    const docs = await api(base, `/api/knowledge/docs?kbId=${encodeURIComponent(kbId)}`)
     assert.equal(docs.body.docCount, 0)
   })
 
@@ -430,48 +373,47 @@ try {
     assert.equal(r.body.ok, false)
   })
 
-  await check('Key 错误时给出可读原因', async () => {
-    await api(base, '/api/settings', jsonInit('PUT', { knowledge: { baseUrl: `http://127.0.0.1:${mock.port}`, apiKey: 'bad-key' } }))
+  await check('Key 错误时给出可读原因（401）', async () => {
+    await api(
+      base,
+      '/api/settings',
+      jsonInit('PUT', { knowledge: { baseUrl: `http://127.0.0.1:${mock.port}`, apiKey: 'bad-key' } }),
+    )
     const r = await api(base, '/api/knowledge/test', jsonInit('POST', {}))
     assert.equal(r.status, 401)
     assert.match(r.body.message, /API Key 无效/)
   })
 
-  await check('删除项目：上游可用时连带删掉 workspace 与映射', async () => {
-    // 先把配置指回可用地址
-    await api(base, '/api/settings', jsonInit('PUT', { knowledge: { baseUrl: `http://127.0.0.1:${mock.port}`, apiKey: 'test-key' } }))
-    const before = await api(base, '/api/knowledge/docs?project=star-sea')
-    const slugBefore = before.body.slug
-    assert.ok(mock.state.workspaces.has(slugBefore), '建库后上游应有该 workspace')
-
-    const del = await api(base, '/api/project?name=star-sea', { method: 'DELETE' })
-    assert.equal(del.body.ok, true)
-    assert.equal(mock.state.workspaces.has(slugBefore), false, '项目删掉后上游 workspace 应被清理')
-
-    // 映射也要清掉：重新建同名项目应得到新库，而不是复用旧标识
-    await api(base, '/api/project?name=star-sea&create=1', jsonInit('POST', { title: '星海' }))
-    const after = await api(base, '/api/knowledge/docs?project=star-sea')
-    assert.equal(after.body.ok, true)
-    assert.notEqual(after.body.slug, slugBefore, '旧映射不该残留')
+  await check('错误码透传：未选库给 kb_session_unset', async () => {
+    await api(
+      base,
+      '/api/settings',
+      jsonInit('PUT', { knowledge: { baseUrl: `http://127.0.0.1:${mock.port}`, apiKey: 'test-key' } }),
+    )
+    const r = await api(
+      base,
+      '/api/knowledge/search',
+      jsonInit('POST', { sessionId: 'sess-none', query: 'x' }),
+    )
+    assert.equal(r.status, 400)
+    assert.equal(r.body.code, 'kb_session_unset', '前端/工具层要靠这个码区分「还没选」')
   })
 
-  await check('删除项目：上游不可用时仍删成功，并给出残留提示', async () => {
-    const proj = 'kb-down'
-    await api(base, `/api/project?name=${proj}&create=1`, jsonInit('POST', {}))
-    const created = await api(base, `/api/knowledge/docs?project=${proj}`)
-    assert.equal(created.body.ok, true)
-
-    // 把地址指到一个没人监听的端口：删除必须仍然成功
-    await api(base, '/api/settings', jsonInit('PUT', { knowledge: { baseUrl: 'http://127.0.0.1:59998', apiKey: 'k' } }))
-    const del = await api(base, `/api/project?name=${proj}`, { method: 'DELETE' })
-    assert.equal(del.body.ok, true, '上游挂了也不能阻止删除项目')
-    assert.match(JSON.stringify(del.body.warnings || []), /知识库未能自动清理/)
-    assert.match(JSON.stringify(del.body.warnings || []), new RegExp(created.body.slug))
+  await check('删库不碰邻居：文档池与其它库都在', async () => {
+    const before = (await api(base, '/api/knowledge/bases')).body.bases.length
+    const del = await api(base, `/api/knowledge/bases/${encodeURIComponent(kbId)}`, { method: 'DELETE' })
+    assert.equal(del.body.ok, true, del.body.message)
+    const after = await api(base, '/api/knowledge/bases')
+    assert.equal(after.body.bases.length, before - 1)
+    assert.ok(
+      after.body.bases.some((b) => b.name === '另一个库'),
+      '邻居库应仍在',
+    )
   })
 
   await check('清空地址即关闭知识库', async () => {
     await api(base, '/api/settings', jsonInit('PUT', { knowledge: { baseUrl: '', clearApiKey: true } }))
-    const r = await api(base, '/api/knowledge/docs?project=hunter')
+    const r = await api(base, '/api/knowledge/bases', jsonInit('POST', { name: '关闭后建库' }))
     assert.equal(r.status, 409)
     assert.equal(r.body.configured, false)
   })

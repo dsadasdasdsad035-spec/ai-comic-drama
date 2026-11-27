@@ -187,6 +187,34 @@ await check('转发 execute 时带 studioExpertId', async () => {
   assert.equal(call.payload.expertId, 'expert-omni')
 })
 
+/*
+ * 知识库工具的作用域靠这个字段：没有 sessionId，桥无法判断「本次会话选了哪个库」，
+ * 只能退回「未选库」。所以这里必须验证它真的从 exec.agent.session.id 取到了值，
+ * 而不是从模型可见的 args 里（那里根本没有这个字段）。
+ */
+await check('转发 execute 时带会话标识（来自 exec.agent.session.id）', async () => {
+  calls.length = 0
+  await registered.get('read_source').execute({}, { agent: { session: { id: 'sess-abc' } } })
+  const call = calls.find((c) => c.url === '/api/studio/tools/execute')
+  assert.equal(call.payload.sessionId, 'sess-abc')
+})
+
+await check('模型无法通过 args 伪造会话标识', async () => {
+  calls.length = 0
+  await registered
+    .get('read_source')
+    .execute({ sessionId: 'sess-forged' }, { agent: { session: { id: 'sess-real' } } })
+  const call = calls.find((c) => c.url === '/api/studio/tools/execute')
+  assert.equal(call.payload.sessionId, 'sess-real', 'args 里的 sessionId 必须被忽略')
+})
+
+await check('没有会话上下文时 sessionId 为空串（不猜）', async () => {
+  calls.length = 0
+  await registered.get('read_source').execute({}, {})
+  const call = calls.find((c) => c.url === '/api/studio/tools/execute')
+  assert.equal(call.payload.sessionId, '')
+})
+
 await check('模型只看到摘要，界面能拿到详情', async () => {
   const def = registered.get('generate_keyframe')
   const value = await def.execute({ no: 'E01-S01' }, {})

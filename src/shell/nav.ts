@@ -18,12 +18,13 @@ import {
  *   Inspector 与画布内 Agent 里编辑。
  * - 这里不包含「账号与充值」——账号是跨项目的身份，不是项目视图。
  *   它是全局路由 `#/account`，入口在项目大厅顶栏，见 shell/route.ts。
+ * - 这里不包含「知识库」——库是独立命名的资源，与项目无关，
+ *   它是全局路由 `#/knowledge`，入口在大厅顶栏与项目内左栏两处。
  */
 export type ViewId =
   | 'overview'
   | 'creative'
   | 'assets'
-  | 'knowledge'
   | 'script'
   | 'board'
   | 'settings'
@@ -51,11 +52,28 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'overview', label: '概览', group: 'main', icon: LayoutDashboard, crumb: '概览' },
   { id: 'creative', label: '创意', group: 'create', icon: Sparkles, crumb: '创意' },
   { id: 'assets', label: '素材', group: 'create', icon: Images, crumb: '素材', countKey: 'assets' },
-  // 知识库入口常驻可见：未配置时进入看引导，比「入口凭空消失」更好解释
-  { id: 'knowledge', label: '知识库', group: 'create', icon: Library, crumb: '知识库' },
   { id: 'script', label: '剧本', group: 'create', icon: FileText, crumb: '剧本' },
   { id: 'board', label: '画布', group: 'create', icon: Clapperboard, crumb: '画布' },
   { id: 'settings', label: '设置', group: 'system', icon: SettingsIcon, crumb: '设置' },
+]
+
+/**
+ * 全局导航（与具体项目无关）。
+ *
+ * 与 `NAV_ITEMS` 分开的理由：这些条目对应的不是 `ViewId`，而是全局 hash
+ * （`#/knowledge`）。混进 `ViewId` 会让「route.kind === 'project'」的假定失效，
+ * 也会让 `isViewId()` 开始认一个没有项目的视图。
+ */
+export type GlobalNavItem = {
+  id: 'knowledge'
+  label: string
+  icon: LucideIcon
+  /** 目标 hash，由外壳直接 navigate */
+  hash: string
+}
+
+export const GLOBAL_NAV_ITEMS: GlobalNavItem[] = [
+  { id: 'knowledge', label: '知识库', icon: Library, hash: '#/knowledge' },
 ]
 
 export const VIEW_IDS: ViewId[] = NAV_ITEMS.map((i) => i.id)

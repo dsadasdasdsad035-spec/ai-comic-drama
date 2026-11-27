@@ -1,10 +1,13 @@
 /**
- * 知识库（AnythingLLM）伴生服务验收。
+ * 知识库（AnythingLLM）伴生服务验收 · 纯函数与客户端契约。
  *
  * 分层验证，全部免费：
  * - 纯函数：地址候选、回环判定、错误翻译、上传表单、应答归一化、文档标识校验；
- * - 客户端：对本地 mock AnythingLLM 跑建库/上传/列表/检索/问答历史/删除；
- * - 集成：由 `verify-knowledge-ui.mjs` 覆盖页面，这里只验服务端契约。
+ * - 客户端：对本地 mock AnythingLLM 跑建库（库维度）/上传/列表/移出/检索/读全文/删库；
+ * - 数据层：`knowledge_bases` 的 CRUD 与一次性迁移（幂等、留快照）。
+ *
+ * 页面与路由级验收在 `verify-knowledge-bases.mjs`（库维度路由）、
+ * `verify-knowledge-tools.mjs`（Agent 工具作用域）、`verify-knowledge-ui-plugin.mjs`（选择器插件）。
  *
  * 不依赖真实 AnythingLLM，不产生任何外部费用。
  * 跑法：node verify-knowledge.mjs
@@ -14,28 +17,34 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { openDatabase } from './server/db.mjs'
+import {
+  createKnowledgeBase,
+  deleteKnowledgeBase,
+  getKnowledgeBase,
+  getKnowledgeBaseByName,
+  getSessionKnowledgeSelection,
+  KNOWLEDGE_LINKS_MIGRATED_KEY,
+  listKnowledgeBases,
+  migrateKnowledgeLinks,
+  openDatabase,
+  renameKnowledgeBase,
+  setSessionKnowledgeBase,
+} from './server/db.mjs'
 import {
   DEFAULT_KB_BASE_URL,
-  KB_SESSION_PREFIX,
   MAX_KB_UPLOAD_BYTES,
   assertDocLocations,
+  baseSlugOf,
   buildUploadForm,
   createKnowledgeClient,
-  deleteKbLink,
   isLoopbackBase,
   isUsableSlug,
   kbBaseCandidates,
-  kbSessionId,
   normalizeUploadedDocs,
   normalizeWorkspace,
-  parseSseDataLine,
-  readKbLink,
-  stripReasoning,
   stripChunkMetadata,
   translateKbError,
   validateKbBaseUrl,
-  writeKbLink,
 } from './server/knowledge.mjs'
 import {
   KB_ENV_API_KEY,
@@ -91,12 +100,6 @@ await check('地址校验：错误文案可读', () => {
   assert.match(validateKbBaseUrl(''), /请填写/)
   assert.match(validateKbBaseUrl('127.0.0.1:3001'), /格式不正确/)
   assert.match(validateKbBaseUrl('ftp://x'), /http/)
-})
-
-await check('会话分区：同一项目恒定', () => {
-  assert.equal(kbSessionId('mo-ren'), `${KB_SESSION_PREFIX}mo-ren`)
-  assert.equal(kbSessionId('mo-ren'), kbSessionId('mo-ren'))
-  assert.notEqual(kbSessionId('a'), kbSessionId('b'))
 })
 
 await check('slug 可用性：空串与非法字符都要重建', () => {
@@ -202,32 +205,6 @@ await check('文档标识校验：拒绝绝对路径与穿越', () => {
   assert.throws(() => assertDocLocations(['../../a.json']), /不合法/)
   assert.throws(() => assertDocLocations(['http://evil/a.json']), /不合法/)
   assert.throws(() => assertDocLocations([]), /没有指定/)
-})
-
-await check('SSE 帧解析：JSON 与非 JSON', () => {
-  assert.deepEqual(parseSseDataLine('data: {"type":"textResponse","textResponse":"hi"}'), {
-    type: 'textResponse',
-    textResponse: 'hi',
-  })
-  assert.equal(parseSseDataLine('data: [DONE]'), null)
-  assert.equal(parseSseDataLine('event: ping'), null)
-  assert.equal(parseSseDataLine('data: 不是json'), null)
-})
-
-await check('stripReasoning：剥掉成对推理块', () => {
-  assert.equal(stripReasoning('<think>内部推理</think>雨夜巷口'), '雨夜巷口')
-  assert.equal(stripReasoning('前<think>x</think>后'), '前后')
-  assert.equal(stripReasoning('<think>a</think><think>b</think>正文'), '正文')
-  assert.equal(stripReasoning('没有推理块的正常回答'), '没有推理块的正常回答')
-})
-
-await check('stripReasoning：未闭合时整段丢弃（流式截断）', () => {
-  assert.equal(stripReasoning('正文<think>截断的推理没有闭合'), '正文')
-  assert.equal(stripReasoning('<think>全是推理没闭合'), '')
-})
-
-await check('stripReasoning：thinking 变体也认', () => {
-  assert.equal(stripReasoning('<thinking>x</thinking>答案'), '答案')
 })
 
 await check('stripChunkMetadata：剥掉上游元数据头', () => {
@@ -613,32 +590,22 @@ await check('客户端：连接自检', async () => {
   assert.equal(r.workspaceCount, 0)
 })
 
-await check('客户端：建库并回读上游 slug（中文项目名不可逆推）', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('猎魔人', db)
-  assert.match(slug, /^ws-\d+$/, '应当用上游返回的标识，而不是项目名')
+await check('客户端：建库回读上游 slug（中文库名不可逆推）', async () => {
+  const slug = await client.createUpstreamWorkspace('猎魔人')
+  assert.match(slug, /^ws-\d+$/, '应当用上游返回的标识，而不是库名')
   assert.notEqual(slug, '猎魔人')
-  // 第二次直接命中映射，不再建库
-  const before = mock.state.calls.filter((c) => c.path === '/v1/workspace/new').length
-  const again = await client.ensureWorkspace('猎魔人', db)
-  const after = mock.state.calls.filter((c) => c.path === '/v1/workspace/new').length
-  assert.equal(again, slug)
-  assert.equal(after, before, '已有映射时不应再次建库')
-  db.close()
+  assert.equal(isUsableSlug(slug), true)
 })
 
-await check('客户端：映射丢失时按 name 找回，不堆重复库', async () => {
-  const fresh = openTempDb()
-  const slug = await client.ensureWorkspace('猎魔人', fresh.db)
+await check('客户端：同名库被上游拒绝时按 name 找回，不堆重复库', async () => {
+  const before = mock.state.workspaces.size
+  const slug = await client.createUpstreamWorkspace('猎魔人')
   assert.match(slug, /^ws-\d+$/)
-  const count = mock.state.workspaces.size
-  assert.equal(count, 1, '同名项目不应创建第二个库')
-  fresh.db.close()
+  assert.equal(mock.state.workspaces.size, before, '同名库不应再建一个')
 })
 
 await check('客户端：上传文档挂到当前库', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('上传测试', db)
+  const slug = await client.createUpstreamWorkspace('上传测试')
   const docs = await client.uploadDoc({
     slug,
     filename: '世界观.md',
@@ -650,12 +617,10 @@ await check('客户端：上传文档挂到当前库', async () => {
   const detail = await client.listDocs(slug)
   assert.equal(detail.docCount, 1)
   assert.equal(detail.documents[0].location, docs[0].location)
-  db.close()
 })
 
 await check('客户端：上传失败报文透出 collector 原因', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('失败测试', db)
+  const slug = await client.createUpstreamWorkspace('失败测试')
   mock.state.failNextUpload = 'Document processing API is not online.'
   await assert.rejects(
     () => client.uploadDoc({ slug, filename: 'a.pdf', bytes: Buffer.from('x'), mime: 'application/pdf' }),
@@ -664,87 +629,42 @@ await check('客户端：上传失败报文透出 collector 原因', async () =>
   // 失败不产生半成品
   const detail = await client.listDocs(slug)
   assert.equal(detail.docCount, 0)
-  db.close()
 })
 
 await check('客户端：列表兼容上游 workspace 是数组的形状', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('数组形状', db)
+  const slug = await client.createUpstreamWorkspace('数组形状')
   const detail = await client.listDocs(slug)
   assert.equal(detail.slug, slug)
   assert.equal(Array.isArray(detail.documents), true)
-  db.close()
 })
 
 await check('客户端：移出本库只解绑', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('移出测试', db)
+  const slug = await client.createUpstreamWorkspace('移出测试')
   const docs = await client.uploadDoc({ slug, filename: 'b.md', bytes: Buffer.from('x') })
   const removed = await client.removeDocs(slug, [docs[0].location])
   assert.equal(removed.removed, 1)
   const detail = await client.listDocs(slug)
   assert.equal(detail.docCount, 0)
-  db.close()
 })
 
 await check('客户端：检索不经 LLM，返回带 score 的片段', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('检索测试', db)
+  const slug = await client.createUpstreamWorkspace('检索测试')
   await client.uploadDoc({ slug, filename: '运镜手册.md', bytes: Buffer.from('推拉摇移') })
   const hits = await client.search(slug, '推镜')
   assert.equal(hits.length, 1)
   assert.equal(hits[0].title, '运镜手册.md')
   assert.equal(typeof hits[0].score, 'number')
   assert.match(hits[0].text, /推镜/)
-  db.close()
 })
 
 await check('客户端：空库检索返回空数组', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('空库', db)
+  const slug = await client.createUpstreamWorkspace('空库')
   const hits = await client.search(slug, '任何')
   assert.deepEqual(hits, [])
-  db.close()
 })
 
 await check('客户端：检索空关键词被本地拒绝', async () => {
   await assert.rejects(() => client.search('ws-1', '   '), /不能为空/)
-})
-
-await check('客户端：问答流透传，来源被归一', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('问答测试', db)
-  await client.uploadDoc({ slug, filename: '设定.md', bytes: Buffer.from('主角是猎人') })
-  const res = await client.chatStream({ slug, message: '主角是谁' })
-  assert.equal(res.status, 200)
-  const text = await res.text()
-  assert.match(text, /data: /)
-  const frames = text
-    .split('\n\n')
-    .map((f) => f.trim())
-    .filter(Boolean)
-    .map((f) => JSON.parse(f.slice(5)))
-  const answer = frames.map((f) => f.textResponse || '').join('')
-  assert.equal(answer, '根据资料回答')
-  const last = frames[frames.length - 1]
-  assert.equal(last.close, true)
-  assert.equal(last.sources.length, 1)
-  assert.equal(last.sources[0].title, '设定.md')
-  db.close()
-})
-
-await check('客户端：历史按会话分区回读', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('历史测试', db)
-  await client.uploadDoc({ slug, filename: 'h.md', bytes: Buffer.from('内容') })
-  await client.chatStream({ slug, message: '第一问' }).then((r) => r.text())
-  const hist = await client.history(slug)
-  assert.equal(hist.length, 2)
-  assert.equal(hist[0].role, 'user')
-  assert.equal(hist[0].content, '第一问')
-  assert.equal(hist[1].role, 'assistant')
-  assert.equal(hist[1].sources[0].title, 'h.md')
-  db.close()
 })
 
 await check('客户端：可接受类型来自上游', async () => {
@@ -753,8 +673,7 @@ await check('客户端：可接受类型来自上游', async () => {
 })
 
 await check('客户端：读单文档接受 docpath 与纯文件名', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('读文档', db)
+  const slug = await client.createUpstreamWorkspace('读文档')
   const docs = await client.uploadDoc({ slug, filename: '全文.md', bytes: Buffer.from('x') })
   // 前端拿到的 location 是 custom-documents/xxx.json；readDoc 要能剥掉前缀
   const doc = await client.readDoc(docs[0].location)
@@ -764,18 +683,15 @@ await check('客户端：读单文档接受 docpath 与纯文件名', async () =
   const bare = docs[0].location.split('/').pop()
   const doc2 = await client.readDoc(bare)
   assert.equal(doc2.title, '全文.md')
-  db.close()
 })
 
 await check('客户端：删库', async () => {
-  const { db } = openTempDb()
-  const slug = await client.ensureWorkspace('删库测试', db)
+  const slug = await client.createUpstreamWorkspace('删库测试')
   const r = await client.deleteWorkspace(slug)
   assert.equal(r.deleted, true)
   // 再删一次当成功（不存在）
   const again = await client.deleteWorkspace(slug)
   assert.equal(again.deleted, false)
-  db.close()
 })
 
 await check('客户端：未配置时所有调用给出可读错误', async () => {
@@ -820,20 +736,134 @@ await check('客户端：请求都带 Bearer 头', () => {
   assert.ok(authed.every((c) => c.auth === true), '所有请求都应带 Authorization')
 })
 
-await check('映射表：脏 slug 不拿去请求上游', () => {
-  const { db } = openTempDb()
-  db.prepare('INSERT INTO knowledge_links (project_name, workspace_slug) VALUES (?,?)').run('脏项目', '../etc')
-  assert.equal(readKbLink(db, '脏项目'), '')
-  db.close()
+// ---------------------------------------------------------------- 数据层：库的 CRUD 与迁移
+
+function tempRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'kb-db-'))
+}
+
+await check('库 CRUD：创建 / 按名查 / 改名保 id 与 slug', () => {
+  const root = tempRoot()
+  const d = openDatabase(root)
+  try {
+    const base = createKnowledgeBase(d, { name: '运镜手册', upstreamSlug: 'ws-1' })
+    assert.ok(base.id.startsWith('kb_'))
+    assert.equal(getKnowledgeBaseByName(d, '运镜手册').id, base.id)
+    const renamed = renameKnowledgeBase(d, base.id, '运镜宝典')
+    assert.equal(renamed.id, base.id, '改名不该换 id')
+    assert.equal(renamed.upstreamSlug, 'ws-1', '改名不该换上游 slug')
+    assert.equal(getKnowledgeBaseByName(d, '运镜手册'), null)
+  } finally {
+    d.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
-await check('映射表：写入校验 slug', () => {
-  const { db } = openTempDb()
-  assert.throws(() => writeKbLink(db, 'p', '中文 slug'), /不合法/)
-  assert.equal(writeKbLink(db, 'p', 'good-slug'), 'good-slug')
-  assert.equal(deleteKbLink(db, 'p'), 1)
-  assert.equal(readKbLink(db, 'p'), '')
-  db.close()
+await check('库 CRUD：重名被 UNIQUE 拦住（给可读错误码）', () => {
+  const root = tempRoot()
+  const d = openDatabase(root)
+  try {
+    createKnowledgeBase(d, { name: '重名库', upstreamSlug: 'ws-1' })
+    assert.throws(
+      () => createKnowledgeBase(d, { name: '重名库', upstreamSlug: 'ws-2' }),
+      (e) => {
+        assert.equal(e.code, 'kb_name_taken')
+        return true
+      },
+    )
+  } finally {
+    d.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await check('会话选库：写后读回；库被删后能区分「选过但没了」', () => {
+  const root = tempRoot()
+  const d = openDatabase(root)
+  try {
+    const base = createKnowledgeBase(d, { name: '临时库', upstreamSlug: 'ws-1' })
+    setSessionKnowledgeBase(d, 'sess-1', base.id)
+    const picked = getSessionKnowledgeSelection(d, 'sess-1')
+    assert.equal(picked.kbId, base.id)
+    assert.equal(picked.base.name, '临时库')
+
+    // 直接从表里删库行，模拟「记录还在、库没了」的外部变动
+    d.prepare('DELETE FROM knowledge_bases WHERE id = ?').run(base.id)
+    const ghost = getSessionKnowledgeSelection(d, 'sess-1')
+    assert.equal(ghost.kbId, base.id, '选过的记录要留着，才能报「已被删除」')
+    assert.equal(ghost.base, null, 'base 为 null 表示库已不存在')
+  } finally {
+    d.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await check('迁移：knowledge_links 每行转一个库，留快照，标记键把关幂等', () => {
+  const root = tempRoot()
+  const d = openDatabase(root)
+  try {
+    // 造两条旧记录（列名是历史遗留，表结构仍在）
+    d.prepare('INSERT INTO knowledge_links (project_name, workspace_slug) VALUES (?,?)').run('猎魔人', 'ws-9')
+    d.prepare('INSERT INTO knowledge_links (project_name, workspace_slug) VALUES (?,?)').run('旧项目', '中文 slug')
+    const first = migrateKnowledgeLinks(d)
+    assert.equal(first.migrated, 2, '两行各转一个库')
+    assert.equal(first.skipped, 0)
+    /*
+     * 快照存在 settings 的标记键里（纯 db 层拿不到文件系统路径约定，
+     * 存这里比猜一个目录更可靠）。反序列化后应能还原出原始映射。
+     */
+    const marker = JSON.parse(
+      d.prepare('SELECT value FROM settings WHERE key = ?').get(KNOWLEDGE_LINKS_MIGRATED_KEY).value,
+    )
+    const snap = JSON.parse(marker.snapshot)
+    assert.equal(snap.length, 2, '快照应含迁移前的全部行')
+    assert.deepEqual(
+      snap.map((r) => [r.projectName, r.workspaceSlug]),
+      [
+        ['猎魔人', 'ws-9'],
+        ['旧项目', '中文 slug'],
+      ],
+    )
+    const bases = listKnowledgeBases(d)
+    assert.equal(bases.length, 2)
+    // 迁移时 created_at 都取自旧行（可能同为空）→ 顺序按名字兜底，所以按映射断言
+    const byName = new Map(bases.map((b) => [b.name, b.upstreamSlug]))
+    assert.equal(byName.get('猎魔人'), 'ws-9')
+    // 上游归一后不可用的 slug 也原样保留：库名是用户的，slug 只是访问凭据，
+    // 不可用只是「访问时会报错」，不该在迁移时就把用户的库丢掉
+    assert.equal(byName.get('旧项目'), '中文 slug')
+
+    // 第二次跑：标记键把关，不再迁
+    const second = migrateKnowledgeLinks(d)
+    assert.equal(second.migrated, 0)
+    assert.equal(listKnowledgeBases(d).length, 2, '重复启动不该再迁一批')
+  } finally {
+    d.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await check('删库：清掉会话选择，返回被清条数', () => {
+  const root = tempRoot()
+  const d = openDatabase(root)
+  try {
+    const base = createKnowledgeBase(d, { name: '待删库', upstreamSlug: 'ws-1' })
+    setSessionKnowledgeBase(d, 's1', base.id)
+    setSessionKnowledgeBase(d, 's2', base.id)
+    const r = deleteKnowledgeBase(d, base.id)
+    assert.equal(r.deleted, true)
+    assert.equal(r.sessionsCleared, 2)
+    assert.equal(getSessionKnowledgeSelection(d, 's1'), null)
+  } finally {
+    d.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await check('baseSlugOf：脏 slug 不拿去请求上游', () => {
+  assert.equal(baseSlugOf({ upstreamSlug: '../etc' }), '')
+  assert.equal(baseSlugOf({ upstreamSlug: 'ws-1' }), 'ws-1')
+  assert.equal(baseSlugOf(null), '')
 })
 
 // ---------------------------------------------------------------- 代配上游 LLM

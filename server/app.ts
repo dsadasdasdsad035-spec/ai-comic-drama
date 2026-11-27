@@ -60,6 +60,15 @@ import {
   getChatThread,
   saveChatThread,
   deleteChatThread,
+  listKnowledgeBases,
+  getKnowledgeBase,
+  getKnowledgeBaseByName,
+  createKnowledgeBase,
+  renameKnowledgeBase,
+  deleteKnowledgeBase,
+  setSessionKnowledgeBase,
+  getSessionKnowledgeBase,
+  getSessionKnowledgeSelection,
 } from './db.mjs'
 import {
   deleteProjects,
@@ -139,8 +148,8 @@ import {
 } from './knowledge-settings.mjs'
 import {
   MAX_KB_UPLOAD_BYTES,
+  baseSlugOf,
   createKnowledgeClient,
-  deleteKbLink,
   translateKbError,
 } from './knowledge.mjs'
 import {
@@ -1210,25 +1219,78 @@ const kbClient = createKnowledgeClient({
 })
 
 /**
- * 知识库路由的公共前置：项目必须**真的存在**。
+ * 知识库路由的公共前置：库必须**真的存在于本地表**里，且它的上游标识可用。
  *
- * 为什么不能只校验名字格式：ensureWorkspace 会在上游自动建库，一个手滑写错的项目名
- * 就会在上游留下一个空 workspace（实测边界测试里造出 6 个 `__no_such__*` 垃圾库，
- * 只能手工去控制台删）。这里先查本地 projects 表，不存在直接报可读错误。
+ * 两条校验都不能省：
+ * - 本地查表：库是独立资源，id 来自我们自己生成的主键；不存在的 id 直接 404，
+ *   而不是拿它去拼上游 URL（那会得到一个看不出根因的 400/404）。
+ * - 上游标识校验：历史脏数据（如 `../etc`）不该被拼进 URL（`baseSlugOf` 把关）。
  *
- * @returns 校验通过的（已 safeProjectName 归一化的）项目名
+ * @returns 本地库记录与可用的上游 slug
  */
-function requireKnowledgeProject(raw: unknown, root: string): string {
-  const project = safeProjectName(String(raw || '').trim())
-  if (!project) throw new Error('缺少项目名')
+function requireKnowledgeBase(raw: unknown, root: string): {
+  base: { id: string; name: string; upstreamSlug: string; createdAt: string }
+  slug: string
+} {
+  const kbId = String(raw || '').trim()
+  if (!kbId) throw new Error('缺少知识库标识')
   const db = openDatabase(resolveRoot(root))
-  const row = db.prepare('SELECT name FROM projects WHERE name = ?').get(project)
-  if (!row) {
-    const err: any = new Error(`项目「${project}」不存在`)
+  const base = getKnowledgeBase(db, kbId)
+  if (!base) {
+    const err: any = new Error(`知识库不存在：${kbId}`)
     err.status = 404
     throw err
   }
-  return project
+  const slug = baseSlugOf(base)
+  if (!slug) {
+    const err: any = new Error(`知识库「${base.name}」的上游标识不可用：请删除后重建`)
+    err.status = 400
+    throw err
+  }
+  return { base, slug }
+}
+
+/**
+ * 检索类路由的作用域解析：优先显式 kbId（人在界面上选的），
+ * 其次 sessionId（Agent 工具带的会话标识 → 查会话选定的库）。
+ *
+ * 为什么 Agent 工具走 sessionId 而不是 kbId：工具 schema 里不能暴露库标识，
+ * 否则模型就有了指向其它库的入口（规格「工具参数无法指向其它库」）。
+ * 会话标识只是「哪个对话在问」，不构成越权——它由宿主注入，模型看不到也改不了。
+ */
+function resolveKnowledgeScope(
+  input: { kbId?: unknown; sessionId?: unknown },
+  root: string,
+): { base: { id: string; name: string; upstreamSlug: string; createdAt: string }; slug: string } {
+  const kbId = String(input?.kbId || '').trim()
+  if (kbId) return requireKnowledgeBase(kbId, root)
+
+  const sessionId = String(input?.sessionId || '').trim()
+  if (!sessionId) {
+    const err: any = new Error('缺少知识库标识：本次会话还没有选择知识库')
+    err.status = 400
+    err.code = 'kb_session_unset'
+    throw err
+  }
+  const db = openDatabase(resolveRoot(root))
+  const picked = getSessionKnowledgeSelection(db, sessionId)
+  if (!picked) {
+    const err: any = new Error('本次会话还没有选择知识库：请在会话头部选择，或告诉助手用哪个库')
+    err.status = 400
+    err.code = 'kb_session_unset'
+    throw err
+  }
+  if (!picked.base) {
+    /*
+     * 选过但库被删了。必须与「还没选」分开：两种情况的下一步动作不同，
+     * 而且用户界面上明明选过，说「你还没选」会让人以为自己点错了。
+     */
+    const err: any = new Error('本次会话选定的知识库已被删除：请在会话头部重新选择知识库')
+    err.status = 400
+    err.code = 'kb_session_gone'
+    throw err
+  }
+  return requireKnowledgeBase(picked.kbId, root)
 }
 
 /** 知识库默认使用的上游对话模型。可在设置页改成别的 MiniMax 型号。 */
@@ -1415,44 +1477,6 @@ function saveAppSettings(patch: Partial<AppSettings>): AppSettings {
   // 模型表变了要同步给创意会话宿主，否则它的模型选择器还停在旧列表
   notifySettingsChanged('settings')
   return next
-}
-
-/**
- * 项目删除后尽力清理上游知识库。
- *
- * 三条刻意的选择：
- * 1. **不阻塞删除**：外部服务挂了不该让用户删不掉项目，失败只进 warnings；
- * 2. **映射行已在事务里删掉**（PROJECT_CASCADE），所以这里只处理上游；
- * 3. **未配置时整体跳过**：没配知识库的项目本来就没有上游库，不做无意义的请求。
- *
- * 失败时把上游标识写进警告，让用户能去 AnythingLLM 控制台手工清理 —— 只说
- * 「清理失败」而不给标识，用户就无从下手。
- */
-async function cleanupKnowledgeAfterProjectDelete(result: any): Promise<void> {
-  const rows = Array.isArray(result?.results) ? result.results : []
-  if (!rows.length) return
-  const cfg = applyKbEnvDefaults(getAppSettings().knowledge, process.env).settings
-  if (!cfg.enabled) return
-  for (const row of rows) {
-    const slug = String(row?.knowledgeSlug || '').trim()
-    if (!slug) continue
-    // 内部字段不外泄：它只用于这里的清理
-    delete row.knowledgeSlug
-    try {
-      const r = await kbClient.deleteWorkspace(slug)
-      if (r.deleted === false && r.reason !== 'not-found') {
-        row.warnings = [
-          ...(Array.isArray(row.warnings) ? row.warnings : []),
-          `知识库未能自动清理（${r.reason || '未知原因'}）：可在 AnythingLLM 控制台删除「${slug}」`,
-        ]
-      }
-    } catch (e: any) {
-      row.warnings = [
-        ...(Array.isArray(row.warnings) ? row.warnings : []),
-        `知识库未能自动清理：${e?.message || String(e)}（可在 AnythingLLM 控制台删除「${slug}」）`,
-      ]
-    }
-  }
 }
 
 /** 按能力取模型条目：显式 key > 该能力默认 > 该能力第一条 */
@@ -5590,8 +5614,6 @@ export function createAppHandler({ root }: { root: string }) {
               }
               if (raw || fromBody.length) {
                 const result = deleteProjects(rootDir, names, { appRoot: root })
-                // 上游知识库要发 HTTP，只能在拿到结果后尽力删（失败进 warnings）
-                await cleanupKnowledgeAfterProjectDelete(result)
                 res.end(JSON.stringify(result))
                 return
               }
@@ -5600,7 +5622,6 @@ export function createAppHandler({ root }: { root: string }) {
               if (!first.ok && first.code === 'active_jobs') res.statusCode = 409
               else if (!first.ok && first.code === 'not_found') res.statusCode = 404
               else if (!first.ok) res.statusCode = 500
-              await cleanupKnowledgeAfterProjectDelete({ results: [first] })
               res.end(JSON.stringify({ ...first, sharedFilesKept: true }))
               return
             }
@@ -6905,17 +6926,26 @@ export function createAppHandler({ root }: { root: string }) {
           const kbFail = (e: any) => {
             const status = Number(e?.status) || 0
             res.statusCode =
-              e?.code === 'kb_not_configured'
+              e?.code === 'kb_not_configured' || e?.code === 'kb_name_taken'
                 ? 409
-                : status === 401 || status === 403
-                  ? 401
-                  : status === 404
-                    ? 404
-                    : 502
+                : e?.code === 'kb_not_found'
+                  ? 404
+                  : status === 401 || status === 403
+                    ? 401
+                    : status === 404
+                      ? 404
+                      : status === 400
+                        ? 400
+                        : 502
             res.end(
               JSON.stringify({
                 ok: false,
                 configured: e?.code !== 'kb_not_configured',
+                /*
+                 * code 必须透给前端：工具层要区分「还没选库」（去选一个）与
+                 * 「选过的库被删了」（重选一个）。两者靠文案区分太脆。
+                 */
+                code: String(e?.code || ''),
                 message: translateKbError(e),
               }),
             )
@@ -6961,28 +6991,168 @@ export function createAppHandler({ root }: { root: string }) {
               return
             }
 
+            // ---- 库 CRUD：库是独立命名资源，与项目无关 ----
+            if (url === '/api/knowledge/bases' && req.method === 'GET') {
+              const db = openDatabase(resolveRoot(root))
+              const bases = listKnowledgeBases(db)
+              /*
+               * 文档数要问上游（本地只存库名与 slug，不复制文档清单 —— 复制必然漂移）。
+               * 并发回查、每库失败只让那一项没有 docCount，整体不报错：库列表是
+               * 导航页，上游某几个 workspace 坏了不该让整页打不开。
+               */
+              const withCounts = await Promise.all(
+                bases.map(async (base) => {
+                  const slug = baseSlugOf(base)
+                  if (!slug) return { ...base, docCount: undefined, broken: true }
+                  try {
+                    const detail = await kbClient.listDocs(slug)
+                    return { ...base, docCount: Number(detail.docCount) || 0 }
+                  } catch (e: any) {
+                    // 404 = 上游 workspace 被手工删了：标记出来，界面提示删记录重建
+                    const gone = Number(e?.status) === 404
+                    return { ...base, docCount: undefined, ...(gone ? { broken: true } : {}) }
+                  }
+                }),
+              )
+              res.end(JSON.stringify({ ok: true, bases: withCounts }))
+              return
+            }
+
+            if (url === '/api/knowledge/bases' && req.method === 'POST') {
+              const body = await readJson(req)
+              const name = String(body?.name || '').trim()
+              if (!name) throw new Error('知识库名称不能为空')
+              // 先本地查重：省一次上游建库请求，也给出更准确的文案
+              const db = openDatabase(resolveRoot(root))
+              if (getKnowledgeBaseByName(db, name)) {
+                const err: any = new Error(`知识库名称已被占用：${name}`)
+                err.code = 'kb_name_taken'
+                throw err
+              }
+              const upstreamSlug = await kbClient.createUpstreamWorkspace(name)
+              const base = createKnowledgeBase(db, { name, upstreamSlug })
+              res.end(JSON.stringify({ ok: true, base }))
+              return
+            }
+
+            const baseMatch = url.match(/^\/api\/knowledge\/bases\/([^/]+)$/)
+            if (baseMatch) {
+              const kbId = decodeURIComponent(baseMatch[1])
+              const db = openDatabase(resolveRoot(root))
+              if (req.method === 'PATCH' || req.method === 'PUT') {
+                const body = await readJson(req)
+                const base = renameKnowledgeBase(db, kbId, String(body?.name || ''))
+                res.end(JSON.stringify({ ok: true, base }))
+                return
+              }
+              if (req.method === 'DELETE') {
+                const row = getKnowledgeBase(db, kbId)
+                if (!row) {
+                  const err: any = new Error(`知识库不存在：${kbId}`)
+                  err.status = 404
+                  throw err
+                }
+                // row 已在上面判空；deleteKnowledgeBase 返回的 base 只是同一行的副本
+                const result = deleteKnowledgeBase(db, kbId)
+                /*
+                 * 尽力删上游 workspace。这一步只清「文档引用集合」，上游的文档池不受
+                 * 影响（workspace 与文档池是两回事），所以删除是安全的。
+                 * 失败只记 warning：外部服务挂了不该让用户删不掉库。
+                 */
+                const warnings: string[] = []
+                try {
+                  const r = await kbClient.deleteWorkspace(row.upstreamSlug)
+                  if (r.deleted === false && r.reason !== 'not-found') {
+                    warnings.push(
+                      `上游知识库未清理（${r.reason || '未知原因'}）：可在 AnythingLLM 控制台删除「${row.upstreamSlug}」`,
+                    )
+                  }
+                } catch (e: any) {
+                  warnings.push(
+                    `上游知识库未清理：${e?.message || String(e)}（可在 AnythingLLM 控制台删除「${row.upstreamSlug}」）`,
+                  )
+                }
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    deleted: result.deleted,
+                    id: kbId,
+                    name: row.name,
+                    sessionsCleared: result.sessionsCleared,
+                    warnings,
+                  }),
+                )
+                return
+              }
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 PATCH / DELETE' }))
+              return
+            }
+
+            // ---- 会话选库：按 dsh 会话隔离 ----
+            if (url === '/api/knowledge/session-kb') {
+              const db = openDatabase(resolveRoot(root))
+              if (req.method === 'GET') {
+                const q = new URL(req.url || '', 'http://x').searchParams
+                /*
+                 * 三态要分开回：没选（kbId 空）、选了有效库（base 有值）、
+                 * 选过的库已被删（kbId 有值但 base 为 null）。第三态界面要提示
+                 * 「重新选择」而不是画成一个空下拉 —— 用户明明选过。
+                 */
+                const picked = getSessionKnowledgeSelection(db, String(q.get('sessionId') || ''))
+                res.end(
+                  JSON.stringify({
+                    ok: true,
+                    sessionId: String(q.get('sessionId') || ''),
+                    kbId: picked?.kbId || '',
+                    base: picked?.base || null,
+                    /** 选过但库没了：界面据此显示「已失效，请重选」 */
+                    gone: Boolean(picked && !picked.base),
+                  }),
+                )
+                return
+              }
+              if (req.method === 'POST') {
+                const body = await readJson(req)
+                const kbId = String(body?.kbId || '').trim()
+                if (!kbId) throw new Error('缺少知识库标识')
+                if (!getKnowledgeBase(db, kbId)) {
+                  const err: any = new Error(`知识库不存在：${kbId}`)
+                  err.status = 404
+                  throw err
+                }
+                setSessionKnowledgeBase(db, String(body?.sessionId || ''), kbId)
+                res.end(JSON.stringify({ ok: true }))
+                return
+              }
+              res.statusCode = 405
+              res.end(JSON.stringify({ ok: false, message: '只支持 GET / POST' }))
+              return
+            }
+
             if (url === '/api/knowledge/docs' && req.method === 'GET') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const project = requireKnowledgeProject(q.get('project'), root)
-              const db = openDatabase(resolveRoot(root))
-              let slug = await kbClient.ensureWorkspace(project, db)
+              const { base, slug } = resolveKnowledgeScope(
+                { kbId: q.get('kbId'), sessionId: q.get('sessionId') },
+                root,
+              )
               let detail
               try {
                 detail = await kbClient.listDocs(slug)
               } catch (e: any) {
-                // 上游库被手工删掉了但映射还在：清掉映射重建一次，不让用户卡在 404
+                // 上游库被手工删了但本地记录还在：给出可读说明，不自动重建（库名由用户定，重建等于造一个空库）
                 if (Number(e?.status) !== 404) throw e
-                deleteKbLink(db, project)
-                slug = await kbClient.ensureWorkspace(project, db)
-                detail = await kbClient.listDocs(slug)
+                const err: any = new Error(`上游知识库「${base.name}」已不存在：可在知识库页删除这条记录后重建`)
+                err.status = 404
+                throw err
               }
-              res.end(JSON.stringify({ ...detail, ok: true, slug }))
+              res.end(JSON.stringify({ ...detail, ok: true, kbId: base.id, slug }))
               return
             }
 
             if (url === '/api/knowledge/upload' && req.method === 'POST') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const project = requireKnowledgeProject(q.get('project'), root)
+              const { base, slug } = requireKnowledgeBase(q.get('kbId'), root)
               const filename = String(q.get('filename') || '').trim()
               // 先按 Content-Length 预拒绝：否则要等整个 Body 读完才报超限
               const declared = Number(req.headers['content-length']) || 0
@@ -6997,95 +7167,86 @@ export function createAppHandler({ root }: { root: string }) {
                 return
               }
               const bytes = await readBody(req, MAX_KB_UPLOAD_BYTES)
-              const db = openDatabase(resolveRoot(root))
-              const slug = await kbClient.ensureWorkspace(project, db)
               const docs = await kbClient.uploadDoc({
                 slug,
                 filename,
                 bytes,
                 mime: String(req.headers['content-type'] || 'application/octet-stream'),
               })
-              res.end(JSON.stringify({ ok: true, slug, documents: docs }))
+              res.end(JSON.stringify({ ok: true, kbId: base.id, slug, documents: docs }))
               return
             }
 
             if (url === '/api/knowledge/remove' && req.method === 'POST') {
               const body = await readJson(req)
-              const project = requireKnowledgeProject(body?.project, root)
-              const db = openDatabase(resolveRoot(root))
-              const slug = await kbClient.ensureWorkspace(project, db)
+              const { base, slug } = requireKnowledgeBase(body?.kbId, root)
               const r = await kbClient.removeDocs(slug, body?.locations)
-              res.end(JSON.stringify({ ok: true, ...r }))
+              res.end(JSON.stringify({ ok: true, kbId: base.id, ...r }))
               return
             }
 
             if (url === '/api/knowledge/purge' && req.method === 'POST') {
               const body = await readJson(req)
-              // 彻底删除不依赖项目映射：文档在实例池里，跨项目共用
+              // 彻底删除不依赖具体库：文档在实例文档池里，可被多个库挂载
               const r = await kbClient.purgeDocs(body?.locations)
               res.end(JSON.stringify({ ok: true, ...r }))
               return
             }
 
-            if (url === '/api/knowledge/history' && req.method === 'GET') {
-              const q = new URL(req.url || '', 'http://x').searchParams
-              const project = requireKnowledgeProject(q.get('project'), root)
-              const db = openDatabase(resolveRoot(root))
-              const slug = await kbClient.ensureWorkspace(project, db)
-              const history = await kbClient.history(slug, {
-                limit: q.get('limit') ? Number(q.get('limit')) : undefined,
-              })
-              res.end(JSON.stringify({ ok: true, slug, history }))
-              return
-            }
-
-            if (url === '/api/knowledge/chat' && req.method === 'POST') {
-              const body = await readJson(req)
-              const project = requireKnowledgeProject(body?.project, root)
-              const db = openDatabase(resolveRoot(root))
-              const slug = await kbClient.ensureWorkspace(project, db)
-              const upstream = await kbClient.chatStream({
-                slug,
-                message: body?.message,
-                reset: Boolean(body?.reset),
-                mode: body?.mode,
-              })
-              // SSE 原样透传：不解析、不改协议，前端按上游事件形状消费
-              res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
-              res.setHeader('Cache-Control', 'no-cache')
-              res.setHeader('Connection', 'keep-alive')
-              res.flushHeaders?.()
-              if (!upstream.body) {
-                res.end()
-                return
-              }
-              try {
-                for await (const chunk of upstream.body as any) {
-                  if (res.writableEnded || res.destroyed) break
-                  res.write(chunk)
-                }
-              } finally {
-                res.end()
-              }
-              return
-            }
-
             if (url === '/api/knowledge/search' && req.method === 'POST') {
               const body = await readJson(req)
-              const project = requireKnowledgeProject(body?.project, root)
-              const db = openDatabase(resolveRoot(root))
-              const slug = await kbClient.ensureWorkspace(project, db)
+              // 界面用 kbId，Agent 工具用 sessionId（见 resolveKnowledgeScope 的注释）
+              const { base, slug } = resolveKnowledgeScope(body, root)
               const hits = await kbClient.search(slug, body?.query, {
                 topN: body?.topN,
                 scoreThreshold: body?.scoreThreshold,
               })
-              res.end(JSON.stringify({ ok: true, hits }))
+              res.end(JSON.stringify({ ok: true, kbId: base.id, hits }))
               return
             }
 
             if (url === '/api/knowledge/doc' && req.method === 'GET') {
               const q = new URL(req.url || '', 'http://x').searchParams
-              const doc = await kbClient.readDoc(String(q.get('docName') || ''))
+              const docName = String(q.get('docName') || '')
+              /*
+               * 有作用域时必须先证明这份文档挂在该库里。
+               *
+               * 上游文档池是实例级共享的：`/v1/document/:name` 只认文件名，
+               * 不认库。不加这一层，模型拿一个别的库的文件名就能读到内容 ——
+               * 规格要求「工具参数无法指向其它库」，所以作用域校验放在这里，
+               * 而不是靠模型自觉。没给作用域的调用（维护页按库查文档）走原路径。
+               */
+              const scoped = String(q.get('kbId') || '').trim() || String(q.get('sessionId') || '').trim()
+              if (scoped) {
+                const { slug } = resolveKnowledgeScope(
+                  { kbId: q.get('kbId'), sessionId: q.get('sessionId') },
+                  root,
+                )
+                let listed
+                try {
+                  listed = await kbClient.listDocs(slug)
+                } catch (e: any) {
+                  if (Number(e?.status) !== 404) throw e
+                  const err: any = new Error('会话选定的知识库在上游已不存在：请重新选择知识库')
+                  err.status = 404
+                  throw err
+                }
+                const want = docName.includes('/') ? docName.slice(docName.lastIndexOf('/') + 1) : docName
+                const hit = (listed.documents || []).find(
+                  (d: any) =>
+                    d.location === docName ||
+                    d.location === want ||
+                    (d.location || '').split('/').pop() === want ||
+                    d.title === docName ||
+                    d.title === want,
+                )
+                if (!hit) {
+                  const err: any = new Error(`这份文档不在本次会话选定的知识库里：${docName}`)
+                  err.status = 404
+                  throw err
+                }
+              }
+              const doc = await kbClient.readDoc(docName)
               res.end(JSON.stringify({ ok: true, ...doc }))
               return
             }

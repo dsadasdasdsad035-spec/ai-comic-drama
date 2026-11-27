@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { projectHealthCore } from '../src/promptAuditCore.mjs'
 
@@ -450,9 +451,25 @@ CREATE TABLE IF NOT EXISTS stock_imports (
   UNIQUE(project_id, provider, item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_stock_imports_url ON stock_imports(project_id, asset_url);
--- 知识库是外部服务（AnythingLLM）的伴生能力：本库只存「项目 → 上游库标识」的映射。
--- 不能由项目名反推标识：上游会把 name 归一成 slug（小写、去空格），撞名时还会追加
--- 唯一后缀（hunter → hunter-2），所以创建后必须回读并落库。
+-- 知识库是独立命名的资源，与项目无关（项目删了库还在）。
+-- id 由本应用生成：库能改名（改名不该换 id），上游 slug 也可能变（撞名后缀 /
+-- 控制台重建），所以两者分开存。upstream_slug 必须由创建后回读上游得到，不能由
+-- 库名反推 —— 上游会把 name 归一成 slug（小写、去空格）并在撞名时追加后缀。
+CREATE TABLE IF NOT EXISTS knowledge_bases (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  upstream_slug TEXT NOT NULL,
+  created_at    TEXT
+);
+-- 会话 → 选定库。不写进 dsh 的 session 文件：那是严格版本化的耐用格式
+-- （session.v4，未知结构抛 SessionFormatError），我们的业务字段会被格式迁移丢掉。
+CREATE TABLE IF NOT EXISTS knowledge_sessions (
+  dsh_session_id TEXT PRIMARY KEY,
+  kb_id          TEXT NOT NULL,
+  updated_at     TEXT
+);
+-- 旧的项目级映射：迁移到 knowledge_bases 后保留不删（老版本回退时数据仍可见），
+-- 代码不再读写它。
 CREATE TABLE IF NOT EXISTS knowledge_links (
   project_name   TEXT PRIMARY KEY,
   workspace_slug TEXT NOT NULL,
@@ -492,6 +509,8 @@ function open(root) {
   // 标记既不可见也不可清理，只会经读工具喂给模型。只跑一次，由 settings 把关。
   const cleaned = cleanupLegacyOrphanMarks()
   if (cleaned) console.log(`[db] 已清理 ${cleaned} 条历史孤儿标记`)
+  // 知识库从项目级改为独立资源：搬一次旧映射，之后由标记键把关不再跑。
+  migrateKnowledgeLinks(db)
   return db
 }
 
@@ -894,6 +913,279 @@ export function setSetting(key, value) {
     `INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
   ).run(key, JSON.stringify(value), new Date().toISOString())
+}
+
+// ---------------------------------------------------------------- 知识库
+
+/**
+ * 知识库迁移的标记键：跑过一次就不再跑。
+ * 与 `LEGACY_ORPHAN_CLEANUP_KEY` 同构 —— 建表语句幂等，但数据搬迁只该发生一次。
+ */
+export const KNOWLEDGE_LINKS_MIGRATED_KEY = 'knowledge.linksMigratedAt'
+
+/**
+ * 把旧的「项目 → 上游库」映射迁成独立知识库（幂等）。
+ *
+ * 背景：库以前从属于项目（`knowledge_links.project_name` 主键），现在库是独立命名
+ * 资源。迁移把每行项目映射变成一条 `knowledge_bases`：`name = project_name`、
+ * `upstream_slug` 原样、`id` 新生成。库名取自项目名，因为那是用户当时能认出的唯一名字。
+ *
+ * 三条不变量：
+ * 1. **先留快照再动数据**：迁移失败或想回退时，`knowledge_links` 的原始内容仍有存档。
+ * 2. **标记键把关**：`settings` 里写过标记就不再迁，避免重复生成 id。
+ * 3. **重名跳过而非失败**：若用户已手工建了同名库，跳过该行并记日志，不让整次迁移挂掉。
+ *
+ * @returns {{ migrated: number, skipped: number, snapshot: string }}
+ */
+export function migrateKnowledgeLinks(d) {
+  const empty = { migrated: 0, skipped: 0, snapshot: '' }
+  if (!d) return empty
+  const done = d.prepare('SELECT value FROM settings WHERE key = ?').get(KNOWLEDGE_LINKS_MIGRATED_KEY)
+  if (done !== undefined) return empty
+
+  let rows = []
+  try {
+    rows = d.prepare('SELECT project_name, workspace_slug, created_at FROM knowledge_links').all()
+  } catch {
+    // 老库可能还没有这张表：没有可迁的就直接标记，避免每次启动重试
+    rows = []
+  }
+
+  // 快照：写到媒体外的 state 目录不方便（这里只有 db 句柄），
+  // 所以存进 settings —— 体量是一个项目名到 slug 的映射，几十行以内。
+  const snapshot = JSON.stringify(
+    rows.map((r) => ({
+      projectName: String(r.project_name || ''),
+      workspaceSlug: String(r.workspace_slug || ''),
+      createdAt: String(r.created_at || ''),
+    })),
+  )
+
+  let migrated = 0
+  let skipped = 0
+  d.exec('BEGIN IMMEDIATE')
+  try {
+    for (const row of rows) {
+      const name = String(row.project_name || '').trim()
+      const slug = String(row.workspace_slug || '').trim()
+      if (!name || !slug) {
+        skipped += 1
+        continue
+      }
+      const existing = d.prepare('SELECT id FROM knowledge_bases WHERE name = ?').get(name)
+      if (existing) {
+        skipped += 1
+        continue
+      }
+      d.prepare('INSERT INTO knowledge_bases (id, name, upstream_slug, created_at) VALUES (?,?,?,?)').run(
+        newKnowledgeBaseId(),
+        name,
+        slug,
+        String(row.created_at || '') || new Date().toISOString(),
+      )
+      migrated += 1
+    }
+    const now = new Date().toISOString()
+    d.prepare(
+      `INSERT INTO settings (key,value,updated_at) VALUES (?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+    ).run(
+      KNOWLEDGE_LINKS_MIGRATED_KEY,
+      JSON.stringify({ at: now, migrated, skipped, snapshot }),
+      now,
+    )
+    d.exec('COMMIT')
+  } catch (e) {
+    try {
+      d.exec('ROLLBACK')
+    } catch {
+      /* 事务已结束 */
+    }
+    console.error('[db] 知识库映射迁移失败：', e?.message || e)
+    return empty
+  }
+  if (migrated || skipped) {
+    console.log(`[db] 知识库迁移：${migrated} 条转独立库，${skipped} 条跳过（重名或数据不全）`)
+  }
+  return { migrated, skipped, snapshot }
+}
+
+/**
+ * 知识库访问器。
+ *
+ * 入参用 `d` 而不是模块级 `db`：路由层走 `openDatabase(root)` 拿独立连接，
+ * 这样验收脚本用临时项目根时不会误用主库（与 `openDatabase` 的注释一致）。
+ *
+ * id 与 name 的关系：id 是稳定主键，改名不换 id；name 有唯一约束，
+ * 重名时抛 SQLITE_CONSTRAINT，由调用方翻成可读错误。
+ */
+
+/** 生成知识库 id：短、稳定、不含库名（库名可改，id 不能跟着变） */
+export function newKnowledgeBaseId() {
+  return `kb_${randomBytes(8).toString('hex')}`
+}
+
+function mapBaseRow(row) {
+  if (!row) return null
+  return {
+    id: String(row.id || ''),
+    name: String(row.name || ''),
+    upstreamSlug: String(row.upstream_slug || ''),
+    createdAt: String(row.created_at || ''),
+  }
+}
+
+export function listKnowledgeBases(d) {
+  return d
+    .prepare('SELECT id, name, upstream_slug, created_at FROM knowledge_bases ORDER BY created_at ASC, name ASC')
+    .all()
+    .map(mapBaseRow)
+}
+
+export function getKnowledgeBase(d, id) {
+  const key = String(id || '').trim()
+  if (!key) return null
+  return mapBaseRow(
+    d.prepare('SELECT id, name, upstream_slug, created_at FROM knowledge_bases WHERE id = ?').get(key),
+  )
+}
+
+/** 按名查：用于「重名检查」与「迁移时避免重复插入」 */
+export function getKnowledgeBaseByName(d, name) {
+  const key = String(name || '').trim()
+  if (!key) return null
+  return mapBaseRow(
+    d.prepare('SELECT id, name, upstream_slug, created_at FROM knowledge_bases WHERE name = ?').get(key),
+  )
+}
+
+/**
+ * 建库。重名时抛出带 `code = 'kb_name_taken'` 的错误，路由层据此回 409。
+ * `upstreamSlug` 必须来自上游回读，不接受调用方编造。
+ */
+export function createKnowledgeBase(d, { name, upstreamSlug, id }) {
+  const cleanName = String(name || '').trim()
+  const cleanSlug = String(upstreamSlug || '').trim()
+  if (!cleanName) throw new Error('知识库名称不能为空')
+  if (!cleanSlug) throw new Error('缺少上游库标识')
+  const rowId = String(id || '').trim() || newKnowledgeBaseId()
+  try {
+    d.prepare('INSERT INTO knowledge_bases (id, name, upstream_slug, created_at) VALUES (?,?,?,?)').run(
+      rowId,
+      cleanName,
+      cleanSlug,
+      new Date().toISOString(),
+    )
+  } catch (e) {
+    if (/UNIQUE/i.test(String(e?.message || ''))) {
+      const err = new Error(`知识库名称已被占用：${cleanName}`)
+      err.code = 'kb_name_taken'
+      throw err
+    }
+    throw e
+  }
+  return getKnowledgeBase(d, rowId)
+}
+
+/** 改名。id 与 upstream_slug 不变；重名同样抛 `kb_name_taken`。 */
+export function renameKnowledgeBase(d, id, name) {
+  const key = String(id || '').trim()
+  const cleanName = String(name || '').trim()
+  if (!key) throw new Error('缺少知识库标识')
+  if (!cleanName) throw new Error('知识库名称不能为空')
+  if (!getKnowledgeBase(d, key)) {
+    const err = new Error(`知识库不存在：${key}`)
+    err.code = 'kb_not_found'
+    throw err
+  }
+  try {
+    d.prepare('UPDATE knowledge_bases SET name = ? WHERE id = ?').run(cleanName, key)
+  } catch (e) {
+    if (/UNIQUE/i.test(String(e?.message || ''))) {
+      const err = new Error(`知识库名称已被占用：${cleanName}`)
+      err.code = 'kb_name_taken'
+      throw err
+    }
+    throw e
+  }
+  return getKnowledgeBase(d, key)
+}
+
+/**
+ * 删库（只删本地记录与引用它的会话选择）。
+ * 上游 workspace 由调用方尽力清理 —— 那是网络操作，不该放进这里。
+ */
+export function deleteKnowledgeBase(d, id) {
+  const key = String(id || '').trim()
+  if (!key) return { deleted: false, base: null, sessionsCleared: 0 }
+  const base = getKnowledgeBase(d, key)
+  if (!base) return { deleted: false, base: null, sessionsCleared: 0 }
+  const cleared = d.prepare('DELETE FROM knowledge_sessions WHERE kb_id = ?').run(key)
+  d.prepare('DELETE FROM knowledge_bases WHERE id = ?').run(key)
+  return { deleted: true, base, sessionsCleared: Number(cleared?.changes) || 0 }
+}
+
+/** 会话选定库。同一会话重复设置以最后一次为准。 */
+export function setSessionKnowledgeBase(d, sessionId, kbId) {
+  const sid = String(sessionId || '').trim()
+  const kid = String(kbId || '').trim()
+  if (!sid) throw new Error('缺少会话标识')
+  if (!kid) throw new Error('缺少知识库标识')
+  d.prepare(
+    `INSERT INTO knowledge_sessions (dsh_session_id, kb_id, updated_at) VALUES (?,?,?)
+     ON CONFLICT(dsh_session_id) DO UPDATE SET kb_id=excluded.kb_id, updated_at=excluded.updated_at`,
+  ).run(sid, kid, new Date().toISOString())
+  return { sessionId: sid, kbId: kid }
+}
+
+/**
+ * 读会话的选库记录：未选返回 null，选了就返回 `{sessionId, kbId, base}`。
+ *
+ * `base` 为 null 表示「选过，但那个库已经不在了」。调用方必须区分这两种情况：
+ * 前者是「还没选」，后者是「选过但被删了」，两者给用户的下一步动作不同
+ * （去选一个 vs 重新选）。所以这里不把两者揉成同一个 null —— 那会让
+ * 「库被删了」被说成「你还没选库」，用户按提示去选时界面上明明显示着已选。
+ */
+export function getSessionKnowledgeSelection(d, sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return null
+  const row = d.prepare('SELECT kb_id FROM knowledge_sessions WHERE dsh_session_id = ?').get(sid)
+  const kbId = String(row?.kb_id || '').trim()
+  if (!kbId) return null
+  return { sessionId: sid, kbId, base: getKnowledgeBase(d, kbId) }
+}
+
+/** 便捷读法：只要「选定的库仍存在」。未选与已删都返回 null。 */
+export function getSessionKnowledgeBase(d, sessionId) {
+  const picked = getSessionKnowledgeSelection(d, sessionId)
+  return picked?.base ? picked : null
+}
+
+export function clearSessionKnowledgeBase(d, sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return 0
+  return Number(d.prepare('DELETE FROM knowledge_sessions WHERE dsh_session_id = ?').run(sid)?.changes) || 0
+}
+
+/**
+ * 清孤儿会话选择：dsh 会话被删除后这里会留下指向它的行。
+ *
+ * `liveSessionIds` 由调用方从 `dsh/sessions/*` 的目录名里读出来传进来；
+ * 传空数组表示「读不到目录」，此时**不清**（宁可留孤儿，也不要因为路径变了
+ * 把用户的选择全删掉）。
+ */
+export function pruneKnowledgeSessions(d, liveSessionIds) {
+  const live = Array.isArray(liveSessionIds) ? liveSessionIds.filter(Boolean) : []
+  if (!live.length) return 0
+  const keep = new Set(live)
+  const rows = d.prepare('SELECT dsh_session_id FROM knowledge_sessions').all()
+  let removed = 0
+  for (const row of rows) {
+    const sid = String(row.dsh_session_id || '')
+    if (keep.has(sid)) continue
+    removed += Number(d.prepare('DELETE FROM knowledge_sessions WHERE dsh_session_id = ?').run(sid)?.changes) || 0
+  }
+  return removed
 }
 
 // ---------------------------------------------------------------- 技能覆盖

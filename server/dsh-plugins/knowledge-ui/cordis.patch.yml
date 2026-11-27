@@ -1,0 +1,7 @@
+# 知识库选择器插件层：只插入一行，把 this bundle 的插件挂进 dsh 插件树。
+#
+# 与 creative-tools 同一机制：profile 的用户层 patch 只能覆盖已有行（按 id），
+# 不能新增；新增行必须来自 bundle 的 patch 层（见 server/dsh-bundle.mjs）。
+- insert:
+    - id: knowledge-ui
+      name: dsh-plugin-knowledge-ui

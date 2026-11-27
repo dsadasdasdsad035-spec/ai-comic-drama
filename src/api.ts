@@ -1559,20 +1559,28 @@ export type KnowledgeDocsResult = {
   documents: KnowledgeDoc[]
 }
 
+/**
+ * 知识库（独立命名，与项目无关）。
+ *
+ * `upstreamSlug` 是上游 workspace 标识：中文库名会被上游归一成不可逆推的 slug，
+ * 所以必须存下来，任何「由库名反推 slug」的写法都是错的。
+ */
+export type KnowledgeBaseSummary = {
+  id: string
+  name: string
+  upstreamSlug: string
+  createdAt: string
+  /** 文档数；列表接口按需回查上游，取不到时省略 */
+  docCount?: number
+  /** 上游 workspace 已不存在（被手工删了）：界面提示删记录后重建 */
+  broken?: boolean
+}
+
 export type KnowledgeSearchHit = {
   text: string
   title: string
   score: number
   location: string
-}
-
-export type KnowledgeSource = { title: string; text: string; score: number }
-
-export type KnowledgeHistoryItem = {
-  role: 'user' | 'assistant'
-  content: string
-  sentAt: number
-  sources: KnowledgeSource[]
 }
 
 export type KnowledgeTestResult = {
@@ -1591,10 +1599,13 @@ export type KnowledgeTestResult = {
 /** 知识库接口的错误：带 `configured` 让页面能区分「没配」与「配了但坏了」 */
 export class KnowledgeError extends Error {
   configured: boolean
-  constructor(message: string, configured: boolean) {
+  /** 服务端错误码（如 kb_session_unset / kb_session_gone）；没有就是空串 */
+  code: string
+  constructor(message: string, configured: boolean, code = '') {
     super(message)
     this.name = 'KnowledgeError'
     this.configured = configured
+    this.code = code
   }
 }
 
@@ -1602,7 +1613,11 @@ async function knowledgeJson<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await apiFetch(path, init)
   const j = await readJsonRes(r)
   if (!j.ok) {
-    throw new KnowledgeError(String(j.message || `知识库请求失败（HTTP ${r.status}）`), j.configured !== false)
+    throw new KnowledgeError(
+      String(j.message || `知识库请求失败（HTTP ${r.status}）`),
+      j.configured !== false,
+      String((j as { code?: string }).code || ''),
+    )
   }
   return j as T
 }
@@ -1615,10 +1630,67 @@ export async function testKnowledge(): Promise<KnowledgeTestResult> {
   return knowledgeJson<KnowledgeTestResult>('/api/knowledge/test', { method: 'POST' })
 }
 
-export async function getKnowledgeDocs(project: string): Promise<KnowledgeDocsResult> {
-  return knowledgeJson<KnowledgeDocsResult>(
-    `/api/knowledge/docs?project=${encodeURIComponent(project)}`,
+export async function getKnowledgeBases(): Promise<KnowledgeBaseSummary[]> {
+  const r = await knowledgeJson<{ bases: KnowledgeBaseSummary[] }>('/api/knowledge/bases')
+  return r.bases
+}
+
+/** 别名：工具层按「动作命名」（list_...），界面按 get 命名，两者同一份实现 */
+export const listKnowledgeBases = getKnowledgeBases
+
+export async function createKnowledgeBase(name: string): Promise<KnowledgeBaseSummary> {
+  const r = await knowledgeJson<{ base: KnowledgeBaseSummary }>('/api/knowledge/bases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  return r.base
+}
+
+export async function renameKnowledgeBase(id: string, name: string): Promise<KnowledgeBaseSummary> {
+  const r = await knowledgeJson<{ base: KnowledgeBaseSummary }>(
+    `/api/knowledge/bases/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    },
   )
+  return r.base
+}
+
+export async function deleteKnowledgeBase(
+  id: string,
+): Promise<{ id: string; name: string; sessionsCleared: number; warnings: string[] }> {
+  return knowledgeJson<{ id: string; name: string; sessionsCleared: number; warnings: string[] }>(
+    `/api/knowledge/bases/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  )
+}
+
+/**
+ * 会话选定的库。`systemId` 是 dsh 会话标识：它由宿主注入，模型看不到也改不了。
+ * 界面在会话头部选库时也走这里，把同一个值写进我们的表。
+ */
+export async function getSessionKnowledgeBase(
+  sessionId: string,
+): Promise<{ kbId: string; base: KnowledgeBaseSummary | null }> {
+  const r = await knowledgeJson<{ kbId: string; base: KnowledgeBaseSummary | null }>(
+    `/api/knowledge/session-kb?sessionId=${encodeURIComponent(sessionId)}`,
+  )
+  return { kbId: r.kbId, base: r.base }
+}
+
+export async function setSessionKnowledgeBase(sessionId: string, kbId: string): Promise<void> {
+  await knowledgeJson<{ ok: true }>('/api/knowledge/session-kb', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, kbId }),
+  })
+}
+
+export async function getKnowledgeDocs(kbId: string): Promise<KnowledgeDocsResult> {
+  return knowledgeJson<KnowledgeDocsResult>(`/api/knowledge/docs?kbId=${encodeURIComponent(kbId)}`)
 }
 
 /** 可接受类型只认上游：不在这里维护第二份扩展名清单 */
@@ -1627,11 +1699,11 @@ export async function getKnowledgeAcceptedTypes(): Promise<{ extensions: string[
 }
 
 export async function uploadKnowledgeDoc(
-  project: string,
+  kbId: string,
   file: File,
-): Promise<{ slug: string; documents: KnowledgeDoc[] }> {
-  return knowledgeJson<{ slug: string; documents: KnowledgeDoc[] }>(
-    `/api/knowledge/upload?project=${encodeURIComponent(project)}&filename=${encodeURIComponent(file.name)}`,
+): Promise<{ kbId: string; documents: KnowledgeDoc[] }> {
+  return knowledgeJson<{ kbId: string; documents: KnowledgeDoc[] }>(
+    `/api/knowledge/upload?kbId=${encodeURIComponent(kbId)}&filename=${encodeURIComponent(file.name)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
@@ -1642,13 +1714,13 @@ export async function uploadKnowledgeDoc(
 
 /** 移出本库：只解绑，文档留在实例文档池 */
 export async function removeKnowledgeDocs(
-  project: string,
+  kbId: string,
   locations: string[],
 ): Promise<{ removed: number }> {
   return knowledgeJson<{ removed: number }>('/api/knowledge/remove', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project, locations }),
+    body: JSON.stringify({ kbId, locations }),
   })
 }
 
@@ -1661,114 +1733,43 @@ export async function purgeKnowledgeDocs(locations: string[]): Promise<{ purged:
   })
 }
 
-export async function getKnowledgeHistory(project: string): Promise<KnowledgeHistoryItem[]> {
-  const r = await knowledgeJson<{ history: KnowledgeHistoryItem[] }>(
-    `/api/knowledge/history?project=${encodeURIComponent(project)}`,
-  )
-  return r.history
-}
-
+/**
+ * 检索。第一个参数是**会话标识**（Agent 工具栏）或库 id（界面用）——
+ * 服务端两种都认：显式 kbId 优先，其次按会话标识查会话选定的库。
+ * 工具 schema 里没有库参数，所以模型无法指定别的库。
+ */
 export async function searchKnowledge(
-  project: string,
+  scope: { sessionId: string } | { kbId: string },
   query: string,
   opts: { topN?: number; scoreThreshold?: number } = {},
 ): Promise<KnowledgeSearchHit[]> {
+  const body =
+    'sessionId' in scope
+      ? { sessionId: scope.sessionId, query, ...opts }
+      : { kbId: scope.kbId, query, ...opts }
   const r = await knowledgeJson<{ hits: KnowledgeSearchHit[] }>('/api/knowledge/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project, query, ...opts }),
+    body: JSON.stringify(body),
   })
   return r.hits
 }
 
+/**
+ * 读全文。带上作用域（会话或库）时服务端会先确认这份文档挂在该库里 ——
+ * 上游文档池是实例级共享的，只认文件名不认库，不校验就等于允许越库读取。
+ */
 export async function readKnowledgeDoc(
+  scope: { sessionId: string } | { kbId: string },
   docName: string,
 ): Promise<{ title: string; text: string; wordCount: number }> {
+  const params = new URLSearchParams({ docName })
+  if ('sessionId' in scope) params.set('sessionId', scope.sessionId)
+  else params.set('kbId', scope.kbId)
   return knowledgeJson<{ title: string; text: string; wordCount: number }>(
-    `/api/knowledge/doc?docName=${encodeURIComponent(docName)}`,
+    `/api/knowledge/doc?${params.toString()}`,
   )
 }
-
-/** SSE 事件形状：上游原样透传，这里只声明我们消费的字段 */
-export type KnowledgeChatEvent = {
-  type?: string
-  textResponse?: string
-  sources?: KnowledgeSource[]
-  close?: boolean
-  error?: string | null
-}
-
-/**
- * 流式问答。
- *
- * 手工解析 SSE 而不上 EventSource：要 POST，且要能中断（AbortSignal）。
- * 上游事件形状保持不变，本函数只做切帧与 JSON 解码。
- */
-export async function streamKnowledgeChat(
-  input: { project: string; message?: string; reset?: boolean },
-  handlers: {
-    onEvent: (ev: KnowledgeChatEvent) => void
-    signal?: AbortSignal
-  },
-): Promise<void> {
-  const res = await apiFetch('/api/knowledge/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(input),
-    signal: handlers.signal,
-  })
-  if (!res.ok || !res.body) {
-    let message = `知识库问答失败（HTTP ${res.status}）`
-    let configured = true
-    try {
-      const j = await readJsonRes(res)
-      message = String(j.message || message)
-      configured = j.configured !== false
-    } catch {
-      /* 非 JSON 响应 */
-    }
-    throw new KnowledgeError(message, configured)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    // 上游以空行分隔事件；半帧留在 buf 里等下一块
-    let idx
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const frame = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      for (const line of frame.split('\n')) {
-        const ev = parseKnowledgeSseLine(line)
-        if (ev) handlers.onEvent(ev)
-      }
-    }
-  }
-  // 收尾：没有以空行结束的最后一帧也要处理
-  for (const line of buf.split('\n')) {
-    const ev = parseKnowledgeSseLine(line)
-    if (ev) handlers.onEvent(ev)
-  }
-}
-
-/** 单行 SSE 解码：非 data 行、[DONE]、坏 JSON 一律跳过（上游有心跳帧） */
-export function parseKnowledgeSseLine(line: string): KnowledgeChatEvent | null {
-  const text = String(line || '').trim()
-  if (!text.startsWith('data:')) return null
-  const payload = text.slice(5).trim()
-  if (!payload || payload === '[DONE]') return null
-  try {
-    const j = JSON.parse(payload) as KnowledgeChatEvent
-    return j && typeof j === 'object' ? j : null
-  } catch {
-    return null
-  }
-}
-
-// ---------------------------------------------------------------- 渠道测试
 
 export type ProviderTestResult = {
   ok: boolean

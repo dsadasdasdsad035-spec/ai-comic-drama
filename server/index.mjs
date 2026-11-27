@@ -564,6 +564,12 @@ const server = http.createServer((req, res) => {
           epNo: episode,
           sessionToken: studioSessionToken,
           expertId: String(body.expertId || ''),
+          /*
+           * 会话标识只用于知识库工具的作用域解析。它由宿主插件从
+           * `exec.agent.session.id` 注入，模型的参数里没有这个字段，
+           * 所以模型没有办法把一次检索指向别的会话选定的库。
+           */
+          sessionId: String(body.sessionId || ''),
         })
         // 业务失败也用 200 返回：宿主据此得到「可读失败」而不是传输错误
         res.end(JSON.stringify(result))

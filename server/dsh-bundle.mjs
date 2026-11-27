@@ -21,6 +21,11 @@ export const CREATIVE_TOOLS_BUNDLE = 'dsh-plugin-creative-tools'
 export const CREATIVE_EXPERT_PLUGIN = 'dsh-plugin-creative-expert'
 /** 上游 Blender 直连 bundle（npm 包 `dsh-blender-plugin`） */
 export const BLENDER_PLUGIN_BUNDLE = 'dsh-blender-plugin'
+/**
+ * 知识库选择器 bundle：浏览器半边在会话头部注册「本会话检索哪个库」下拉。
+ * 与 creative-tools 同为本地 bundle（需要 patch 层才能新增插件行）。
+ */
+export const KNOWLEDGE_UI_PLUGIN = 'dsh-plugin-knowledge-ui'
 
 /**
  * web profile 的基础层。必须完整保留：`dsh.profile.bundles` 是**全量选择**，
@@ -42,6 +47,11 @@ export function blenderPluginDir(root) {
 /** 专家闸门插件源目录 */
 export function expertPluginSourceDir(root) {
   return path.join(root, 'server', 'dsh-plugins', 'creative-expert')
+}
+
+/** 知识库选择器插件源目录 */
+export function knowledgeUiSourceDir(root) {
+  return path.join(root, 'server', 'dsh-plugins', 'knowledge-ui')
 }
 
 /** profile 目录：与 studio-profile.mjs 的 profilePatchPath 保持同一位置约定 */
@@ -202,6 +212,21 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
   const expertDest = path.join(target, 'node_modules', CREATIVE_EXPERT_PLUGIN)
   if (copyPluginPackage(expertPluginSourceDir(root), expertDest, ['index.js', 'package.json'], log)) changed = true
 
+  // 知识库选择器是 bundle（浏览器半边 + patch 层）：需要 index.js / client.js /
+  // package.json / cordis.patch.yml 四件套，缺 client.js 就没有插槽组件。
+  const knowledgeSource = knowledgeUiSourceDir(root)
+  const knowledgeDest = path.join(target, 'node_modules', KNOWLEDGE_UI_PLUGIN)
+  if (
+    copyPluginPackage(
+      knowledgeSource,
+      knowledgeDest,
+      ['index.js', 'client.js', 'package.json', 'cordis.patch.yml'],
+      log,
+    )
+  ) {
+    changed = true
+  }
+
   // profile 的 package.json：dsh 按 dependencies + dsh.profile.bundles 决定加载哪些层
   const manifestPath = path.join(target, 'package.json')
   let manifest = {}
@@ -220,6 +245,7 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
   manifest.dependencies[CREATIVE_TOOLS_BUNDLE] = `file:${source}`
   // 闸门插件是普通依赖（无 dsh.bundle），装进 profile 只为能被按名解析
   manifest.dependencies[CREATIVE_EXPERT_PLUGIN] = `file:${expertPluginSourceDir(root)}`
+  manifest.dependencies[KNOWLEDGE_UI_PLUGIN] = `file:${knowledgeUiSourceDir(root)}`
   const bundles = Array.isArray(manifest.dsh?.profile?.bundles) && manifest.dsh.profile.bundles.length
     ? [...manifest.dsh.profile.bundles]
     : [...BASE_BUNDLES]
@@ -228,6 +254,7 @@ export function installCreativeToolsBundle({ dshHome, root, log = () => {} }) {
     if (!bundles.includes(base)) bundles.unshift(base)
   }
   if (!bundles.includes(CREATIVE_TOOLS_BUNDLE)) bundles.push(CREATIVE_TOOLS_BUNDLE)
+  if (!bundles.includes(KNOWLEDGE_UI_PLUGIN)) bundles.push(KNOWLEDGE_UI_PLUGIN)
   const blenderPkg = blenderPluginDir(root)
   const blenderEntry = path.join(blenderPkg, 'lib', 'index.js')
   if (fs.existsSync(blenderEntry)) {

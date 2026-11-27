@@ -27,6 +27,16 @@ import { expandStudioToolCatalog, resolveStudioToolName } from './studio-tool-al
 
 const SKILL_ID_READ_TOOLS = new Set(SKILL_READ_TOOLS.filter((n) => n !== 'list_installed_skills'))
 
+/**
+ * 知识库工具名。作用域是「本次会话选定的库」，所以每次调用都要现建一份闭包，
+ * 不能复用按项目缓存的那张工具表（多会话并发会串库）。
+ */
+const KNOWLEDGE_TOOL_NAMES_SET = new Set([
+  'list_knowledge_bases',
+  'search_knowledge',
+  'read_knowledge_doc',
+])
+
 /** 内部令牌请求头：宿主进程是唯一持有者，浏览器请求带不上它 */
 export const INTERNAL_TOKEN_HEADER = 'x-studio-internal'
 
@@ -73,6 +83,8 @@ export class StudioToolBridge {
       typeof onProjectWrite === 'function' ? onProjectWrite : () => {}
     this.log = log
     this.context = { internalToken, sessionToken: '' }
+    /** 建表时用的会话标识初值；每次 invoke 会用现建闭包覆盖它 */
+    this.invokeSessionId = ''
     this.module = null
     this.tools = new Map()
     this.loadedProject = ''
@@ -118,6 +130,37 @@ export class StudioToolBridge {
     this.context.sessionToken = String(token || '')
   }
 
+  /**
+   * 知识库工具的作用域来源。
+   *
+   * 这里只是「建表时的初值」：多会话并发时这个字段会互相覆盖，所以 invoke
+   * 命中知识库工具时**不用**这份工具表里的闭包，而是按本次 sessionId 现建
+   * （见 invoke）。留这个字段是为了让工具表在无会话上下文时也有确定行为，
+   * 不至于建出一个永远回「没有会话」的表。
+   */
+  setInvokeSessionId(sessionId) {
+    this.invokeSessionId = String(sessionId || '').trim()
+  }
+
+  /**
+   * 按会话标识现建三个知识库工具。
+   *
+   * 为什么不用工厂里的 `input.sessionId` 那一份：那是建表时捕获的旧值。
+   * 这里每次传入本次调用的 sessionId，闭包只活一次调用。
+   * 产物里没有这个工厂（老 bundle / 精简产物）时返回 null，调用方退回原工具。
+   */
+  createKnowledgeToolset(sessionId) {
+    const factory = this.module?.createKnowledgeTools
+    if (typeof factory !== 'function') return null
+    try {
+      const tools = factory({ sessionId: () => String(sessionId || '') })
+      return new Map(tools.map((tool) => [tool.name, tool]))
+    } catch (e) {
+      this.log(`[studio-tools] 现建知识库工具失败，退回工具表：${e?.message || String(e)}`)
+      return null
+    }
+  }
+
   /** 加载工具 bundle 并建好工具表；产物被重建或项目上下文变化时重建 */
   async ensureLoaded(projectName, epNo) {
     const bundle = path.join(this.root, 'server-build', 'studio-tools.mjs')
@@ -153,6 +196,8 @@ export class StudioToolBridge {
     const platform = this.module.createBuiltinPlatformTools({
       projectName: projectName || '',
       epNo: epNo || 1,
+      // 知识库工具的作用域依赖会话标识；每次 invoke 还会现建一份（见 invoke 里的说明）
+      sessionId: this.invokeSessionId,
       onProjectDataChanged: notifyWrite,
       expertAllowlist: () => this.invokeExpertAllowlist,
       ...this.canvasHooks(projectName),
@@ -192,11 +237,24 @@ export class StudioToolBridge {
    * 参数先按同一份 zod schema 校验：缺必填字段时抛错且**不执行**工具体，
    * 错误文本里带字段名，模型据此补齐后重试。
    */
-  async invoke(name, args, { projectName, epNo, sessionToken, expertId } = {}) {
+  async invoke(name, args, { projectName, epNo, sessionToken, expertId, sessionId } = {}) {
     const tools = await this.ensureLoaded(projectName, epNo)
     if (typeof this.resetReadSnapshot === 'function') this.resetReadSnapshot()
     const resolvedName = resolveStudioToolName(name)
-    const tool = tools.get(resolvedName)
+    let tool = tools.get(resolvedName)
+    /*
+     * 知识库工具按本次会话**现建**，不复用工具表里的那份。
+     *
+     * 工具表按 `${projectName} ${epNo}` 缓存，而知识库作用域是会话级的：
+     * 同一项目里两个标签页各选一个库，复用缓存表就会让后选的那个覆盖先选的，
+     * 先选的会话拿到**另一个库**的结果 —— 这不是账目误差，是错误答案。
+     * 三个 zod 工具的创建代价是微秒级，换一个不会串味的闭包值得。
+     */
+    const needsFreshKnowledge = KNOWLEDGE_TOOL_NAMES_SET.has(resolvedName)
+    if (needsFreshKnowledge) {
+      const fresh = this.createKnowledgeToolset(String(sessionId || '').trim())
+      if (fresh) tool = fresh.get(resolvedName) ?? tool
+    }
     if (!tool) {
       return { ok: false, error: `没有名为「${name}」的工具` }
     }

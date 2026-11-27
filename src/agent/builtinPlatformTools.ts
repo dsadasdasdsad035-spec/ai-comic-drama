@@ -124,6 +124,15 @@ export type BuiltinPlatformCtx = {
    * 由 StudioToolBridge 在 invoke 前通过闭包注入，不扩展工具对外 schema。
    */
   expertAllowlist?: () => readonly string[] | null | undefined
+  /**
+   * 当前对话的会话标识，只给知识库工具用。
+   *
+   * 为什么不复用 projectName：库与项目已解耦（见 openspec 变更
+   * knowledge-base-library-model），会话选定的库与打开的项目无关。
+   * 宿主每次调用都会注入真实值；空串表示没有会话上下文，知识库工具会
+   * 如实回「还没选库」而不是猜一个。
+   */
+  sessionId?: string
 }
 
 function resolveEpNo(input: BuiltinPlatformCtx): number {
@@ -1068,8 +1077,8 @@ export function createBuiltinPlatformTools(input: BuiltinPlatformCtx): ToolDef[]
   byName.set('generate_narration', createGenerateNarrationTool(input))
   // 案例库是全局作用域，与 list_projects 同层：不碰项目快照，未选项目也能查
   for (const t of createPromptCaseTools()) byName.set(t.name, t)
-  // 知识库：项目名从上下文注入，工具参数里没有项目字段（作用域由服务端钉死）
-  for (const t of createKnowledgeTools({ projectName: () => input.projectName })) {
+  // 知识库：会话标识从上下文注入，工具参数里没有任何库字段（作用域由服务端钉死）
+  for (const t of createKnowledgeTools({ sessionId: () => input.sessionId || '' })) {
     byName.set(t.name, t)
   }
   for (const t of createMaterialTools({

@@ -12,4 +12,9 @@
 export { createBuiltinPlatformTools, mergeBuiltinWithSkillTools } from '../src/agent/builtinPlatformTools'
 export { createPiNativeToolSet } from '../src/agent/stageTools'
 export { modelFacingResult } from '../src/agent/agentToolResult'
+/*
+ * 知识库工具单独出口：桥要在每次调用时按会话标识**现建**一份（作用域是会话级的，
+ * 复用按项目缓存的那张工具表会让并发会话互相串库）。导出的是同一个工厂，不是副本。
+ */
+export { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from '../src/agent/knowledgeTools'
 export type { ToolDef } from '../src/agent/tool'

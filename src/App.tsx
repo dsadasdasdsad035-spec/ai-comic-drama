@@ -43,6 +43,7 @@ import {
   accountHash,
   clearLastView,
   hubHash,
+  knowledgeHash,
   navigate,
   parseHash,
   projectHash,
@@ -4122,6 +4123,40 @@ function Shell() {
             accountReady={session.status !== 'loading'}
           />
         </div>
+      ) : gated.kind === 'knowledge' ? (
+        /*
+         * 全局知识库页：库是独立命名的资源，与项目无关。
+         * 所以它不套 AppShell（外壳需要项目身份块与集选择器），
+         * 而是自己一整屏，带回大厅的入口 —— 与账号页同一形态。
+         */
+        <div className="app kb-global" data-knowledge-global>
+          <header className="topbar">
+            <nav className="crumbs" aria-label="位置">
+              <button type="button" className="crumb crumb-hub" onClick={replaceWithHub} title="返回项目大厅">
+                项目
+              </button>
+              <span className="crumb-sep" aria-hidden>
+                /
+              </span>
+              <span className="crumb crumb-view" aria-current="page">
+                知识库
+              </span>
+            </nav>
+            <div className="spacer" />
+            <div className="topbar-tools">
+              <ThemeToggle />
+            </div>
+          </header>
+          <div className="app-main">
+            <KnowledgeView
+              toast={(m) => {
+                setToast(m)
+                window.setTimeout(() => setToast(''), 3000)
+              }}
+              onOpenSettings={() => changeView('settings', { settingsSection: 'knowledge' })}
+            />
+          </div>
+        </div>
       ) : gated.kind === 'account' ? (
         /*
          * 账号页不套 AppShell：未登录时左栏所有项目菜单都不可用，留着外壳
@@ -4143,6 +4178,8 @@ function Shell() {
         projectTitle={currentSummary.title || projectName}
         onNavigate={changeView}
         onReturnHub={replaceWithHub}
+        onOpenGlobal={(hash) => navigate(hash)}
+        activeGlobal={route.kind === 'knowledge' ? knowledgeHash() : ''}
         projectSlot={
           <ProjectMenu
             currentProjectName={projectName}
@@ -4200,15 +4237,6 @@ function Shell() {
             // 创意会话整体交给宿主：这里只放容器与错误态
             <StudioFrame projectName={projectName} />
           ) : null
-        ) : view === 'knowledge' ? (
-          <KnowledgeView
-            projectName={projectName}
-            toast={(m) => {
-              setToast(m)
-              window.setTimeout(() => setToast(''), 3000)
-            }}
-            onOpenSettings={() => changeView('settings', { settingsSection: 'knowledge' })}
-          />
         ) : view === 'settings' ? (
           <Settings
             currentProjectName={projectName}

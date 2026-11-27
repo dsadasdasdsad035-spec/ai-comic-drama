@@ -115,6 +115,54 @@ export declare function saveChatThread(
 ): ReturnType<typeof getChatThread>
 export declare function deleteChatThread(key: ChatThreadKey): void
 
+/* ---------------------------------------------------------------- 知识库 */
+
+export declare type KnowledgeBase = {
+  id: string
+  name: string
+  upstreamSlug: string
+  createdAt: string
+}
+
+export declare const KNOWLEDGE_LINKS_MIGRATED_KEY: string
+
+/** 把旧的 knowledge_links 迁成独立知识库（幂等，由 settings 标记键把关） */
+export declare function migrateKnowledgeLinks(d: unknown): {
+  migrated: number
+  skipped: number
+  snapshot: string
+}
+
+export declare function newKnowledgeBaseId(): string
+export declare function listKnowledgeBases(d: unknown): KnowledgeBase[]
+export declare function getKnowledgeBase(d: unknown, id: string): KnowledgeBase | null
+export declare function getKnowledgeBaseByName(d: unknown, name: string): KnowledgeBase | null
+export declare function createKnowledgeBase(
+  d: unknown,
+  input: { name: string; upstreamSlug: string; id?: string },
+): KnowledgeBase
+export declare function renameKnowledgeBase(d: unknown, id: string, name: string): KnowledgeBase
+export declare function deleteKnowledgeBase(
+  d: unknown,
+  id: string,
+): { deleted: boolean; base: KnowledgeBase | null; sessionsCleared: number }
+export declare function setSessionKnowledgeBase(
+  d: unknown,
+  sessionId: string,
+  kbId: string,
+): { sessionId: string; kbId: string }
+/** 选了但库已被删：`base` 为 null，调用方据此区分「未选」与「选过但没了」 */
+export declare function getSessionKnowledgeSelection(
+  d: unknown,
+  sessionId: string,
+): { sessionId: string; kbId: string; base: KnowledgeBase | null } | null
+export declare function getSessionKnowledgeBase(
+  d: unknown,
+  sessionId: string,
+): { sessionId: string; kbId: string; base: KnowledgeBase } | null
+export declare function clearSessionKnowledgeBase(d: unknown, sessionId: string): number
+export declare function pruneKnowledgeSessions(d: unknown, liveSessionIds: string[]): number
+
 export declare type StockImportRecord = {
   provider: string
   itemId: string

@@ -22,18 +22,11 @@ export const DEFAULT_KB_BASE_URL = 'http://127.0.0.1:3001'
 /** 单文件上传上限。全量 Buffer 驻留内存，所以上限写死并在读 Body 前按 Content-Length 预拒绝。 */
 export const MAX_KB_UPLOAD_BYTES = 100 * 1024 * 1024
 
-/** 会话分区前缀：问答历史靠这个前缀按项目隔离，不另存本地消息。 */
-export const KB_SESSION_PREFIX = 'sb-'
-
-/**
- * 问答默认模式：`query` = 纯 RAG（检索 → 作答，不调工具）。
- *
- * 为什么不是 `chat`：实测真实上游在 `chat` 模式下会启用 Agent，模型可能去调
- * `web-browsing` 之类的联网工具，撞到工具调用上限，还会被网上的同名词条带偏
- * （实测把「沈砚」查到一部同名网剧上）。知识库问答的语义是「只依据这些文档」，
- * `query` 正是这个语义，且 1-2 秒就返回。
+/*
+ * 问答相关的常量（`KB_SESSION_PREFIX` / `DEFAULT_KB_CHAT_MODE`）已随自写问答面板
+ * 一起删除：问答收敛到创意会话，上游不再有本应用的问答会话分区。
+ * 上游里既有的按库问答历史不删、不迁移，只是不再从这里访问。
  */
-export const DEFAULT_KB_CHAT_MODE = 'query'
 
 /** 回环主机名：这些地址直连，绝不过代理。 */
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '0.0.0.0'])
@@ -100,12 +93,6 @@ export function validateKbBaseUrl(base) {
   return ''
 }
 
-/** 该会话分区标识；同一项目恒定，便于回读历史。 */
-export function kbSessionId(workspaceSlug) {
-  const slug = String(workspaceSlug || '').trim()
-  return slug ? `${KB_SESSION_PREFIX}${slug}` : KB_SESSION_PREFIX
-}
-
 /** 映射表里读出的 slug 是否可用。空串与非法字符都要重建，不能拿去请求上游。 */
 export function isUsableSlug(slug) {
   return SLUG_RE.test(String(slug || '').trim())
@@ -154,13 +141,20 @@ export function translateKbError(err, opts = {}) {
   }
   if (status === 404 || lower.includes('not found')) {
     /*
-     * 404 有两个来源，不能都翻译成「上游库没了」：
-     * - 本地前置校验（requireKnowledgeProject）判项目不存在 → 文案里带「项目」，
-     *   原文已经说清楚了，直接透传
-     * - 上游库被手工删除 → 提示「重开页面会自动重建」
+     * 404 有四个来源，不能都翻译成「上游库没了」：
+     * - 本地前置校验（requireKnowledgeBase）判库不存在 → 文案带「知识库不存在」
+     * - 会话选定的库被删 → 文案带「已被删除」，要求重选
+     * - 作用域校验判文档不在本库 → 文案带「不在本次会话选定的知识库里」
+     * - 上游文档不存在 → 文案带「文档」
      */
-    if (lower.includes('项目')) return raw
-    return '知识库在上游不存在了（可能被手工删除）：重新打开页面会自动重建'
+    if (
+      lower.includes('知识库不存在') ||
+      lower.includes('文档') ||
+      lower.includes('已被删除')
+    ) {
+      return raw
+    }
+    return '上游知识库已不存在：可在知识库页删除这条记录后重新创建'
   }
   if (status === 400 && lower.includes('workspace')) {
     return '上游拒绝了知识库操作：请检查服务的 workspace 配置'
@@ -315,57 +309,9 @@ export function assertDocLocations(list) {
 }
 
 /** 上游 SSE 的单个事件帧：`data: {...}`。非 JSON 帧返回 null 而不抛错（上游有心跳帧）。 */
-export function parseSseDataLine(line) {
-  const text = String(line || '')
-  if (!text.startsWith('data:')) return null
-  const payload = text.slice(5).trim()
-  if (!payload || payload === '[DONE]') return null
-  try {
-    return JSON.parse(payload)
-  } catch {
-    return null
-  }
-}
-
-// ---------------------------------------------------------------- 映射表
-
-/**
- * 读项目的上游库标识。
- *
- * 返回空串表示「还没有映射」，调用方应当建库；返回非空但不合法（历史脏数据）
- * 也当作没有映射，由调用方重建 —— 拿着脏 slug 请求上游只会得到 400。
- */
-export function readKbLink(db, projectName) {
-  const name = String(projectName || '').trim()
-  if (!name) return ''
-  try {
-    const row = db.prepare('SELECT workspace_slug FROM knowledge_links WHERE project_name = ?').get(name)
-    const slug = String(row?.workspace_slug || '').trim()
-    return isUsableSlug(slug) ? slug : ''
-  } catch {
-    return ''
-  }
-}
-
-/** 写映射。覆盖写：重建库后 slug 变了也要跟着更新。 */
-export function writeKbLink(db, projectName, workspaceSlug) {
-  const name = String(projectName || '').trim()
-  const slug = String(workspaceSlug || '').trim()
-  if (!name) throw new Error('缺少项目名')
-  if (!isUsableSlug(slug)) throw new Error(`上游返回的知识库标识不合法：${slug || '(空)'}`)
-  db.prepare(
-    `INSERT INTO knowledge_links (project_name, workspace_slug, created_at) VALUES (?,?,?)
-     ON CONFLICT(project_name) DO UPDATE SET workspace_slug=excluded.workspace_slug`,
-  ).run(name, slug, new Date().toISOString())
-  return slug
-}
-
-/** 删映射。项目删除时调用；失败不抛，调用方只关心最终有没有残留。 */
-export function deleteKbLink(db, projectName) {
-  const name = String(projectName || '').trim()
-  if (!name) return 0
-  const res = db.prepare('DELETE FROM knowledge_links WHERE project_name = ?').run(name)
-  return Number(res?.changes) || 0
+export function baseSlugOf(base) {
+  const slug = String(base?.upstreamSlug || '').trim()
+  return isUsableSlug(slug) ? slug : ''
 }
 
 // ---------------------------------------------------------------- 客户端
@@ -574,19 +520,26 @@ export function createKnowledgeClient(deps) {
    * 2. 没有映射 → 按项目名建库，回读上游返回的 slug 落表；
    * 3. 建库返回 400（同名已存在，常见于映射丢失）→ 按 name 在列表里找回。
    */
-  async function ensureWorkspace(projectName, db) {
-    const name = String(projectName || '').trim()
-    if (!name) throw new Error('缺少项目名')
-
-    const existing = db ? readKbLink(db, name) : ''
-    if (existing) return existing
+  /**
+   * 在上游创建知识库，返回上游 slug。
+   *
+   * 与旧的 `ensureWorkspace(projectName)` 的区别：
+   * - **不查本地映射**（本地 id ↔ slug 的对应由调用方用 db 访问器管）；
+   * - **不由项目名派生**，只接受用户起的库名；
+   * - 建库被拒（同名已存在）时按 name 找回，避免在用户库里堆出 `运镜手册-2`。
+   *
+   * 库名允许中文与空格：上游会归一成 slug，我们只回读结果，不猜。
+   */
+  async function createUpstreamWorkspace(name) {
+    const wanted = String(name || '').trim()
+    if (!wanted) throw new Error('缺少知识库名称')
 
     let created
     try {
       created = await json('/v1/workspace/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name: wanted }),
       })
     } catch (e) {
       if (Number(e?.status) !== 400) throw e
@@ -594,22 +547,16 @@ export function createKnowledgeClient(deps) {
     }
 
     const slug = String(created?.workspace?.slug || '').trim()
-    if (slug) {
-      if (db) writeKbLink(db, name, slug)
-      return slug
-    }
+    if (slug && isUsableSlug(slug)) return slug
 
-    // 建库被拒（同名已存在）：按 name 找回，避免在用户项目里堆出 hunter-2
+    // 建库被拒（同名已存在）：按 name 找回，不重复建库
     const list = await json('/v1/workspaces')
     const found = (Array.isArray(list?.workspaces) ? list.workspaces : []).find(
-      (w) => String(w?.name || '').trim() === name,
+      (w) => String(w?.name || '').trim() === wanted,
     )
     const foundSlug = String(found?.slug || '').trim()
-    if (foundSlug && isUsableSlug(foundSlug)) {
-      if (db) writeKbLink(db, name, foundSlug)
-      return foundSlug
-    }
-    throw new Error(`无法为项目「${name}」创建知识库：上游未返回可用标识`)
+    if (foundSlug && isUsableSlug(foundSlug)) return foundSlug
+    throw new Error(`无法创建知识库「${wanted}」：上游未返回可用标识`)
   }
 
   /** 单个库的详情（含文档清单）。上游这里返回的 workspace 是数组，已兼容。 */
@@ -705,63 +652,7 @@ export function createKnowledgeClient(deps) {
     return { purged: list.length }
   }
 
-  /**
-   * 流式问答：把上游 SSE 的原始流交回调用方转发。
-   *
-   * 不在这里解析事件：上游的事件形状（`textResponse` / `sources` / `close`）
-   * 前端要原样消费，中间再包一层只会让协议漂移。
-   */
-  async function chatStream({ slug, message, reset = false, mode = DEFAULT_KB_CHAT_MODE }) {
-    const body = reset
-      ? { reset: true }
-      : { message: String(message || ''), mode, sessionId: kbSessionId(slug) }
-    const res = await request(`/v1/workspace/${encodeURIComponent(slug)}/stream-chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify(body),
-      // 问答可能比普通请求久：模型生成时间不可控
-      signal: AbortSignal.timeout(Math.max(timeoutMs, 180_000)),
-    })
-    return res
-  }
-
   /** 非流式问答。给只需要最终文本的场景用（例如将来的摘要素材）。 */
-  async function chat({ slug, message, reset = false, mode = DEFAULT_KB_CHAT_MODE }) {
-    const body = reset
-      ? { reset: true }
-      : { message: String(message || ''), mode, sessionId: kbSessionId(slug) }
-    const j = await json(`/v1/workspace/${encodeURIComponent(slug)}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (j?.error && !j?.textResponse) {
-      const err = new Error(String(j.error))
-      err.upstreamMessage = String(j.error)
-      throw err
-    }
-    return {
-      text: stripReasoning(j?.textResponse),
-      sources: normalizeSources(j?.sources),
-    }
-  }
-
-  /** 问答历史。只读上游，不落本地副本。 */
-  async function history(slug, opts = {}) {
-    const params = new URLSearchParams()
-    params.set('apiSessionId', String(opts.sessionId || kbSessionId(slug)))
-    params.set('limit', String(Number(opts.limit) || 100))
-    params.set('orderBy', opts.orderBy === 'desc' ? 'desc' : 'asc')
-    const j = await json(`/v1/workspace/${encodeURIComponent(slug)}/chats?${params.toString()}`)
-    const list = Array.isArray(j?.history) ? j.history : []
-    return list.map((m) => ({
-      role: m?.role === 'assistant' ? 'assistant' : 'user',
-      content: String(m?.content || ''),
-      sentAt: Number(m?.sentAt) || 0,
-      sources: normalizeSources(m?.sources),
-    }))
-  }
-
   /** 向量检索：不经 LLM，Agent 工具用它。 */
   async function search(slug, query, opts = {}) {
     const q = String(query || '').trim()
@@ -913,15 +804,12 @@ export function createKnowledgeClient(deps) {
   return {
     config,
     test,
-    ensureWorkspace,
+    createUpstreamWorkspace,
     workspaceDetail,
     listDocs,
     uploadDoc,
     removeDocs,
     purgeDocs,
-    chatStream,
-    chat,
-    history,
     search,
     readDoc,
     acceptedTypes,
@@ -931,29 +819,13 @@ export function createKnowledgeClient(deps) {
 }
 
 /**
- * 剥掉模型输出里的推理块。
- *
- * 实测：MiniMax 系模型经上游调用时会在正文前输出 `<think>…</think>`（英文推理），
- * 上游原样把它并进 `textResponse`。用户看到「答案」里夹着一段英文思考过程，
- * 既像 bug 又泄露内部推理。这里按成对标签剥离；只有开标签没有闭标签时
- * （流式截断的常见形态）从开标签处整段丢弃 —— 宁可少一段也不漏半截推理。
- */
-export function stripReasoning(text) {
-  let out = String(text || '')
-  for (let i = 0; i < 5; i++) {
-    const next = out.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
-    if (next === out) break
-    out = next
-  }
-  out = out.replace(/<think(?:ing)?>[\s\S]*$/gi, '')
-  return out.trim()
-}
-
-/**
  * 剥掉命中片段里的上游元数据头。
  *
  * AnythingLLM 的向量片段开头会带一段 `<document_metadata>sourceDocument: …</document_metadata>`，
  * 那是它给模型的上下文标注，对用户只有噪音（标题本来就单独显示了）。
+ *
+ * 为什么留在服务端而不是只在界面剥：这条路径同时喂模型（search_knowledge 的片段）
+ * 与界面（引用/片段预览），两头都得干净。
  */
 export function stripChunkMetadata(text) {
   return String(text || '')
@@ -961,18 +833,7 @@ export function stripChunkMetadata(text) {
     .trim()
 }
 
-/** 上游 sources 的形状在各版本间有出入，这里一次收敛成前端要的三个字段。 */
-export function normalizeSources(raw) {
-  const list = Array.isArray(raw) ? raw : []
-  return list
-    .map((s) => ({
-      title: String(s?.title || s?.metadata?.title || s?.chunkSource || '').trim(),
-      text: stripChunkMetadata(s?.chunk || s?.text || s?.score?.text || ''),
-      score: Number(s?.score ?? s?.similarity ?? 0) || 0,
-    }))
-    .filter((s) => s.title || s.text)
-}
-
+/** 读上游错误正文用于报错；失败不掩盖原始 HTTP 状态。 */
 async function safeText(res) {
   try {
     const t = await res.text()

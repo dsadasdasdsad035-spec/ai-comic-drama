@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { ChevronLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { NAV_GROUPS, NAV_ITEMS, type ViewId } from './nav'
+import { GLOBAL_NAV_ITEMS, NAV_GROUPS, NAV_ITEMS, type ViewId } from './nav'
 
 export type SideNavProps = {
   view: ViewId
@@ -24,6 +24,13 @@ export type SideNavProps = {
    * 只当作加速信号，不影响导航本身；不传就是纯静态导航。
    */
   onIntent?: (view: ViewId) => void
+  /**
+   * 打开全局页面（知识库）。与 `onNavigate` 分开：那个只认项目视图 id，
+   * 而知识库是 `#/knowledge` 这种全局 hash，不需要也不该带着项目走。
+   */
+  onOpenGlobal?: (hash: string) => void
+  /** 当前是否停在某个全局页；用于高亮（项目视图下为空） */
+  activeGlobal?: string
 }
 
 /**
@@ -44,6 +51,8 @@ export default function SideNav({
   footer,
   hiddenViews = [],
   onIntent,
+  onOpenGlobal,
+  activeGlobal = '',
 }: SideNavProps) {
   return (
     <aside className="rail" data-collapsed={collapsed ? 'true' : 'false'} aria-label="项目导航">
@@ -98,6 +107,32 @@ export default function SideNav({
             </div>
           )
         })}
+        {onOpenGlobal && GLOBAL_NAV_ITEMS.length ? (
+          <div className="rail-group" role="group" aria-label="全局" key="global">
+            <div className="rail-group-title" aria-hidden>
+              全局
+            </div>
+            {GLOBAL_NAV_ITEMS.map((item) => {
+              const Icon = item.icon
+              const active = item.hash === activeGlobal
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={active ? 'on' : ''}
+                  data-global-nav={item.id}
+                  aria-current={active ? 'page' : undefined}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => onOpenGlobal(item.hash)}
+                >
+                  <Icon size={16} aria-hidden className="rail-icon" />
+                  <span className="rail-label">{item.label}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
       </nav>
 
       <div className="rail-foot">

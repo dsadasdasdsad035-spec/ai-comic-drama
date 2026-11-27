@@ -8,12 +8,20 @@
  * /api/text 与 dsh 的差别只有传输层，模型看到的工具 JSON Schema 完全同源
  * （都来自 src/agent/knowledgeTools.ts 的 zod → JSON Schema）。
  *
- * 跑法：KB_APP_BASE=http://127.0.0.1:62946 KB_PROJECT=tooltest node verify-knowledge-model-tool.mjs
+ * 需要会话选库：脚本自己调 `/api/knowledge/session-kb` 把库绑到 `KB_SESSION`，
+ * 因为工具作用域只认会话（schema 里没有库字段）。
+ *
+ * 跑法：KB_APP_BASE=http://127.0.0.1:62946 KB_SESSION=tooltest-sess KB_KB=<库id> \
+ *       node verify-knowledge-model-tool.mjs
  */
 import { StudioToolBridge } from './server/studio-tool-bridge.mjs'
 
 const BASE = String(process.env.KB_APP_BASE || '').replace(/\/+$/, '')
 const PROJECT = String(process.env.KB_PROJECT || 'tooltest')
+/** 会话标识：知识库工具的作用域来源，必须先在服务端绑定一个库 */
+const SESSION = String(process.env.KB_SESSION || `tooltest-${Date.now().toString().slice(-6)}`)
+/** 要绑定的库 id；不传就取列表里第一个 */
+let KB_ID = String(process.env.KB_KB || '').trim()
 /** 显式模型键：默认模型可能因订阅过期不可用，验证工具调用应指定一个能跑的 */
 const MODEL_KEY = String(process.env.KB_MODEL_KEY || '')
 
@@ -47,7 +55,11 @@ const bridge = new StudioToolBridge({
 })
 const catalog = await bridge.catalog(PROJECT, 1)
 const kbTools = catalog.filter((t) => /knowledge/i.test(t.name))
-check('工具表里有知识库工具', kbTools.length === 2, kbTools.map((t) => t.name).join(', '))
+check('工具表里有三个知识库工具', kbTools.length === 3, kbTools.map((t) => t.name).join(', '))
+check(
+  '模型可见的库清单工具也在（未选库时模型能列出可选项）',
+  kbTools.some((t) => t.name === 'list_knowledge_bases'),
+)
 
 // 2. 把工具声明转成 /api/text 要的 function 定义
 const toolSchemas = kbTools.map((t) => ({
@@ -59,9 +71,29 @@ const toolSchemas = kbTools.map((t) => ({
   },
 }))
 check(
-  '工具声明里没有 project 字段（作用域由服务端钉死）',
-  toolSchemas.every((t) => !Object.keys(t.function.parameters?.properties || {}).includes('project')),
+  '工具声明里没有任何库/项目/会话字段（作用域由服务端钉死）',
+  toolSchemas.every((t) =>
+    ['project', 'kbId', 'sessionId', 'workspace', 'slug'].every(
+      (k) => !Object.keys(t.function.parameters?.properties || {}).includes(k),
+    ),
+  ),
 )
+
+// 2.5 把一个库绑到本脚本的会话上，否则工具会如实回「还没选库」
+if (!KB_ID) {
+  const list = await api('/api/knowledge/bases')
+  KB_ID = String((list.body?.bases || [])[0]?.id || '')
+}
+if (!KB_ID) {
+  console.error('没有可用的知识库：请先在「知识库」页建一个并上传资料（或用 KB_KB 指定）')
+  process.exit(2)
+}
+const bound = await api('/api/knowledge/session-kb', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sessionId: SESSION, kbId: KB_ID }),
+})
+check('会话已绑定知识库', bound.body?.ok === true, bound.body?.message || String(bound.status))
 
 // 3. 真实模型对话：问一个必须查资料才知道的问题
 const question = '沈砚在哪一场正式登场？如果项目知识库里没有资料就明说不知道。'
@@ -110,7 +142,8 @@ if (calls.length) {
     }
   }
   if (/knowledge/i.test(name)) {
-    const exec = await bridge.invoke(name, args, { projectName: PROJECT, epNo: 1 })
+    // 关键：sessionId 走 invoke 的上下文（与 dsh 插件同一条路径），不进模型参数
+    const exec = await bridge.invoke(name, args, { projectName: PROJECT, epNo: 1, sessionId: SESSION })
     check(`执行模型给的参数`, exec.ok === true, exec.ok ? 'ok' : String(exec.summary?.error || '').slice(0, 80))
     if (exec.ok) {
       const hits = exec.summary?.hits || []

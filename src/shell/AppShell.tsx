@@ -22,6 +22,10 @@ export type AppShellProps = {
   hiddenViews?: ViewId[]
   /** 入口的提前意图（指针悬停 / 键盘聚焦），用于预热重视图 */
   onIntent?: (view: ViewId) => void
+  /** 全局页面入口（知识库）：目标 hash */
+  onOpenGlobal?: (hash: string) => void
+  /** 当前全局页的 hash（项目视图下为空），用于左栏高亮 */
+  activeGlobal?: string
   children: ReactNode
 }
 
@@ -46,6 +50,8 @@ export default function AppShell({
   onToggleCollapsed,
   hiddenViews = [],
   onIntent,
+  onOpenGlobal,
+  activeGlobal,
   children,
 }: AppShellProps) {
   const item = navItemOf(view)
@@ -83,6 +89,8 @@ export default function AppShell({
           hiddenViews={hiddenViews}
           onIntent={onIntent}
           onNavigate={onNavigate}
+          onOpenGlobal={onOpenGlobal}
+          activeGlobal={activeGlobal}
           projectSlot={projectSlot}
           collapsed={collapsed}
           onToggleCollapsed={onToggleCollapsed}

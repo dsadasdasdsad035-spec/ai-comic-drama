@@ -23,6 +23,7 @@
     "list_prompt_cases",
     "get_prompt_case",
     "read_prompt_case_facets",
+    "list_knowledge_bases",
     "read_knowledge_doc",
     "search_knowledge",
     "read_skill",

@@ -14,6 +14,11 @@ export type Route =
   | { kind: 'hub' }
   /** 全局账号页；next 是登录成功后要去的 hash（仅采纳合法的项目路由） */
   | { kind: 'account'; next?: string }
+  /**
+   * 全局知识库页。库是独立命名的资源，与项目无关，所以不放进 `ViewId`：
+   * 放进项目视图组就意味着「必须先开一个项目才能管库」，而库本来就跨项目。
+   */
+  | { kind: 'knowledge' }
   | { kind: 'project'; project: string; view: ViewId }
 
 export const ROUTE_EVENT = 'sb-route'
@@ -35,6 +40,11 @@ export function hubHash(): string {
 
 export function projectHash(project: string, view: ViewId): string {
   return `#/p/${encodeURIComponent(project)}/${view}`
+}
+
+/** 全局知识库页地址 */
+export function knowledgeHash(): string {
+  return '#/knowledge'
 }
 
 /**
@@ -72,7 +82,8 @@ function parseAccountNext(rest: string): string | undefined {
  * 解析 hash。手输链接、刷新、返回键都走这里：
  * - 空 / 非 #/ 开头 / 段数不对 → 大厅
  * - `#/account` → 全局账号页（带校验后的 next）
- * - `#/p/<项目>/account` → 归一成全局账号页（历史书签与旧链接）
+ * - `#/knowledge` → 全局知识库页
+ * - `#/p/<项目>/account` / `#/p/<项目>/knowledge` → 归一成对应的全局页
  * - 项目名解不出来 → 大厅
  * - 视图不认识（含历史上的 prompts / table）→ 概览
  */
@@ -86,6 +97,8 @@ export function parseHash(rawHash: string): Route {
     const next = parseAccountNext(rest)
     return next ? { kind: 'account', next } : { kind: 'account' }
   }
+  // 全局知识库页：库跨项目，没有项目也能进
+  if (rest === 'knowledge') return { kind: 'knowledge' }
   const parts = rest.split('/')
   if (parts[0] !== 'p' || parts.length < 2) return { kind: 'hub' }
   let project = ''
@@ -100,9 +113,10 @@ export function parseHash(rawHash: string): Route {
     primeMaterialTabCharacter()
     return { kind: 'project', project, view: 'assets' }
   }
-  // 账号页曾经是项目视图：旧链接必须是「重定向到全局账号页」，
+  // 账号页、知识库页曾经是项目视图：旧链接必须是「重定向到全局页」，
   // 不能因为 ViewId 里已经没有它而落到「未知视图回落概览」。
   if (rawView === 'account') return { kind: 'account' }
+  if (rawView === 'knowledge') return { kind: 'knowledge' }
   const view: ViewId = isViewId(rawView) ? rawView : 'overview'
   return { kind: 'project', project, view }
 }

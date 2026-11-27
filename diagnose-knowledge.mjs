@@ -1,24 +1,27 @@
 /**
- * 知识库「聊天命中」诊断：检查一条提问从本应用打到上游的完整链路。
+ * 知识库诊断：检查「检索命中」从本应用到上游的完整链路。
  *
- * 为什么需要它：用户看到「There is no relevant information...」时，可能是
- * 空库、向量未就绪、阈值过高或模式不对 —— 这些原因在界面上长得一模一样。
+ * 为什么需要它：用户看到「库里查不到内容」时，可能是空库、向量未就绪、
+ * 阈值过高或上游没配 embedder —— 这些原因在界面上长得一模一样。
  * 这个脚本逐层打印，把「哪一层断了」定位到一步。
  *
+ * 只跑检索，不跑问答：问答已收敛到创意会话（Agent 工具），
+ * 因此本脚本零 LLM token 成本。
+ *
  * 跑法：
- *   node diagnose-knowledge.mjs <项目名> ["问题"] [--base http://127.0.0.1:59107]
+ *   node diagnose-knowledge.mjs <库名或库id> ["查询词"] [--base http://127.0.0.1:59107]
  */
 import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 
 const args = process.argv.slice(2)
-const project = String(args[0] || '').trim()
-const question = String(args[1] || '这份文档讲了什么？').trim()
+const kbArg = String(args[0] || '').trim()
+const query = String(args[1] || '这份文档讲了什么？').trim()
 const baseIdx = args.indexOf('--base')
 const APP = baseIdx >= 0 ? args[baseIdx + 1] : 'http://127.0.0.1:59107'
 
-if (!project) {
-  console.error('用法：node diagnose-knowledge.mjs <项目名> ["问题"] [--base <应用地址>]')
+if (!kbArg) {
+  console.error('用法：node diagnose-knowledge.mjs <库名或库id> ["查询词"] [--base <应用地址>]')
   process.exit(2)
 }
 
@@ -34,10 +37,10 @@ function readAppSettings() {
   const db = new DatabaseSync(f, { readOnly: true })
   try {
     const row = db.prepare(`SELECT value FROM settings WHERE key='app'`).get()
-    const link = db.prepare('SELECT workspace_slug FROM knowledge_links WHERE project_name = ?').get(project)
+    const bases = db.prepare('SELECT id, name, upstream_slug FROM knowledge_bases').all()
     return {
       knowledge: row ? JSON.parse(row.value).knowledge || {} : {},
-      slug: String(link?.workspace_slug || ''),
+      bases: bases.map((b) => ({ id: b.id, name: b.name, upstreamSlug: b.upstream_slug })),
     }
   } finally {
     db.close()
@@ -54,9 +57,9 @@ async function j(path, init) {
   }
 }
 
-console.log(`项目：${project}`)
+console.log(`库：${kbArg}`)
 console.log(`应用：${APP}`)
-console.log(`问题：${question}`)
+console.log(`查询：${query}`)
 
 // 1. 本应用设置
 step(1, '本应用的知识库设置')
@@ -67,9 +70,8 @@ if (!app) {
 }
 const kb = app.knowledge
 info(`baseUrl = ${kb.baseUrl || '(空)'}`)
-info(`enabled = ${kb.enabled}`)
 info(`enabled = ${kb.enabled}, hasApiKey = ${Boolean(kb.apiKey)}`)
-if (!kb.enabled || !kb.baseUrl) {
+if (kb.enabled === false || !kb.baseUrl) {
   bad('本应用还没配置知识库，视图会显示引导页')
   process.exit(1)
 }
@@ -77,42 +79,52 @@ ok('本应用已配置')
 
 // 2. 上游连通 + 认证
 step(2, '上游连通与认证')
-const kbApiKey = String(kb.apiKey || '').trim()
 const testR = await j('/api/knowledge/test', { method: 'POST' })
 if (!testR.body?.ok) {
   bad(`连接失败：${testR.body?.message || testR.status}`)
   process.exit(1)
 }
-ok(`认证通过，上游有 ${testR.body.workspaceCount} 个库`)
-const llm = testR.body.llm
-if (llm) info(`模型推送：${llm.ok ? '成功' : '失败 ' + llm.error}`)
+ok(`认证通过，上游有 ${testR.body.workspaceCount} 个 workspace`)
 
-// 3. 项目 → 库映射
-step(3, '项目 → 上游库映射')
-const docsR = await j(`/api/knowledge/docs?project=${encodeURIComponent(project)}`)
+// 3. 库定位（库名或 id 都认）
+step(3, '库定位')
+const base =
+  app.bases.find((b) => b.id === kbArg) || app.bases.find((b) => b.name === kbArg) || null
+if (!base) {
+  bad(`本地库表里找不到「${kbArg}」`)
+  info(`现有库：${app.bases.map((b) => `${b.name}(${b.id})`).join('、') || '(空)'}`)
+  process.exit(1)
+}
+ok(`找到库：${base.name}`)
+info(`id = ${base.id}`)
+info(`上游 slug = ${base.upstreamSlug || '(空)'}`)
+
+// 4. 文档清单
+step(4, '文档清单（上游实时回查）')
+const docsR = await j(`/api/knowledge/docs?kbId=${encodeURIComponent(base.id)}`)
 if (!docsR.body?.ok) {
   bad(`取文档清单失败：${docsR.body?.message}`)
   process.exit(1)
 }
-const slug = docsR.body.slug
 const docCount = docsR.body.docCount
-info(`slug = ${slug}`)
 info(`文档数 = ${docCount}`)
 const docs = docsR.body.documents || []
-for (const d of docs.slice(0, 8)) info(`   · ${d.title || d.location}${d.wordCount ? ` (${d.wordCount} 词)` : ''}`)
+for (const d of docs.slice(0, 8)) {
+  info(`   · ${d.title || d.location}${d.wordCount ? ` (${d.wordCount} 词)` : ''}`)
+}
 if (!docCount) {
-  bad('库是空的 —— 这就是「There is no relevant information」的直接原因')
-  console.log('\n结论：先往这个项目上传文档，或确认你打开的是有资料的那个项目。')
+  bad('库是空的 —— 这就是「查不到内容」的直接原因')
+  console.log('\n结论：先往这个库上传文档（知识库页 → 选库 → 上传文档）。')
   process.exit(1)
 }
 ok(`库里已有 ${docCount} 份文档`)
 
-// 4. 向量是否真的写入
-step(4, '向量索引（上游 LanceDB）')
+// 5. 向量是否真的写入
+step(5, '向量索引（上游 LanceDB）')
 const vs = await j('/api/knowledge/search', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ project, query: question, topN: 4 }),
+  body: JSON.stringify({ kbId: base.id, query, topN: 4 }),
 })
 if (!vs.body?.ok) {
   bad(`检索失败：${vs.body?.message}`)
@@ -126,56 +138,27 @@ if (!hits.length) {
 }
 ok(`命中 ${hits.length} 段`)
 for (const h of hits.slice(0, 4)) {
-  info(`   · score=${Number(h.score || 0).toFixed(3)} ${h.title || '(无标题)'} :: ${String(h.text || '').slice(0, 60).replace(/\s+/g, ' ')}`)
+  info(
+    `   · score=${Number(h.score || 0).toFixed(3)} ${h.title || '(无标题)'} :: ${String(h.text || '').slice(0, 60).replace(/\s+/g, ' ')}`,
+  )
 }
 const maxScore = Math.max(...hits.map((h) => Number(h.score) || 0))
 if (maxScore < 0.25) {
   console.log(`\n   ⚠️ 最高分 ${maxScore.toFixed(3)} 低于上游默认阈值 0.25 —— 上游可能因此判定「无相关内容」`)
 }
-
-// 5. 真实问答
-step(5, '真实问答（走本应用 SSE）')
-const t0 = Date.now()
-const res = await fetch(`${APP}/api/knowledge/chat`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ project, message: question }),
-})
-const raw = await res.text()
-const ms = Date.now() - t0
-let answer = ''
-let sources = []
-for (const frame of raw.split('\n\n')) {
-  const line = frame.trim()
-  if (!line.startsWith('data:')) continue
-  const payload = line.slice(5).trim()
-  if (!payload || payload === '[DONE]') continue
-  let ev
-  try {
-    ev = JSON.parse(payload)
-  } catch {
-    continue
-  }
-  if (ev.textResponse) answer += ev.textResponse
-  if (Array.isArray(ev.sources) && ev.sources.length) sources = ev.sources
-}
-const cleaned = answer
-  .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
-  .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
-  .trim()
-info(`耗时 ${ms}ms`)
-info(`原始长度 ${answer.length}，剥掉推理块后 ${cleaned.length}`)
-info(`引用 ${sources.length} 段：${sources.map((s) => s.title).join('、') || '(无)'}`)
-if (!cleaned) {
-  bad('剥掉推理块后回答为空 —— 推理占满了输出预算')
-} else if (/no relevant information/i.test(cleaned)) {
-  bad('上游判定「库内无相关内容」')
-  console.log('   可能原因：文档仍在解析 / 向量化失败 / 相似度低于阈值 / 问题与内容完全不相关')
+if (hits.some((h) => /<document_metadata>/i.test(String(h.text || '')))) {
+  bad('片段里还有 <document_metadata> 头（stripChunkMetadata 没生效）')
 } else {
-  ok('回答：' + cleaned.slice(0, 160).replace(/\s+/g, ' '))
-  if (answer.length > cleaned.length * 1.5) {
-    console.log(`   ⚠️ 推理块占了 ${Math.round((1 - cleaned.length / answer.length) * 100)}% 的输出，建议换输出更干净的型号`)
-  }
+  ok('片段已剥掉上游元数据头')
 }
 
-console.log('\n完成。')
+// 6. Agent 工具实际返回什么（模型看到的那一份）
+step(6, 'Agent 工具返回（模型可见摘要）')
+const snip = (t, max = 600) => (String(t).length > max ? `${String(t).slice(0, max)}…（片段已截断）` : String(t))
+for (const h of hits.slice(0, 2)) {
+  info(`   摘要长度 ${snip(h.text).length} / 原文 ${String(h.text || '').length}`)
+}
+if (hits.every((h) => snip(h.text).length <= 620)) ok('摘要已按 600 字截断')
+else bad('摘要没有被截断 —— 检查 knowledgeTools 的 SNIPPET_MAX')
+
+console.log('\n完成。要验「模型会不会主动调工具」，用创意会话提问，或跑 verify-knowledge-model-tool.mjs。')

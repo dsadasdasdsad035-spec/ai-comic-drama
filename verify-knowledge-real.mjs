@@ -1,40 +1,44 @@
 /**
- * 真实 AnythingLLM 验收（task 5.4）：跑真上游，不用 mock。
+ * 真实 AnythingLLM 验收（库维度）：跑真上游，不用 mock。
  *
  * 前置：一个可用的 AnythingLLM 实例（默认 127.0.0.1:3001）+ API Key，
- * 且它内部已配好对话模型与 embedder（问答要真能出结果）。
+ * 且它内部已配好 embedder（向量检索要能出结果）。
  *
  * 覆盖：
  * 1. 连接自检（/v1/auth + workspace 列表）
- * 2. 建库（回读上游 slug）
+ * 2. 建库（回读上游 slug；同名不堆重复库）
  * 3. 上传 md 与 PDF，等 collector 解析完成
  * 4. 文档清单里两份都在
- * 5. 真实问答：回答里能看到正确事实 + sources 非空且有片段
- * 6. 向量检索：命中期望的文档
- * 7. 移出库
+ * 5. 向量检索：命中期望的文档
+ * 6. 库隔离：另一个库查不到这份资料
+ * 7. 移出库（只解绑）
  *
- * 会产生少量上游 LLM token 费用（几次问答），不涉及 Seedance。
+ * **不跑问答**：问答已收敛到创意会话（Agent 工具），这里只验检索链路。
+ * 向量检索不经 LLM，因此本脚本零 LLM token 成本，也不涉及 Seedance。
  *
  * 跑法：
  *   ANYTHINGLLM_BASE_URL=http://127.0.0.1:3001 \
  *   ANYTHINGLLM_API_KEY=xxxx \
  *   node verify-knowledge-real.mjs
  *
- * 可选：SB_PROJECTS_DIR 指定隔离项目根（强烈建议，避免碰真实库）。
+ * 可选：SB_PROJECTS_DIR 指定隔离库根（强烈建议，避免碰真实库）。
  */
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDatabase } from './server/db.mjs'
+import {
+  createKnowledgeBase,
+  deleteKnowledgeBase,
+  getKnowledgeBaseByName,
+  openDatabase,
+} from './server/db.mjs'
 import { createKnowledgeClient, translateKbError } from './server/knowledge.mjs'
 import { applyKbEnvDefaults } from './server/knowledge-settings.mjs'
 
 const BASE = String(process.env.ANYTHINGLLM_BASE_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '')
 const KEY = String(process.env.ANYTHINGLLM_API_KEY || '').trim()
-const PROJECT = String(process.env.KB_TEST_PROJECT || 'kbreal').trim()
-/** 问答允许的最长等待：真模型可能慢 */
-const CHAT_TIMEOUT_MS = Number(process.env.KB_CHAT_TIMEOUT_MS) || 180_000
+const KB_NAME = String(process.env.KB_TEST_NAME || `真实验收库-${Date.now().toString().slice(-5)}`).trim()
 
 let bad = 0
 async function check(name, fn) {
@@ -82,8 +86,8 @@ const MD = String(process.env.KB_MD_PATH || findFixture('kb-verify-world.md'))
 const PDF = String(process.env.KB_PDF_PATH || findFixture('kb-src.pdf'))
 
 console.log(`上游：${BASE}`)
-console.log(`项目：${PROJECT}`)
-console.log(`映射库：${path.join(ROOT, 'storyboard.sqlite')}\n`)
+console.log(`库名：${KB_NAME}`)
+console.log(`本地库文件：${path.join(ROOT, 'storyboard.sqlite')}\n`)
 
 let slug = ''
 
@@ -96,12 +100,16 @@ try {
   })
 
   await check('建库并回读上游 slug', async () => {
-    slug = await client.ensureWorkspace(PROJECT, db)
+    const before = (await client.test()).workspaceCount
+    slug = await client.createUpstreamWorkspace(KB_NAME)
     assert.ok(slug, '应当拿到上游标识')
     console.log(`   slug = ${slug}`)
-    // 再调一次必须复用，不重复建库
-    const again = await client.ensureWorkspace(PROJECT, db)
-    assert.equal(again, slug, '已有映射时不应重建')
+    createKnowledgeBase(db, { name: KB_NAME, upstreamSlug: slug })
+    // 同名再建一次：上游会拒绝，客户端应回落到「按名字找回」而不是新建
+    const again = await client.createUpstreamWorkspace(KB_NAME)
+    assert.equal(again, slug, '同名库应找回同一个 slug，不重复建')
+    const after = (await client.test()).workspaceCount
+    assert.equal(after, before + 1, `上游库数应只 +1，实际 ${before} → ${after}`)
   })
 
   await check('上传 markdown', async () => {
@@ -151,54 +159,6 @@ try {
     )
   })
 
-  await check('真实问答：回答正确且带引用', async () => {
-    const res = await client.chatStream({ slug, message: '沈砚在哪一场正式登场？只说场合名。' })
-    const text = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('问答超时')), CHAT_TIMEOUT_MS)
-      let acc = ''
-      let sources = []
-      ;(async () => {
-        try {
-          for await (const chunk of res.body) {
-            acc += Buffer.from(chunk).toString('utf8')
-          }
-          clearTimeout(timer)
-          resolve(acc)
-        } catch (e) {
-          clearTimeout(timer)
-          reject(e)
-        }
-      })()
-    })
-    // 解析 SSE：取最后的 sources，拼所有 textResponse
-    let answer = ''
-    let sources = []
-    for (const frame of String(text).split('\n\n')) {
-      const line = frame.trim()
-      if (!line.startsWith('data:')) continue
-      const payload = line.slice(5).trim()
-      if (!payload || payload === '[DONE]') continue
-      let ev
-      try {
-        ev = JSON.parse(payload)
-      } catch {
-        continue
-      }
-      if (ev.textResponse) answer += ev.textResponse
-      if (Array.isArray(ev.sources) && ev.sources.length) sources = ev.sources
-    }
-    console.log(`   回答：${answer.slice(0, 200).replace(/\s+/g, ' ')}`)
-    console.log(`   引用来源：${sources.map((s) => s.title).join('、') || '(无)'}`)
-    assert.ok(answer.trim().length > 0, '回答不能为空')
-    assert.ok(/雨夜巷口/.test(answer), `回答应包含「雨夜巷口」，实际：${answer.slice(0, 200)}`)
-    assert.ok(sources.length > 0, '应当带引用来源（sources 非空）')
-    // 真实上游 source 的片段字段是 text（不是 chunk）；这里两种都认，
-    // 因为断言的是「引用里有真实文档内容」，不是上游用哪个键名。
-    const srcText = sources.map((s) => `${s.title || ''} ${s.text || s.chunk || ''}`).join(' ')
-    console.log(`   引用片段预览：${srcText.slice(0, 120).replace(/\s+/g, ' ')}…`)
-    assert.ok(/沈砚|雨夜巷口|符牌/.test(srcText), '引用片段里应有真实文档内容')
-  })
-
   await check('Agent 工具能用同一客户端检索（search_knowledge 的底层）', async () => {
     const hits = await client.search(slug, '核心道具是什么', { topN: 3 })
     assert.ok(hits.length > 0)
@@ -225,13 +185,28 @@ try {
       '移出后清单不应再有测试文档',
     )
   })
+  await check('库隔离：新建的空库查不到这份资料', async () => {
+    const otherSlug = await client.createUpstreamWorkspace(`${KB_NAME}-空`)
+    try {
+      const hits = await client.search(otherSlug, '沈砚在哪一场登场', { topN: 3 })
+      assert.equal(hits.length, 0, `空库不该命中，实际 ${hits.length} 段`)
+      const detail = await client.listDocs(otherSlug)
+      assert.equal(detail.docCount, 0, '空库清单应为 0')
+      console.log('   空库 0 命中、0 文档')
+    } finally {
+      await client.deleteWorkspace(otherSlug).catch(() => {})
+    }
+  })
 } catch (e) {
   console.error(`\n未预期的失败：${translateKbError(e)}`)
   bad += 1
 } finally {
+  // 本地库行一并清掉：这是临时库文件，留着只会让下次跑出现重名
+  const row = getKnowledgeBaseByName(db, KB_NAME)
+  if (row) deleteKnowledgeBase(db, row.id)
   db.close()
 }
 
 console.log(bad ? `\n${bad} 项失败` : '\n真实上游验收全部通过')
-console.log(`映射库保留在：${ROOT}（测试库可用 ${BASE} 控制台删除 slug=${slug || '(未创建)'}）`)
+console.log(`上游可能残留 slug=${slug || '(未创建)'}：如需清理，可在 ${BASE} 控制台删除`)
 process.exit(bad ? 1 : 0)

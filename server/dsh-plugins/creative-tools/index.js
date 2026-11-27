@@ -188,6 +188,12 @@ export function apply(ctx, config) {
                       project: callProject,
                       episode: callEpisode,
                       expertId: String(exec?.studioExpertId || ''),
+                      /*
+                       * 会话标识：知识库工具的作用域是「本次会话选定的库」。
+                       * 会话 id 由宿主注入在 exec.agent.session 上，模型既看不到
+                       * 也传不进来 —— 它只能从 args 里填参数，而 args 里没有这个字段。
+                       */
+                      sessionId: String(exec?.agent?.session?.id || exec?.session?.id || exec?.sessionId || ''),
                     },
                     exec?.signal,
                   )

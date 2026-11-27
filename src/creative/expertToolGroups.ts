@@ -46,7 +46,9 @@ const READ = new Set([
   'get_prompt_case',
   'read_prompt_case_facets',
   'list_projects',
-  // 知识库检索：只读、无成本（上游 vector-search 不经 LLM），所以归「读项目」
+  // 知识库：只读、无成本（上游 vector-search 不经 LLM），所以归「读项目」。
+  // list_knowledge_bases 也是读：它只列库，不改选定。
+  'list_knowledge_bases',
   'search_knowledge',
   'read_knowledge_doc',
 ])
@@ -132,6 +134,7 @@ export const DEFAULT_EXPERT_PLATFORM_TOOLS = [
   'list_prompt_cases',
   'get_prompt_case',
   'read_prompt_case_facets',
+  'list_knowledge_bases',
   'search_knowledge',
   'read_knowledge_doc',
   'read_skill',

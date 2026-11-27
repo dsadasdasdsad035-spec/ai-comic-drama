@@ -2,12 +2,10 @@
 
 export declare const DEFAULT_KB_BASE_URL: string
 export declare const MAX_KB_UPLOAD_BYTES: number
-export declare const KB_SESSION_PREFIX: string
 
 export declare function kbBaseCandidates(base: string): string[]
 export declare function isLoopbackBase(base: string): boolean
 export declare function validateKbBaseUrl(base: string): string
-export declare function kbSessionId(workspaceSlug: string): string
 export declare function isUsableSlug(slug: string): boolean
 export declare function translateKbError(
   err: unknown,
@@ -31,13 +29,7 @@ export declare function normalizeUploadedDocs(
   fallbackName?: string,
 ): { location: string; title: string; wordCount: number }[]
 export declare function assertDocLocations(list: unknown): string[]
-export declare function parseSseDataLine(line: string): Record<string, unknown> | null
-export declare function normalizeSources(
-  raw: unknown,
-): { title: string; text: string; score: number }[]
-export declare function readKbLink(db: unknown, projectName: string): string
-export declare function writeKbLink(db: unknown, projectName: string, workspaceSlug: string): string
-export declare function deleteKbLink(db: unknown, projectName: string): number
+export declare function baseSlugOf(base: { upstreamSlug?: string } | null): string
 
 export interface KbDoc {
   location: string
@@ -74,7 +66,7 @@ export interface KnowledgeClient {
     authenticated: boolean
     workspaceCount: number
   }>
-  ensureWorkspace(projectName: string, db?: unknown): Promise<string>
+  createUpstreamWorkspace(name: string): Promise<string>
   workspaceDetail(slug: string): Promise<KbWorkspaceDetail>
   listDocs(slug: string): Promise<KbWorkspaceDetail>
   uploadDoc(input: {
@@ -85,22 +77,6 @@ export interface KnowledgeClient {
   }): Promise<KbDoc[]>
   removeDocs(slug: string, locations: unknown): Promise<{ removed: number }>
   purgeDocs(locations: unknown): Promise<{ purged: number }>
-  chatStream(input: {
-    slug: string
-    message?: string
-    reset?: boolean
-    mode?: string
-  }): Promise<Response>
-  chat(input: {
-    slug: string
-    message?: string
-    reset?: boolean
-    mode?: string
-  }): Promise<{ text: string; sources: { title: string; text: string; score: number }[] }>
-  history(
-    slug: string,
-    opts?: { sessionId?: string; limit?: number; orderBy?: 'asc' | 'desc' },
-  ): Promise<KbChatHistoryItem[]>
   search(
     slug: string,
     query: string,

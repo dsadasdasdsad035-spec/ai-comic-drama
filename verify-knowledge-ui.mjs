@@ -1,11 +1,13 @@
 /**
- * 知识库设置面板 + 知识库视图的 UI 验收（Playwright-core，临时 dev server + mock 上游）。
+ * 知识库 UI 验收（Playwright-core，临时 dev server + mock 上游，零成本）。
  *
  * 覆盖：
- * - 设置 → 连接与模型 → 知识库 入口、表单、检查清单、Key 不回显；
- * - 未配置时知识库视图显示引导（不是报错）；
- * - 配置后能建库、上传、看到清单；
- * - 问答无命中时明确标注「没有命中」，不冒充知识库结论。
+ * - 设置 → 连接与模型 → 知识库 入口、表单、Key 不回显、env 兜底显示；
+ * - 全局路由 `#/knowledge` 打得开（且旧链接 `#/p/<项目>/knowledge` 落到同一个全局页）；
+ * - 未配置时显示引导（不是报错框）；
+ * - 建库 → 上传 → 改名 → 删库的完整维护链路；
+ * - **没有提问输入框、没有消息流**（问答只在创意会话里）；
+ * - 删除库的确认文案说明「文档不会被从文档池删除」，取消则不删。
  *
  * 跑法：node verify-knowledge-ui.mjs
  */
@@ -32,7 +34,7 @@ seed(
 // ---------------------------------------------------------------- mock AnythingLLM
 
 function startMock() {
-  const state = { workspaces: new Map(), nextId: 1, chats: [], calls: [] }
+  const state = { workspaces: new Map(), nextId: 1, calls: [] }
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
     // 真实上游在 /api/v1/*；mock 两种前缀都接受
@@ -66,9 +68,10 @@ function startMock() {
       if (p === '/v1/workspaces') return send(200, { workspaces: [...state.workspaces.values()] })
       const one = p.match(/^\/v1\/workspace\/([^/]+)$/)
       if (one) {
-        const ws = state.workspaces.get(decodeURIComponent(one[1]))
+        const slug = decodeURIComponent(one[1])
+        const ws = state.workspaces.get(slug)
         if (req.method === 'DELETE') {
-          state.workspaces.delete(decodeURIComponent(one[1]))
+          state.workspaces.delete(slug)
           return send(200, {})
         }
         return send(200, { workspace: ws ? [{ ...ws }] : [] })
@@ -94,39 +97,12 @@ function startMock() {
         if (ws) ws.documents = ws.documents.filter((d) => !deletes.includes(d.location))
         return send(200, { workspace: ws })
       }
-      const chats = p.match(/^\/v1\/workspace\/([^/]+)\/chats$/)
-      if (chats) {
-        const sid = url.searchParams.get('apiSessionId') || ''
-        return send(200, {
-          history: state.chats
-            .filter((c) => !sid || c.sessionId === sid)
-            .map((c) => ({ role: c.role, content: c.content, sentAt: c.sentAt, sources: c.sources })),
-        })
-      }
-      const stream = p.match(/^\/v1\/workspace\/([^/]+)\/stream-chat$/)
-      if (stream) {
-        const ws = state.workspaces.get(decodeURIComponent(stream[1]))
-        const body = j()
-        if (body.reset) {
-          state.chats = []
-          res.writeHead(200, { 'Content-Type': 'text/event-stream' })
-          return res.end(`data: ${JSON.stringify({ type: 'textResponse', textResponse: '', sources: [], close: true })}\n\n`)
+      if (p === '/v1/system/remove-documents') {
+        const { names = [] } = j()
+        for (const ws of state.workspaces.values()) {
+          ws.documents = ws.documents.filter((d) => !names.includes(d.location))
         }
-        // 故意不返回 sources：验「没命中要明说」这条
-        state.chats.push({ sessionId: body.sessionId, role: 'user', content: body.message, sentAt: 1, sources: [] })
-        state.chats.push({
-          sessionId: body.sessionId,
-          role: 'assistant',
-          content: '我猜是第三场',
-          sentAt: 2,
-          sources: [],
-        })
-        res.writeHead(200, { 'Content-Type': 'text/event-stream' })
-        res.write(`data: ${JSON.stringify({ type: 'textResponse', textResponse: '我猜是' })}\n\n`)
-        res.end(
-          `data: ${JSON.stringify({ type: 'textResponse', textResponse: '第三场', sources: [], close: true })}\n\n`,
-        )
-        return
+        return send(200, { success: true })
       }
       if (p === '/v1/document/accepted-file-types') {
         return send(200, { types: { 'text/plain': ['.txt', '.md'] } })
@@ -141,6 +117,35 @@ function startMock() {
   })
 }
 
+// ---------------------------------------------------------------- 未配置态
+
+const mockOff = await startApp({
+  projectsDir: PROJECTS,
+  port: PORT + 1,
+  extraEnv: { ANYTHINGLLM_BASE_URL: '', ANYTHINGLLM_API_KEY: '' },
+})
+{
+  const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(`${mockOff.app}/#/knowledge`, { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('[data-knowledge-view]', { timeout: 25_000 })
+    check('未配置时全局知识库页打得开', true)
+    await page.waitForSelector('[data-knowledge-unconfigured]', { timeout: 20_000 })
+    check('未配置显示引导（不是报错框）', (await page.locator('[data-knowledge-unconfigured]').count()) === 1)
+    check(
+      '引导里给出「去设置里填写」入口',
+      (await page.locator('[data-knowledge-goto-settings]').count()) === 1,
+    )
+    await page.screenshot({ path: path.join(OUT, 'unconfigured.png'), fullPage: true })
+  } finally {
+    await browser.close()
+    mockOff.stop()
+  }
+}
+
+// ---------------------------------------------------------------- 已配置态
+
 const mock = await startMock()
 const app = await startApp({
   projectsDir: PROJECTS,
@@ -149,6 +154,7 @@ const app = await startApp({
   extraEnv: {
     ANYTHINGLLM_BASE_URL: `http://127.0.0.1:${mock.port}`,
     ANYTHINGLLM_API_KEY: 'ui-key',
+    SB_BUILTIN_KNOWLEDGE: '1',
   },
 })
 
@@ -156,17 +162,22 @@ const app = await startApp({
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
 
+/** prompt/confirm 由 window 提供，Playwright 里必须显式接管，否则会一直挂着 */
+const answerDialog = (value) =>
+  page.once('dialog', async (d) => {
+    if (d.type() === 'prompt') await d.accept(value)
+    else await d.accept()
+  })
+
 try {
   // ---- 设置面板
   await page.goto(`${app.app}/#/p/${PROJECT}/settings`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('.st-sec', { timeout: 25_000 })
 
-  // 设置页的子页标签是 role=tab；左栏导航也有「知识库」，不能用 hasText 猜
   const kbTab = page.locator('button[role="tab"][data-settings-pane="knowledge"]')
   check('设置导航有「知识库」入口', (await kbTab.count()) > 0)
   if ((await kbTab.count()) > 0) {
     await kbTab.click()
-    // 面板根节点与 tab 同名属性，用表单里的字段确认面板真的挂上了
     await page.waitForSelector('[data-knowledge-base-url]', { timeout: 10_000 })
     check('知识库面板可打开', true)
     check('服务地址输入框存在', (await page.locator('[data-knowledge-base-url]').count()) === 1)
@@ -177,24 +188,34 @@ try {
       'Key 输入框是密码类型',
       (await page.locator('[data-knowledge-api-key]').getAttribute('type')) === 'password',
     )
-    // 环境变量兜底：地址应已带出来
     const urlValue = await page.locator('[data-knowledge-base-url]').inputValue()
     check('地址由环境变量兜底显示', urlValue.includes(String(mock.port)), urlValue)
     await page.screenshot({ path: path.join(OUT, 'settings-pane.png'), fullPage: true })
   }
 
-  // ---- 知识库视图（未配置/已配置由 env 决定，这里验已配置路径）
+  // ---- 旧项目内链接要落到全局页
   await page.goto(`${app.app}/#/p/${PROJECT}/knowledge`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('[data-knowledge-view]', { timeout: 25_000 })
-  check('知识库视图能打开', true)
+  check('旧链接 #/p/<项目>/knowledge 落到全局知识库页', true)
+  check('全局页不套项目外壳（没有左栏）', (await page.locator('.rail').count()) === 0)
 
+  // ---- 维护链路：建库
+  await page.waitForSelector('[data-knowledge-no-base]', { timeout: 20_000 })
+  check('还没有库时显示空态', (await page.locator('[data-knowledge-no-base]').count()) === 1)
+
+  answerDialog('运镜手册')
+  await page.locator('[data-knowledge-create]').click()
+  await page.waitForSelector('[data-knowledge-base-row]', { timeout: 20_000 })
+  check('新建库后出现在列表', (await page.locator('[data-knowledge-base-row]').count()) === 1)
+  const rowText = await page.locator('[data-knowledge-base-row]').first().innerText()
+  check('列表显示库名', rowText.includes('运镜手册'), rowText.slice(0, 80))
+
+  // ---- 没有问答界面
+  check('没有提问输入框', (await page.locator('[data-knowledge-question]').count()) === 0)
+  check('没有消息流', (await page.locator('.kb-messages, [data-knowledge-answer]').count()) === 0)
+
+  // ---- 上传
   await page.waitForSelector('[data-knowledge-doc-list]', { timeout: 20_000 })
-  check('文档清单区渲染', (await page.locator('[data-knowledge-doc-list]').count()) === 1)
-  // 清单容器在加载中就存在，空态要等 loading 结束才出现
-  await page.waitForSelector('[data-knowledge-empty]', { timeout: 20_000 })
-  check('空库显示空态', (await page.locator('[data-knowledge-empty]').count()) === 1)
-
-  // 上传一个文件
   const fileInput = page.locator('[data-knowledge-upload]')
   check('有上传入口', (await fileInput.count()) >= 1)
   if ((await fileInput.count()) >= 1) {
@@ -202,26 +223,50 @@ try {
     fs.writeFileSync(tmpFile, '# 世界观\n主角是猎人', 'utf8')
     await fileInput.setInputFiles(tmpFile)
     await page.waitForSelector('[data-knowledge-doc-row]', { timeout: 20_000 })
-    check('上传后清单出现该文档', (await page.locator('[data-knowledge-doc-row]').count()) === 1)
-    const rowText = await page.locator('[data-knowledge-doc-row]').first().innerText()
-    check('文档行显示文件名', rowText.includes('kb-ui-world.md'), rowText.slice(0, 80))
+    check('上传后文档出现在该库', (await page.locator('[data-knowledge-doc-row]').count()) === 1)
+    const docText = await page.locator('[data-knowledge-doc-row]').first().innerText()
+    check('文档行显示文件名', docText.includes('kb-ui-world.md'), docText.slice(0, 80))
     fs.rmSync(tmpFile, { force: true })
   }
+  await page.screenshot({ path: path.join(OUT, 'view-with-docs.png'), fullPage: true })
 
-  // 提问：上游不返回 sources，界面必须明说没命中
-  const composer = page.locator('[data-knowledge-question]')
-  check('有提问输入框', (await composer.count()) === 1)
-  if ((await composer.count()) === 1) {
-    await composer.fill('主角在哪一场出场')
-    await page.locator('[data-knowledge-ask]').click()
-    // 未命中标记只在流式结束后出现，等它就是等终态（也顺带验了这条需求）
-    await page.waitForSelector('[data-knowledge-no-hit]', { timeout: 30_000 })
-    const answers = await page.locator('[data-knowledge-answer]').allInnerTexts()
-    const answer = answers[answers.length - 1] || ''
-    check('回答渲染到界面', answer.includes('我猜是'), answer.slice(0, 80))
-    check('未命中时明确标注（不冒充知识库结论）', true)
-    await page.screenshot({ path: path.join(OUT, 'view-with-answer.png'), fullPage: true })
-  }
+  // ---- 改名
+  answerDialog('运镜宝典')
+  await page.locator('[data-knowledge-base-row] .btn-ghost', { hasText: '改名' }).first().click()
+  /*
+   * 改名后要等列表那一行真的换了字：`document.body.innerText` 里已经有
+   * 「运镜宝典」（确认框关掉前就在 DOM 里），拿它当条件会立刻通过、
+   * 断言到旧文案。
+   */
+  await page.waitForFunction(
+    () => {
+      const row = document.querySelector('[data-knowledge-base-row]')
+      return Boolean(row && row.textContent && row.textContent.includes('运镜宝典'))
+    },
+    undefined,
+    { timeout: 20_000 },
+  )
+  const renamed = await page.locator('[data-knowledge-base-row]').first().innerText()
+  check('改名后列表显示新名字', renamed.includes('运镜宝典'), renamed.slice(0, 60))
+
+  // ---- 删库：先取消，库要还在
+  let dialogText = ''
+  page.once('dialog', async (d) => {
+    dialogText = d.message()
+    await d.dismiss()
+  })
+  await page.locator('[data-knowledge-delete-base]').first().click()
+  await page.waitForTimeout(600)
+  check('删库确认文案说明文档不会被从文档池删除', /不会被从文档池删除/.test(dialogText), dialogText.slice(0, 120))
+  check('取消后库仍在', (await page.locator('[data-knowledge-base-row]').count()) === 1)
+
+  // ---- 删库：确认后列表即时刷新
+  answerDialog(undefined)
+  await page.locator('[data-knowledge-delete-base]').first().click()
+  await page.waitForSelector('[data-knowledge-no-base]', { timeout: 20_000 })
+  check('删库后列表即时刷新为空态', (await page.locator('[data-knowledge-base-row]').count()) === 0)
+  check('删库后上游 workspace 也被清掉', mock.state.workspaces.size === 0, String(mock.state.workspaces.size))
+  await page.screenshot({ path: path.join(OUT, 'after-delete.png'), fullPage: true })
 } finally {
   await browser.close()
   app.stop()
