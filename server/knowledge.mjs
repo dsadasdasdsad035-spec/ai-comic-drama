@@ -99,6 +99,30 @@ export function isUsableSlug(slug) {
 }
 
 /**
+ * 上游 `POST /v1/workspace/new` 未给出可用 slug 时的说明。
+ * 内置实例在磁盘满时仍会 200，但 `workspace: null` 且 message 里是 Prisma/SQLite 错误。
+ */
+export function workspaceCreateFailureMessage(wanted, payload) {
+  const wantedName = String(wanted || '').trim() || '未命名'
+  const msg = String(payload?.message || '').trim()
+  const lower = msg.toLowerCase()
+  if (
+    lower.includes('unable to open database') ||
+    lower.includes('sqlitefailure') ||
+    lower.includes('cannotopen') ||
+    lower.includes('database or disk is full') ||
+    lower.includes('disk i/o error')
+  ) {
+    return `无法创建知识库「${wantedName}」：知识库服务的本地数据库无法写入（常见于磁盘空间不足）。请释放系统磁盘空间后重启应用后重试`
+  }
+  if (msg) {
+    const short = msg.length > 240 ? `${msg.slice(0, 240)}…` : msg
+    return `无法创建知识库「${wantedName}」：${short}`
+  }
+  return `无法创建知识库「${wantedName}」：上游未返回可用标识`
+}
+
+/**
  * 上游错误的可读翻译。
  *
  * 顺序很重要：上游 403 会被我们自己的 fetch 包成普通 Error，所以既认 status
@@ -138,6 +162,14 @@ export function translateKbError(err, opts = {}) {
   }
   if (lower.includes('no model') || lower.includes('no llm') || lower.includes('llm provider')) {
     return 'AnythingLLM 里还没有可用的对话模型：请先在它的设置中配置 LLM 与 embedder'
+  }
+  if (
+    lower.includes('unable to open database') ||
+    lower.includes('sqlitefailure') ||
+    lower.includes('database or disk is full') ||
+    lower.includes('disk i/o error')
+  ) {
+    return '知识库服务的本地数据库无法写入（常见于磁盘空间不足）：请释放磁盘空间后重启应用'
   }
   if (status === 404 || lower.includes('not found')) {
     /*
@@ -556,7 +588,7 @@ export function createKnowledgeClient(deps) {
     )
     const foundSlug = String(found?.slug || '').trim()
     if (foundSlug && isUsableSlug(foundSlug)) return foundSlug
-    throw new Error(`无法创建知识库「${wanted}」：上游未返回可用标识`)
+    throw new Error(workspaceCreateFailureMessage(wanted, created))
   }
 
   /** 单个库的详情（含文档清单）。上游这里返回的 workspace 是数组，已兼容。 */

@@ -65,10 +65,21 @@ try {
     beforeCount,
     { timeout: 40_000 },
   )
+  await page.waitForFunction(
+    (name) =>
+      [...document.querySelectorAll('[data-knowledge-base-row] .kb-doc-title')].some(
+        (el) => el.textContent?.trim() === name,
+      ),
+    KB_NAME,
+    { timeout: 40_000 },
+  )
   /* 按名字定位，不能用 .first()：列表里还有迁移来的旧库，按顺序取会改错对象 */
-  const myRow = () => page.locator('[data-knowledge-base-row]', { hasText: KB_NAME }).first()
-  check('真实上游建库成功', (await page.locator('[data-knowledge-base-row]', { hasText: KB_NAME }).count()) === 1,
-    await myRow().innerText().catch(() => ''))
+  const rowsNamed = () =>
+    page.locator('[data-knowledge-base-row]').filter({
+      has: page.getByText(KB_NAME, { exact: true }),
+    })
+  const myRow = () => rowsNamed().first()
+  check('真实上游建库成功', (await rowsNamed().count()) === 1, await myRow().innerText().catch(() => ''))
   const selectedText = await page.locator('[data-knowledge-base-row][data-active]').first().innerText().catch(() => '')
   check('新建库自动选中', selectedText.includes(KB_NAME), selectedText.split('\n')[0])
 

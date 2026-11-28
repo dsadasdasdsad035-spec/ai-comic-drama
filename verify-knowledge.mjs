@@ -44,6 +44,7 @@ import {
   normalizeWorkspace,
   stripChunkMetadata,
   translateKbError,
+  workspaceCreateFailureMessage,
   validateKbBaseUrl,
 } from './server/knowledge.mjs'
 import {
@@ -124,6 +125,14 @@ await check('错误翻译：collector 离线单独说明', () => {
 
 await check('错误翻译：上游没配模型要给指引', () => {
   assert.match(translateKbError({ message: 'No model found for this provider' }), /对话模型/)
+})
+
+await check('建库失败：磁盘/SQLite 要有直白说明', () => {
+  const prismaDisk =
+    'Invalid `prisma.workspaces.create()` … unable to open database file'
+  const user = workspaceCreateFailureMessage('探针库', { workspace: null, message: prismaDisk })
+  assert.match(user, /磁盘空间不足/)
+  assert.match(translateKbError({ message: prismaDisk }), /磁盘空间不足/)
 })
 
 await check('错误翻译：未配置优先于一切', () => {
