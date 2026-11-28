@@ -13,6 +13,8 @@ import type { AppSettings, Cap, Stage } from './api'
 import { listVideoFiles, type VideoFile } from './api'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
+import SubtitleAssetPanel from './SubtitleAssetPanel'
+import { resolveShotsFromSourceIds, type ShotPromptField } from './assetShotPromptRef'
 import type { CharacterSheet } from './characters'
 import { CapModelSelect, type StagePick } from './ModelSelect'
 import { IMAGE_CAPS } from './modelCaps'
@@ -50,15 +52,23 @@ function AssetPanel({
   patch,
   onDelete,
   projectName,
+  settings,
+  pick,
+  onPick,
   onGenerate,
   onGenerateAudio,
+  shotNodes = [],
 }: {
   node: AssetNodeType
   patch: (id: string, p: Record<string, unknown>) => void
   onDelete: (id: string) => void
   projectName: string
+  settings: AppSettings | null
+  pick: Partial<Record<Cap, string>>
+  onPick: (cap: Cap, key: string) => void
   onGenerate?: (id: string) => void
   onGenerateAudio?: (id: string) => void
+  shotNodes?: ShotNodeType[]
 }) {
   const d = node.data
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -208,6 +218,31 @@ function AssetPanel({
           ) : null}
         </label>
       )}
+      {d.kind === 'audio' ? (
+        <>
+          <div className="field">
+            <span>分镜引用字段</span>
+            <select
+              value={(d as { promptSource?: ShotPromptField }).promptSource || 'dialogue'}
+              onChange={(e) => patch(node.id, { promptSource: e.target.value } as never)}
+            >
+              <option value="dialogue">台词 dialogue</option>
+              <option value="video_prompt">出片提示词</option>
+            </select>
+          </div>
+          <div className="field">
+            <span>已引用分镜</span>
+            <span className="st-hint">
+              {(() => {
+                const linked = resolveShotsFromSourceIds(shotNodes, (d as { sourceShotIds?: string[] }).sourceShotIds ?? [])
+                return linked.length
+                  ? linked.map((s) => s.no || s.id).join('、')
+                  : '尚无（从分镜拖到本卡）'
+              })()}
+            </span>
+          </div>
+        </>
+      ) : null}
       <div className="field">
         <span>{d.kind === 'video' ? '视频来源' : d.kind === 'audio' ? '音频来源' : '图片来源'}</span>
         <button
@@ -302,9 +337,37 @@ function AssetPanel({
         )}
       </div>
       <p className="st-hint">
-        图片/音频卡：填写提示词后在此生成；可把角色或其他素材<b>连到本卡</b>作为出图参考。
-        连到<b>出片镜</b>时，图片进画面参考，音频进音频槽。
+        图片/音频卡：填写提示词后在此生成。
+        {d.kind === 'image' ? (
+          <>
+            <b>出图参考</b>：从角色或其它有图素材<b>拖到本卡</b>。
+            <b>被分镜引用</b>：右键本卡点选分镜，或从本卡拖到出片镜。
+          </>
+        ) : (
+          <>
+            连到<b>出片镜</b>时，音频进音频槽；图片素材请用图片卡。
+          </>
+        )}
       </p>
+      {d.kind === 'image' ? (
+        <CapModelSelect
+          cap="image"
+          caps={IMAGE_CAPS}
+          label="生图模型"
+          settings={settings}
+          value={pick.image}
+          onChange={(key) => onPick('image', key)}
+        />
+      ) : null}
+      {d.kind === 'audio' ? (
+        <CapModelSelect
+          cap="audio"
+          label="音频模型"
+          settings={settings}
+          value={pick.audio}
+          onChange={(key) => onPick('audio', key)}
+        />
+      ) : null}
       {d.kind === 'image' && onGenerate ? (
         <button
           type="button"
@@ -798,6 +861,8 @@ type Props = {
   hasPrevShot?: boolean
   onPublishClipFrame?: (role: 'head' | 'tail') => Promise<{ title: string; notice?: string }>
   onLinkPrevShotTail?: () => Promise<{ title: string; notice?: string }>
+  /** 当前集可见分镜节点（字幕/音频引用分镜文案） */
+  shotNodes?: ShotNodeType[]
 }
 
 function ShotLexiconRefBlock({
@@ -889,14 +954,33 @@ function ShotLexiconRefBlock({
 export default function Inspector(props: Props) {
   if (!props.node) return <EmptyInspector onReset={props.onReset} />
   if ((props.node as unknown as AssetNodeType).type === 'asset') {
+    const asset = props.node as unknown as AssetNodeType
+    if (asset.data.kind === 'subtitle') {
+      return (
+        <SubtitleAssetPanel
+          node={asset}
+          patch={props.patch as unknown as (id: string, p: Record<string, unknown>) => void}
+          onDelete={props.onDelete}
+          projectName={props.projectName}
+          settings={props.settings}
+          pick={props.pick}
+          onPick={props.onPick}
+          shotNodes={props.shotNodes ?? []}
+        />
+      )
+    }
     return (
       <AssetPanel
-        node={props.node as unknown as AssetNodeType}
+        node={asset}
         patch={props.patch as unknown as (id: string, p: Record<string, unknown>) => void}
         onDelete={props.onDelete}
         projectName={props.projectName}
+        settings={props.settings}
+        pick={props.pick}
+        onPick={props.onPick}
         onGenerate={props.onGenerate}
         onGenerateAudio={props.onGenerateAssetAudio}
+        shotNodes={props.shotNodes}
       />
     )
   }

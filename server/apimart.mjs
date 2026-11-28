@@ -1136,7 +1136,12 @@ export async function synthesizeSpeech({
       body: JSON.stringify({
         model,
         input: input.slice(0, 4096),
-        voice: strictVoice && voice ? String(voice) : normalizeVoice(voice),
+        voice: (() => {
+          const id = String(voice || '').trim()
+          const known = APIMART_VOICES.some((v) => v.id === id)
+          if (strictVoice && known) return id
+          return normalizeVoice(voice)
+        })(),
         response_format: format,
         speed,
         ...(supportsInstructions ? { instructions: String(instructions).slice(0, 4096) } : {}),

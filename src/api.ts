@@ -831,6 +831,14 @@ export type ProjectAsset = {
   prompt?: string
   /** 图片素材卡接受的参考连线（画布节点 id） */
   refIds?: string[]
+  /** 引用分镜（音频/字幕文案）；画布 shot 节点 id */
+  sourceShotIds?: string[]
+  /** 从分镜读取 dialogue 或 video_prompt */
+  promptSource?: 'dialogue' | 'video_prompt'
+  /** 字幕卡 SRT 正文 */
+  srtBody?: string
+  /** @deprecated 遗留 cue */
+  cues?: { id: string; text: string; startMs: number; endMs: number; speaker?: string }[]
   note?: string
   tags?: string[]
   /** 来自场景/道具设定卡的稳定标识；手工素材卡为空 */

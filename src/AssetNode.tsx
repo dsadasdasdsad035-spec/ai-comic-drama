@@ -8,6 +8,7 @@ const KIND_META: Record<string, { label: string; cls: string }> = {
   image: { label: '图', cls: 'asset-badge-image' },
   video: { label: '视频', cls: 'asset-badge-video' },
   audio: { label: '音频', cls: 'asset-badge-audio' },
+  subtitle: { label: '字幕', cls: 'asset-badge-subtitle' },
   'expression-sheet': { label: '表情', cls: 'asset-badge-expression' },
 }
 
@@ -27,7 +28,16 @@ function AssetNodeInner({ data, selected }: NodeProps<AssetNodeType>) {
         <span className="asset-title">{data.title || '未命名素材'}</span>
       </div>
       <div className="asset-body">
-        {data.kind === 'audio' ? (
+        {data.kind === 'subtitle' ? (
+          <div className="asset-subtitle">
+            <span className="asset-subtitle-count">
+              {(data.cues?.length ?? 0) > 0 ? `${data.cues!.length} 条 cue` : '尚未编辑字幕'}
+            </span>
+            {(data.sourceShotIds?.length ?? 0) > 0 ? (
+              <span className="asset-subtitle-hint">已引 {data.sourceShotIds!.length} 镜</span>
+            ) : null}
+          </div>
+        ) : data.kind === 'audio' ? (
           data.url ? (
             <div className="asset-audio">
               <audio src={data.url} controls preload="metadata" className="asset-audio-el" />

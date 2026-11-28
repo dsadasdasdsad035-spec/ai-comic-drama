@@ -46,6 +46,7 @@ export const KIND_LABEL: Record<AssetKind, string> = {
   image: '图片',
   video: '视频',
   audio: '音频',
+  subtitle: '字幕',
   'expression-sheet': '表情总图',
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import PromptDialog from '../PromptDialog'
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
@@ -51,8 +52,17 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
   const [accepted, setAccepted] = useState<string[]>([])
   const [busyDoc, setBusyDoc] = useState('')
   const [busyBase, setBusyBase] = useState('')
+  /** 桌面端不能用 window.prompt，建库/改名走统一弹窗 */
+  const [namePrompt, setNamePrompt] = useState<null | { kind: 'create' } | { kind: 'rename'; base: KnowledgeBaseSummary }>(
+    null,
+  )
 
   const active = bases.find((b) => b.id === activeId) || null
+
+  const nameOk = (value: string) => {
+    const t = value.trim()
+    return t.length > 0 && t.length <= NAME_MAX
+  }
 
   const loadBases = useCallback(async (keepId?: string) => {
     setConnError('')
@@ -117,11 +127,10 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
       .catch(() => setAccepted([]))
   }, [])
 
-  const createBase = async () => {
-    const name = window.prompt(`新知识库名称（最多 ${NAME_MAX} 字）`, '')
-    if (name == null) return
-    const trimmed = name.trim()
-    if (!trimmed) return
+  const submitCreateBase = async (value: string) => {
+    const trimmed = value.trim()
+    if (!nameOk(trimmed)) return
+    setNamePrompt(null)
     try {
       const base = await createKnowledgeBase(trimmed)
       toast(`已创建知识库：${base.name}`)
@@ -131,11 +140,15 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
     }
   }
 
-  const renameBase = async (base: KnowledgeBaseSummary) => {
-    const name = window.prompt('重命名知识库', base.name)
-    if (name == null) return
-    const trimmed = name.trim()
-    if (!trimmed || trimmed === base.name) return
+  const submitRenameBase = async (value: string) => {
+    if (namePrompt?.kind !== 'rename') return
+    const base = namePrompt.base
+    const trimmed = value.trim()
+    if (!nameOk(trimmed) || trimmed === base.name) {
+      setNamePrompt(null)
+      return
+    }
+    setNamePrompt(null)
     setBusyBase(base.id)
     try {
       const next = await renameKnowledgeBase(base.id, trimmed)
@@ -284,7 +297,7 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
             type="button"
             className="btn"
             data-knowledge-create
-            onClick={() => void createBase()}
+            onClick={() => setNamePrompt({ kind: 'create' })}
           >
             新建知识库
           </button>
@@ -343,7 +356,7 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
                       disabled={busyBase === b.id}
                       onClick={(e) => {
                         e.stopPropagation()
-                        void renameBase(b)
+                        setNamePrompt({ kind: 'rename', base: b })
                       }}
                     >
                       改名
@@ -435,6 +448,28 @@ export default function KnowledgeView({ toast, onOpenSettings }: Props) {
           )}
         </section>
       </div>
+
+      <PromptDialog
+        open={namePrompt?.kind === 'create'}
+        title="新建知识库"
+        label="库名称"
+        hint={`最多 ${NAME_MAX} 字；创意会话里按库检索文档`}
+        placeholder="如 本项目参考资料"
+        confirmText="创建"
+        validate={nameOk}
+        onCancel={() => setNamePrompt(null)}
+        onConfirm={(v) => void submitCreateBase(v)}
+      />
+      <PromptDialog
+        open={namePrompt?.kind === 'rename'}
+        title="重命名知识库"
+        label="新名称"
+        defaultValue={namePrompt?.kind === 'rename' ? namePrompt.base.name : ''}
+        confirmText="保存"
+        validate={(v) => nameOk(v) && namePrompt?.kind === 'rename' && v.trim() !== namePrompt.base.name}
+        onCancel={() => setNamePrompt(null)}
+        onConfirm={(v) => void submitRenameBase(v)}
+      />
     </div>
   )
 }

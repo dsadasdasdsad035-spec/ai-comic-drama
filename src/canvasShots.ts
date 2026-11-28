@@ -5,6 +5,7 @@
  * 否则会出现「加载后」与「导入后」两种栅格和两套连线，布局反复漂移。
  */
 import type { ProjectAsset, ProjectShot } from './api'
+import { migrateCuesToSrtBody } from './subtitleCard'
 import {
   SHOT_COLS,
   SHOT_GAP,
@@ -50,6 +51,14 @@ export function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
         url: a.url,
         ...(a.prompt ? { prompt: a.prompt } : {}),
         ...(a.refIds?.length ? { refIds: [...a.refIds] } : {}),
+        ...(a.sourceShotIds?.length ? { sourceShotIds: [...a.sourceShotIds] } : {}),
+        ...(a.promptSource ? { promptSource: a.promptSource } : {}),
+        ...(() => {
+          const srt =
+            String(a.srtBody || '').trim() ||
+            (a.kind === 'subtitle' && a.cues?.length ? migrateCuesToSrtBody(a.cues) : '')
+          return srt ? { srtBody: srt } : {}
+        })(),
         ...(a.designId ? { designId: a.designId } : {}),
         ...(a.characterName ? { characterName: a.characterName } : {}),
         ...(a.sourceShotId ? { sourceShotId: a.sourceShotId } : {}),

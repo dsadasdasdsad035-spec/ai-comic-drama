@@ -1958,12 +1958,57 @@ function assetExtraFromRow(raw) {
   return extra
 }
 
+/** 与前端 `formatSrtTime` 一致，仅供遗留 cues 迁移 */
+function formatSrtTimeMs(ms) {
+  const total = Math.max(0, Math.round(ms))
+  const h = Math.floor(total / 3_600_000)
+  const m = Math.floor((total % 3_600_000) / 60_000)
+  const s = Math.floor((total % 60_000) / 1000)
+  const millis = total % 1000
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(millis).padStart(3, '0')}`
+}
+
+function serializeSubtitleCuesToSrt(cues) {
+  const rows = (Array.isArray(cues) ? cues : [])
+    .map((c) => ({
+      startMs: Number(c?.startMs) || 0,
+      endMs: Number(c?.endMs) || 0,
+      text: String(c?.text || '').trim(),
+    }))
+    .filter((c) => c.text)
+    .sort((a, b) => a.startMs - b.startMs)
+  if (!rows.length) return ''
+  return rows
+    .map(
+      (cue, i) =>
+        `${i + 1}\n${formatSrtTimeMs(cue.startMs)} --> ${formatSrtTimeMs(cue.endMs)}\n${cue.text}\n`,
+    )
+    .join('\n')
+}
+
+function resolveSubtitleSrtBody(extra, kind) {
+  const raw = typeof extra?.srtBody === 'string' ? extra.srtBody.trim() : ''
+  if (raw) return raw
+  if (kind !== 'subtitle') return ''
+  const cues = Array.isArray(extra?.cues) ? extra.cues : []
+  return serializeSubtitleCuesToSrt(cues)
+}
+
 function rowToAsset(a) {
   const extra = assetExtraFromRow(a.extra)
+  const kind = a.kind || 'image'
   const prompt = typeof extra.prompt === 'string' ? extra.prompt : ''
   const refIds = Array.isArray(extra.refIds) ? extra.refIds.filter((x) => typeof x === 'string') : []
+  const sourceShotIds = Array.isArray(extra.sourceShotIds)
+    ? extra.sourceShotIds.filter((x) => typeof x === 'string')
+    : []
+  const promptSource =
+    extra.promptSource === 'dialogue' || extra.promptSource === 'video_prompt'
+      ? extra.promptSource
+      : undefined
+  const srtBody = resolveSubtitleSrtBody(extra, kind)
   return {
-    kind: a.kind || 'image',
+    kind,
     title: a.title || '',
     url: a.url || '',
     note: a.note || '',
@@ -1972,6 +2017,9 @@ function rowToAsset(a) {
     ...(a.canvas_id ? { canvasId: a.canvas_id } : {}),
     ...(prompt ? { prompt } : {}),
     ...(refIds.length ? { refIds } : {}),
+    ...(sourceShotIds.length ? { sourceShotIds } : {}),
+    ...(promptSource ? { promptSource } : {}),
+    ...(srtBody ? { srtBody } : {}),
   }
 }
 
@@ -1981,6 +2029,19 @@ function packAssetExtra(a) {
   if (prompt) extra.prompt = prompt
   const refIds = Array.isArray(a?.refIds) ? a.refIds.filter((x) => typeof x === 'string') : []
   if (refIds.length) extra.refIds = refIds
+  const sourceShotIds = Array.isArray(a?.sourceShotIds)
+    ? a.sourceShotIds.filter((x) => typeof x === 'string')
+    : []
+  if (sourceShotIds.length) extra.sourceShotIds = sourceShotIds
+  if (a?.promptSource === 'dialogue' || a?.promptSource === 'video_prompt') {
+    extra.promptSource = a.promptSource
+  }
+  const kind = String(a?.kind || 'image')
+  let srt = typeof a?.srtBody === 'string' ? a.srtBody.trim() : ''
+  if (!srt && kind === 'subtitle' && Array.isArray(a?.cues) && a.cues.length) {
+    srt = serializeSubtitleCuesToSrt(a.cues)
+  }
+  if (srt) extra.srtBody = srt
   return Object.keys(extra).length ? JSON.stringify(extra) : '{}'
 }
 
@@ -2055,6 +2116,10 @@ export function writeProject(root, name, data = {}) {
       // 同一身份被两张卡同时占用会让画布出现两个同 id 节点，后来的让位
       if (canvasId && used.has(canvasId)) canvasId = ''
       if (canvasId) used.add(canvasId)
+      let srtBody = typeof a?.srtBody === 'string' ? a.srtBody.trim() : ''
+      if (!srtBody && kind === 'subtitle' && Array.isArray(a?.cues) && a.cues.length) {
+        srtBody = serializeSubtitleCuesToSrt(a.cues)
+      }
       return {
         kind,
         title,
@@ -2065,6 +2130,11 @@ export function writeProject(root, name, data = {}) {
         canvasId,
         prompt: typeof a?.prompt === 'string' ? a.prompt : '',
         refIds: Array.isArray(a?.refIds) ? a.refIds : [],
+        sourceShotIds: Array.isArray(a?.sourceShotIds) ? a.sourceShotIds : [],
+        ...(a?.promptSource === 'dialogue' || a?.promptSource === 'video_prompt'
+          ? { promptSource: a.promptSource }
+          : {}),
+        ...(srtBody ? { srtBody } : {}),
       }
     })
     db.prepare('DELETE FROM assets WHERE project_id = ?').run(pid)

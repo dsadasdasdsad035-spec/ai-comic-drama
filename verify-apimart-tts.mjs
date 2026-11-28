@@ -38,6 +38,16 @@ await synthesizeSpeech({
 })
 check('未知音色回落 alloy', seen?.body.voice === 'alloy', seen?.body.voice)
 
+await synthesizeSpeech({
+  baseUrl: 'https://api.apimart.ai/v1',
+  apiKey: 'k',
+  text: 'x',
+  voice: 'Tingting',
+  strictVoice: true,
+  fetchImpl: mock,
+})
+check('strict 时未知音色仍回落 alloy', seen?.body.voice === 'alloy', seen?.body.voice)
+
 const jsonErr = await synthesizeSpeech({
   baseUrl: 'https://api.apimart.ai/v1',
   apiKey: 'k',

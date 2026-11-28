@@ -59,7 +59,12 @@ import BoardMenu from './BoardMenu'
 import { effectiveProdKind } from './shotProdKind'
 import { planImageShotToAssetCards } from './imageShotMigration'
 import { buildAssetImageRefs } from './assetCardRefs'
-import { audioModelReady } from './assetCardGeneration'
+import {
+  audioModelReady,
+  imageModelReady,
+  resolveAudioModelKey,
+  resolveImageModelKey,
+} from './assetCardGeneration'
 import type { ShotProdKind } from './types'
 import TransitionPanel from './TransitionPanel'
 import { loadInspectorPrefs, saveInspectorPrefs } from './inspectorLayout'
@@ -163,6 +168,13 @@ import {
 } from './shotReferences'
 import { extractSingleClipFrame, type ClipFrameRole } from './clipBoundaryFrames'
 import { buildClipFrameAssetFields, findClipFrameAssetNode } from './clipFrameAssets'
+import {
+  assetAcceptsShotPromptRef,
+  buildAssetAudioPrompt,
+  parseShotPromptRefEdgeId,
+  resolveShotsFromSourceIds,
+  shotPromptRefEdgeId,
+} from './assetShotPromptRef'
 import { refreshPromptRenderTemplateVersion } from './promptRender'
 import {
   buildShotVideoRequest,
@@ -427,6 +439,10 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       url?: string
       prompt?: string
       refIds?: string[]
+      sourceShotIds?: string[]
+      promptSource?: 'dialogue' | 'video_prompt'
+      srtBody?: string
+      cues?: { id: string; text: string; startMs: number; endMs: number; speaker?: string }[]
       note?: string
       designId?: string
       characterName?: string
@@ -441,6 +457,9 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       url: d.url || '',
       ...(d.prompt ? { prompt: d.prompt } : {}),
       ...(d.refIds?.length ? { refIds: [...d.refIds] } : {}),
+      ...(d.sourceShotIds?.length ? { sourceShotIds: [...d.sourceShotIds] } : {}),
+      ...(d.promptSource ? { promptSource: d.promptSource } : {}),
+      ...(String(d.srtBody || '').trim() ? { srtBody: String(d.srtBody).trim() } : {}),
       ...(d.note ? { note: d.note } : {}),
       ...(d.designId ? { designId: d.designId } : {}),
       ...(d.characterName ? { characterName: d.characterName } : {}),
@@ -2104,6 +2123,22 @@ function Shell() {
       const src = nodesRef.current.find((n) => n.id === c.source) as unknown as AssetNodeType | undefined
       const srcType = (src as unknown as { type?: string } | undefined)?.type
       // 角色/素材 → 分镜：不进 edges 状态，写进目标镜头的 refIds（随镜头落库），边由 refEdges 派生
+      const srcShot = nodesRef.current.find((n) => n.id === c.source)
+      const srcShotType = (srcShot as unknown as { type?: string } | undefined)?.type
+      if (srcShotType === 'shot' && c.target && c.source) {
+        const tgt = nodesRef.current.find((n) => n.id === c.target)
+        if (!tgt) return
+        const tgtType = (tgt as unknown as { type?: string }).type
+        if (tgtType !== 'asset') return
+        const kind = String((tgt.data as { kind?: string }).kind || '')
+        if (!assetAcceptsShotPromptRef(kind)) return
+        const cur = (tgt.data as { sourceShotIds?: string[] }).sourceShotIds ?? []
+        if (cur.includes(c.source)) return
+        patch(c.target, { sourceShotIds: [...cur, c.source!] } as never)
+        setToast(`已引用分镜文案（共 ${cur.length + 1} 镜）`)
+        window.setTimeout(() => setToast(''), 1800)
+        return
+      }
       if ((srcType === 'char' || srcType === 'asset') && c.target && c.source) {
         const tgt = nodesRef.current.find((n) => n.id === c.target)
         if (!tgt) return
@@ -2150,6 +2185,16 @@ function Shell() {
   /** 单条连线的删除副作用：参考连线移出 refIds，转场连线清掉源镜头的 transitionOut */
   const applyEdgeRemoval = useCallback(
     (e: Edge) => {
+      const shotRef = parseShotPromptRefEdgeId(e.id)
+      if (shotRef) {
+        const tgt = nodesRef.current.find((n) => n.id === shotRef.assetId)
+        if (!tgt) return
+        const cur = (tgt.data as { sourceShotIds?: string[] }).sourceShotIds ?? []
+        if (cur.includes(shotRef.shotId)) {
+          patch(shotRef.assetId, { sourceShotIds: cur.filter((x) => x !== shotRef.shotId) } as never)
+        }
+        return
+      }
       if (e.id.startsWith('ref-')) {
         const tgt = nodesRef.current.find((n) => n.id === e.target)
         if (!tgt) return
@@ -2247,14 +2292,18 @@ function Shell() {
   }
 
   /** 新建图片/音频生成素材卡（不占镜号） */
-  const addGenerateAssetCard = (kind: 'image' | 'audio') => {
+  const addGenerateAssetCard = (kind: 'image' | 'audio' | 'subtitle') => {
     if (!readyProject) {
       setToast('先选择项目再新建素材卡')
       window.setTimeout(() => setToast(''), 2200)
       return
     }
-    const title = kind === 'image' ? '图片生成' : '音频生成'
-    const card = newAssetCard(nodesRef.current, { title, kind, url: '', prompt: '' })
+    const title = kind === 'image' ? '图片生成' : kind === 'audio' ? '音频生成' : '字幕'
+    const extra =
+      kind === 'subtitle'
+        ? { srtBody: '', sourceShotIds: [] as string[], promptSource: 'dialogue' as const }
+        : { prompt: '' }
+    const card = newAssetCard(nodesRef.current, { title, kind, url: '', ...extra })
     setNodes((ns) => [...ns, card])
     setSelId(card.id)
   }
@@ -2535,6 +2584,31 @@ function Shell() {
         } as unknown as Edge)
       }
     }
+  const assetCards = canvasNodes.filter((n) => (n as unknown as { type?: string }).type === 'asset')
+  for (const n of assetCards) {
+    const kind = String((n.data as { kind?: string }).kind || '')
+    if (!assetAcceptsShotPromptRef(kind)) continue
+    for (const shotId of (n.data as { sourceShotIds?: string[] }).sourceShotIds ?? []) {
+      if (!shotsById.has(shotId)) continue
+      const eid = shotPromptRefEdgeId(shotId, n.id)
+      const on = selRef === eid
+      out.push({
+        id: eid,
+        source: shotId,
+        target: n.id,
+        type: 'default',
+        style: {
+          stroke: 'var(--shot-ref-edge, #7c9cff)',
+          strokeWidth: on ? 3 : 1.6,
+          strokeDasharray: '4 3',
+          filter: on ? 'drop-shadow(0 0 6px rgba(124,156,255,.55))' : undefined,
+        },
+        label: '分镜文案',
+        labelStyle: { fill: 'var(--shot-ref-edge, #7c9cff)', fontSize: 10 },
+        labelBgStyle: { fill: 'var(--ref-label-bg)' },
+      } as unknown as Edge)
+    }
+  }
     return out
   }, [canvasNodes, shownNodes, selRef, edges])
 
@@ -2546,6 +2620,14 @@ function Shell() {
       const t = ev.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       for (const n of nodesRef.current) {
+        const shotIds = (n.data as { sourceShotIds?: string[] }).sourceShotIds ?? []
+        for (const sid of shotIds) {
+          if (shotPromptRefEdgeId(sid, n.id) !== selRef) continue
+          ev.preventDefault()
+          patch(n.id, { sourceShotIds: shotIds.filter((x) => x !== sid) } as never)
+          setSelRef(null)
+          return
+        }
         const cur = (n.data as unknown as { refIds?: string[] }).refIds ?? []
         for (const rid of cur) {
           if (`ref-${rid}-${n.id}` !== selRef) continue
@@ -2626,22 +2708,31 @@ function Shell() {
       }
     }
     const isChar = type === 'char'
+    const assetKind = String(d.kind || '')
+    const isImageAsset = type === 'asset' && assetKind === 'image'
+    const shotTargets = shownNodes.filter(isShotCanvasNode)
     return {
       mode: 'source' as const,
       targetId: node.id,
       nodeType: (isChar ? 'char' : 'asset') as 'char' | 'asset',
       headTitle: isChar ? `角色「${d.name ?? ''}」` : `素材「${d.title || '未命名'}」`,
-      headSub: '点选镜头即建立参考连线',
-      sectionTitle: '连到画布里的镜头',
-      emptyText: '画布上还没有分镜卡',
-      hint: '连线后，出片与出图（多参考）会使用该图；须先连线再出片。',
-      items: shownNodes.map((n) => ({
-        id: n.id,
-        title: `${n.data.no}${n.data.size ? ' · ' + n.data.size : ''}`,
-        tag: (n.data.prompt ?? '').slice(0, 14),
-        img: n.data.refImage,
-        on: (n.data.refIds ?? []).includes(node.id),
-      })),
+      headSub: '点选镜头：本卡作为该镜的画面/配音参考',
+      sectionTitle: '连到画布里的分镜',
+      emptyText: '当前集还没有分镜卡',
+      hint: isImageAsset
+        ? '素材互相当出图参考请用拖拽：从参考卡拖到本图片卡（写入本卡 refIds）。右键菜单只负责「被分镜引用」。'
+        : '连线后出片会使用该图/音；图片素材卡还可拖线连到其它图片卡作出图参考。',
+      items: shotTargets.map((n) => {
+        const sd = n.data as { no?: string; shotId?: string; size?: string; prompt?: string; refIds?: string[]; refImage?: string }
+        const label = String(sd.no || sd.shotId || n.id).trim()
+        return {
+          id: n.id,
+          title: `${label}${sd.size ? ` · ${sd.size}` : ''}`,
+          tag: String(sd.prompt ?? '').slice(0, 14),
+          img: sd.refImage,
+          on: (sd.refIds ?? []).includes(node.id),
+        }
+      }),
     }
   }, [ctx, canvasNodes, refCards, shownNodes])
 
@@ -3336,6 +3427,13 @@ function Shell() {
         patch(id, { genState: 'error', genError: '先选择项目再生成图片' })
         return
       }
+      const models = appSettings?.models ?? []
+      const imgKey = resolveImageModelKey(modelPick.image, appSettings)
+      const imgReady = imageModelReady(imgKey, models)
+      if (!imgReady.ok) {
+        patch(id, { genState: 'error', genError: imgReady.reason })
+        return
+      }
       if (opts.signal?.aborted) return
       const controller = new AbortController()
       const onExternalAbort = () => controller.abort()
@@ -3382,7 +3480,7 @@ function Shell() {
           refImage: ref,
           refImages: extraRefs,
           n: candCount,
-          modelKey: modelPick.image,
+          modelKey: imgReady.entry.key,
           project: projectName,
         }, { signal: controller.signal })
         if (!current()) return
@@ -3414,18 +3512,30 @@ function Shell() {
         if (current()) activeImgRef.current.delete(id)
       }
     },
-    [patch, ratio, refMode, candCount, characters, modelPick, price, missingMedia, cancelGenerate, projectName],
+    [patch, ratio, refMode, candCount, characters, modelPick, price, missingMedia, cancelGenerate, projectName, appSettings],
   )
 
   const generateAssetAudio = useCallback(
     async (id: string) => {
       const node = nodesRef.current.find((n) => n.id === id)
       if (!node || !isAssetCanvasNode(node)) return
-      const d = node.data as unknown as { prompt?: string; title?: string; kind?: string }
+      const d = node.data as unknown as {
+        prompt?: string
+        title?: string
+        kind?: string
+        sourceShotIds?: string[]
+        promptSource?: 'dialogue' | 'video_prompt'
+      }
       if (String(d.kind) !== 'audio') return
-      const prompt = String(d.prompt ?? '').trim()
-      if (!prompt) {
-        patch(id, { genState: 'error', genError: '请先填写提示词' } as never)
+      const field = d.promptSource === 'video_prompt' ? 'video_prompt' : 'dialogue'
+      const shots = resolveShotsFromSourceIds(nodesRef.current, d.sourceShotIds ?? [])
+      const merged = buildAssetAudioPrompt({
+        prompt: String(d.prompt ?? ''),
+        field,
+        shots,
+      })
+      if (!merged) {
+        patch(id, { genState: 'error', genError: '请先填写提示词，或连线分镜以引用台词' } as never)
         return
       }
       if (!projectName) {
@@ -3433,7 +3543,8 @@ function Shell() {
         return
       }
       const models = appSettings?.models ?? []
-      const ready = audioModelReady(modelPick.audio, models)
+      const audKey = resolveAudioModelKey(modelPick.audio, appSettings)
+      const ready = audioModelReady(audKey, models)
       if (!ready.ok) {
         patch(id, { genState: 'error', genError: ready.reason } as never)
         return
@@ -3441,9 +3552,17 @@ function Shell() {
       patch(id, { genState: 'running', genError: undefined } as never)
       const tid = startTask('voice', `${d.title || '音频卡'} 生成`, {})
       try {
+        const catalog = await listVoicesCached(ready.entry.key)
+        const voiceId = catalog.voices[0]?.id
+        if (!voiceId) {
+          patch(id, { genState: 'error', genError: catalog.error || '当前音频模型没有可用音色' } as never)
+          endTask(tid, catalog.error || '无可用音色')
+          return
+        }
         const voice = await generateVoice({
-          text: prompt,
-          modelKey: modelPick.audio,
+          text: merged,
+          voice: voiceId,
+          modelKey: ready.entry.key,
           project: projectName,
         })
         patch(id, { url: voice.url, genState: 'idle', genError: undefined } as never)
@@ -4588,6 +4707,7 @@ function Shell() {
                 diagOn={diagOn}
                 onAddImageAsset={() => addGenerateAssetCard('image')}
                 onAddAudioAsset={() => addGenerateAssetCard('audio')}
+                onAddSubtitleAsset={() => addGenerateAssetCard('subtitle')}
                 onAddVideoShot={() => void addShot()}
                 onGenAll={generateAll}
                 onUnifyTransitions={unifyTransitions}
@@ -4923,6 +5043,7 @@ function Shell() {
             hasPrevShot={selectedHasPrevShot}
             onPublishClipFrame={handlePublishClipFrame}
             onLinkPrevShotTail={handleLinkPrevShotTail}
+            shotNodes={shownNodes}
           />
           )}
         </main>

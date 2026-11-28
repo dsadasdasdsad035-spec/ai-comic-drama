@@ -18,7 +18,7 @@ fs.writeFileSync(
     `export * from ${abs('src/shotReferences.ts')}`,
     `export * from ${abs('src/videoPrompt.ts')}`,
     `export { planAddShot } from ${abs('src/canvasShotOps.ts')}`,
-    `export { audioModelReady } from ${abs('src/assetCardGeneration.ts')}`,
+    `export { audioModelReady, resolveAudioModelKey } from ${abs('src/assetCardGeneration.ts')}`,
   ].join('\n') + '\n',
 )
 const bundle = path.join(tmp, 'bundle.mjs')
@@ -85,6 +85,10 @@ const check = (n, c, e = '') => {
   check('已接入音频模型可提交', ok.ok === true)
   const no = lib.audioModelReady('missing', models)
   check('未接入模型拒绝', no.ok === false && no.reason.includes('无效'), no.reason)
+  const settings = { defaults: { audio: 'voice-a' } }
+  const resolved = lib.resolveAudioModelKey('', settings)
+  check('未手选时回落配音默认', resolved === 'voice-a', resolved)
+  check('手选优先于默认', lib.resolveAudioModelKey('voice-b', { defaults: { audio: 'voice-a' } }) === 'voice-b')
 }
 
 // 3.4 出片镜引用图片卡 / 音频卡

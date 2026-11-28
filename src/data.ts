@@ -25,7 +25,7 @@ export type CharNodeType = Node<
  * 素材类型：场景图 / 道具图 / 普通参考图 / 视频 / 音频 / 角色表情总图。
  * 音频只做素材管理与预览，不参与画面参考与成片音轨。
  */
-export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'expression-sheet'
+export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'subtitle' | 'expression-sheet'
 
 /** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
 export type AssetNodeType = Node<
@@ -36,6 +36,20 @@ export type AssetNodeType = Node<
     /** 生成提示词（图片 Seedream / 音频 TTS） */
     prompt?: string
     refIds?: string[]
+    /** 分镜 → 本卡（音频/字幕文案来源）；画布 shot 节点 id */
+    sourceShotIds?: string[]
+    /** 从分镜取的字段 */
+    promptSource?: 'dialogue' | 'video_prompt'
+    /** 字幕 SRT 正文（仅 subtitle） */
+    srtBody?: string
+    /** @deprecated 遗留 cue，加载时迁移为 srtBody */
+    cues?: {
+      id: string
+      text: string
+      startMs: number
+      endMs: number
+      speaker?: string
+    }[]
     genState?: 'idle' | 'running' | 'error'
     genError?: string
     designId?: string
