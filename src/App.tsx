@@ -769,6 +769,10 @@ function Shell() {
   const [epNo, setEpNo] = useState(1)
   /** 项目镜头快照：画布、导入、Agent 写回都以它为输入（真相仍在 project.json） */
   const [projectShots, setProjectShots] = useState<ProjectShot[]>([])
+  const projectShotsRef = useRef(projectShots)
+  useEffect(() => {
+    projectShotsRef.current = projectShots
+  }, [projectShots])
   /** 项目分集快照：集摘要与目标时长从这里取 */
   const [episodes, setEpisodes] = useState<ProjectEpisode[]>([])
   /** 画布导入对话框 */
@@ -1135,9 +1139,17 @@ function Shell() {
     (no: number) => {
       setEpNo(no)
       setBoardPhase('canvas')
-      hydrateCanvasShots(projectShots, { episode: no, fit: true })
+      // 退出到集目录再进来时，内存里往往还有该集节点；用陈旧 projectShots 重水合会盖掉未落库的提示词/连线
+      const hasCards = nodesRef.current.some(
+        (n) => n.data.shotId && (Number(n.data.episode) || 1) === no,
+      )
+      if (hasCards) {
+        window.setTimeout(() => fitView({ padding: 0.25, duration: 450 }), 80)
+        return
+      }
+      hydrateCanvasShots(projectShotsRef.current, { episode: no, fit: true })
     },
-    [hydrateCanvasShots, projectShots],
+    [hydrateCanvasShots, fitView],
   )
 
   // 打开「新增分集」输入弹窗。
@@ -3438,42 +3450,63 @@ function Shell() {
     }
   }, [charsOn, projectName, readyProject, setNodes])
 
-  /** 画布侧改动 → 写回 project.json。
-   * 只在有实质性业务字段变化时才写，且靠快照对比避免首屏把所有镜头重写一遍。
-   */
+  /** 收集当前画布上有改动的镜头并写回 project.json（供防抖与离开画布时 flush） */
+  const flushPendingShotWrites = useCallback(async (): Promise<boolean> => {
+    if (!projectName || readyProject !== projectName) return false
+    if (syncedRef.current.size === 0) return false
+    const changed: ProjectShot[] = []
+    const unlockedByShot = new Map<string, string[]>()
+    for (const n of nodesRef.current) {
+      const id = n.data.shotId
+      if (!id) continue
+      const unlocked = pendingUnlockRef.current.get(String(id))
+      const sig = bizSignature(n.data)
+      if (syncedRef.current.get(id) === sig && !unlocked) continue
+      syncedRef.current.set(id, sig)
+      if (unlocked) unlockedByShot.set(String(id), [...unlocked])
+      changed.push(
+        nodeToShot(n.data, id, unlocked ? { unlockedFields: [...unlocked] } : undefined),
+      )
+    }
+    if (changed.length === 0) return false
+    try {
+      const r = await mergeProjectShots(projectName, changed)
+      for (const id of unlockedByShot.keys()) pendingUnlockRef.current.delete(id)
+      setProjectShots(r.shots)
+      projectShotsRef.current = r.shots
+      bumpProjectRevision(r.revision)
+      pushStudioCanvasNow()
+      return true
+    } catch {
+      return false
+    }
+  }, [projectName, readyProject, bumpProjectRevision, pushStudioCanvasNow])
+
+  /** 画布侧改动 → 写回 project.json（防抖） */
   useEffect(() => {
     if (!projectName || readyProject !== projectName) return
     if (syncedRef.current.size === 0) return
     const timer = window.setTimeout(() => {
-      const changed: ProjectShot[] = []
-      const unlockedByShot = new Map<string, string[]>()
-      for (const n of nodes) {
-        const id = n.data.shotId
-        if (!id) continue
-        const unlocked = pendingUnlockRef.current.get(String(id))
-        const sig = bizSignature(n.data)
-        if (syncedRef.current.get(id) === sig && !unlocked) continue
-        syncedRef.current.set(id, sig)
-        if (unlocked) unlockedByShot.set(String(id), [...unlocked])
-        changed.push(
-          nodeToShot(n.data, id, unlocked ? { unlockedFields: [...unlocked] } : undefined),
-        )
-      }
-      if (changed.length === 0) return
-      // 局部写回（不标孤儿）：这里只发本次真正改过的镜，未改的必须原样保留
-      mergeProjectShots(projectName, changed)
-        .then((r) => {
-          // 写回成功才清账：失败时留着重试，否则解锁意图会静默丢失
-          for (const id of unlockedByShot.keys()) pendingUnlockRef.current.delete(id)
-          bumpProjectRevision(r.revision)
-          pushStudioCanvasNow()
-        })
-        .catch(() => {
-          /* 写回失败不打断画布操作，工作台「重新加载」可看到差异 */
-        })
+      void flushPendingShotWrites()
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [nodes, projectName, readyProject, bumpProjectRevision, pushStudioCanvasNow])
+  }, [nodes, projectName, readyProject, flushPendingShotWrites])
+
+  const prevBoardPhaseRef = useRef(boardPhase)
+  useEffect(() => {
+    if (prevBoardPhaseRef.current === 'canvas' && boardPhase === 'episodes') {
+      void flushPendingShotWrites()
+    }
+    prevBoardPhaseRef.current = boardPhase
+  }, [boardPhase, flushPendingShotWrites])
+
+  const prevViewRef = useRef(view)
+  useEffect(() => {
+    if (prevViewRef.current === 'board' && view !== 'board') {
+      void flushPendingShotWrites()
+    }
+    prevViewRef.current = view
+  }, [view, flushPendingShotWrites])
 
   const charImages = useMemo(() => {
     const m: Record<string, string> = {}

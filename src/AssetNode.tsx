@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { canvasDisplayImageUrl } from './canvasThumbUrl'
 import type { AssetNodeType } from './data'
 
 const KIND_META: Record<string, { label: string; cls: string }> = {
@@ -56,7 +57,14 @@ function AssetNodeInner({ data, selected }: NodeProps<AssetNodeType>) {
             <span className="asset-empty">未设置视频</span>
           )
         ) : data.url ? (
-          <img src={data.url} alt={data.title} className="asset-media" draggable={false} />
+          <img
+            src={canvasDisplayImageUrl(data.url)}
+            alt={data.title}
+            className="asset-media"
+            draggable={false}
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <span className="asset-empty">未设置图片</span>
         )}

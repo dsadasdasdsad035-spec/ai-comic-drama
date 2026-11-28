@@ -120,6 +120,7 @@ import {
   saveProjectImage,
   saveProjectMedia,
 } from './media.mjs'
+import { handleCanvasThumb } from './canvas-thumb.mjs'
 import {
   cc0PropsVendorReady,
   ensurePolyHavenModel,
@@ -3470,6 +3471,10 @@ export function createAppHandler({ root }: { root: string }) {
             res.end()
           }
           return
+        }
+
+        if (url.startsWith('/api/canvas-thumb')) {
+          if (await handleCanvasThumb(req, res, url, root, serveFile)) return
         }
 
         // 项目媒体：<projects>/<项目>/assets/，和项目数据同生命周期

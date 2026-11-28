@@ -409,7 +409,7 @@ export function shotToData(s: ProjectShot, fallback: ShotData): ShotData {
     motionLexiconAsRef:
       s.motion_lexicon_as_ref === undefined ? fallback.motionLexiconAsRef : Boolean(s.motion_lexicon_as_ref),
     useExpressionRef: Boolean(s.use_expression_ref ?? fallback.useExpressionRef),
-    refIds: s.refIds,
+    refIds: s.refIds === undefined ? fallback.refIds : s.refIds,
     shotId: s.id,
     episode: s.episode,
     handEdited: s.handEdited ?? fallback.handEdited,
