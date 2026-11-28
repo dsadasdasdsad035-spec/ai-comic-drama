@@ -74,7 +74,11 @@ export default function SubtitleAssetPanel({
 
   const generateSrt = useCallback(async () => {
     if (!linkedShots.length) {
-      setExportErr('请先把分镜连线到本字幕卡（从分镜拖到本卡）')
+      setExportErr(
+        sourceShotIds.length
+          ? '已记录分镜引用，但画布上找不到对应分镜卡（可能已删或换了项目）；请重新从分镜拖到本卡，或在字幕卡上右键点选分镜'
+          : '请引用分镜文案：从分镜拖到本字幕卡，或右键字幕卡点选分镜（虚线「分镜文案」；实线「参考」不算）',
+      )
       return
     }
     const models = settings?.models ?? []
@@ -104,7 +108,7 @@ export default function SubtitleAssetPanel({
     } finally {
       setLlmBusy(false)
     }
-  }, [linkedShots, promptSource, promptNote, settings, textPickKey, set])
+  }, [linkedShots, sourceShotIds.length, promptSource, promptNote, settings, textPickKey, set])
 
   return (
     <aside className="inspector" data-subtitle-asset-panel>

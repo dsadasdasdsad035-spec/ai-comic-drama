@@ -2120,8 +2120,8 @@ function Shell() {
 
   const onConnect = useCallback(
     (c: Connection) => {
-      const src = nodesRef.current.find((n) => n.id === c.source) as unknown as AssetNodeType | undefined
-      const srcType = (src as unknown as { type?: string } | undefined)?.type
+      const srcNode = nodesRef.current.find((n) => n.id === c.source)
+      const srcType = (srcNode as unknown as { type?: string } | undefined)?.type
       // 角色/素材 → 分镜：不进 edges 状态，写进目标镜头的 refIds（随镜头落库），边由 refEdges 派生
       const srcShot = nodesRef.current.find((n) => n.id === c.source)
       const srcShotType = (srcShot as unknown as { type?: string } | undefined)?.type
@@ -2139,11 +2139,32 @@ function Shell() {
         window.setTimeout(() => setToast(''), 1800)
         return
       }
+      if (srcType === 'asset' && srcNode && c.target && c.source) {
+        const tgt = nodesRef.current.find((n) => n.id === c.target)
+        if (!tgt) return
+        const tgtType = (tgt as unknown as { type?: string }).type
+        if (tgtType === 'shot') {
+          const assetData = srcNode.data as { kind?: string; sourceShotIds?: string[] }
+          const kind = String(assetData.kind || '')
+          if (assetAcceptsShotPromptRef(kind)) {
+            const cur = assetData.sourceShotIds ?? []
+            if (cur.includes(c.target)) return
+            patch(c.source, { sourceShotIds: [...cur, c.target] } as never)
+            setToast(`已引用分镜文案（共 ${cur.length + 1} 镜）`)
+            window.setTimeout(() => setToast(''), 1800)
+            return
+          }
+        }
+      }
       if ((srcType === 'char' || srcType === 'asset') && c.target && c.source) {
         const tgt = nodesRef.current.find((n) => n.id === c.target)
         if (!tgt) return
         const tgtType = (tgt as unknown as { type?: string }).type
         if (tgtType === 'shot') {
+          if (srcType === 'asset' && srcNode) {
+            const kind = String((srcNode.data as { kind?: string }).kind || '')
+            if (assetAcceptsShotPromptRef(kind)) return
+          }
           const cur = (tgt.data as unknown as { refIds?: string[] }).refIds ?? []
           if (!cur.includes(c.source!)) {
             patch(c.target, { refIds: [...cur, c.source!] } as never)
@@ -2358,6 +2379,9 @@ function Shell() {
     () => nodes.filter((n) => !n.data.shotId || (Number(n.data.episode) || 1) === epNo),
     [nodes, epNo],
   )
+
+  /** 全部分镜节点（不按集过滤）：字幕/音频卡引用解析与当前集显示无关 */
+  const allShotNodes = useMemo(() => nodes.filter(isShotCanvasNode), [nodes])
 
   /** 角色上画布：开关 + 拖动位置（数据真相源在 characters，画布只存布局） */
   const [charsOn, setCharsOn] = useState(() => localStorage.getItem('storyboard-chars-on') === '1')
@@ -2710,7 +2734,33 @@ function Shell() {
     const isChar = type === 'char'
     const assetKind = String(d.kind || '')
     const isImageAsset = type === 'asset' && assetKind === 'image'
+    const isPromptRefAsset = type === 'asset' && assetAcceptsShotPromptRef(assetKind)
     const shotTargets = shownNodes.filter(isShotCanvasNode)
+    if (isPromptRefAsset) {
+      const sourceShotIds = (d as { sourceShotIds?: string[] }).sourceShotIds ?? []
+      return {
+        mode: 'assetShotRef' as const,
+        targetId: node.id,
+        nodeType: 'asset' as const,
+        headTitle: `素材「${d.title || '未命名'}」`,
+        headSub: assetKind === 'subtitle' ? '点选分镜以生成字幕' : '点选分镜以引用台词',
+        sectionTitle: '引用分镜文案',
+        emptyText: '当前集还没有分镜卡',
+        hint:
+          '写入本卡的「分镜文案」引用（虚线「分镜文案」）。也可从分镜拖到本卡。与镜头出片参考（实线「参考」）不是同一条连线。',
+        items: shotTargets.map((n) => {
+          const sd = n.data as { no?: string; shotId?: string; size?: string; prompt?: string; refImage?: string }
+          const label = String(sd.no || sd.shotId || n.id).trim()
+          return {
+            id: n.id,
+            title: `${label}${sd.size ? ` · ${sd.size}` : ''}`,
+            tag: String(sd.prompt ?? '').slice(0, 14),
+            img: sd.refImage,
+            on: sourceShotIds.includes(n.id),
+          }
+        }),
+      }
+    }
     return {
       mode: 'source' as const,
       targetId: node.id,
@@ -2744,6 +2794,20 @@ function Shell() {
       const cur = (t.data as unknown as { refIds?: string[] }).refIds ?? []
       const next = cur.includes(sourceId) ? cur.filter((x) => x !== sourceId) : [...cur, sourceId]
       patch(shotNodeId, { refIds: next } as never)
+    },
+    [patch],
+  )
+
+  /** 字幕/音频卡：分镜文案引用写在素材卡 sourceShotIds */
+  const toggleAssetSourceShot = useCallback(
+    (assetNodeId: string, shotNodeId: string) => {
+      const asset = nodesRef.current.find((n) => n.id === assetNodeId)
+      if (!asset) return
+      const kind = String((asset.data as { kind?: string }).kind || '')
+      if (!assetAcceptsShotPromptRef(kind)) return
+      const cur = (asset.data as { sourceShotIds?: string[] }).sourceShotIds ?? []
+      const next = cur.includes(shotNodeId) ? cur.filter((x) => x !== shotNodeId) : [...cur, shotNodeId]
+      patch(assetNodeId, { sourceShotIds: next } as never)
     },
     [patch],
   )
@@ -4939,6 +5003,7 @@ function Shell() {
                 items={ctxData.items}
                 onClickItem={(id) => {
                   if (ctxData.mode === 'shot') toggleRef(ctxData.targetId, id)
+                  else if (ctxData.mode === 'assetShotRef') toggleAssetSourceShot(ctxData.targetId, id)
                   else toggleRef(id, ctxData.targetId)
                 }}
                 onFirstFrame={
@@ -5043,7 +5108,7 @@ function Shell() {
             hasPrevShot={selectedHasPrevShot}
             onPublishClipFrame={handlePublishClipFrame}
             onLinkPrevShotTail={handleLinkPrevShotTail}
-            shotNodes={shownNodes}
+            shotNodes={allShotNodes}
           />
           )}
         </main>

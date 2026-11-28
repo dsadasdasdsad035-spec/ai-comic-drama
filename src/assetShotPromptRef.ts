@@ -17,20 +17,24 @@ export function resolveShotsFromSourceIds(
   sourceShotIds: string[],
 ): ShotPromptSlice[] {
   const byId = new Map<string, ShotPromptSlice>()
+  const byShotId = new Map<string, ShotPromptSlice>()
   for (const n of nodes) {
-    if (n.type !== 'shot') continue
+    if (n.type !== 'shot' && n.type != null) continue
     const d = n.data || {}
-    byId.set(n.id, {
+    const slice: ShotPromptSlice = {
       id: n.id,
       no: String(d.no || ''),
       dialogue: dialogueToText(d.dialogue),
       video_prompt: String(d.videoPrompt || (d as { video_prompt?: string }).video_prompt || ''),
       seconds: Number(d.seconds) || 0,
-    })
+    }
+    byId.set(n.id, slice)
+    const biz = String((d as { shotId?: string }).shotId || '').trim()
+    if (biz) byShotId.set(biz, slice)
   }
   const out: ShotPromptSlice[] = []
   for (const id of sourceShotIds) {
-    const slice = byId.get(id)
+    const slice = byId.get(id) ?? byShotId.get(id)
     if (slice) out.push(slice)
   }
   return out
@@ -57,15 +61,18 @@ export function buildAssetAudioPrompt(opts: {
 }
 
 export function shotPromptRefEdgeId(shotNodeId: string, assetNodeId: string): string {
-  return `ref-shot-${shotNodeId}-${assetNodeId}`
+  return `ref-shot-${shotNodeId}--${assetNodeId}`
 }
 
 export function parseShotPromptRefEdgeId(edgeId: string): { shotId: string; assetId: string } | null {
   if (!edgeId.startsWith('ref-shot-')) return null
   const rest = edgeId.slice('ref-shot-'.length)
-  const idx = rest.indexOf('-asset-')
-  if (idx < 0) return null
-  return { shotId: rest.slice(0, idx), assetId: rest.slice(idx + 1) }
+  const idx = rest.indexOf('--')
+  if (idx >= 0) return { shotId: rest.slice(0, idx), assetId: rest.slice(idx + 2) }
+  // 旧格式：ref-shot-<shot>-<asset-...>，从首个 asset- 前缀切开
+  const legacy = rest.indexOf('-asset-')
+  if (legacy < 0) return null
+  return { shotId: rest.slice(0, legacy), assetId: rest.slice(legacy + 1) }
 }
 
 export function assetAcceptsShotPromptRef(kind: string | undefined): boolean {

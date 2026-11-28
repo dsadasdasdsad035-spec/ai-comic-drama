@@ -52,9 +52,11 @@ const merged = lib.buildAssetAudioPrompt({
 check('音频文案合并', merged === '前缀\n\n再见\n\n你好', merged)
 
 const eid = lib.shotPromptRefEdgeId('shot-a', 'asset-xy')
-check('边 id', eid.startsWith('ref-shot-'), eid)
+check('边 id', eid === 'ref-shot-shot-a--asset-xy', eid)
 const parsed = lib.parseShotPromptRefEdgeId(eid)
 check('解析边', parsed?.shotId === 'shot-a' && parsed?.assetId === 'asset-xy', JSON.stringify(parsed))
+const legacy = lib.parseShotPromptRefEdgeId('ref-shot-shot-a-asset-xy')
+check('旧边 id 兼容', legacy?.shotId === 'shot-a' && legacy?.assetId === 'asset-xy', JSON.stringify(legacy))
 
 console.log(bad ? `\n❌ ${bad} 项失败` : '\n✅ 全部通过')
 process.exit(bad ? 1 : 0)
