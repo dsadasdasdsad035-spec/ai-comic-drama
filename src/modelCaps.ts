@@ -1,5 +1,9 @@
 import type { Cap, ModelEntry } from './api'
 
+function isMusicGenModel(m: ModelEntry): boolean {
+  return Boolean(m.features?.music) || /^flowmusic$/i.test(String(m.model || ''))
+}
+
 export const CAP_ORDER: Cap[] = [
   'text',
   'textPro',
@@ -10,6 +14,7 @@ export const CAP_ORDER: Cap[] = [
   'video',
   'videoRef',
   'audio',
+  'music',
 ]
 
 export const CAP_LABELS: Record<Cap, string> = {
@@ -22,6 +27,7 @@ export const CAP_LABELS: Record<Cap, string> = {
   video: '视频',
   videoRef: '视频参考',
   audio: '配音',
+  music: '音乐',
 }
 
 /** 模型声明的能力；旧条目没有 caps 时退回单一 cap */
@@ -57,6 +63,7 @@ export function modelHasCap(m: ModelEntry, cap: Cap): boolean {
     return declaredCap(m, 'videoRef') || Boolean(m.supportsVideoRef)
   }
   if (isImageCap(cap)) return declaredCap(m, 'image') || declaredCap(m, 'view')
+  if (cap === 'music') return declaredCap(m, 'music') || isMusicGenModel(m)
   return declaredCap(m, cap)
 }
 

@@ -508,6 +508,44 @@ export async function generateVoice(o: {
   return j as VoiceResult
 }
 
+/** 画布音频卡：APIMart Flow Music */
+export async function generateMusic(o: {
+  soundPrompt?: string
+  lyrics?: string
+  title?: string
+  length?: number
+  bpm?: string
+  version?: string
+  modelKey?: string
+  project?: string
+}): Promise<VoiceResult & { taskId?: string }> {
+  const prompt = String(o.soundPrompt || '').trim()
+  const lyrics = String(o.lyrics || '').trim()
+  if (!prompt && !lyrics) throw new Error('请填写风格描述或歌词')
+  let res: Response
+  try {
+    res = await apiFetch('/api/music', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sound_prompt: prompt,
+        lyrics: lyrics || undefined,
+        title: o.title,
+        length: o.length,
+        bpm: o.bpm,
+        version: o.version,
+        modelKey: o.modelKey,
+        project: o.project,
+      }),
+    })
+  } catch {
+    throw new Error('连不上本地代理，dev server 是否还在运行？')
+  }
+  const j = await readJsonRes(res)
+  if (!j.ok) throw new Error(proxyErrorMessage(j, '音乐生成失败'))
+  return j as VoiceResult & { taskId?: string }
+}
+
 export type LipSyncResult = {
   outputVideo: string
   provider: string
@@ -831,10 +869,12 @@ export type ProjectAsset = {
   prompt?: string
   /** 图片素材卡接受的参考连线（画布节点 id） */
   refIds?: string[]
-  /** 引用分镜（音频/字幕文案）；画布 shot 节点 id */
+  /** 引用分镜（音频/音乐/字幕文案）；画布 shot 节点 id */
   sourceShotIds?: string[]
   /** 从分镜读取 dialogue 或 video_prompt */
   promptSource?: 'dialogue' | 'video_prompt'
+  musicLength?: number
+  musicLyrics?: string
   /** 字幕卡 SRT 正文 */
   srtBody?: string
   /** @deprecated 遗留 cue */
@@ -1390,7 +1430,17 @@ export async function askVideoVision(
 
 export type RulePack = { enabled: boolean; text: string }
 
-export type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
+export type Cap =
+  | 'text'
+  | 'textPro'
+  | 'vision'
+  | 'videoVision'
+  | 'image'
+  | 'view'
+  | 'video'
+  | 'videoRef'
+  | 'audio'
+  | 'music'
 /** 生成环节：环节默认值只引用模型表键 */
 export type Stage =
   | 'character'
@@ -1446,6 +1496,8 @@ export type ModelFeatureSet = {
   /** 支持只给提示词生成（文生视频）；未声明时纯文本模式会被阻止 */
   textToVideo?: boolean
   audioOut?: boolean
+  /** 文生音乐（Flow Music / APIMart） */
+  music?: boolean
   tools?: boolean
 }
 export type ModelEntry = {

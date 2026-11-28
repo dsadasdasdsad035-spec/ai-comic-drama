@@ -118,6 +118,7 @@ import {
   resolveProjectMediaPath,
   resolveRef,
   saveProjectImage,
+  saveProjectMedia,
 } from './media.mjs'
 import {
   cc0PropsVendorReady,
@@ -184,7 +185,10 @@ import {
   parseApimartResponsesRaw,
   getTask as getApimartTask,
   pollTask as pollApimartTask,
+  pollMusicTask as pollApimartMusicTask,
+  musicUrlFromTask,
   submitImage as submitApimartImage,
+  submitMusic as submitApimartMusic,
   submitVideo as submitApimartVideo,
   synthesizeSpeech as synthesizeApimartSpeech,
   uploadImage as uploadApimartImage,
@@ -505,8 +509,19 @@ function missingKeyMessage(p?: Provider): string {
 type RulePack = { enabled: boolean; text: string }
 
 /** 能力：文本两档 / 图像 / 三视图 / 视频两档 / 音频 */
-type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio'
-const CAP_VALUES: Cap[] = ['text', 'textPro', 'vision', 'videoVision', 'image', 'view', 'video', 'videoRef', 'audio']
+type Cap = 'text' | 'textPro' | 'vision' | 'videoVision' | 'image' | 'view' | 'video' | 'videoRef' | 'audio' | 'music'
+const CAP_VALUES: Cap[] = [
+  'text',
+  'textPro',
+  'vision',
+  'videoVision',
+  'image',
+  'view',
+  'video',
+  'videoRef',
+  'audio',
+  'music',
+]
 
 /**
  * 生成环节：环节默认值只引用模型表里的键，不携带模型 ID。
@@ -548,6 +563,8 @@ type ModelFeatureSet = {
   /** 支持只给提示词生成（文生视频） */
   textToVideo?: boolean
   audioOut?: boolean
+  /** 文生音乐（Flow Music） */
+  music?: boolean
   tools?: boolean
 }
 
@@ -871,6 +888,17 @@ const DEFAULT_MODELS: ModelEntry[] = [
     features: { audioOut: true },
   },
   {
+    key: 'apimart-music-flowmusic',
+    label: 'Flow Music（APIMart）',
+    cap: 'audio',
+    caps: ['audio'],
+    provider: 'apimart',
+    model: 'flowmusic',
+    source: 'preset',
+    note: '文生音乐；需 APIMart Key 与代理',
+    features: { music: true },
+  },
+  {
     key: 'ark-video',
     label: 'Seedance 1.0 pro',
     cap: 'video',
@@ -911,6 +939,7 @@ const DEFAULT_DEFAULTS: Partial<Record<Cap, string>> = {
   video: 'ark-video',
   videoRef: 'ark-video-ref',
   audio: 'minimax-tts',
+  music: 'apimart-music-flowmusic',
   // Agent Plan 网关不解析 image_url，视觉默认走 APIMart 的多模态模型
   vision: 'apimart-text-gemini-3-5-flash',
 }
@@ -927,7 +956,8 @@ function capsOfKind(kind: ProviderKind): ProviderCap[] {
 }
 
 /** 预设迁移版本：只在升级时合并一次新增的渠道/模型 */
-const CURRENT_PRESETS_VERSION = 11
+const CURRENT_PRESETS_VERSION = 12
+const V12_PRESET_MODEL_KEYS = new Set(['apimart-music-flowmusic'])
 const V2_PRESET_PROVIDER_IDS = new Set(['ark-plan', 'volc-tts'])
 const V2_PRESET_MODEL_KEYS = new Set(
   DEFAULT_MODELS.filter((m) => V2_PRESET_PROVIDER_IDS.has(m.provider)).map((m) => m.key),
@@ -1021,6 +1051,23 @@ function mergePresets(cur: AppSettings, version: number): AppSettings {
       textKeys.has(m.key) ? { ...m, features: { ...m.features, textToVideo: true } } : m,
     )
   }
+  if (version < 12) {
+    const modelKeys = new Set(models.map((m) => m.key))
+    models = [
+      ...models.map((m) =>
+        /^flowmusic$/i.test(String(m.model || ''))
+          ? {
+              ...m,
+              runtime: 'ready' as const,
+              cap: 'audio' as const,
+              caps: ['audio' as Cap],
+              features: { ...m.features, music: true },
+            }
+          : m,
+      ),
+      ...DEFAULT_MODELS.filter((m) => V12_PRESET_MODEL_KEYS.has(m.key) && !modelKeys.has(m.key)),
+    ]
+  }
   return { ...cur, providers, models, defaults, stageModels, presetsVersion: CURRENT_PRESETS_VERSION }
 }
 
@@ -1078,7 +1125,7 @@ function normalizeModelCaps(raw: unknown): Cap[] | undefined {
 function normalizeFeatures(raw: any): ModelFeatureSet | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const out: ModelFeatureSet = {}
-  for (const key of ['vision', 'videoInput', 'videoRef', 'firstFrame', 'lastFrame', 'textToVideo', 'audioOut', 'tools'] as const) {
+  for (const key of ['vision', 'videoInput', 'videoRef', 'firstFrame', 'lastFrame', 'textToVideo', 'audioOut', 'music', 'tools'] as const) {
     if (typeof raw[key] === 'boolean') out[key] = raw[key]
   }
   if (raw.imageRef === 'none' || raw.imageRef === 'single' || raw.imageRef === 'multi') {
@@ -7535,6 +7582,111 @@ export function createAppHandler({ root }: { root: string }) {
           } catch (e) {
             res.statusCode = 500
             res.end(JSON.stringify({ ok: false, message: (e as Error).message }))
+          }
+          return
+        }
+
+        // ---- 画布音频卡：Flow Music（APIMart）----
+        if (url === '/api/music') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          if (req.method !== 'POST') {
+            res.statusCode = 405
+            res.end(JSON.stringify({ ok: false, message: '只支持 POST' }))
+            return
+          }
+          try {
+            const body = await readJson(req)
+            const modelKey = String(body.modelKey || '').trim()
+            const { provider, entry } = pickModel('audio', modelKey)
+            if (provider?.kind !== 'apimart') {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '音乐生成仅支持 APIMart 渠道的 flowmusic 模型' }))
+              return
+            }
+            const model = String(entry?.model || '').trim()
+            const isMusic =
+              Boolean((entry as { features?: { music?: boolean } })?.features?.music) || /^flowmusic$/i.test(model)
+            if (!isMusic) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '所选模型不是音乐模型（请在音频卡选择 Flow Music）' }))
+              return
+            }
+            const apiKey = providerKey(provider)
+            if (!apiKey) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: 'APIMart 渠道没有 API Key' }))
+              return
+            }
+            const sound = String(body.sound_prompt || body.soundPrompt || body.text || '').trim()
+            const lyrics = String(body.lyrics || '').trim()
+            if (!sound && !lyrics) {
+              res.statusCode = 400
+              res.end(JSON.stringify({ ok: false, message: '请填写风格描述或歌词' }))
+              return
+            }
+            const title = String(body.title || '画布配乐').trim().slice(0, 80)
+            const length = Math.min(240, Math.max(1, Math.round(Number(body.length) || 30)))
+            const base = String(provider.baseUrl || 'https://api.apimart.ai/v1').replace(/\/+$/, '')
+            const fetchImpl = getApimartFetch() as typeof fetch
+            const t0 = Date.now()
+            const payload: Record<string, unknown> = {
+              model: 'flowmusic',
+              title,
+              length,
+              ...(sound ? { sound_prompt: sound.slice(0, 4000) } : {}),
+              ...(lyrics ? { lyrics: lyrics.slice(0, 8000) } : {}),
+            }
+            const bpm = String(body.bpm || '').trim()
+            if (bpm) payload.bpm = bpm
+            const version = String(body.version || '').trim()
+            if (version) payload.version = version
+            const { taskId } = await submitApimartMusic({ baseUrl: base, apiKey, payload, fetchImpl })
+            const done = await pollApimartMusicTask({
+              baseUrl: base,
+              apiKey,
+              taskId,
+              fetchImpl,
+              timeoutMs: 8 * 60 * 1000,
+              intervalMs: 5000,
+            })
+            const remote = musicUrlFromTask(done)
+            if (!remote) throw new Error('音乐任务完成但没有 audio_url')
+            const { bytes, contentType } = await downloadApimartResult({
+              url: remote,
+              fetchImpl,
+              timeoutMs: 180_000,
+            })
+            const ext = /\.wav(\?|$)/i.test(remote) || contentType.includes('wav') ? 'wav' : 'm4a'
+            const sampleProject = String(body.project || '').trim()
+            let outUrl = ''
+            let seconds = Number(done?.result?.music?.[0]?.duration) || 0
+            if (sampleProject) {
+              const saved = saveProjectMedia(root, sampleProject, bytes, { ext, prefix: 'music' })
+              outUrl = saved.url
+              const local = mediaPathFromUrl(root, outUrl)
+              if (local && fs.existsSync(local)) seconds = seconds || (await probeDuration(local))
+            } else {
+              const outDir = mediaPath(root, 'generated')
+              fs.mkdirSync(outDir, { recursive: true })
+              const name = `music-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`
+              fs.writeFileSync(path.join(outDir, name), bytes)
+              outUrl = `/generated/${name}`
+              seconds = seconds || (await probeDuration(path.join(outDir, name)))
+            }
+            res.end(
+              JSON.stringify({
+                ok: true,
+                url: outUrl,
+                engine: `apimart:flowmusic`,
+                seconds,
+                taskId,
+                elapsed: Date.now() - t0,
+              }),
+            )
+          } catch (e) {
+            const msg = e instanceof ApimartError ? e.message : (e as Error).message
+            res.statusCode = e instanceof ApimartError && e.kind === 'bad-request' ? 400 : 500
+            res.end(JSON.stringify({ ok: false, message: msg || '音乐生成失败' }))
           }
           return
         }

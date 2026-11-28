@@ -62,6 +62,8 @@ import { buildAssetImageRefs } from './assetCardRefs'
 import {
   audioModelReady,
   imageModelReady,
+  musicModelReady,
+  resolveMusicModelKey,
   resolveAudioModelKey,
   resolveImageModelKey,
 } from './assetCardGeneration'
@@ -118,6 +120,7 @@ import {
   checkHealth,
   generateImage,
   generateVoice,
+  generateMusic,
   extractFrames,
   getSettings,
   listProjects,
@@ -442,6 +445,8 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       sourceShotIds?: string[]
       promptSource?: 'dialogue' | 'video_prompt'
       srtBody?: string
+      musicLength?: number
+      musicLyrics?: string
       cues?: { id: string; text: string; startMs: number; endMs: number; speaker?: string }[]
       note?: string
       designId?: string
@@ -459,6 +464,8 @@ function assetsPayloadOf(nodes: ShotNodeType[]): ProjectAsset[] {
       ...(d.refIds?.length ? { refIds: [...d.refIds] } : {}),
       ...(d.sourceShotIds?.length ? { sourceShotIds: [...d.sourceShotIds] } : {}),
       ...(d.promptSource ? { promptSource: d.promptSource } : {}),
+      ...(d.musicLength != null ? { musicLength: d.musicLength } : {}),
+      ...(String(d.musicLyrics || '').trim() ? { musicLyrics: String(d.musicLyrics).trim() } : {}),
       ...(String(d.srtBody || '').trim() ? { srtBody: String(d.srtBody).trim() } : {}),
       ...(d.note ? { note: d.note } : {}),
       ...(d.designId ? { designId: d.designId } : {}),
@@ -2313,17 +2320,34 @@ function Shell() {
   }
 
   /** 新建图片/音频生成素材卡（不占镜号） */
-  const addGenerateAssetCard = (kind: 'image' | 'audio' | 'subtitle') => {
+  const addGenerateAssetCard = (kind: 'image' | 'audio' | 'music' | 'subtitle') => {
     if (!readyProject) {
       setToast('先选择项目再新建素材卡')
       window.setTimeout(() => setToast(''), 2200)
       return
     }
-    const title = kind === 'image' ? '图片生成' : kind === 'audio' ? '音频生成' : '字幕'
+    const title =
+      kind === 'image'
+        ? '图片生成'
+        : kind === 'audio'
+          ? '配音生成'
+          : kind === 'music'
+            ? '音乐生成'
+            : '字幕'
     const extra =
       kind === 'subtitle'
         ? { srtBody: '', sourceShotIds: [] as string[], promptSource: 'dialogue' as const }
-        : { prompt: '' }
+        : kind === 'music'
+          ? {
+              prompt: '',
+              musicLength: 30,
+              musicLyrics: '',
+              sourceShotIds: [] as string[],
+              promptSource: 'dialogue' as const,
+            }
+          : kind === 'audio'
+            ? { prompt: '', sourceShotIds: [] as string[], promptSource: 'dialogue' as const }
+            : { prompt: '' }
     const card = newAssetCard(nodesRef.current, { title, kind, url: '', ...extra })
     setNodes((ns) => [...ns, card])
     setSelId(card.id)
@@ -3589,6 +3613,8 @@ function Shell() {
         kind?: string
         sourceShotIds?: string[]
         promptSource?: 'dialogue' | 'video_prompt'
+        musicLength?: number
+        musicLyrics?: string
       }
       if (String(d.kind) !== 'audio') return
       const field = d.promptSource === 'video_prompt' ? 'video_prompt' : 'dialogue'
@@ -3598,8 +3624,8 @@ function Shell() {
         field,
         shots,
       })
-      if (!merged) {
-        patch(id, { genState: 'error', genError: '请先填写提示词，或连线分镜以引用台词' } as never)
+      if (!merged.trim()) {
+        patch(id, { genState: 'error', genError: '请先填写配音文案，或连线分镜以引用台词' } as never)
         return
       }
       if (!projectName) {
@@ -3614,7 +3640,7 @@ function Shell() {
         return
       }
       patch(id, { genState: 'running', genError: undefined } as never)
-      const tid = startTask('voice', `${d.title || '音频卡'} 生成`, {})
+      const tid = startTask('voice', `${d.title || '配音卡'} 生成`, {})
       try {
         const catalog = await listVoicesCached(ready.entry.key)
         const voiceId = catalog.voices[0]?.id
@@ -3637,6 +3663,67 @@ function Shell() {
       }
     },
     [patch, projectName, appSettings, modelPick, price],
+  )
+
+  const generateAssetMusic = useCallback(
+    async (id: string) => {
+      const node = nodesRef.current.find((n) => n.id === id)
+      if (!node || !isAssetCanvasNode(node)) return
+      const d = node.data as unknown as {
+        prompt?: string
+        title?: string
+        kind?: string
+        sourceShotIds?: string[]
+        promptSource?: 'dialogue' | 'video_prompt'
+        musicLength?: number
+        musicLyrics?: string
+      }
+      if (String(d.kind) !== 'music') return
+      const field = d.promptSource === 'video_prompt' ? 'video_prompt' : 'dialogue'
+      const shots = resolveShotsFromSourceIds(nodesRef.current, d.sourceShotIds ?? [])
+      const merged = buildAssetAudioPrompt({
+        prompt: String(d.prompt ?? ''),
+        field,
+        shots,
+      })
+      const lyrics = String(d.musicLyrics || '').trim()
+      if (!merged && !lyrics) {
+        patch(id, { genState: 'error', genError: '请先填写风格/歌词，或连线分镜以引用文案' } as never)
+        return
+      }
+      if (!projectName) {
+        patch(id, { genState: 'error', genError: '先选择项目' } as never)
+        return
+      }
+      const models = appSettings?.models ?? []
+      const musicKey = resolveMusicModelKey(modelPick.music, appSettings)
+      const ready = musicModelReady(musicKey, models)
+      if (!ready.ok) {
+        patch(id, { genState: 'error', genError: ready.reason } as never)
+        return
+      }
+      patch(id, { genState: 'running', genError: undefined } as never)
+      const tid = startTask('voice', `${d.title || '音乐卡'} 作曲`, {})
+      try {
+        const length = Math.min(240, Math.max(1, Math.round(Number(d.musicLength) || 30)))
+        const out = await generateMusic({
+          soundPrompt: merged,
+          lyrics: lyrics || undefined,
+          title: d.title || '画布配乐',
+          length,
+          modelKey: ready.entry.key,
+          project: projectName,
+        })
+        patch(id, { url: out.url, genState: 'idle', genError: undefined } as never)
+        endTask(tid)
+        setToast('音乐已生成并写入素材卡')
+        window.setTimeout(() => setToast(''), 2200)
+      } catch (e) {
+        patch(id, { genState: 'error', genError: (e as Error).message } as never)
+        endTask(tid, (e as Error).message)
+      }
+    },
+    [patch, projectName, appSettings, modelPick],
   )
 
   /**
@@ -4771,6 +4858,7 @@ function Shell() {
                 diagOn={diagOn}
                 onAddImageAsset={() => addGenerateAssetCard('image')}
                 onAddAudioAsset={() => addGenerateAssetCard('audio')}
+                onAddMusicAsset={() => addGenerateAssetCard('music')}
                 onAddSubtitleAsset={() => addGenerateAssetCard('subtitle')}
                 onAddVideoShot={() => void addShot()}
                 onGenAll={generateAll}
@@ -5078,6 +5166,7 @@ function Shell() {
             onReset={resetAll}
             onGenerate={generateOne}
             onGenerateAssetAudio={generateAssetAudio}
+            onGenerateAssetMusic={generateAssetMusic}
             onCancelGenerate={cancelGenerate}
             ratio={ratio}
             setRatio={setRatio}

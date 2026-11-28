@@ -128,23 +128,31 @@ export function capModelEntries(
 export function CapModelSelect({
   cap,
   caps,
+  defaultCap,
   label,
   settings,
   value,
   onChange,
   className = 'mp-row',
+  filterEntry,
 }: {
   cap: Cap
   /** 可选：同时列出多个能力的模型（如视频族 video + videoRef） */
   caps?: Cap[]
+  /** 默认 modelKey 取自 defaults 的哪一项（如音乐卡用 music，模型表仍属 audio 能力） */
+  defaultCap?: Cap
   label: string
   settings: AppSettings | null
   value?: string
   onChange: (key: string) => void
   className?: string
+  filterEntry?: (m: ModelEntry) => boolean
 }) {
-  const defKey = settings?.defaults?.[cap] || ''
-  const list = capModelEntries(settings, cap, caps, value || defKey)
+  const defCap = defaultCap ?? cap
+  const defKey = settings?.defaults?.[defCap] || ''
+  const list = capModelEntries(settings, cap, caps, value || defKey).filter((m) =>
+    filterEntry ? filterEntry(m) : true,
+  )
   const def = list.find((m) => m.key === defKey) || list[0]
   return (
     <label

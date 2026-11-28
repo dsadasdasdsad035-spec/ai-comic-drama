@@ -25,7 +25,7 @@ export type CharNodeType = Node<
  * 素材类型：场景图 / 道具图 / 普通参考图 / 视频 / 音频 / 角色表情总图。
  * 音频只做素材管理与预览，不参与画面参考与成片音轨。
  */
-export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'subtitle' | 'expression-sheet'
+export type AssetKind = 'scene' | 'prop' | 'image' | 'video' | 'audio' | 'music' | 'subtitle' | 'expression-sheet'
 
 /** 画布上的素材卡：数据与位置都存画布 localStorage（不属于 project.json 的业务数据） */
 export type AssetNodeType = Node<
@@ -33,10 +33,14 @@ export type AssetNodeType = Node<
     title: string
     kind: AssetKind
     url?: string
-    /** 生成提示词（图片 Seedream / 音频 TTS） */
+    /** 生成提示词（图片 Seedream / 音频 TTS 或音乐风格） */
     prompt?: string
+    /** Flow Music 目标时长（秒，1–240） */
+    musicLength?: number
+    /** Flow Music 可选歌词 */
+    musicLyrics?: string
     refIds?: string[]
-    /** 分镜 → 本卡（音频/字幕文案来源）；画布 shot 节点 id */
+    /** 分镜 → 本卡（音频/音乐/字幕文案来源）；画布 shot 节点 id */
     sourceShotIds?: string[]
     /** 从分镜取的字段 */
     promptSource?: 'dialogue' | 'video_prompt'

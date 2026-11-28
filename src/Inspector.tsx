@@ -15,6 +15,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetKind, AssetNodeType, ShotNodeType } from './data'
 import SubtitleAssetPanel from './SubtitleAssetPanel'
 import { resolveShotsFromSourceIds, type ShotPromptField } from './assetShotPromptRef'
+import MusicAssetPanel from './MusicAssetPanel'
+import { isMusicAudioModel } from './assetCardGeneration'
 import type { CharacterSheet } from './characters'
 import { CapModelSelect, type StagePick } from './ModelSelect'
 import { IMAGE_CAPS } from './modelCaps'
@@ -80,7 +82,6 @@ function AssetPanel({
   const [cropBusy, setCropBusy] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
   const set = (p: Partial<{ title: string; kind: AssetKind; url: string; prompt?: string }>) => patch(node.id, p as never)
-
   /**
    * 本地上传：保存成功才写地址。素材卡会落库，所以不能像参考图那样先塞 dataURL。
    * 类型沿用既有规则（pickKind）：场景/道具卡保持原类型，其余回落图片。
@@ -211,7 +212,7 @@ function AssetPanel({
             value={d.prompt ?? ''}
             onChange={(e) => set({ prompt: e.target.value })}
             rows={4}
-            placeholder={d.kind === 'audio' ? '要写进模型的文本（旁白或音乐描述）' : 'Seedream 画面描述'}
+            placeholder={d.kind === 'audio' ? '要写进 TTS 的文本（旁白/对白）' : 'Seedream 画面描述'}
           />
           {(d.refIds?.length ?? 0) > 0 && d.kind === 'image' ? (
             <p className="st-hint">已连线 {d.refIds!.length} 项参考，出图时会带上（不含相邻镜头）。</p>
@@ -362,10 +363,11 @@ function AssetPanel({
       {d.kind === 'audio' ? (
         <CapModelSelect
           cap="audio"
-          label="音频模型"
+          label="配音模型"
           settings={settings}
           value={pick.audio}
           onChange={(key) => onPick('audio', key)}
+          filterEntry={(m) => !isMusicAudioModel(m)}
         />
       ) : null}
       {d.kind === 'image' && onGenerate ? (
@@ -385,7 +387,7 @@ function AssetPanel({
           disabled={d.genState === 'running'}
           onClick={() => onGenerateAudio(node.id)}
         >
-          {d.genState === 'running' ? '生成中…' : '生成音频'}
+          {d.genState === 'running' ? '生成中…' : '生成配音'}
         </button>
       ) : null}
       {d.genError ? <p className="st-hint error-text">{d.genError}</p> : null}
@@ -820,6 +822,7 @@ type Props = {
   onReset: () => void
   onGenerate: (id: string) => void
   onGenerateAssetAudio?: (id: string) => void
+  onGenerateAssetMusic?: (id: string) => void
   onCancelGenerate: (id: string) => void
   ratio: string
   setRatio: (v: string) => void
@@ -955,6 +958,20 @@ export default function Inspector(props: Props) {
   if (!props.node) return <EmptyInspector onReset={props.onReset} />
   if ((props.node as unknown as AssetNodeType).type === 'asset') {
     const asset = props.node as unknown as AssetNodeType
+    if (asset.data.kind === 'music') {
+      return (
+        <MusicAssetPanel
+          node={asset}
+          patch={props.patch as unknown as (id: string, p: Record<string, unknown>) => void}
+          onDelete={props.onDelete}
+          settings={props.settings}
+          pick={props.pick}
+          onPick={props.onPick}
+          onGenerate={props.onGenerateAssetMusic}
+          shotNodes={props.shotNodes ?? []}
+        />
+      )
+    }
     if (asset.data.kind === 'subtitle') {
       return (
         <SubtitleAssetPanel

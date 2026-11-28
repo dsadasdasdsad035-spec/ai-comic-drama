@@ -327,15 +327,25 @@ export function mapCatalogEntry(raw) {
         reason: '转写模型，当前版本未接入',
       }
     }
-    const music = /suno|lyria|flow-music|music|音乐|歌词/.test(`${lowerId} ${lowerTags}`)
+    const music = /suno|lyria|flow-music|flowmusic|music|音乐|歌词/.test(`${lowerId} ${lowerTags}`)
     if (music) {
+      if (lowerId === 'flowmusic') {
+        return {
+          id,
+          category,
+          tags,
+          suggestedCaps: ['audio'],
+          runtime: 'ready',
+          features: { music: true },
+        }
+      }
       return {
         id,
         category,
         tags,
         suggestedCaps: ['audio'],
         runtime: 'catalog-only',
-        reason: '音乐生成，当前版本未接入',
+        reason: '音乐生成，当前版本未验证（画布请用 flowmusic）',
       }
     }
     if (!/gpt-4o-mini-tts/.test(lowerId)) {
@@ -719,6 +729,22 @@ export async function submitVideo({ baseUrl, apiKey, payload, signal, timeoutMs 
   return { taskId }
 }
 
+/** Flow Music 文生音乐 */
+export async function submitMusic({ baseUrl, apiKey, payload, signal, timeoutMs = SUBMIT_TIMEOUT_MS, fetchImpl = defaultFetchImpl }) {
+  const j = await requestJson(`${resolveBaseUrl(baseUrl)}/music/generations`, {
+    apiKey,
+    method: 'POST',
+    body: payload,
+    signal,
+    timeoutMs,
+    fetchImpl,
+  })
+  const first = Array.isArray(j?.data) ? j.data[0] : undefined
+  const taskId = String(first?.task_id ?? j?.task_id ?? '').trim()
+  if (!taskId) throw new ApimartError('音乐任务没有返回 task_id', { kind: 'api' })
+  return { taskId }
+}
+
 // ---------------------------------------------------------------- 轮询 / 下载
 
 /** 查询一次任务状态（不轮询；用于超时后手动拉取成片） */
@@ -739,6 +765,18 @@ export async function getTask({
   return j?.data && typeof j.data === 'object' ? j.data : j
 }
 
+export function musicUrlFromTask(data) {
+  const list = data?.result?.music
+  if (!Array.isArray(list) || !list.length) return ''
+  const first = list[0]
+  return String(first?.audio_url || first?.wav_url || first?.file_url || '').trim()
+}
+
+export async function pollMusicTask(opts) {
+  const taskUrl = `${resolveBaseUrl(opts.baseUrl)}/music/tasks/${encodeURIComponent(opts.taskId)}?language=zh`
+  return pollTaskAtUrl({ ...opts, taskUrl })
+}
+
 export async function pollTask({
   baseUrl,
   apiKey,
@@ -749,9 +787,22 @@ export async function pollTask({
   fetchImpl = defaultFetchImpl,
   onProgress,
 }) {
+  const taskUrl = `${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`
+  return pollTaskAtUrl({ baseUrl, apiKey, taskId, signal, timeoutMs, intervalMs, fetchImpl, onProgress, taskUrl })
+}
+
+async function pollTaskAtUrl({
+  apiKey,
+  taskId,
+  signal,
+  timeoutMs = TASK_TIMEOUT_MS,
+  intervalMs = POLL_INTERVAL_MS,
+  fetchImpl = defaultFetchImpl,
+  onProgress,
+  taskUrl,
+}) {
   const started = Date.now()
   let netStreak = 0
-  const taskUrl = `${resolveBaseUrl(baseUrl)}/tasks/${encodeURIComponent(taskId)}?language=zh`
   for (;;) {
     if (signal?.aborted) throw new ApimartError('请求已取消', { kind: 'cancelled' })
     if (Date.now() - started > timeoutMs) {

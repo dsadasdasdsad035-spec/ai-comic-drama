@@ -10,7 +10,7 @@ import type { ProjectAsset } from './api'
  */
 
 /** 画布与项目共用的六种素材类型；与 `AssetNode` 的徽标、Inspector 的下拉一致 */
-export const ASSET_KINDS = ['scene', 'prop', 'image', 'video', 'audio', 'expression-sheet'] as const
+export const ASSET_KINDS = ['scene', 'prop', 'image', 'video', 'audio', 'music', 'subtitle', 'expression-sheet'] as const
 export type AssetKind = (typeof ASSET_KINDS)[number]
 
 export function isAssetKind(v: unknown): v is AssetKind {

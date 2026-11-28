@@ -45,6 +45,28 @@ test('新增卡没有 canvasId 时不留空字符串字段', () => {
   assert.equal('canvasId' in next[0], false)
 })
 
+test('音乐卡 kind 与附属字段合并保留', () => {
+  const existing = [
+    card({
+      kind: 'music',
+      title: '配乐',
+      url: '/generated/p/a.mp3',
+      musicLength: 30,
+      musicLyrics: '副歌',
+      sourceShotIds: ['shot-1'],
+      promptSource: 'dialogue',
+    }),
+  ]
+  const { next } = mergeAssetCards(existing, [
+    card({ kind: 'music', title: '配乐', url: '/generated/p/a.mp3', prompt: '紧张弦乐' }),
+  ])
+  assert.equal(next[0].kind, 'music')
+  assert.equal(next[0].musicLength, 30)
+  assert.equal(next[0].musicLyrics, '副歌')
+  assert.deepEqual(next[0].sourceShotIds, ['shot-1'])
+  assert.equal(next[0].prompt, '紧张弦乐')
+})
+
 test('更新载荷带了新 canvasId 时以载荷为准', () => {
   const existing = [card({ canvasId: 'cid-old' })]
   const { next } = mergeAssetCards(existing, [card({ canvasId: 'cid-migrated' })])

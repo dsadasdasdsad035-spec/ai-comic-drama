@@ -53,7 +53,10 @@ const whisper = mapCatalogEntry({ id: 'whisper-1', category: 'audio' })
 check('Whisper 标记未接入', whisper.runtime === 'catalog-only', whisper.reason)
 
 const suno = mapCatalogEntry({ id: 'suno-v6', category: 'audio' })
-check('音乐标记未接入', suno.runtime === 'catalog-only', suno.reason)
+check('Suno 标记未接入', suno.runtime === 'catalog-only', suno.reason)
+
+const flow = mapCatalogEntry({ id: 'flowmusic', category: 'audio' })
+check('flowmusic 可运行', flow.runtime === 'ready' && flow.features?.music, JSON.stringify(flow))
 
 const unknown = mapCatalogEntry({ id: 'mystery-model' })
 check('未知分类 catalog-only', unknown.runtime === 'catalog-only')

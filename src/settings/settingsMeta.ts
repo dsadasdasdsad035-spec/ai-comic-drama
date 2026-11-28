@@ -46,6 +46,7 @@ export const CAP_META: { cap: Cap; label: string; hint: string }[] = [
   { cap: 'video', label: '视频 · 首帧出片', hint: '单图图生视频；2.0+ 可带视频参考' },
   { cap: 'videoRef', label: '视频 · 多参考图 / 视频参考', hint: 'reference_image 1~4 张；2.0+ 可带 reference_video' },
   { cap: 'audio', label: '音频 · 配音', hint: '台词合成' },
+  { cap: 'music', label: '音频 · 音乐', hint: '画布音乐素材卡（Flow Music 等）' },
 ]
 
 export const CAP_TO_PC: Record<Cap, ProviderCap> = {
@@ -58,6 +59,7 @@ export const CAP_TO_PC: Record<Cap, ProviderCap> = {
   video: 'video',
   videoRef: 'video',
   audio: 'audio',
+  music: 'audio',
 }
 
 export const PROVIDER_CAPS: { pc: ProviderCap; label: string }[] = [

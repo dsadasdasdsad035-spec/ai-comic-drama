@@ -128,6 +128,28 @@ export declare function submitVideo(opts: {
   fetchImpl?: typeof fetch
 }): Promise<{ taskId: string }>
 
+export declare function submitMusic(opts: {
+  baseUrl: string
+  apiKey: string
+  payload: Record<string, unknown>
+  signal?: AbortSignal
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}): Promise<{ taskId: string }>
+
+export declare function musicUrlFromTask(data: any): string
+
+export declare function pollMusicTask(opts: {
+  baseUrl: string
+  apiKey: string
+  taskId: string
+  signal?: AbortSignal
+  timeoutMs?: number
+  intervalMs?: number
+  fetchImpl?: typeof fetch
+  onProgress?: (p: { status: string; progress: number }) => void
+}): Promise<any>
+
 export declare function getTask(opts: {
   baseUrl: string
   apiKey: string

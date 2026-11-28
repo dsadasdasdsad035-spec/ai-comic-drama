@@ -76,5 +76,5 @@ export function parseShotPromptRefEdgeId(edgeId: string): { shotId: string; asse
 }
 
 export function assetAcceptsShotPromptRef(kind: string | undefined): boolean {
-  return kind === 'audio' || kind === 'subtitle'
+  return kind === 'audio' || kind === 'music' || kind === 'subtitle'
 }

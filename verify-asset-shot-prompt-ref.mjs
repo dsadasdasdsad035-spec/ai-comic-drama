@@ -33,6 +33,7 @@ const check = (n, c, e = '') => {
 }
 
 check('audio 接受分镜引用', lib.assetAcceptsShotPromptRef('audio'))
+check('music 接受分镜引用', lib.assetAcceptsShotPromptRef('music'))
 check('subtitle 接受分镜引用', lib.assetAcceptsShotPromptRef('subtitle'))
 check('image 不接受', !lib.assetAcceptsShotPromptRef('image'))
 

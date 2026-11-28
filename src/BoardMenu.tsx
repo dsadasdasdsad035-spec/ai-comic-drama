@@ -10,6 +10,7 @@ type Props = {
   diagOn: boolean
   onAddImageAsset: () => void
   onAddAudioAsset: () => void
+  onAddMusicAsset: () => void
   onAddSubtitleAsset: () => void
   onAddVideoShot: () => void
   onGenAll: () => void
@@ -41,6 +42,7 @@ export default function BoardMenu({
   diagOn,
   onAddImageAsset,
   onAddAudioAsset,
+  onAddMusicAsset,
   onAddSubtitleAsset,
   onAddVideoShot,
   onGenAll,
@@ -134,7 +136,10 @@ export default function BoardMenu({
             新建图片素材卡<span className="bm-hint">Seedream</span>
           </button>
           <button className="bm-item" onClick={act(onAddAudioAsset)}>
-            新建音频素材卡<span className="bm-hint">语音 / 音乐</span>
+            新建配音素材卡<span className="bm-hint">TTS / 旁白</span>
+          </button>
+          <button className="bm-item" onClick={act(onAddMusicAsset)}>
+            新建音乐素材卡<span className="bm-hint">BGM / 歌曲</span>
           </button>
           <button className="bm-item" onClick={act(onAddSubtitleAsset)}>
             新建字幕素材卡<span className="bm-hint">cue · SRT</span>

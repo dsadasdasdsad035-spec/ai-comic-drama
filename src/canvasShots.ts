@@ -53,6 +53,8 @@ export function assetNodesFromAssets(assets: ProjectAsset[]): ShotNodeType[] {
         ...(a.refIds?.length ? { refIds: [...a.refIds] } : {}),
         ...(a.sourceShotIds?.length ? { sourceShotIds: [...a.sourceShotIds] } : {}),
         ...(a.promptSource ? { promptSource: a.promptSource } : {}),
+        ...(a.musicLength != null ? { musicLength: a.musicLength } : {}),
+        ...(String(a.musicLyrics || '').trim() ? { musicLyrics: String(a.musicLyrics).trim() } : {}),
         ...(() => {
           const srt =
             String(a.srtBody || '').trim() ||

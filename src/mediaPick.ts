@@ -46,6 +46,7 @@ export const KIND_LABEL: Record<AssetKind, string> = {
   image: '图片',
   video: '视频',
   audio: '音频',
+  music: '音乐',
   subtitle: '字幕',
   'expression-sheet': '表情总图',
 }
@@ -66,7 +67,7 @@ export function isAudioUrl(url: string): boolean {
  * 所有「非视频即图片」的判断都应改为调用它，音频才不会漏进画面参考。
  */
 export function assetMediaType(kind: AssetKind, url: string): MediaType {
-  if (kind === 'audio' || isAudioUrl(url)) return 'audio'
+  if (kind === 'audio' || kind === 'music' || isAudioUrl(url)) return 'audio'
   if (kind === 'video' || isVideoUrl(url)) return 'video'
   return 'image'
 }
@@ -129,6 +130,7 @@ function assetItem(a: ProjectAssetItem): PickItem | null {
     a.kind === 'prop' ||
     a.kind === 'video' ||
     a.kind === 'audio' ||
+    a.kind === 'music' ||
     a.kind === 'image' ||
     a.kind === 'expression-sheet'
       ? a.kind
